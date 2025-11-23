@@ -369,6 +369,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
         try:
             # Extract status
+
             status_match = re.search(
                 r'STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)',
                 response_text,
@@ -406,11 +407,13 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             # Handle MODIFIED status - extract improved fix
             modified_fix = None
             if status == ValidationStatus.MODIFIED:
+                improved_code_pattern = r'IMPROVED_FIX:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
                 improved_code_match = re.search(
-                    r'IMPROVED_FIX:\s*```[a-zA-Z]*\s*(.*?)\s*```',
+                    improved_code_pattern,
                     response_text,
                     re.DOTALL
                 )
+
                 improved_explanation_match = re.search(
                     r'IMPROVED_EXPLANATION:\s*(.*?)(?=$)',
                     response_text,

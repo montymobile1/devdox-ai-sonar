@@ -70,7 +70,6 @@ class SonarCloudAnalyzer:
             pool_maxsize=20       # Connections per pool
         )
 
-        self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
 
         # Set authentication header (secure - not in process list)

@@ -365,7 +365,8 @@ Focus on:
         """Extract fix information from LLM response."""
         try:
             # Extract fixed code
-            fixed_code_match = re.search(r'FIXED_CODE:\s*```[a-zA-Z]*\s*(.*?)\s*```', content, re.DOTALL)
+            fixed_code_pattern = r'FIXED_CODE:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
+            fixed_code_match = re.search(fixed_code_pattern, content, re.DOTALL)
             fixed_code = fixed_code_match.group(1).strip() if fixed_code_match else ""
 
             # Extract explanation
