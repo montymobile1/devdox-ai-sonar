@@ -1,0 +1,131 @@
+[build-system]
+requires = ["setuptools>=80.9.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "devdox_ai_sonar"
+version = "0.0.1"
+description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0" }
+authors = [
+    {name = "Hayat Bourji", email = "hayat.bourgi@montyholding.com"}
+]
+maintainers = [
+    {name = "Hayat Bourji", email = "hayat.bourgi@montyholding.com"},
+]
+keywords = ["sonarcloud", "code-analysis", "ai", "llm", "code-quality"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Testing",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
+    "Topic :: System :: Networking :: Monitoring",
+]
+
+
+# Core dependencies
+dependencies = [
+    "click==8.0.0",
+    "rich==13.0.0",
+    "requests==2.32",
+    "pydantic==2.9.0",
+    "pydantic_core==2.23.2",
+    "pydantic-settings==2.12.0",
+    "python-dotenv==1.0.0",
+    "openai==2.8.1",
+    "google-genai==1.51.0",
+    "sonar-tools==3.16.2",
+    "gitpython==3.1.0",
+    "pathlib2==2.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==7.0.0",
+    "pytest-cov==4.0.0",
+    "black==25.11.0",
+    "isort==5.12.0",
+    "flake8==6.0.0",
+    "mypy==1.0.0",
+    "pre-commit==3.0.0",
+    "twine==4.0.0",
+    "build==0.10.0",
+]
+
+[project.scripts]
+devdox_ai_sonar = "devdox_ai_sonar.cli:main"
+dal = "devdox_ai_sonar.cli:main"
+
+
+[project.urls]
+Homepage = "https://github.com/hayatbourgi/devdox-ai-sonar"
+Repository = "https://github.com/hayatbourgi/devdox-ai-sonar"
+Issues = "https://github.com/hayatbourgi/devdox-ai-sonar/issues"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.black]
+line-length = 88
+target-version = ['py39']
+include = '\.pyi?$'
+extend-exclude = '''
+/(
+  # directories
+  \.eggs
+  | \.git
+  | \.hg
+  | \.mypy_cache
+  | \.tox
+  | \.venv
+  | build
+  | dist
+)/
+'''
+
+[tool.isort]
+profile = "black"
+multi_line_output = 3
+line_length = 88
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+
+[tool.coverage.run]
+source = ["src/devdox_ai_sonar"]
+omit = ["*/tests/*", "*/test_*.py"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
