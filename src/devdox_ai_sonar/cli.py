@@ -44,7 +44,8 @@ def main(ctx: click.Context, verbose: bool) -> None:
 @click.option("--token", "-t", required=True, help="SonarCloud authentication token")
 @click.option("--organization", "--org", required=True, help="SonarCloud organization key")
 @click.option("--project", "-p", required=True, help="SonarCloud project key")
-@click.option("--branch", "-b", default="main", help="Branch to analyze (default: main)")
+@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
+@click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
 @click.option("--severity", multiple=True, type=click.Choice(["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]), help="Filter by severity")
 @click.option("--type", "issue_types", multiple=True, type=click.Choice(["BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"]), help="Filter by issue type")
 @click.option("--output", "-o", type=click.Path(), help="Output file for results (JSON format)")
@@ -56,6 +57,7 @@ def analyze(
     organization: str,
     project: str,
     branch: str,
+    pull_request: Optional[str],
     severity: List[str],
     issue_types: List[str],
     output: Optional[str],
@@ -72,6 +74,7 @@ def analyze(
             result = analyzer.get_project_issues(
                 project_key=project,
                 branch=branch,
+                pull_request_number=int(pull_request) if pull_request else 0,
                 severities=list(severity) if severity else None,
                 types=list(issue_types) if issue_types else None
             )

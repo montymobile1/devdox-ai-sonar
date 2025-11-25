@@ -78,7 +78,8 @@ Options:
   -t, --token TEXT              SonarCloud authentication token [required]
   -o, --organization TEXT       SonarCloud organization key [required]
   -p, --project TEXT            SonarCloud project key [required]
-  -b, --branch TEXT             Branch to analyze (default: main)
+  -b, --branch TEXT             Branch to analyze 
+  -pr, --pull-request INTEGER    Pull request ID to analyze (optional)
   --severity [BLOCKER|CRITICAL|MAJOR|MINOR|INFO]
                                Filter by severity (multiple values allowed)
   --type [BUG|VULNERABILITY|CODE_SMELL|SECURITY_HOTSPOT]

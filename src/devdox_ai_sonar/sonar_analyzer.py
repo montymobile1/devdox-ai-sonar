@@ -82,7 +82,8 @@ class SonarCloudAnalyzer:
     def get_project_issues(
             self,
             project_key: str,
-            branch: str = "main",
+            branch: str = "",
+            pull_request_number: Optional[int] = 0,
             statuses: List[str] = None,
             severities: List[str] = None,
             types: List[str] = None
@@ -104,8 +105,8 @@ class SonarCloudAnalyzer:
             AnalysisResult with issues and metadata, or None if error
         """
         if statuses is None:
-            statuses = ["OPEN", "ACCEPTED"]
-
+            statuses = ["OPEN"]
+        logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
         # Build API URL
         url = urljoin(self.base_url, "/api/issues/search")
 
@@ -113,10 +114,17 @@ class SonarCloudAnalyzer:
         params = {
             'componentKeys': project_key,
             'organization': self.organization,
-            'branch': branch,
+
             'issueStatuses': ','.join(statuses),  # Note: SonarCloud uses 'issueStatuses' not 'statuses'
             'ps': 500  # Page size (max 500)
         }
+        if branch!='':
+            params['branch']=branch
+        else:
+           if pull_request_number!=0:
+                params['pullRequest']=str(pull_request_number)
+           else:
+                params['branch']='main'
 
         # Add optional filters
         if severities:
