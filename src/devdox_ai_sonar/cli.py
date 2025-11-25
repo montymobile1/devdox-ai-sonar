@@ -195,9 +195,6 @@ def fix(
 
                                                        create_backup=backup and not dry_run,dry_run=dry_run,use_validator=True,
                                                        validator_provider=provider,validator_model=model,validator_api_key=api_key)
-
-
-
             _display_fix_results(result)
 
 
@@ -221,7 +218,8 @@ def inspect(project_path: Path) -> None:
         # Display project analysis
         console.print(Panel.fit(f"[bold]Project Analysis: {project_path}[/bold]"))
 
-        table = Table(show_header=True, header_style="bold magenta")
+        BOLD_MAGENTA = "bold magenta"  # Define constant for repeated literal
+        table = Table(show_header=True, header_style=BOLD_MAGENTA)
         table.add_column("Property")
         table.add_column("Value")
 
