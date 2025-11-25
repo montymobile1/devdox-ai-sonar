@@ -3,8 +3,9 @@
 import os
 import re
 import shutil
+import autopep8
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 from .fix_validator import FixValidator, ValidationStatus
 from .models import SonarIssue, FixSuggestion, FixResult
@@ -76,7 +77,7 @@ class LLMFixer:
         else:
             raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
 
-    def generate_fix(self, issue: SonarIssue, project_path: Path) -> Optional[FixSuggestion]:
+    def generate_fix(self, issue: SonarIssue, project_path: Path,modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for a SonarCloud issue.
 
@@ -102,9 +103,12 @@ class LLMFixer:
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             # Get context around the issue
-            context = self._extract_context(lines, issue.first_line, issue.last_line, self.context_lines)
+            if modified_content!="":
+                context = modified_content
+            else:
+                context = self._extract_context(lines, issue.first_line, issue.last_line, self.context_lines)
             # Generate fix using LLM
-            fix_response = self._call_llm(issue, context, file_path.suffix)
+            fix_response = self._call_llm(issue, context, file_path.suffix, error_message)
 
             if fix_response:
                 logger.info(f"Successfully generated fix for issue {issue.key} with confidence {fix_response['confidence']}")
@@ -212,11 +216,10 @@ class LLMFixer:
 
         # Calculate context boundaries
         start_idx = max(0, context_lines-first_line_idx  )
-        print("start_idx ", start_idx)
+
         #end_idx = min(len(lines), first_line_idx + context_lines + 1)
         end_idx = min(len(lines), last_line_idx + context_lines + 1)
 
-        context_lines_list = lines[start_idx:end_idx]
         context_lines_list= lines[first_line_idx:last_line_number]
 
         problem_line = lines[first_line_idx].rstrip() if first_line_idx < len(lines) else ""
@@ -229,7 +232,7 @@ class LLMFixer:
             "end_line": end_idx
         }
 
-    def _call_llm(self, issue: SonarIssue, context: Dict[str, Any], file_extension: str) -> Optional[Dict[str, Any]]:
+    def _call_llm(self, issue: SonarIssue, context: Dict[str, Any], file_extension: str, error_message: str="") -> Optional[Dict[str, Any]]:
         """
         Call the LLM to generate a fix.
 
@@ -245,7 +248,7 @@ class LLMFixer:
         language = self._get_language_from_extension(file_extension)
 
         # Prepare prompt
-        prompt = self._create_fix_prompt(issue, context, language)
+        prompt = self._create_fix_prompt(issue, context, language, error_message)
 
         try:
             if self.provider == "openai":
@@ -281,8 +284,9 @@ class LLMFixer:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
 
-    def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], language: str) -> str:
+    def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], language: str, error_message: str="") -> str:
         """Create a prompt for the LLM to generate a fix."""
+        error_section = f"\n**Additional Error Information:**\n{error_message}\n" if error_message else ""
         prompt = f"""
 Analyze this {language} code issue and provide a fix:
 
@@ -303,16 +307,21 @@ Analyze this {language} code issue and provide a fix:
 ```{language}
 {context['problem_line']}
 ```
+{error_section}
 
 Please provide:
-1. **Fixed Code**: The corrected version of the problematic line(s) using best practices and modern conventions based on the issue details and code context.
+1. **Fixed Code**: Return ONLY the corrected code block from lines {context['start_line']} to {context['end_line']} with the fix applied. Do NOT add imports, class definitions, or other surrounding code that wasn't in the original context.
 2. **Explanation**: Why this fix addresses the SonarCloud rule
 3. **Confidence**: A score from 0.0 to 1.0 indicating your confidence in this fix
 
-When the issue indicates removing commented-out code or dead code:
-- Delete the code completely.
-- Do NOT add replacement comments or documentation.
-- Produce only the minimal required fix.
+**CRITICAL INSTRUCTIONS:**
+- Return EXACTLY the code block shown in the context (lines {context['start_line']}-{context['end_line']})
+- Do NOT add any imports, class definitions, or extra code not present in the original context
+- Do NOT invent or assume surrounding class structure
+- Include ALL lines from the provided context, with your fix applied to the problematic lines
+- Maintain the exact same scope and boundaries as the original context
+- Preserve proper indentation and formatting relative to the context provided
+
 
 Format your response as:
 FIXED_CODE:
@@ -563,8 +572,9 @@ Focus on:
 
             # Validate final code (optional)
             modified_content = "".join(lines)
-            if not self._validate_modified_content(modified_content, file_path):
-                logger.error("Validation failed — not writing changes.")
+            validated,message_error = self._validate_modified_content(modified_content, file_path)
+            if not validated:
+                logger.error(f"Validation failed — not writing changes. Error: {message_error}")
                 return False
 
             # Write file
@@ -577,7 +587,7 @@ Focus on:
             return False
 
 
-    def _validate_modified_content(self, content: str, file_path: Path) -> bool:
+    def _validate_modified_content(self, content: str, file_path: Path) -> Union[bool, str]:
         """
         Perform basic validation on modified content to catch obvious corruption.
 
@@ -597,11 +607,13 @@ Focus on:
         Returns:
             True if content passes validation, False otherwise
         """
+        message_error = ""
         try:
             # CHECK 1: File is not empty
             if not content or not content.strip():
-                logger.error("Validation failed: Modified content is empty")
-                return False
+                message_error="Validation failed: Modified content is empty"
+                logger.error(message_error)
+                return False,message_error
 
             # # CHECK 2: Basic bracket/parenthesis matching
             # if not self._check_bracket_balance(content):
@@ -613,24 +625,31 @@ Focus on:
                 try:
                     import ast
                     ast.parse(content)
+                    validated = True
 
                 except SyntaxError as e:
-                    logger.error(f"Validation failed: Python syntax error at line {e.lineno}: {e.msg}")
-
-                    return False
+                    message_error=f"Validation failed: Python syntax error at line {e.lineno}: {e.msg}"
+                    logger.error(message_error)
+                    validated=False
+            if not validated:
+                fixed_code = autopep8.fix_code(content, options={"aggressive": 2})
+                logger.info(f"fixed code: {fixed_code}")
 
             # CHECK 4: No duplicate function/class definitions
             if not self._check_no_duplicate_definitions(content, file_path.suffix):
-                logger.error("Validation failed: Detected duplicate function/class definitions")
-                return False
+                message_error="Validation failed: Detected duplicate function/class definitions"
+
+                logger.error(message_error)
+                return False, message_error
 
 
-            return True
+            return True,""
 
         except Exception as e:
-            logger.error(f"Error during content validation: {e}", exc_info=True)
+            message_error=f"Error during content validation: {e}"
+            logger.error(message_error, exc_info=True)
             # On validation error, fail safe - don't write
-            return False
+            return False,message_error
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
@@ -713,14 +732,11 @@ Focus on:
         """
         Apply fixes with optional validation by a senior code reviewer agent.
 
-        This method integrates the fix validator to review fixes before application.
-
-        Workflow:
+        WORKFLOW:
         1. Group fixes by file
-        2. If use_validator=True: Validate each fix with AI reviewer
-        3. Only apply fixes that pass validation (APPROVED or MODIFIED status)
-        4. Use improved line-based replacement logic
-        5. Perform syntax validation before writing
+        2. Apply fixes to files directly first
+        3. If _validate_modified_content fails, use AI validator as fallback
+        4. AI validator can fix syntax errors or improve the applied fix
 
         Args:
             fixes: List of fix suggestions
@@ -728,7 +744,7 @@ Focus on:
             project_path: Path to the project root
             create_backup: Whether to create a backup before applying
             dry_run: If True, don't actually modify files
-            use_validator: If True, validate fixes with AI reviewer before applying
+            use_validator: If True, use AI validator as fallback when validation fails
             validator_provider: LLM provider for validation
             validator_model: LLM model for validation
             validator_api_key: API key for validator
@@ -737,7 +753,6 @@ Focus on:
         Returns:
             FixResult with detailed application results
         """
-
 
         result = FixResult(
             project_path=project_path,
@@ -751,10 +766,9 @@ Focus on:
             result.backup_path = backup_path
             logger.info(f"Created backup at: {backup_path}")
 
-        # Validate fixes if requested
-        validated_fixes = fixes
+        # Initialize validator if needed (but don't use it upfront)
+        validator = None
         if use_validator:
-            logger.info("Validating fixes with AI code reviewer...")
             validator = FixValidator(
                 provider=validator_provider,
                 model=validator_model,
@@ -762,75 +776,132 @@ Focus on:
                 min_confidence_threshold=min_confidence
             )
 
-            validation_results = []
-            for fix, issue in zip(fixes, issues):
-                file_path = project_path / fix.file_path if fix.file_path else None
-                if not file_path or not file_path.exists():
-                    logger.warning(f"File not found for validation: {file_path}")
-                    continue
-
-                try:
-                    with open(file_path, 'r', encoding='utf-8') as f:
-                        file_content = f.read()
-
-                    validation_result = validator.validate_fix(fix, issue, file_content)
-                    validation_results.append(validation_result)
-
-                    # Log validation decision
-                    if validation_result.status == ValidationStatus.APPROVED:
-                        logger.info(f"✓ Fix {fix.issue_key} APPROVED (confidence: {validation_result.confidence:.2f})")
-                    elif validation_result.status == ValidationStatus.MODIFIED:
-                        logger.info(
-                            f"✓ Fix {fix.issue_key} MODIFIED by reviewer (confidence: {validation_result.confidence:.2f})")
-                    elif validation_result.status == ValidationStatus.REJECTED:
-                        logger.warning(f"✗ Fix {fix.issue_key} REJECTED: {validation_result.validation_notes}")
-                    else:
-                        logger.warning(f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.validation_notes}")
-
-                except Exception as e:
-                    logger.error(f"Error validating fix {fix.issue_key}: {e}", exc_info=True)
-
-            # Filter to only approved/modified fixes
-            validated_fixes = [
-                vr.final_fix for vr in validation_results
-                if vr.should_apply
-            ]
-
-            rejected_count = len(fixes) - len(validated_fixes)
-            if rejected_count > 0:
-                logger.warning(
-                    f"Validator rejected/flagged {rejected_count}/{len(fixes)} fixes. "
-                    f"Only applying {len(validated_fixes)} validated fixes."
-                )
-
         # Group fixes by file for efficient processing
-        fixes_by_file: Dict[str, List[FixSuggestion]] = {}
-        for fix in validated_fixes:
+        fixes_by_file: Dict[str, List[Tuple[FixSuggestion, SonarIssue]]] = {}
+        for fix, issue in zip(fixes, issues):
             file_key = self._get_file_from_fix(fix, project_path)
             if file_key:
                 if file_key not in fixes_by_file:
                     fixes_by_file[file_key] = []
-                fixes_by_file[file_key].append(fix)
-
+                fixes_by_file[file_key].append((fix, issue))
 
         # Apply fixes file by file
-        for file_path_str, file_fixes in fixes_by_file.items():
+        for file_path_str, file_fix_pairs in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
+                file_fixes = [fix for fix, _ in file_fix_pairs]
+                file_issues = [issue for _, issue in file_fix_pairs]
 
-                if self._apply_fixes_to_file(file_path, file_fixes, dry_run):
+                # STEP 1: Try to apply fixes directly
+                logger.info(f"Applying {len(file_fixes)} fixes to {file_path}")
+
+                # Store original content for validator fallback
+                original_content = ""
+                if file_path.exists():
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        original_content = f.read()
+
+                # Attempt direct application
+                success = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+
+                if success:
+                    # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
+                    logger.info(f"✓ Successfully applied {len(file_fixes)} fixes to {file_path}")
+
                 else:
-                    result.failed_fixes.extend([
-                        {"fix": fix, "error": f"Failed validation or application {file_path}"}
-                        for fix in file_fixes
-                    ])
-                    logger.error(f"✗ Failed to apply fixes to {file_path}")
+                    # STEP 2: Direct application failed, try AI validator fallback
+                    if use_validator and validator:
+                        logger.warning(
+                            f"Direct fix application failed for {file_path}. Trying AI validator fallback...")
+
+                        # Restore original content
+                        if not dry_run and file_path.exists():
+                            with open(file_path, 'w', encoding='utf-8') as f:
+                                f.write(original_content)
+
+                        # Use validator to fix each problematic fix
+                        validator_success_count = 0
+                        for fix, issue in file_fix_pairs:
+                            try:
+                                logger.info(f"Using AI validator for fix {fix.issue_key}")
+
+                                # Get current file content (may have been modified by previous validator fixes)
+                                current_content = original_content
+                                if file_path.exists():
+                                    with open(file_path, 'r', encoding='utf-8') as f:
+                                        current_content = f.read()
+
+                                validation_result = validator.validate_fix(fix, issue, current_content)
+
+                                # Log validation decision
+                                if validation_result.status == ValidationStatus.APPROVED:
+                                    logger.info(
+                                        f"✓ Fix {fix.issue_key} APPROVED by validator (confidence: {validation_result.confidence:.2f})")
+                                    result.successful_fixes.append(fix)
+                                    validator_success_count += 1
+
+                                elif validation_result.status == ValidationStatus.MODIFIED:
+                                    logger.info(
+                                        f"✓ Fix {fix.issue_key} MODIFIED by validator (confidence: {validation_result.confidence:.2f})")
+
+                                    # Apply the improved fix
+                                    if validation_result.final_fix:
+                                        improved_success = self._apply_fixes_to_file(
+                                            file_path,
+                                            [validation_result.final_fix],
+                                            dry_run
+                                        )
+                                        if improved_success:
+                                            result.successful_fixes.append(validation_result.final_fix)
+                                            validator_success_count += 1
+                                        else:
+                                            result.failed_fixes.append({
+                                                "fix": fix,
+                                                "error": "Validator improved fix but application still failed"
+                                            })
+                                    else:
+                                        result.failed_fixes.append({
+                                            "fix": fix,
+                                            "error": "Validator marked as MODIFIED but provided no improved fix"
+                                        })
+
+                                elif validation_result.status == ValidationStatus.REJECTED:
+                                    logger.warning(
+                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.validation_notes}")
+                                    result.failed_fixes.append({
+                                        "fix": fix,
+                                        "error": f"Rejected by validator: {validation_result.validation_notes}"
+                                    })
+
+                                else:  # NEEDS_REVIEW
+                                    logger.warning(
+                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.validation_notes}")
+                                    result.failed_fixes.append({
+                                        "fix": fix,
+                                        "error": f"Needs manual review: {validation_result.validation_notes}"
+                                    })
+
+                            except Exception as e:
+                                logger.error(f"Error in validator fallback for fix {fix.issue_key}: {e}", exc_info=True)
+                                result.failed_fixes.append({"fix": fix, "error": f"Validator error: {str(e)}"})
+
+                        logger.info(f"Validator fallback: {validator_success_count}/{len(file_fixes)} fixes successful")
+
+                    else:
+                        # No validator available, mark all as failed
+                        result.failed_fixes.extend([
+                            {"fix": fix, "error": f"Direct application failed and no validator available"}
+                            for fix in file_fixes
+                        ])
+                        logger.error(f"✗ Failed to apply fixes to {file_path} (no validator fallback)")
+
             except Exception as e:
                 result.failed_fixes.extend([
                     {"fix": fix, "error": str(e)}
-                    for fix in file_fixes
+                    for fix, _ in file_fix_pairs
                 ])
                 logger.error(f"✗ Error processing file {file_path_str}: {e}", exc_info=True)
 
         return result
+

@@ -5,12 +5,13 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
+
 import click
 from rich.console import Console
+from rich.text import Text
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress, TaskID
-from rich.text import Text
 
 from . import __version__
 from .sonar_analyzer import SonarCloudAnalyzer
@@ -165,7 +166,6 @@ def fix(
             for issue in fixable_issues:
                 fix = fixer.generate_fix(issue, project_path)
                 if fix:
-                    console.print(f"[green]fix to check {fix}[/green]")
                     fixes.append(fix)
                 progress.advance(task)
         console.print(f"\n[green]fixable_issues  {fixable_issues} fixes[/green]")
@@ -196,7 +196,8 @@ def fix(
 
 
     except Exception as e:
-        console.print(f"[red]Error: {e}[/red]")
+
+        console.print(f"Error: {str(e)}", style="red", markup=False)
         if ctx.obj.get("verbose"):
             console.print_exception()
         sys.exit(1)
@@ -264,11 +265,11 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
     severity_counts = result.issues_by_severity
     console.print(f"\n[bold]Issues by Severity:[/bold]")
     for severity in Severity:
+        color="green"
         count = len(severity_counts[severity])
         if count > 0:
             color = _get_severity_color(severity)
-
-            console.print(f"  {severity.value}: [{color}]{count}[/{color}]")
+            console.print(f"  {severity.value}: {count}", style=color, markup=False)
 
     # Display issues table
     if result.issues:
@@ -284,13 +285,15 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 
         for issue in issues_to_show:
             severity_color = _get_severity_color(Severity(issue.severity))
+            severity_text = Text(issue.severity, style=severity_color)
             table.add_row(
-                f"[{severity_color}]{issue.severity}[/{severity_color}]",
+                severity_text,
                 issue.type,
                 issue.file or "N/A",
                 str(issue.first_line) if issue.first_line else "N/A",
-                issue.message[:47] + "..." if len(issue.message) > 50 else issue.message
+                issue.message[:47] + "..." if len(issue.message) > 50 else issue.message  # Still need to escape this
             )
+
 
         console.print("\n")
         console.print(table)

@@ -367,9 +367,6 @@ class SonarCloudAnalyzer:
                             end_line = int(end_line)
                             if end_line > last_line:
                                 last_line = end_line
-                logger.info(f"last line {last_line}")
-
-
 
                 issue = SonarIssue(
                     key=issue_data.get("key", ""),

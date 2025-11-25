@@ -42,6 +42,8 @@ dependencies = [
     "openai==2.8.1",
     "google-genai==1.51.0",
     "sonar-tools==3.16.2",
+    "pycodestyle==2.14.0",
+    "autopep8==2.3.2",
     "gitpython==3.1.0",
     "pathlib2==2.3.0",
 ]
