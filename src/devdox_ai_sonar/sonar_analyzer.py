@@ -432,6 +432,7 @@ class SonarCloudAnalyzer:
             self,
             project_key: str,
             branch: str = "main",
+            pull_request: Optional[int] = 0,
             max_issues: Optional[int] = None
     ) -> List[SonarIssue]:
         """
@@ -445,7 +446,7 @@ class SonarCloudAnalyzer:
         Returns:
             List of fixable SonarIssue objects
         """
-        analysis = self.get_project_issues(project_key, branch)
+        analysis = self.get_project_issues(project_key, branch,pull_request_number=pull_request)
         if not analysis:
             return []
 

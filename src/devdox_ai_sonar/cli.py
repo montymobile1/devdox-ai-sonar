@@ -104,6 +104,7 @@ def analyze(
 @click.option("--project", "-p", required=True, help="SonarCloud project key")
 @click.option("--project-path", required=True, type=click.Path(exists=True, path_type=Path), help="Path to local project directory")
 @click.option("--branch", "-b", default="main", help="Branch to analyze (default: main)")
+@click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
 @click.option("--provider", type=click.Choice(["openai", "gemini"]), default="openai", help="LLM provider")
 @click.option("--model", help="LLM model name")
 @click.option("--api-key", help="LLM API key (or set environment variable)")
@@ -119,6 +120,7 @@ def fix(
     project: str,
     project_path: Path,
     branch: str,
+    pull_request: int,
     provider: str,
     model: Optional[str],
     api_key: Optional[str],
@@ -150,6 +152,7 @@ def fix(
             fixable_issues = analyzer.get_fixable_issues(
                 project_key=project,
                 branch=branch,
+                pull_request=pull_request,
                 max_issues=max_fixes
             )
 
