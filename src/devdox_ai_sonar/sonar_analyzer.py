@@ -321,114 +321,56 @@ class SonarCloudAnalyzer:
         return text
 
     def _infer_root_cause(self, rule: Dict) -> str:
-
         """
-
         Infer root cause based on rule information.
 
-
-
         Args:
-
-            rule: Rule dictionary from SonarCloud API
-
-
+        rule: Rule dictionary from SonarCloud API
 
         Returns:
-
-            Root cause description
-
+        Root cause description
         """
-
         name = rule.get('name', '').lower()
-
         desc = rule.get('htmlDesc', '').lower()
-
         tags = [tag.lower() for tag in rule.get('tags', [])]
-
         rule_type = rule.get('type', '').lower()
 
         # Pattern matching for root causes
+        return self._match_root_cause(name, desc, tags, rule_type)
 
-        if any(keyword in name or keyword in desc for keyword in ['unused', 'dead', 'never used']):
-
+    def _match_root_cause(self, name: str, desc: str, tags: List[str], rule_type: str) -> str:
+        if self._contains_keywords(name, desc, ['unused', 'dead', 'never used']):
             return "Unused code creates clutter and indicates incomplete implementation or copy-paste errors"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['null', 'npe', 'null pointer']):
-
+        elif self._contains_keywords(name, desc, ['null', 'npe', 'null pointer']):
             return "Null pointer access causes NullPointerException at runtime, crashing the application"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['sql', 'injection', 'query']):
-
+        elif self._contains_keywords(name, desc, ['sql', 'injection', 'query']):
             return "Improper input handling allows malicious SQL injection attacks that can compromise data"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['password', 'secret', 'credential', 'api key']):
-
+        elif self._contains_keywords(name, desc, ['password', 'secret', 'credential', 'api key']):
             return "Hard-coded credentials in source code create security vulnerabilities and make rotation impossible"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['complex', 'cognitive', 'cyclomatic']):
-
+        elif self._contains_keywords(name, desc, ['complex', 'cognitive', 'cyclomatic']):
             return "High code complexity makes code difficult to understand, test, debug, and maintain"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['duplicate', 'repeated', 'copy']):
-
+        elif self._contains_keywords(name, desc, ['duplicate', 'repeated', 'copy']):
             return "Code duplication increases maintenance burden and creates consistency risks when changes are needed"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['empty', 'blank']):
-
+        elif self._contains_keywords(name, desc, ['empty', 'blank']):
             return "Empty code blocks indicate incomplete implementation or missing error handling"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['resource', 'leak', 'close']):
-
+        elif self._contains_keywords(name, desc, ['resource', 'leak', 'close']):
             return "Unclosed resources (files, connections, streams) cause memory leaks and resource exhaustion"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['thread', 'synchroniz', 'concurrenc']):
-
+        elif self._contains_keywords(name, desc, ['thread', 'synchroniz', 'concurrenc']):
             return "Improper thread handling can cause race conditions, deadlocks, and data corruption"
-
-
-
-        elif any(keyword in name or keyword in desc for keyword in ['exception', 'error', 'catch']):
-
+        elif self._contains_keywords(name, desc, ['exception', 'error', 'catch']):
             return "Poor exception handling can hide errors, cause unexpected behavior, or crash the application"
-
-
-
         elif 'security' in tags or 'vulnerability' in rule_type:
-
             return "Security-sensitive code requires careful review and proper security controls to prevent attacks"
-
-
-
         elif rule_type == 'bug':
-
             return "Coding error that can cause incorrect behavior, crashes, or unexpected results at runtime"
-
-
-
         elif rule_type == 'code_smell':
-
             return "Code quality issue that affects readability, maintainability, or follows poor practices"
-
-
-
         else:
+            return "Unknown rule type or insufficient data for analysis"
+
+    def _contains_keywords(self, name: str, desc: str, keywords: List[str]) -> bool:
+            return any(keyword in name or keyword in desc for keyword in keywords)
+
 
             return "Code quality or correctness issue that should be addressed to improve software quality"
 
