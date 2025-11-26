@@ -7,6 +7,7 @@ import autopep8
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
+
 from .fix_validator import FixValidator, ValidationStatus
 from .models import SonarIssue, FixSuggestion, FixResult
 
@@ -28,6 +29,23 @@ try:
 except ImportError as e:
     logger.warning(f"Failed to import Gemini library: {e}")
     HAS_GEMINI = False
+
+
+def calculate_base_indentation(code: str) -> int:
+    """
+    Calculate the base indentation level from the first non-empty line.
+
+    Args:
+        code: Code string
+
+    Returns:
+        Number of leading spaces in the first non-empty line
+    """
+    for line in code.split('\n'):
+        if line.strip():
+            return len(line) - len(line.lstrip())
+    return 0
+
 
 
 class LLMFixer:
@@ -77,14 +95,16 @@ class LLMFixer:
         else:
             raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
 
-    def generate_fix(self, issue: SonarIssue, project_path: Path,modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
+    def generate_fix(self, issue: SonarIssue, project_path: Path,rule_info: Dict[str, Any],modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for a SonarCloud issue.
 
         Args:
             issue: SonarCloud issue to fix
             project_path: Path to the project root
-
+            rule_info: Dictionary containing rule information
+            modified_content: Optional[str] = None,
+            error_message: Optional[str] = None
         Returns:
             FixSuggestion object or None if fix cannot be generated
         """
@@ -101,15 +121,21 @@ class LLMFixer:
 
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                content_file = f.read()
+                lines = content_file.splitlines(keepends=True)
+
+
             # Get context around the issue
             if modified_content!="":
                 context = modified_content
             else:
                 context = self._extract_context(lines, issue.first_line, issue.last_line, self.context_lines)
-            # Generate fix using LLM
-            fix_response = self._call_llm(issue, context, file_path.suffix, error_message)
 
+                if len(lines)<1000:
+                    context['context']=content_file
+
+            # Generate fix using LLM
+            fix_response = self._call_llm(issue, context, file_path.suffix, rule_info, error_message)
             if fix_response:
                 logger.info(f"Successfully generated fix for issue {issue.key} with confidence {fix_response['confidence']}")
 
@@ -232,13 +258,14 @@ class LLMFixer:
             "end_line": end_idx
         }
 
-    def _call_llm(self, issue: SonarIssue, context: Dict[str, Any], file_extension: str, error_message: str="") -> Optional[Dict[str, Any]]:
+    def _call_llm(self, issue: SonarIssue, context: Dict[str, Any], file_extension: str, rule_info: Dict[str, Any], error_message: str="") -> Optional[Dict[str, Any]]:
         """
         Call the LLM to generate a fix.
 
         Args:
             issue: SonarCloud issue
             context: Code context around the issue
+            rule_info: Rule info from sonar cloud
             file_extension: File extension to determine language
 
         Returns:
@@ -248,7 +275,7 @@ class LLMFixer:
         language = self._get_language_from_extension(file_extension)
 
         # Prepare prompt
-        prompt = self._create_fix_prompt(issue, context, language, error_message)
+        prompt = self._create_fix_prompt(issue, context, rule_info, language, error_message)
 
         try:
             if self.provider == "openai":
@@ -260,20 +287,11 @@ class LLMFixer:
                         {"role": "user", "content": prompt}
                     ],
                     temperature=0.1,
-                    max_tokens=1000
+                    max_tokens=4000
                 )
                 return self._parse_openai_response(response)
 
-            elif self.provider == "anthropic":
-                response = self.client.messages.create(
-                    model=self.model,
-                    max_tokens=1000,
-                    temperature=0.1,
-                    messages=[
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                return self._parse_anthropic_response(response)
+
             elif self.provider == "gemini":
                 response = self.client.models.generate_content(
                     model=self.model,
@@ -284,64 +302,142 @@ class LLMFixer:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
 
-    def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], language: str, error_message: str="") -> str:
-        """Create a prompt for the LLM to generate a fix."""
-        error_section = f"\n**Additional Error Information:**\n{error_message}\n" if error_message else ""
-        prompt = f"""
-Analyze this {language} code issue and provide a fix:
 
-**SonarCloud Issue Details:**
-- Rule: {issue.rule}
-- Message: {issue.message}
-- Severity: {issue.severity}
-- Type: {issue.type}
-- First Line: {issue.first_line}
-- Last Line: {issue.last_line}
+    def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], rule_info: Dict[str, Any], language: str,
+                        error_message: str = "") -> str:
+        """Create a focused prompt for the LLM to generate a fix."""
+        error_section = f"\n**Error Context:**\n{error_message}\n" if error_message else ""
+        base_indent = calculate_base_indentation(context.get('context', ''))
 
-**Code Context (lines {context['start_line']}-{context['end_line']}):**
-```{language}
-{context['context']}
-```
+        # Detect indentation style and count
+        indent_style = "spaces" if base_indent > 0 else "detect from code"
+        indent_count = base_indent if base_indent > 0 else 0
 
-**Problematic Line {issue.first_line}:**
-```{language}
-{context['problem_line']}
-```
-{error_section}
+        # Extract specific rule guidance
+        root_cause = rule_info.get('root_cause', 'Code quality issue detected')
+        fix_description = rule_info.get('how_to_fix', {}).get('description', 'Apply appropriate fix')
+        fix_steps = rule_info.get('how_to_fix', {}).get('steps', [])
+        priority = rule_info.get('how_to_fix', {}).get('priority', 'Medium')
 
-Please provide:
-1. **Fixed Code**: Return ONLY the corrected code block from lines {context['start_line']} to {context['end_line']} with the fix applied. Do NOT add imports, class definitions, or other surrounding code that wasn't in the original context.
-2. **Explanation**: Why this fix addresses the SonarCloud rule
-3. **Confidence**: A score from 0.0 to 1.0 indicating your confidence in this fix
+        # Format steps as numbered list
+        steps_text = ""
+        if fix_steps:
+            steps_text = "\n".join([f"   {i+1}. {step}" for i, step in enumerate(fix_steps)])
 
-**CRITICAL INSTRUCTIONS:**
-- Return EXACTLY the code block shown in the context (lines {context['start_line']}-{context['end_line']})
-- Do NOT add any imports, class definitions, or extra code not present in the original context
-- Do NOT invent or assume surrounding class structure
-- Include ALL lines from the provided context, with your fix applied to the problematic lines
-- Maintain the exact same scope and boundaries as the original context
-- Preserve proper indentation and formatting relative to the context provided
+        # Special handling for common rule patterns
+        is_unused_code = "unused" in issue.rule.lower() or "unused" in issue.message.lower()
+        is_literal_duplication = "duplicating this literal" in issue.message.lower() or "define a constant" in issue.message.lower()
+        is_null_check = "null" in issue.rule.lower() or "nullable" in issue.message.lower()
 
+        # Extract literal value for duplication issues
+        literal_match = None
+        if is_literal_duplication:
+            import re
+            literal_pattern = r'duplicating this literal "([^"]+)"'
+            match = re.search(literal_pattern, issue.message)
+            if match:
+                literal_match = match.group(1)
 
-Format your response as:
-FIXED_CODE:
-```{language}
-[your fixed code here]
-```
+        prompt = f"""Fix this {language} code issue following SonarQube rule {issue.rule}.
+        
+        ## ISSUE ANALYSIS
+        **Rule:** {issue.rule} | **Severity:** {issue.severity} | **Type:** {issue.type}
+        **Root Cause:** {root_cause}
+        **Fix Strategy:** {fix_description}
+        
+        **Steps to Follow:**
+        {steps_text if steps_text else "   1. Analyze the specific issue\n   2. Apply minimal fix\n   3. Preserve functionality"}
+        
+        **Issue Message:** {issue.message}
+        **Location:** Line {issue.first_line}{f"-{issue.last_line}" if issue.last_line != issue.first_line else ""}
+        {error_section}
+        
+        ## CODE CONTEXT (Lines {context['start_line']}-{context['end_line']})
+        ```{language}
+        {context['context']}
+        ```
+        
+        **Problematic Line {issue.first_line}:**
+        ```{language}
+        {context['problem_line']}
+        ```
+        
+        ## FIX REQUIREMENTS
+        
+        **Focus:** Rule {issue.rule} | Priority: {priority} | Minimal surgical change only
+        
+        ### OUTPUT SCOPE
+        - Return EXACTLY lines {context['start_line']}-{context['end_line']} (inclusive)
+        - Include ALL lines from this range, even if unchanged
+        - NO additional imports, classes, or function headers outside this range
+        
+        ### FORMATTING
+        - Preserve indentation: {indent_count} {indent_style}
+        - Maintain original code style and formatting
+        - Keep syntax valid and error-free
+        
+        ### CHANGE STRATEGY
+        - Make MINIMAL changes - only what's needed for the rule
+        - Preserve variable names unless renaming is the fix
+        - Maintain identical functionality and behavior
+        - Don't refactor unrelated code
+        
+        {f'''
+        ### UNUSED CODE SPECIAL RULES
+        - Remove ONLY the unused variables/imports on the problematic lines
+        - If removing a line leaves empty space, maintain proper structure
+        - Ensure removal doesn't break syntax or references
+        ''' if is_unused_code else ''}
+        
+        {f'''
+        ### LITERAL DUPLICATION SPECIAL RULES
+        - Target literal: "{literal_match or '[extract from message]'}"
+        - Define a constant with descriptive UPPER_CASE name
+        - Replace ALL occurrences of this literal in the provided scope
+        - Place constant definition at appropriate scope level (class/function start)
+        ''' if is_literal_duplication else ''}
+        
+        {f'''
+        ### NULL CHECK SPECIAL RULES
+        - Add proper null/None checks before usage
+        - Use appropriate null-safe operators for {language}
+        - Ensure defensive programming without changing logic flow
+        ''' if is_null_check else ''}
+        
+        ## VALIDATION CHECKLIST
+        Before submitting, verify:
+        □ Output contains ONLY lines {context['start_line']}-{context['end_line']}
+        □ Indentation preserved exactly ({indent_count} {indent_style})
+        □ Syntax is valid {language} code
+        □ Functionality unchanged (same inputs → same outputs)
+        □ Rule {issue.rule} violation is resolved
+        □ No new issues introduced
+        
+        ## REQUIRED OUTPUT FORMAT
+        
+        FIXED_CODE:
+        ```{language}
+        [Exact lines {context['start_line']}-{context['end_line']} with minimal fix applied]
+        ```
+        
+        EXPLANATION:
+        [Brief explanation: what changed and why it fixes rule {issue.rule}]
+        
+        CONFIDENCE: [0.0-1.0]
+        - 0.9-1.0: Certain fix is correct and safe
+        - 0.7-0.8: Confident but edge cases possible  
+        - 0.5-0.6: Fix likely works but needs validation
+        - 0.0-0.4: Uncertain or cannot provide safe fix
+        
+        ---
+        **Focus:** Rule {issue.rule} | Priority: {priority} | Minimal surgical change only
+        {f"**Critical:** For literal duplication, ALL occurrences must be replaced" if is_literal_duplication else ""}
+        {f"**Critical:** Remove unused code without breaking syntax" if is_unused_code else ""}
+        """
 
-EXPLANATION:
-[explanation of the fix]
-
-CONFIDENCE: [0.0-1.0]
-
-Focus on:
-- Following SonarCloud best practices
-- Maintaining code functionality
-- Using modern {language} conventions
-- Ensuring the fix is minimal and targeted
-
-"""
         return prompt
+
+
 
     def _parse_openai_response(self, response) -> Optional[Dict[str, Any]]:
         """Parse OpenAI API response."""
@@ -352,14 +448,7 @@ Focus on:
             logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
             return None
 
-    def _parse_anthropic_response(self, response) -> Optional[Dict[str, Any]]:
-        """Parse Anthropic API response."""
-        try:
-            content = response.content[0].text
-            return self._extract_fix_from_response(content)
-        except Exception as e:
-            logger.error(f"Error parsing Anthropic response: {e}", exc_info=True)
-            return None
+
 
     def _parse_gemini_response(self, response) -> Optional[Dict[str, Any]]:
         """Parse Gemini API response."""
@@ -381,7 +470,6 @@ Focus on:
             # Extract explanation
             explanation_match = re.search(r'EXPLANATION:\s*(.*?)(?=CONFIDENCE:|$)', content, re.DOTALL)
             explanation = explanation_match.group(1).strip() if explanation_match else ""
-
             # Extract confidence
             confidence_match = re.search(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+)', content)
             confidence = float(confidence_match.group(1)) if confidence_match else 0.5
@@ -390,7 +478,6 @@ Focus on:
             if not fixed_code or not explanation:
                 logger.warning("Failed to extract fixed code or explanation from LLM response")
                 return None
-
             return {
                 "fixed_code": fixed_code,
                 "explanation": explanation,
@@ -514,7 +601,6 @@ Focus on:
 
         return matching_files
 
-
     def _apply_fixes_to_file(self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool) -> bool:
         """
         Apply fixes by REMOVING the block between line_number and last_line_number,
@@ -525,7 +611,7 @@ Focus on:
             return True
 
         try:
-            # Load file lines
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
 
@@ -549,30 +635,46 @@ Focus on:
                     skipped_fixes.append(fix)
                     continue
 
-                # Determine indentation from the first line of the original block
+                # Get the base indentation from the first line of the original block
                 original_first_line = lines[start]
-                leading_ws = original_first_line[:len(original_first_line) - len(original_first_line.lstrip())]
+                base_indent = len(original_first_line) - len(original_first_line.lstrip())
 
                 # Split fixed code into lines
+
                 fixed_lines_raw = fix.fixed_code.split("\n")
-
-                # Apply indentation to every line of the fixed block
+                # Process the fixed code to preserve relative indentation
                 fixed_lines = []
-                for fl in fixed_lines_raw:
-                    # Preserve relative indentation
-                    if fl.strip() == "":
-                        fixed_lines.append("\n")
-                    else:
-                        fixed_lines.append(leading_ws + fl.rstrip() + "\n")
+
+                if len(lines)<1000:
+                    logger.info(f"line 799 len(lines) {len(lines)}")
+                    updated_lines= (
+
+                        line if line.strip() else line  # keep empty lines unchanged
+                        for line in fix.fixed_code.splitlines(keepends=True)
+                    )
+                else:
+                    # Replace the lines
+                    original_line = lines[start - 1]
+                    indent = original_line[:len(original_line) - len(original_line.lstrip())]
+
+                    new_block = [
+                        indent + line if line.strip() else line  # keep empty lines unchanged
+                        for line in fix.fixed_code.splitlines(keepends=True)
+                    ]
+
+                    updated_lines = (
+                            lines[:fix.line_number - 1] +
+                            new_block +
+                            lines[fix.last_line_number:]
+                    )
 
 
+                    lines[start:end + 1] = fixed_lines
+                    applied_fixes.append(fix)
 
-                lines[start:end + 1] = fixed_lines
-                applied_fixes.append(fix)
-
-            # Validate final code (optional)
-            modified_content = "".join(lines)
-            validated,message_error = self._validate_modified_content(modified_content, file_path)
+            # Validate final code
+            modified_content=''.join(updated_lines)
+            validated, message_error, modified_content = self._validate_modified_content(modified_content, file_path)
             if not validated:
                 logger.error(f"Validation failed — not writing changes. Error: {message_error}")
                 return False
@@ -613,7 +715,7 @@ Focus on:
             if not content or not content.strip():
                 message_error="Validation failed: Modified content is empty"
                 logger.error(message_error)
-                return False,message_error
+                return False,message_error,content
 
             # # CHECK 2: Basic bracket/parenthesis matching
             # if not self._check_bracket_balance(content):
@@ -640,16 +742,16 @@ Focus on:
                 message_error="Validation failed: Detected duplicate function/class definitions"
 
                 logger.error(message_error)
-                return False, message_error
+                return False, message_error,content
 
 
-            return True,""
+            return True,"",content
 
         except Exception as e:
             message_error=f"Error during content validation: {e}"
             logger.error(message_error, exc_info=True)
             # On validation error, fail safe - don't write
-            return False,message_error
+            return False,message_error,content
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
@@ -803,7 +905,6 @@ Focus on:
 
                 # Attempt direct application
                 success = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
-
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)

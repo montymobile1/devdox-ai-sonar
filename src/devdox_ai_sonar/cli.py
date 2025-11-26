@@ -103,7 +103,7 @@ def analyze(
 @click.option("--organization", "--org", required=True, help="SonarCloud organization key")
 @click.option("--project", "-p", required=True, help="SonarCloud project key")
 @click.option("--project-path", required=True, type=click.Path(exists=True, path_type=Path), help="Path to local project directory")
-@click.option("--branch", "-b", default="main", help="Branch to analyze (default: main)")
+@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
 @click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
 @click.option("--provider", type=click.Choice(["openai", "gemini"]), default="openai", help="LLM provider")
 @click.option("--model", help="LLM model name")
@@ -170,18 +170,18 @@ def fix(
             task = progress.add_task("Generating fixes...", total=len(fixable_issues))
 
             for issue in fixable_issues:
-                fix = fixer.generate_fix(issue, project_path)
+                rule_info = analyzer.get_rule_by_key(issue.rule)
+                fix = fixer.generate_fix(issue, project_path,rule_info)
                 if fix:
                     fixes.append(fix)
+
                 progress.advance(task)
         console.print(f"\n[green]fixable_issues  {fixable_issues} fixes[/green]")
         if not fixes:
             console.print("[yellow]No fixes could be generated[/yellow]")
             return
         console.print(f"\n [blue]Generated fixes:{fixes}[/blue]")
-        for new_fix in fixes:
-            print(new_fix.last_line_number)
-        console.print(f"\n[green]Generated {len(fixes)} fixes[/green]")
+
 
         # Display fix suggestions
         _display_fix_suggestions(fixes)
@@ -316,13 +316,14 @@ def _display_fix_suggestions(fixes: List) -> None:
     table.add_column("Confidence", width=10)
 
     for fix in fixes:
-        confidence_color = "green" if fix.confidence >= 0.8 else "yellow" if fix.confidence >= 0.6 else "red"
 
+
+        confidence_str = f"{fix.confidence:.2f}"
         table.add_row(
             fix.issue_key[-20:],  # Show last 20 chars of issue key
             fix.original_code[:27] + "..." if len(fix.original_code) > 30 else fix.original_code,
             fix.fixed_code[:27] + "..." if len(fix.fixed_code) > 30 else fix.fixed_code,
-            f"[{confidence_color}]{fix.confidence:.2f}[/{confidence_color}]"
+            confidence_str
         )
 
     console.print("\n")
