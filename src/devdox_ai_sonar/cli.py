@@ -21,6 +21,7 @@ from .models import Severity, AnalysisResult
 
 console = Console()
 
+BOLD_MAGENTA = "bold magenta"  # Define constant for repeated literal
 
 @click.group()
 @click.version_option(__version__)
@@ -218,7 +219,6 @@ def inspect(project_path: Path) -> None:
         # Display project analysis
         console.print(Panel.fit(f"[bold]Project Analysis: {project_path}[/bold]"))
 
-        BOLD_MAGENTA = "bold magenta"  # Define constant for repeated literal
         table = Table(show_header=True, header_style=BOLD_MAGENTA)
         table.add_column("Property")
         table.add_column("Value")
@@ -280,7 +280,7 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 
         issues_to_show = result.issues[:limit] if limit else result.issues
 
-        table = Table(show_header=True, header_style="bold magenta")
+        table = Table(show_header=True, header_style=BOLD_MAGENTA)
         table.add_column("Severity", width=10)
         table.add_column("Type", width=12)
         table.add_column("File", width=30)
@@ -309,13 +309,20 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 def _display_fix_suggestions(fixes: List) -> None:
     """Display fix suggestions in a formatted table."""
 
-    table = Table(show_header=True, header_style="bold magenta")
+    table = Table(show_header=True, header_style=BOLD_MAGENTA)
     table.add_column("Issue", width=20)
     table.add_column("Original", width=30)
     table.add_column("Fixed", width=30)
     table.add_column("Confidence", width=10)
 
     for fix in fixes:
+        console.print("fix.confidence ",fix.confidence, type(fix.confidence))
+        if fix.confidence >= 0.8:
+            confidence_color = "green"
+        elif fix.confidence >= 0.6:
+            confidence_color = "yellow"
+        else:
+            confidence_color = "red"
 
 
         confidence_str = f"{fix.confidence:.2f}"
