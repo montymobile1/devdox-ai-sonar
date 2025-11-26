@@ -601,6 +601,152 @@ class LLMFixer:
 
         return matching_files
 
+    def _clean_fixed_code(self, fixed_code: str) -> str:
+        """
+        Clean the fixed code by removing extra quotes and normalizing whitespace.
+        """
+        # Remove surrounding quotes if present
+        cleaned = fixed_code.strip()
+        if cleaned.startswith('"') and cleaned.endswith('"'):
+            cleaned = cleaned[1:-1]
+        elif cleaned.startswith("'") and cleaned.endswith("'"):
+            cleaned = cleaned[1:-1]
+
+        # Replace escaped quotes
+        cleaned = cleaned.replace('\\"', '"').replace("\\'", "'")
+
+        # Normalize line endings
+        cleaned = cleaned.replace('\\n', '\n')
+
+        return cleaned
+
+    def _process_multi_function_code(self, fixed_code: str, base_indent: str) -> List[str]:
+        """
+        Process fixed code that may contain multiple functions.
+        Handles proper indentation and separation with correct Python nesting.
+        """
+        lines = fixed_code.splitlines()
+        processed_lines = []
+
+        current_function_indent = ""
+        inside_function = False
+        inside_docstring = False
+        docstring_delimiter = None
+
+        for i, line in enumerate(lines):
+            if not line.strip():
+                # Empty line - keep as is but ensure newline
+                processed_lines.append('\n')
+                continue
+
+            stripped_line = line.strip()
+
+            # Handle docstring detection
+            if stripped_line.startswith('"""') or stripped_line.startswith("'''"):
+                delimiter = '"""' if stripped_line.startswith('"""') else "'''"
+                if not inside_docstring:
+                    # Starting docstring
+                    inside_docstring = True
+                    docstring_delimiter = delimiter
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+                elif stripped_line.endswith(docstring_delimiter):
+                    # Ending docstring
+                    inside_docstring = False
+                    docstring_delimiter = None
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+                else:
+                    # Middle of docstring
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+                continue
+
+            if inside_docstring:
+                # Inside docstring - maintain docstring indentation
+                processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+                continue
+
+            # Function/class definition
+            if stripped_line.startswith(('def ', 'class ', '@')):
+                inside_function = True
+                current_function_indent = base_indent
+                processed_lines.append(base_indent + stripped_line + '\n')
+
+            # Function body content
+            elif inside_function:
+                # Determine the appropriate indentation level
+                if stripped_line.startswith(
+                        ('if ', 'elif ', 'else:', 'for ', 'while ', 'try:', 'except', 'finally:', 'with ')):
+                    # Control structures - one level deeper than function
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+
+                elif stripped_line.startswith(('return ', 'raise ', 'yield ', 'pass', 'break', 'continue')):
+                    # Check if this return is inside a control block by looking at previous lines
+                    # Simple heuristic: if the previous non-empty line was a control structure, add extra indent
+                    prev_non_empty_idx = i - 1
+                    while prev_non_empty_idx >= 0 and not lines[prev_non_empty_idx].strip():
+                        prev_non_empty_idx -= 1
+
+                    if prev_non_empty_idx >= 0:
+                        prev_line = lines[prev_non_empty_idx].strip()
+                        if (prev_line.startswith(
+                                ('if ', 'elif ', 'else:', 'for ', 'while ', 'try:', 'except', 'finally:')) or
+                                prev_line.endswith(':')):
+                            # Inside control block - add extra indentation
+                            processed_lines.append(base_indent + '        ' + stripped_line + '\n')
+                        else:
+                            # Direct function body statement
+                            processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+                    else:
+                        # Default function body level
+                        processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+
+                elif stripped_line.endswith(':'):
+                    # Likely a control structure we missed
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+
+                else:
+                    # Default function body statement
+                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
+
+            else:
+                # Not inside a function - treat as module level
+                processed_lines.append(base_indent + stripped_line + '\n')
+
+        # Clean up any duplicate return statements at the end
+        processed_lines = self._remove_duplicate_returns(processed_lines)
+
+        # Add extra newline at the end for function separation
+        if processed_lines and not processed_lines[-1].strip() == '':
+            processed_lines.append('\n')
+
+        return processed_lines
+
+    def _remove_duplicate_returns(self, lines: List[str]) -> List[str]:
+        """
+        Remove duplicate or conflicting return statements.
+        """
+        cleaned_lines = []
+        return_statements = []
+
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith('return '):
+                return_statements.append(line)
+            else:
+                # If we've collected return statements, only keep the last meaningful one
+                if return_statements:
+                    # Find the most specific return statement (usually the longest)
+                    best_return = max(return_statements, key=lambda x: len(x.strip()))
+                    cleaned_lines.append(best_return)
+                    return_statements = []
+                cleaned_lines.append(line)
+
+        # Handle any remaining return statements
+        if return_statements:
+            best_return = max(return_statements, key=lambda x: len(x.strip()))
+            cleaned_lines.append(best_return)
+
+        return cleaned_lines
+
     def _apply_fixes_to_file(self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool) -> bool:
         """
         Apply fixes by REMOVING the block between line_number and last_line_number,
@@ -611,7 +757,6 @@ class LLMFixer:
             return True
 
         try:
-
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
 
@@ -636,42 +781,30 @@ class LLMFixer:
                     continue
 
                 # Get the base indentation from the first line of the original block
-                # Removed unused variable original_first_line                # Removed unused variable 'base_indent'
-                # Split fixed code into lines
+                original_line = lines[start]
 
-                fixed_lines_raw = fix.fixed_code.split("\n")
-                # Process the fixed code to preserve relative indentation
-                fixed_lines = []
+                # Calculate indentation
+                indent = original_line[:len(original_line) - len(original_line.lstrip())]
 
-                if len(lines)<1000:
-                    logger.info(f"line 799 len(lines) {len(lines)}")
-                    updated_lines= (
+                fixed_code_clean = self._clean_fixed_code(fix.fixed_code)
 
-                        line if line.strip() else line  # keep empty lines unchanged
-                        for line in fix.fixed_code.splitlines(keepends=True)
-                    )
-                else:
-                    # Replace the lines
-                    original_line = lines[start - 1]
-                    indent = original_line[:len(original_line) - len(original_line.lstrip())]
-
-                    new_block = [
-                        indent + line if line.strip() else line  # keep empty lines unchanged
-                        for line in fix.fixed_code.splitlines(keepends=True)
-                    ]
-
-                    updated_lines = (
-                            lines[:fix.line_number - 1] +
-                            new_block +
-                            lines[fix.last_line_number:]
-                    )
+                # Split into logical blocks (functions) and process each
+                new_block = self._process_multi_function_code(fixed_code_clean, indent)
 
 
-                    lines[start:end + 1] = fixed_lines
-                    applied_fixes.append(fix)
+
+                # CRITICAL FIX: Update lines array directly, don't create separate variable
+                lines = (
+                        lines[:fix.line_number - 1] +
+                        new_block +
+                        lines[fix.last_line_number:]
+                )
+
+                applied_fixes.append(fix)
 
             # Validate final code
-            modified_content=''.join(updated_lines)
+            modified_content = ''.join(lines)
+
             validated, message_error, modified_content = self._validate_modified_content(modified_content, file_path)
             if not validated:
                 logger.error(f"Validation failed — not writing changes. Error: {message_error}")
@@ -680,12 +813,15 @@ class LLMFixer:
             # Write file
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(modified_content)
+
+            if skipped_fixes:
+                logger.warning(f"⚠ Skipped {len(skipped_fixes)} fixes")
+
             return True
 
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False
-
 
     def _validate_modified_content(self, content: str, file_path: Path) -> Union[bool, str]:
         """
