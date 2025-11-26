@@ -107,6 +107,8 @@ def analyze(
 @click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
 @click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
 @click.option("--provider", type=click.Choice(["openai", "gemini"]), default="openai", help="LLM provider")
+@click.option("--types",type=str,help="Comma-separated issue types (BUG, VULNERABILITY, CODE_SMELL, SECURITY_HOTSPOT)")
+@click.option("--severity", multiple=True, type=click.Choice(["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]), help="Filter by severity")
 @click.option("--model", help="LLM model name")
 @click.option("--api-key", help="LLM API key (or set environment variable)")
 @click.option("--max-fixes", type=int, default=10, help="Maximum number of fixes to generate (default: 10)")
@@ -123,6 +125,8 @@ def fix(
     branch: str,
     pull_request: int,
     provider: str,
+    types: Optional[str],
+    severity:Optional[str],
     model: Optional[str],
     api_key: Optional[str],
     max_fixes: int,
@@ -131,8 +135,14 @@ def fix(
     backup: bool
 ) -> None:
     """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
-
+    VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
+    VALID_SEVERETIES=["BLOCKER", "CRITICAL", "MAJOR", "MINOR"]
     try:
+        if types:
+            types_list = [t.strip() for t in types.split(",")]
+            unknown = set(types_list) - VALID_TYPES
+            if unknown:
+                raise click.BadParameter(f"Invalid issue types: {', '.join(unknown)}")
         # Initialize analyzer
         analyzer = SonarCloudAnalyzer(token, organization)
 
@@ -154,7 +164,9 @@ def fix(
                 project_key=project,
                 branch=branch,
                 pull_request=pull_request,
-                max_issues=max_fixes
+                max_issues=max_fixes,
+                severities=list(severity) if severity else None,
+                types_list=types_list if types else None
             )
 
             progress.remove_task(task)
@@ -311,25 +323,16 @@ def _display_fix_suggestions(fixes: List) -> None:
 
     table = Table(show_header=True, header_style=BOLD_MAGENTA)
     table.add_column("Issue", width=20)
-    table.add_column("Original", width=30)
-    table.add_column("Fixed", width=30)
+    table.add_column("Original", width=50)
+    table.add_column("Fixed", width=50)
     table.add_column("Confidence", width=10)
 
     for fix in fixes:
-        console.print("fix.confidence ",fix.confidence, type(fix.confidence))
-        if fix.confidence >= 0.8:
-            confidence_color = "green"
-        elif fix.confidence >= 0.6:
-            confidence_color = "yellow"
-        else:
-            confidence_color = "red"
-
-
         confidence_str = f"{fix.confidence:.2f}"
         table.add_row(
             fix.issue_key[-20:],  # Show last 20 chars of issue key
-            fix.original_code[:27] + "..." if len(fix.original_code) > 30 else fix.original_code,
-            fix.fixed_code[:27] + "..." if len(fix.fixed_code) > 30 else fix.fixed_code,
+            fix.original_code[:47] + "..." if len(fix.original_code) > 50 else fix.original_code,
+            fix.fixed_code[:47] + "..." if len(fix.fixed_code) > 50 else fix.fixed_code,
             confidence_str
         )
 

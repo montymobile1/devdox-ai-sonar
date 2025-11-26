@@ -1253,7 +1253,9 @@ class SonarCloudAnalyzer:
             project_key: str,
             branch: str = "",
             pull_request: Optional[int] = 0,
-            max_issues: Optional[int] = None
+            max_issues: Optional[int] = None,
+            severities: Optional[List[str]] = None,
+            types_list: Optional[List[str]] = None
     ) -> List[SonarIssue]:
         """
         Get issues that are potentially fixable by LLM.
@@ -1262,11 +1264,13 @@ class SonarCloudAnalyzer:
             project_key: SonarCloud project key
             branch: Branch to analyze
             max_issues: Maximum number of issues to return
+            types_list: Optional list of issue types to filter by
 
         Returns:
             List of fixable SonarIssue objects
         """
-        analysis = self.get_project_issues(project_key, branch,pull_request_number=pull_request)
+        analysis = self.get_project_issues(project_key, branch,pull_request_number=pull_request,severities=severities, types=types_list)
+
         if not analysis:
             return []
 
