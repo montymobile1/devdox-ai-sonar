@@ -108,7 +108,7 @@ def analyze(
 @click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
 @click.option("--provider", type=click.Choice(["openai", "gemini"]), default="openai", help="LLM provider")
 @click.option("--types",type=str,help="Comma-separated issue types (BUG, VULNERABILITY, CODE_SMELL, SECURITY_HOTSPOT)")
-@click.option("--severity", multiple=True, type=click.Choice(["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]), help="Filter by severity")
+@click.option("--severity", type=str,help="Comma-separated severities (BLOCKER, CRITICAL, MAJOR, MINOR)")
 @click.option("--model", help="LLM model name")
 @click.option("--api-key", help="LLM API key (or set environment variable)")
 @click.option("--max-fixes", type=int, default=10, help="Maximum number of fixes to generate (default: 10)")
@@ -136,8 +136,13 @@ def fix(
 ) -> None:
     """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
     VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
-    VALID_SEVERETIES=["BLOCKER", "CRITICAL", "MAJOR", "MINOR"]
+    VALID_SEVERETIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
     try:
+        severity_list = [t.strip() for t in severity.split(",")]
+        unknown = set(severity_list) - VALID_SEVERETIES
+        if unknown:
+            raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
+
         if types:
             types_list = [t.strip() for t in types.split(",")]
             unknown = set(types_list) - VALID_TYPES
@@ -165,7 +170,7 @@ def fix(
                 branch=branch,
                 pull_request=pull_request,
                 max_issues=max_fixes,
-                severities=list(severity) if severity else None,
+                severities=severity_list if severity_list else None,
                 types_list=types_list if types else None
             )
 
