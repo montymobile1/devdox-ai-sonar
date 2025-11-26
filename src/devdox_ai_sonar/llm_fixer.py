@@ -636,8 +636,7 @@ class LLMFixer:
                     continue
 
                 # Get the base indentation from the first line of the original block
-                original_first_line = lines[start]
-                # Removed unused variable 'base_indent'
+                # Removed unused variable original_first_line                # Removed unused variable 'base_indent'
                 # Split fixed code into lines
 
                 fixed_lines_raw = fix.fixed_code.split("\n")
