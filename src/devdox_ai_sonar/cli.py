@@ -98,6 +98,55 @@ def analyze(
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
+def select_fixes_interactively(fixes: List):
+    click.echo("\nAvailable fixes:\n")
+
+
+    table = Table(show_header=True, header_style=BOLD_MAGENTA)
+    table.add_column("Number", width=10)
+    table.add_column("Issue", width=20)
+    table.add_column("Original", width=50)
+    table.add_column("Fixed", width=100,overflow="crop")
+    table.add_column("Confidence", width=20)
+
+    for idx, fix in enumerate(fixes, start=1):
+        confidence_str = f"{fix.confidence:.2f}"
+        table.add_row(
+            str(idx),
+            fix.issue_key[-20:],  # Show last 20 chars of issue key
+            fix.original_code[:47] + "..." if len(fix.original_code) > 50 else fix.original_code,
+            fix.fixed_code[:97] + "..." if len(fix.fixed_code) > 100 else fix.fixed_code,
+            confidence_str
+        )
+
+    console.print("\n")
+    console.print(table)
+
+    choice = click.prompt(
+        "\nEnter fix numbers to apply (e.g., 1,3,5) or 'all' or 'none'",
+        default="all"
+    ).strip().lower()
+
+    if choice == "all":
+        return fixes
+
+    if choice == "none" or choice == "":
+        return []
+
+    try:
+        # Convert "1,3,5" → [1,3,5]
+        selected_indices = [int(x.strip()) for x in choice.split(",")]
+    except ValueError:
+        click.echo("❌ Invalid input. Expected numbers separated by commas.")
+        return []
+
+    # Filter fixes based on user input
+    selected = [
+        fix for idx, fix in enumerate(fixes, start=1)
+        if idx in selected_indices
+    ]
+
+    return selected
 
 @main.command()
 @click.option("--token", "-t", required=True, help="SonarCloud authentication token")
@@ -201,15 +250,19 @@ def fix(
         console.print(f"\n [blue]Generated fixes:{fixes}[/blue]")
 
 
-        # Display fix suggestions
-        _display_fix_suggestions(fixes)
 
         # Apply fixes if requested
         if apply or dry_run:
             if not dry_run:
-                if not click.confirm(f"Apply {len(fixes)} fixes to the codebase?"):
+                selected_fixes = fixes if dry_run else select_fixes_interactively(fixes)
+
+                if not selected_fixes:
+                    click.echo("No fixes selected. Exiting.")
                     return
-            result = fixer.apply_fixes_with_validation(fixes=fixes,issues=fixable_issues, project_path=project_path,
+
+                if not click.confirm(f"Apply {len(selected_fixes)} fixes to the codebase?"):
+                    return
+            result = fixer.apply_fixes_with_validation(fixes=selected_fixes,issues=fixable_issues, project_path=project_path,
 
                                                        create_backup=backup and not dry_run,dry_run=dry_run,use_validator=True,
                                                        validator_provider=provider,validator_model=model,validator_api_key=api_key)
@@ -321,28 +374,6 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 
         if limit and len(result.issues) > limit:
             console.print(f"\n[dim]... and {len(result.issues) - limit} more issues[/dim]")
-
-
-def _display_fix_suggestions(fixes: List) -> None:
-    """Display fix suggestions in a formatted table."""
-
-    table = Table(show_header=True, header_style=BOLD_MAGENTA)
-    table.add_column("Issue", width=20)
-    table.add_column("Original", width=50)
-    table.add_column("Fixed", width=50)
-    table.add_column("Confidence", width=10)
-
-    for fix in fixes:
-        confidence_str = f"{fix.confidence:.2f}"
-        table.add_row(
-            fix.issue_key[-20:],  # Show last 20 chars of issue key
-            fix.original_code[:47] + "..." if len(fix.original_code) > 50 else fix.original_code,
-            fix.fixed_code[:47] + "..." if len(fix.fixed_code) > 50 else fix.fixed_code,
-            confidence_str
-        )
-
-    console.print("\n")
-    console.print(table)
 
 
 def _display_fix_results(result) -> None:
