@@ -187,12 +187,15 @@ def fix(
     VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
     VALID_SEVERETIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
     try:
-        severity_list = [t.strip() for t in severity.split(",")]
-        unknown = set(severity_list) - VALID_SEVERETIES
-        if unknown:
-            raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
+        severity_list=None
+        types_list=None
+        if severity and severity!="":
+            severity_list = [t.strip() for t in severity.split(",")]
+            unknown = set(severity_list) - VALID_SEVERETIES
+            if unknown:
+                raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
 
-        if types:
+        if types and types!="":
             types_list = [t.strip() for t in types.split(",")]
             unknown = set(types_list) - VALID_TYPES
             if unknown:
@@ -243,11 +246,9 @@ def fix(
                     fixes.append(fix)
 
                 progress.advance(task)
-        console.print(f"\n[green]fixable_issues  {fixable_issues} fixes[/green]")
         if not fixes:
             console.print("[yellow]No fixes could be generated[/yellow]")
             return
-        console.print(f"\n [blue]Generated fixes:{fixes}[/blue]")
 
 
 
