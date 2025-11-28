@@ -58,11 +58,11 @@ class LLMFixer:
     """LLM-powered code fixer for SonarCloud issues."""
 
     def __init__(
-            self,
-            provider: str = "openai",
-            model: Optional[str] = None,
-            api_key: Optional[str] = None,
-            context_lines: int = 10
+        self,
+        provider: str = "openai",
+        model: Optional[str] = None,
+        api_key: Optional[str] = None,
+        context_lines: int = 10
     ):
         """
         Initialize the LLM fixer.
@@ -75,42 +75,56 @@ class LLMFixer:
         """
         self.provider = provider.lower()
         self.context_lines = context_lines
-        if self.provider == "togetherai":
-            if not HAS_TOGETHER:
-                raise ImportError("Together AI library not installed. Install with: pip install together")
-            self.model = model or "gpt-4o"
-            self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        self.model = model
 
-            if not self.api_key:
-                raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+        self._validate_and_configure_provider(provider, model, api_key)
 
-            self.client = Together(api_key=self.api_key)
 
-        elif self.provider == "openai":
-            if not HAS_OPENAI:
-                raise ImportError("OpenAI library not installed. Install with: pip install openai")
-
-            self.model = model or "gpt-4o"
-            self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not self.api_key:
-                raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
-
-            self.client = openai.OpenAI(api_key=self.api_key)
-
-        elif self.provider == "gemini":
-            if not HAS_GEMINI:
-                raise ImportError("Gemini library not installed. Install with: pip install google-genai")
-
-            self.model = model or "claude-3-5-sonnet-20241022"
-            self.api_key = api_key or os.getenv("GEMINI_KEY")
-            if not self.api_key:
-                raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
-
-            self.client = genai.Client(api_key=self.api_key)
-
+    def _validate_and_configure_provider(self, provider: str, model: Optional[str], api_key: Optional[str]):
+        if provider == "togetherai":
+            self._configure_togetherai(model, api_key)
+        elif provider == "openai":
+            self._configure_openai(model, api_key)
+        elif provider == "gemini":
+            self._configure_gemini(model, api_key)
         else:
             raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini' or 'togetherai'")
 
+
+    def _configure_togetherai(self, model: Optional[str], api_key: Optional[str]):
+        if not HAS_TOGETHER:
+            raise ImportError("Together AI library not installed. Install with: pip install together")
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+
+        if not self.api_key:
+            raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+
+        self.client = Together(api_key=self.api_key)
+
+
+    def _configure_openai(self, model: Optional[str], api_key: Optional[str]):
+        if not HAS_OPENAI:
+            raise ImportError("OpenAI library not installed. Install with: pip install openai")
+
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
+
+        self.client = openai.OpenAI(api_key=self.api_key)
+
+
+    def _configure_gemini(self, model: Optional[str], api_key: Optional[str]):
+        if not HAS_GEMINI:
+            raise ImportError("Gemini library not installed. Install with: pip install google-genai")
+
+        self.model = model or "claude-3-5-sonnet-20241022"
+        self.api_key = api_key or os.getenv("GEMINI_KEY")
+        if not self.api_key:
+            raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
+
+        self.client = genai.Client(api_key=self.api_key)
     def generate_fix(self, issue: SonarIssue, project_path: Path,rule_info: Dict[str, Any],modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for a SonarCloud issue.
@@ -615,6 +629,189 @@ class LLMFixer:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
 
+    def _is_init_method(self, context: str) -> bool:
+        """
+        Detect if the code context contains an __init__ method or constructor.
+
+        Args:
+            context: Code context string
+
+        Returns:
+            True if this appears to be a constructor/init method
+        """
+
+        # Python __init__ method
+        if re.search(r'def\s+__init__\s*\(', context):
+            return True
+
+        # Java/C# constructor patterns
+        if re.search(r'public\s+\w+\s*\([^)]*\)\s*\{', context):
+            return True
+
+        # JavaScript constructor
+        if re.search(r'constructor\s*\([^)]*\)\s*\{', context):
+            return True
+
+        # Check for typical initialization patterns
+        init_patterns = [
+            r'self\.\w+\s*=',  # Python self.attribute =
+            r'this\.\w+\s*=',  # JavaScript/Java this.attribute =
+            r'_\w+\s*=',  # Private member initialization
+        ]
+
+        init_count = sum(1 for pattern in init_patterns if re.search(pattern, context))
+
+        # If we see many initialization patterns, likely a constructor
+        return init_count >= 3
+
+    def _extract_complexity_info(self, message: str) -> Dict[str, str]:
+        """
+        Extract complexity numbers from the issue message.
+
+        Args:
+            message: SonarQube issue message
+
+        Returns:
+            Dictionary with current and target complexity values
+        """
+
+        # Pattern: "Cognitive Complexity from X to the Y allowed"
+        pattern = r'complexity from (\d+) to the (\d+) allowed'
+        match = re.search(pattern, message, re.IGNORECASE)
+
+        if match:
+            return {
+                'current': match.group(1),
+                'target': match.group(2)
+            }
+
+        # Alternative pattern: "complexity is X, maximum allowed is Y"
+        alt_pattern = r'complexity is (\d+).*maximum.*?(\d+)'
+        alt_match = re.search(alt_pattern, message, re.IGNORECASE)
+
+        if alt_match:
+            return {
+                'current': alt_match.group(1),
+                'target': alt_match.group(2)
+            }
+
+        # Default fallback
+        return {
+            'current': 'Unknown',
+            'target': '15'
+        }
+
+    def _get_complexity_example(self, language: str, is_init_method: bool) -> str:
+        """
+        Get language-specific complexity reduction example.
+
+        Args:
+            language: Programming language
+            is_init_method: Whether this is an init/constructor method
+
+        Returns:
+            Example code snippet
+        """
+        if language.lower() == 'python':
+            if is_init_method:
+                return '''
+        # BEFORE (High Complexity):
+        def __init__(self, config):
+            self.config = config
+            if config.get('validate', True):
+                if config.get('strict_mode'):
+                    if not self._check_required_fields(config):
+                        raise ValueError("Missing required fields")
+                    if not self._validate_types(config):
+                        raise TypeError("Invalid types")
+            self.data = config.get('data', {})
+
+        # AFTER (Reduced Complexity):
+        def __init__(self, config):
+            self.config = config
+            self.data = config.get('data', {})
+            self._validate_config_if_needed(config)  # Extract complex logic
+
+        def _validate_config_if_needed(self, config):
+            if not config.get('validate', True):
+                return
+            if config.get('strict_mode'):
+                self._perform_strict_validation(config)
+                '''
+            else:
+                return '''
+        # BEFORE (High Complexity):
+        def process_data(self, items):
+            results = []
+            for item in items:
+                if item.is_valid():
+                    if item.needs_processing():
+                        if item.priority == 'high':
+                            results.append(self._process_high_priority(item))
+                        else:
+                            results.append(self._process_normal(item))
+            return results
+
+        # AFTER (Reduced Complexity):
+        def process_data(self, items):
+            results = []
+            for item in items:
+                if not self._should_process_item(item):
+                    continue
+                processed = self._process_item_by_priority(item)
+                results.append(processed)
+            return results
+                '''
+
+        elif language.lower() in ['java', 'javascript', 'typescript', 'csharp']:
+            if is_init_method:
+                return '''
+        // BEFORE (High Complexity):
+        constructor(config) {
+            this.config = config;
+            if (config.validate && config.strictMode) {
+                if (!this.checkRequired(config) || !this.validateTypes(config)) {
+                    throw new Error("Validation failed");
+                }
+            }
+            this.data = config.data || {};
+        }
+
+        // AFTER (Reduced Complexity):
+        constructor(config) {
+            this.config = config;
+            this.data = config.data || {};
+            this.validateConfigIfNeeded(config);  // Extract complex logic
+        }
+                '''
+            else:
+                return '''
+        // BEFORE (High Complexity):
+        processItems(items) {
+            const results = [];
+            for (const item of items) {
+                if (item.isValid()) {
+                    if (item.needsProcessing()) {
+                        if (item.priority === 'high') {
+                            results.push(this.processHighPriority(item));
+                        } else {
+                            results.push(this.processNormal(item));
+                        }
+                    }
+                }
+            }
+            return results;
+        }
+
+        // AFTER (Reduced Complexity):
+        processItems(items) {
+            return items
+                .filter(item => this.shouldProcessItem(item))
+                .map(item => this.processItemByPriority(item));
+        }
+                '''
+
+        return "Extract complex nested logic into focused helper methos"
 
     def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], rule_info: Dict[str, Any], language: str,
                         error_message: str = "") -> str:
@@ -641,6 +838,13 @@ class LLMFixer:
         is_unused_code = "unused" in issue.rule.lower() or "unused" in issue.message.lower()
         is_literal_duplication = "duplicating this literal" in issue.message.lower() or "define a constant" in issue.message.lower()
         is_null_check = "null" in issue.rule.lower() or "nullable" in issue.message.lower()
+        is_cognitive_complexity = "cognitive complexity" in issue.message.lower() or "complexity" in issue.rule.lower()
+
+        # Detect if this is an __init__ method or constructor
+        is_init_method = self._is_init_method(context.get('context', ''))
+
+        # Extract complexity numbers for cognitive complexity issues
+        complexity_info = self._extract_complexity_info(issue.message) if is_cognitive_complexity else None
 
         # Extract literal value for duplication issues
         literal_match = None
@@ -717,6 +921,40 @@ class LLMFixer:
         - Ensure defensive programming without changing logic flow
         ''' if is_null_check else ''}
         
+        {f'''
+        ### COGNITIVE COMPLEXITY REDUCTION SPECIAL RULES
+        **Current Complexity:** {complexity_info.get('current', 'Unknown')} | **Target:** {complexity_info.get('target', '15')} | **Method Type:** {"__init__ constructor" if is_init_method else "regular method"}
+    
+        **CRITICAL CONSTRAINTS:**
+        - This is {"an __init__ method - KEEP initialization logic at the top" if is_init_method else "a regular method"}
+        - Extract ONLY complex logic into helper methods
+        - {"Preserve all parameter assignments and basic initialization in __init__" if is_init_method else "Focus on extracting nested logic and complex conditions"}
+        
+        **COMPLEXITY REDUCTION STRATEGY:**
+        1. **Identify complexity sources:** nested if/else, loops within conditions, multiple logical operators
+        2. **Extract helper methods:** Pull out complex logic blocks that can be isolated
+        3. **{"Keep core initialization simple:" if is_init_method else "Simplify control flow:"} 
+           - {"Basic assignments stay in __init__" if is_init_method else "Use early returns to reduce nesting"}
+           - {"Complex validation/setup goes to helper methods" if is_init_method else "Break down complex conditions"}
+        4. **Method naming:** Use descriptive names like _validate_params(), _setup_defaults(), _configure_options()
+    
+        **EXTRACTION GUIDELINES:**
+        - Extract methods that reduce complexity by at least 3-5 points
+        - Keep extracted methods focused and cohesive
+        - Avoid creating trivial one-liner methods
+        - Maintain logical grouping of related operations
+        {"- Keep __init__ readable with clear initialization flow" if is_init_method else "- Use guard clauses and early returns where possible"}
+    
+        **FORBIDDEN ACTIONS:**
+        - {"Don't move basic parameter assignments out of __init__" if is_init_method else "Don't create overly fragmented logic"}
+        - Don't create helper methods for simple single operations
+        - Don't break functional cohesion for the sake of complexity
+        - Don't introduce unnecessary abstraction layers
+    
+        **EXAMPLE STRATEGY FOR {language.upper()}:**
+        {self._get_complexity_example(language, is_init_method)}
+        ''' if is_cognitive_complexity else ''}
+    
         ## VALIDATION CHECKLIST
         Before submitting, verify:
         □ Output contains ONLY lines {context['start_line']}-{context['end_line']}
@@ -725,6 +963,10 @@ class LLMFixer:
         □ Functionality unchanged (same inputs → same outputs)
         □ Rule {issue.rule} violation is resolved
         □ No new issues introduced
+        {f"□ Cognitive complexity reduced to target level ({complexity_info.get('target', '15')} or below)" if is_cognitive_complexity else ""}
+        {f"□ __init__ method still handles core initialization properly" if is_cognitive_complexity and is_init_method else ""}
+
+        
         
         ## REQUIRED OUTPUT FORMAT
         
@@ -746,6 +988,9 @@ class LLMFixer:
         **Focus:** Rule {issue.rule} | Priority: {priority} | Minimal surgical change only
         {f"**Critical:** For literal duplication, ALL occurrences must be replaced" if is_literal_duplication else ""}
         {f"**Critical:** Remove unused code without breaking syntax" if is_unused_code else ""}
+        {f"**Critical:** Reduce complexity while preserving initialization structure" if is_cognitive_complexity and is_init_method else ""}
+        {f"**Critical:** Extract meaningful helper methods, avoid over-fragmentation" if is_cognitive_complexity and not is_init_method else ""}
+
         """
 
         return prompt
