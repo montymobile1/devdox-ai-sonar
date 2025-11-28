@@ -9,7 +9,7 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 
 from .fix_validator import FixValidator, ValidationStatus
-from .utils.code_indentation import fix_code_indentation
+#from .utils.code_indentation import fix_code_indentation
 from .models import SonarIssue, FixSuggestion, FixResult
 
 from .logging_config import setup_logging, get_logger
