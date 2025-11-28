@@ -135,7 +135,6 @@ class SonarCloudAnalyzer:
                 params['languages'] = ','.join(languages)
 
             try:
-                print("params ", params)
                 response = self.session.get(
 
                     url,
@@ -842,13 +841,13 @@ class SonarCloudAnalyzer:
         logger.info(f"Exported {rules_data['metadata']['total_rules']} rules to {filename}")
 
     def get_project_issues(
-            self,
-            project_key: str,
-            branch: str = "",
-            pull_request_number: Optional[int] = 0,
-            statuses: List[str] = None,
-            severities: List[str] = None,
-            types: List[str] = None
+        self,
+        project_key: str,
+        branch: str = "",
+        pull_request_number: Optional[int] = 0,
+        statuses: List[str] = None,
+        severities: List[str] = None,
+        types: List[str] = None
     ) -> Optional[AnalysisResult]:
         """
         Fetch SonarCloud issues for a project using REST API.
@@ -866,78 +865,72 @@ class SonarCloudAnalyzer:
         Returns:
             AnalysisResult with issues and metadata, or None if error
         """
-        if statuses is None:
-            statuses = ["OPEN"]
-        logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
-        # Build API URL
-        url = urljoin(self.base_url, "/api/issues/search")
 
-        # Build query parameters
-        params = {
-            'componentKeys': project_key,
-            'organization': self.organization,
+        def _build_query_params():
+            nonlocal branch
+            params = {
+                'componentKeys': project_key,
+                'organization': self.organization,
+                'issueStatuses': ','.join(statuses if statuses else ["OPEN"]),
+                'ps': 500  # Page size (max 500)
+            }
+            if branch != '':
+                params['branch'] = branch
+            else:
+                if pull_request_number != 0:
+                    params['pullRequest'] = str(pull_request_number)
+                else:
+                    params['branch'] = 'main'
+            if severities:
+                params['severities'] = ','.join(severities)
+            if types:
+                params['types'] = ','.join(types)
+            return params
 
-            'issueStatuses': ','.join(statuses),  # Note: SonarCloud uses 'issueStatuses' not 'statuses'
-            'ps': 500  # Page size (max 500)
-        }
-        if branch!='':
-            params['branch']=branch
-        else:
-           if pull_request_number!=0:
-                params['pullRequest']=str(pull_request_number)
-           else:
-                params['branch']='main'
-
-        # Add optional filters
-        if severities:
-            params['severities'] = ','.join(severities)
-        if types:
-            params['types'] = ','.join(types)
-
-        try:
-
-
-            # Fetch all issues with pagination
+        def _fetch_issues(params):
             all_issues = []
             page = 1
-
             while True:
                 params['p'] = page
-
-                response = self.session.get(
-                    url,
-                    params=params,
-                    timeout=self.timeout
-                )
-
-                # Raise exception for HTTP errors
+                response = self.session.get(url, params=params, timeout=self.timeout)
                 response.raise_for_status()
-
                 data = response.json()
-
-                # Extract issues from response
                 issues = data.get('issues', [])
                 all_issues.extend(issues)
-
-                # Check if we've fetched all issues
                 paging = data.get('paging', {})
                 total = paging.get('total', 0)
-                page_size = paging.get('pageSize', 500)
-
-
                 if len(all_issues) >= total:
                     break
-
                 page += 1
+            return all_issues
 
+        def _handle_exceptions(e):
+            status_code = e.response.status_code if hasattr(e, 'response') else None
+            logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
+            if isinstance(e, requests.Timeout):
+                pass
+            elif isinstance(e, requests.HTTPError):
+                error_text = e.response.text
+                if status_code == 401:
+                    logger.error("Authentication failed. Check your SonarCloud token.")
+                elif status_code == 403:
+                    logger.error("Access forbidden. Check organization and project permissions.")
+                elif status_code == 404:
+                    logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
+            return None
 
+        logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
 
-            # Convert raw data to SonarIssue objects
-            parsed_issues = self._parse_issues(all_issues)
+        if statuses is None:
+            statuses = ["OPEN"]
 
-            # Get project metrics
+        url = urljoin(self.base_url, "/api/issues/search")
+
+        try:
+            params = _build_query_params()
+            issues = _fetch_issues(params)
+            parsed_issues = self._parse_issues(issues)
             metrics = self.get_project_metrics(project_key)
-
             return AnalysisResult(
                 project_key=project_key,
                 organization=self.organization,
@@ -947,38 +940,11 @@ class SonarCloudAnalyzer:
                 metrics=metrics,
                 analysis_timestamp=datetime.now().isoformat()
             )
-
-        except requests.Timeout:
-            logger.error(f"Request timeout while fetching issues for {project_key}", exc_info=True)
-            return None
-
-        except requests.HTTPError as e:
-            status_code = e.response.status_code
-            error_text = e.response.text
-
-            logger.error(
-                f"HTTP error {status_code} fetching issues for {project_key}: {error_text}",
-                exc_info=True
-            )
-
-            # Provide helpful error messages
-            if status_code == 401:
-                logger.error("Authentication failed. Check your SonarCloud token.")
-            elif status_code == 403:
-                logger.error("Access forbidden. Check organization and project permissions.")
-            elif status_code == 404:
-                logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
-
-            return None
-
         except requests.RequestException as e:
-            logger.error(f"Network error fetching issues for {project_key}: {e}", exc_info=True)
-            return None
-
+            return _handle_exceptions(e)
         except Exception as e:
             logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
             return None
-
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
         """
         Fetch project metrics from SonarCloud.

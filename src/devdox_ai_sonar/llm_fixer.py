@@ -9,6 +9,7 @@ from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 
 from .fix_validator import FixValidator, ValidationStatus
+from .utils.code_indentation import fix_code_indentation
 from .models import SonarIssue, FixSuggestion, FixResult
 
 from .logging_config import setup_logging, get_logger
@@ -16,6 +17,11 @@ from .logging_config import setup_logging, get_logger
 setup_logging(level='DEBUG',log_file='demo.log')
 logger = get_logger(__name__)
 
+try:
+    from together import AsyncTogether, Together
+    HAS_TOGETHER = True
+except ImportError:
+    HAS_TOGETHER = False
 
 try:
     import openai
@@ -69,8 +75,18 @@ class LLMFixer:
         """
         self.provider = provider.lower()
         self.context_lines = context_lines
+        if self.provider == "togetherai":
+            if not HAS_TOGETHER:
+                raise ImportError("Together AI library not installed. Install with: pip install together")
+            self.model = model or "gpt-4o"
+            self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
 
-        if self.provider == "openai":
+            if not self.api_key:
+                raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+
+            self.client = Together(api_key=self.api_key)
+
+        elif self.provider == "openai":
             if not HAS_OPENAI:
                 raise ImportError("OpenAI library not installed. Install with: pip install openai")
 
@@ -93,7 +109,7 @@ class LLMFixer:
             self.client = genai.Client(api_key=self.api_key)
 
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
+            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini' or 'togetherai'")
 
     def generate_fix(self, issue: SonarIssue, project_path: Path,rule_info: Dict[str, Any],modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
         """
@@ -130,9 +146,10 @@ class LLMFixer:
                 context = modified_content
             else:
                 context = self._extract_context(lines, issue.first_line, issue.last_line, self.context_lines)
-
+                issue.last_line=context.get("end_line")
                 if len(lines)<1000:
                     context['context']=content_file
+
 
             # Generate fix using LLM
             fix_response = self._call_llm(issue, context, file_path.suffix, rule_info, error_message)
@@ -223,9 +240,13 @@ class LLMFixer:
 
         return result
 
-    def _extract_context(self, lines: List[str], first_line_number: int, last_line_number: int, context_lines: int) -> Dict[str, Any]:
+    def _extract_context(self, lines: List[str], first_line_number: int, last_line_number: int, context_lines: int) -> \
+    Dict[str, Any]:
         """
-        Extract context around a problematic line.
+        Extract context around a problematic line with intelligent function/method detection.
+
+        If the issue is on a function/method definition line, extracts the complete function.
+        Otherwise, provides normal context around the issue.
 
         Args:
             lines: All lines in the file
@@ -234,28 +255,301 @@ class LLMFixer:
             context_lines: Number of lines to include before/after
 
         Returns:
-            Dictionary with context information
+            Dictionary with context information including:
+            - context: The extracted code context
+            - problem_line: The specific problematic line
+            - line_number: Line number of the issue
+            - start_line: Starting line of context (1-indexed)
+            - end_line: Ending line of context (1-indexed)
+            - is_complete_function: Boolean indicating if complete function was extracted
+            - function_name: Name of function if applicable
         """
+        import re
+
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
         last_line_idx = last_line_number - 1
 
-        # Calculate context boundaries
-        start_idx = max(0, context_lines-first_line_idx  )
+        if first_line_idx >= len(lines):
+            return self._get_empty_context(first_line_number)
 
-        #end_idx = min(len(lines), first_line_idx + context_lines + 1)
+        problem_line = lines[first_line_idx].rstrip()
+
+        # Check if first line contains function/method definition
+        if self._is_function_definition(problem_line):
+            function_context = self._extract_complete_function(lines, first_line_idx)
+            if function_context:
+                return function_context
+
+        # Check if issue spans multiple lines and any line is a function definition
+        for line_idx in range(first_line_idx, min(last_line_idx + 1, len(lines))):
+            if self._is_function_definition(lines[line_idx]):
+                function_context = self._extract_complete_function(lines, line_idx)
+                if function_context:
+                    return function_context
+
+        # Fall back to normal context extraction
+        return self._extract_normal_context(lines, first_line_idx, last_line_idx, context_lines)
+
+    def _is_function_definition(self, line: str) -> bool:
+        """
+        Check if a line contains a function or method definition.
+
+        Supports Python, JavaScript/TypeScript, Java, and C# function patterns.
+        """
+        import re
+
+        stripped_line = line.strip()
+
+        # Python function/method patterns
+        python_patterns = [
+            r'^def\s+\w+\s*\(',  # def function_name(
+            r'^async\s+def\s+\w+\s*\(',  # async def function_name(
+            r'^\s*def\s+\w+\s*\(',  # indented def (method in class)
+            r'^\s*async\s+def\s+\w+\s*\('  # indented async def
+        ]
+
+        # JavaScript/TypeScript function patterns
+        js_patterns = [
+            r'^function\s+\w+\s*\(',  # function functionName(
+            r'^async\s+function\s+\w+\s*\(',  # async function functionName(
+            r'^\w+\s*:\s*function\s*\(',  # methodName: function(
+            r'^\w+\s*:\s*async\s+function\s*\(',  # methodName: async function(
+            r'^\w+\s*=\s*function\s*\(',  # functionName = function(
+            r'^\w+\s*=\s*async\s+function\s*\(',  # functionName = async function(
+            r'^\w+\s*=\s*\([^)]*\)\s*=>\s*\{',  # functionName = (params) => {
+            r'^\w+\s*=\s*async\s*\([^)]*\)\s*=>\s*\{',  # functionName = async (params) => {
+            r'^\s*\w+\s*\([^)]*\)\s*\{',  # methodName() { (in class/object)
+            r'^\s*async\s+\w+\s*\([^)]*\)\s*\{'  # async methodName() {
+        ]
+
+        # Java/C# method patterns
+        java_csharp_patterns = [
+            r'^(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{',
+            r'^\s*(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{'
+        ]
+
+        all_patterns = python_patterns + js_patterns + java_csharp_patterns
+
+        for pattern in all_patterns:
+            if re.match(pattern, stripped_line, re.IGNORECASE):
+                return True
+
+        return False
+
+    def _extract_complete_function(self, lines: List[str], start_idx: int) -> Optional[Dict[str, Any]]:
+        """
+        Extract complete function/method from start to end.
+
+        Args:
+            lines: All lines in the file
+            start_idx: Starting index (0-indexed) of function definition
+
+        Returns:
+            Context dictionary with complete function or None if not found
+        """
+        if start_idx >= len(lines):
+            return None
+
+        function_start = start_idx
+        function_end = self._find_function_end(lines, start_idx)
+
+        if function_end is None:
+            # If we can't find the end, include reasonable context
+            function_end = min(len(lines) - 1, start_idx + 50)  # Max 50 lines
+
+        # Extract function lines
+        function_lines = lines[function_start:function_end + 1]
+        context_text = "".join(function_lines)
+
+        # Get the actual problem line
+        problem_line = lines[start_idx].rstrip()
+
+        return {
+            "context": context_text,
+            "problem_line": problem_line,
+            "line_number": start_idx + 1,  # Convert back to 1-indexed
+            "start_line": function_start + 1,  # Convert back to 1-indexed
+            "end_line": function_end + 1,  # Convert back to 1-indexed
+            "is_complete_function": True,
+            "function_name": self._extract_function_name(problem_line)
+        }
+
+    def _find_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+        """
+        Find the end line of a function/method based on language-specific rules.
+        """
+        import re
+
+        if start_idx >= len(lines):
+            return None
+
+        start_line = lines[start_idx]
+
+        # Determine language and strategy based on the function definition
+        if re.search(r'\bdef\b', start_line):
+            # Python function - use indentation
+            return self._find_python_function_end(lines, start_idx)
+        elif '{' in start_line or re.search(r'\bfunction\b|\w+\s*\(.*\)\s*\{', start_line):
+            # JavaScript/Java/C# - use brace matching
+            return self._find_brace_function_end(lines, start_idx)
+        else:
+            # Try both strategies
+            python_end = self._find_python_function_end(lines, start_idx)
+            if python_end is not None:
+                return python_end
+            return self._find_brace_function_end(lines, start_idx)
+
+    def _find_python_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+        """
+        Find end of Python function using indentation rules.
+        """
+        if start_idx >= len(lines):
+            return None
+
+        # Get the indentation level of the function definition
+        function_line = lines[start_idx]
+        function_indent = len(function_line) - len(function_line.lstrip())
+
+        # Look for the end of the function
+        for i in range(start_idx + 1, len(lines)):
+            line = lines[i]
+
+            # Skip empty lines and comments
+            if not line.strip() or line.strip().startswith('#'):
+                continue
+
+            # Check indentation
+            current_indent = len(line) - len(line.lstrip())
+
+            # If we find a line at the same or less indentation as the function,
+            # and it's not part of the function signature, we've found the end
+            if current_indent <= function_indent:
+                # Check if this might be a continuation of the function signature
+                prev_line = lines[i - 1] if i > 0 else ""
+                if not (prev_line.rstrip().endswith(('\\', ',', '(')) or
+                        line.strip().startswith((')', '@', 'def ', 'async def'))):
+                    return i - 1
+
+            # Special case: if we find another function at the same level, stop
+            if (current_indent == function_indent and
+                    self._is_function_definition(line)):
+                return i - 1
+
+        # If we reach the end of file, return the last line
+        return len(lines) - 1
+
+    def _find_brace_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+        """
+        Find end of function using brace matching (JavaScript, Java, C#, etc.).
+        """
+        if start_idx >= len(lines):
+            return None
+
+        brace_count = 0
+        found_opening_brace = False
+
+        # Start from the function definition line
+        for i in range(start_idx, len(lines)):
+            line = lines[i]
+
+            # Count braces, ignoring those in strings and comments
+            clean_line = self._remove_strings_and_comments(line)
+
+            for char in clean_line:
+                if char == '{':
+                    brace_count += 1
+                    found_opening_brace = True
+                elif char == '}':
+                    brace_count -= 1
+
+                    # When we close all braces, we've found the end
+                    if found_opening_brace and brace_count == 0:
+                        return i
+
+        return None
+
+    def _remove_strings_and_comments(self, line: str) -> str:
+        """
+        Remove string literals and comments to avoid counting braces inside them.
+        """
+        import re
+
+        # Remove single-line comments
+        line = re.sub(r'//.*$', '', line)  # // comments
+        line = re.sub(r'#.*$', '', line)  # # comments
+
+        # Remove string literals (simplified)
+        line = re.sub(r'"[^"]*"', '""', line)  # Double quotes
+        line = re.sub(r"'[^']*'", "''", line)  # Single quotes
+        line = re.sub(r'`[^`]*`', '``', line)  # Backticks
+
+        return line
+
+    def _extract_function_name(self, function_line: str) -> str:
+        """
+        Extract function name from function definition line.
+        """
+        import re
+
+        # Python function name extraction
+        python_match = re.search(r'def\s+(\w+)', function_line)
+        if python_match:
+            return python_match.group(1)
+
+        # JavaScript function name extraction
+        js_match = re.search(r'function\s+(\w+)', function_line)
+        if js_match:
+            return js_match.group(1)
+
+        # Method assignment patterns
+        assignment_match = re.search(r'(\w+)\s*[:=]', function_line)
+        if assignment_match:
+            return assignment_match.group(1)
+
+        # Java/C# method name extraction
+        method_match = re.search(r'\b(\w+)\s*\([^)]*\)\s*\{?', function_line)
+        if method_match:
+            name = method_match.group(1)
+            # Filter out keywords
+            keywords = {'public', 'private', 'protected', 'static', 'async', 'void', 'int', 'string', 'bool', 'return'}
+            if name.lower() not in keywords:
+                return name
+
+        return ""
+
+    def _extract_normal_context(self, lines: List[str], first_line_idx: int, last_line_idx: int, context_lines: int) -> \
+    Dict[str, Any]:
+        """
+        Extract normal context around the issue (original behavior).
+        """
+        # Calculate context boundaries
+        start_idx = max(0, first_line_idx - context_lines)
         end_idx = min(len(lines), last_line_idx + context_lines + 1)
 
-        context_lines_list= lines[first_line_idx:last_line_number]
-
+        context_lines_list = lines[start_idx:end_idx]
         problem_line = lines[first_line_idx].rstrip() if first_line_idx < len(lines) else ""
 
         return {
             "context": "".join(context_lines_list),
             "problem_line": problem_line,
-            "line_number": first_line_number,
-            "start_line": start_idx + 1,
-            "end_line": end_idx
+            "line_number": first_line_idx + 1,  # Convert back to 1-indexed
+            "start_line": start_idx + 1,  # Convert back to 1-indexed
+            "end_line": end_idx,
+            "is_complete_function": False
+        }
+
+    def _get_empty_context(self, line_number: int) -> Dict[str, Any]:
+        """
+        Return empty context when line number is out of range.
+        """
+        return {
+            "context": "",
+            "problem_line": "",
+            "line_number": line_number,
+            "start_line": line_number,
+            "end_line": line_number,
+            "is_complete_function": False
         }
 
     def _call_llm(self, issue: SonarIssue, context: Dict[str, Any], file_extension: str, rule_info: Dict[str, Any], error_message: str="") -> Optional[Dict[str, Any]]:
@@ -298,6 +592,25 @@ class LLMFixer:
                     contents=prompt
                 )
                 return self._parse_gemini_response(response)
+            elif self.provider == "togetherai":
+
+
+                response = self.client.chat.completions.create(
+                model=self.model,
+                messages=[
+                        {"role": "system",
+                         "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."},
+                        {"role": "user", "content": prompt}
+                    ],
+                max_tokens = 4000,
+
+                top_p = 0.9,
+                top_k = 40,
+                repetition_penalty = 1.1,
+
+
+            )
+            return  self._parse_togetherai_response(response)
         except Exception as e:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
@@ -449,7 +762,6 @@ class LLMFixer:
             return None
 
 
-
     def _parse_gemini_response(self, response) -> Optional[Dict[str, Any]]:
         """Parse Gemini API response."""
         try:
@@ -458,6 +770,19 @@ class LLMFixer:
         except Exception as e:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
+
+    def _parse_togetherai_response(self, response) ->Optional[Dict[str, Any]]:
+        """Parse Together API response."""
+        try:
+            content =  response.choices[0].message.content
+
+
+            return self._extract_fix_from_response(content)
+        except Exception as e:
+            logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
+            return None
+
+
 
     def _extract_fix_from_response(self, content: str) -> Optional[Dict[str, Any]]:
         """Extract fix information from LLM response."""
@@ -601,151 +926,104 @@ class LLMFixer:
 
         return matching_files
 
-    def _clean_fixed_code(self, fixed_code: str) -> str:
+
+    def calculate_base_indentation(self, lines: List[str], line_number: int) -> str:
         """
-        Clean the fixed code by removing extra quotes and normalizing whitespace.
+        Calculate the base indentation for a specific line.
+
+        Args:
+            lines: All lines in the file
+            line_number: Line number (1-indexed)
+
+        Returns:
+            Base indentation string (spaces or tabs)
         """
-        # Remove surrounding quotes if present
-        cleaned = fixed_code.strip()
-        if cleaned.startswith('"') and cleaned.endswith('"'):
-            cleaned = cleaned[1:-1]
-        elif cleaned.startswith("'") and cleaned.endswith("'"):
-            cleaned = cleaned[1:-1]
+        if line_number < 1 or line_number > len(lines):
+            return ""
 
-        # Replace escaped quotes
-        cleaned = cleaned.replace('\\"', '"').replace("\\'", "'")
+        # Convert to 0-indexed
+        line_idx = line_number - 1
 
-        # Normalize line endings
-        cleaned = cleaned.replace('\\n', '\n')
+        # Get the indentation of the target line
+        target_line = lines[line_idx]
+        if not target_line.strip():
+            # If target line is empty, look at surrounding lines
+            for offset in [1, -1, 2, -2]:
+                check_idx = line_idx + offset
+                if 0 <= check_idx < len(lines) and lines[check_idx].strip():
+                    target_line = lines[check_idx]
+                    break
 
-        return cleaned
+        if target_line.strip():
+            stripped = target_line.lstrip()
+            return target_line[:len(target_line) - len(stripped)]
 
-    def _process_multi_function_code(self, fixed_code: str, base_indent: str) -> List[str]:
+        return ""
+
+    def apply_indentation_to_fix(self, fixed_code: str, base_indent: str) -> str:
         """
-        Process fixed code that may contain multiple functions.
-        Handles proper indentation and separation with correct Python nesting.
+        Apply base indentation to fixed code while preserving relative indentation.
+
+        Args:
+            fixed_code: The fixed code to indent
+            base_indent: Base indentation to apply
+
+        Returns:
+            Properly indented fixed code
         """
-        lines = fixed_code.splitlines()
-        processed_lines = []
+        if not fixed_code.strip():
+            return fixed_code
 
-        current_function_indent = ""
-        inside_function = False
-        inside_docstring = False
-        docstring_delimiter = None
+        lines = fixed_code.split('\n')
+        if not lines:
+            return fixed_code
 
-        for i, line in enumerate(lines):
-            if not line.strip():
-                # Empty line - keep as is but ensure newline
-                processed_lines.append('\n')
-                continue
+        # Remove common leading whitespace (normalize)
+        lines = self._normalize_indentation(lines)
 
-            stripped_line = line.strip()
-
-            # Handle docstring detection
-            if stripped_line.startswith('"""') or stripped_line.startswith("'''"):
-                delimiter = '"""' if stripped_line.startswith('"""') else "'''"
-                if not inside_docstring:
-                    # Starting docstring
-                    inside_docstring = True
-                    docstring_delimiter = delimiter
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-                elif stripped_line.endswith(docstring_delimiter):
-                    # Ending docstring
-                    inside_docstring = False
-                    docstring_delimiter = None
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-                else:
-                    # Middle of docstring
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-                continue
-
-            if inside_docstring:
-                # Inside docstring - maintain docstring indentation
-                processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-                continue
-
-            # Function/class definition
-            if stripped_line.startswith(('def ', 'class ', '@')):
-                inside_function = True
-                current_function_indent = base_indent
-                processed_lines.append(base_indent + stripped_line + '\n')
-
-            # Function body content
-            elif inside_function:
-                # Determine the appropriate indentation level
-                if stripped_line.startswith(
-                        ('if ', 'elif ', 'else:', 'for ', 'while ', 'try:', 'except', 'finally:', 'with ')):
-                    # Control structures - one level deeper than function
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-
-                elif stripped_line.startswith(('return ', 'raise ', 'yield ', 'pass', 'break', 'continue')):
-                    # Check if this return is inside a control block by looking at previous lines
-                    # Simple heuristic: if the previous non-empty line was a control structure, add extra indent
-                    prev_non_empty_idx = i - 1
-                    while prev_non_empty_idx >= 0 and not lines[prev_non_empty_idx].strip():
-                        prev_non_empty_idx -= 1
-
-                    if prev_non_empty_idx >= 0:
-                        prev_line = lines[prev_non_empty_idx].strip()
-                        if (prev_line.startswith(
-                                ('if ', 'elif ', 'else:', 'for ', 'while ', 'try:', 'except', 'finally:')) or
-                                prev_line.endswith(':')):
-                            # Inside control block - add extra indentation
-                            processed_lines.append(base_indent + '        ' + stripped_line + '\n')
-                        else:
-                            # Direct function body statement
-                            processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-                    else:
-                        # Default function body level
-                        processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-
-                elif stripped_line.endswith(':'):
-                    # Likely a control structure we missed
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-
-                else:
-                    # Default function body statement
-                    processed_lines.append(base_indent + '    ' + stripped_line + '\n')
-
-            else:
-                # Not inside a function - treat as module level
-                processed_lines.append(base_indent + stripped_line + '\n')
-
-        # Clean up any duplicate return statements at the end
-        processed_lines = self._remove_duplicate_returns(processed_lines)
-
-        # Add extra newline at the end for function separation
-        if processed_lines and not processed_lines[-1].strip() == '':
-            processed_lines.append('\n')
-
-        return processed_lines
-
-    def _remove_duplicate_returns(self, lines: List[str]) -> List[str]:
-        """
-        Remove duplicate or conflicting return statements.
-        """
-        cleaned_lines = []
-        return_statements = []
-
+        # Apply base indentation to all non-empty lines
+        indented_lines = []
         for line in lines:
-            stripped = line.strip()
-            if stripped.startswith('return '):
-                return_statements.append(line)
-            else:
-                # If we've collected return statements, only keep the last meaningful one
-                if return_statements:
-                    # Find the most specific return statement (usually the longest)
-                    best_return = max(return_statements, key=lambda x: len(x.strip()))
-                    cleaned_lines.append(best_return)
-                    return_statements = []
-                cleaned_lines.append(line)
+            if line.strip():  # Non-empty line
+                indented_lines.append(base_indent + line)
+            else:  # Empty line
+                indented_lines.append(line)
 
-        # Handle any remaining return statements
-        if return_statements:
-            best_return = max(return_statements, key=lambda x: len(x.strip()))
-            cleaned_lines.append(best_return)
+        return '\n'.join(indented_lines)
 
-        return cleaned_lines
+    def _normalize_indentation(self, lines: List[str]) -> List[str]:
+        """
+        Remove common leading whitespace from all lines.
+
+        Args:
+            lines: Lines of code
+
+        Returns:
+            Lines with normalized indentation
+        """
+        if not lines:
+            return lines
+
+        # Find minimum indentation of non-empty lines
+        min_indent = float('inf')
+        for line in lines:
+            if line.strip():  # Non-empty line
+                stripped = line.lstrip()
+                indent_length = len(line) - len(stripped)
+                min_indent = min(min_indent, indent_length)
+
+        if min_indent == float('inf') or min_indent == 0:
+            return lines
+
+        # Remove common leading whitespace
+        normalized_lines = []
+        for line in lines:
+            if line.strip():  # Non-empty line
+                normalized_lines.append(line[min_indent:])
+            else:  # Empty line
+                normalized_lines.append(line)
+
+        return normalized_lines
 
     def _apply_fixes_to_file(self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool) -> bool:
         """
@@ -775,6 +1053,12 @@ class LLMFixer:
                 start = fix.line_number - 1
                 end = fix.last_line_number - 1
 
+                base_indent = self.calculate_base_indentation(lines, fix.line_number)
+                logger.debug(f"Line { fix.line_number}: Base indentation = '{base_indent}' (length: {len(base_indent)})")
+
+                # Apply indentation to the fixed code
+                indented_fixed_code = self.apply_indentation_to_fix(fix.fixed_code, base_indent)
+
                 if start < 0 or end >= len(lines) or start > end:
                     logger.warning(f"Fix {fix.issue_key} has invalid line range, skipping")
                     skipped_fixes.append(fix)
@@ -783,20 +1067,13 @@ class LLMFixer:
                 # Get the base indentation from the first line of the original block
                 original_line = lines[start]
 
-                # Calculate indentation
-                indent = original_line[:len(original_line) - len(original_line.lstrip())]
-
-                fixed_code_clean = self._clean_fixed_code(fix.fixed_code)
-
-                # Split into logical blocks (functions) and process each
-                new_block = self._process_multi_function_code(fixed_code_clean, indent)
-
 
 
                 # CRITICAL FIX: Update lines array directly, don't create separate variable
                 lines = (
                         lines[:fix.line_number - 1] +
-                        new_block +
+                        [indented_fixed_code,'\n']+
+
                         lines[fix.last_line_number:]
                 )
 
@@ -805,10 +1082,10 @@ class LLMFixer:
             # Validate final code
             modified_content = ''.join(lines)
 
-            validated, message_error, modified_content = self._validate_modified_content(modified_content, file_path)
-            if not validated:
-                logger.error(f"Validation failed — not writing changes. Error: {message_error}")
-                return False
+            # validated, message_error, modified_content = self._validate_modified_content(modified_content, file_path,original_content=original_content)
+            # if not validated:
+            #     logger.error(f"Validation failed — not writing changes. Error: {message_error}")
+            #     return False
 
             # Write file
             with open(file_path, "w", encoding="utf-8") as f:
@@ -823,7 +1100,7 @@ class LLMFixer:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False
 
-    def _validate_modified_content(self, content: str, file_path: Path) -> Union[bool, str]:
+    def _validate_modified_content(self, content: str, file_path: Path,original_content:str) -> Union[bool, str]:
         """
         Perform basic validation on modified content to catch obvious corruption.
 
@@ -839,6 +1116,7 @@ class LLMFixer:
         Args:
             content: Modified file content
             file_path: Path to the file (to determine language)
+            original_content : Original file content before applying fixes
 
         Returns:
             True if content passes validation, False otherwise
@@ -868,8 +1146,11 @@ class LLMFixer:
                     logger.error(message_error)
                     validated=False
             if not validated:
-                fixed_code = autopep8.fix_code(content, options={"aggressive": 2})
-                logger.info(f"fixed code: {fixed_code}")
+
+                logger.error(message_error)
+
+                content = fix_code_indentation(content, original_content)
+
 
             # CHECK 4: No duplicate function/class definitions
             if not self._check_no_duplicate_definitions(content, file_path.suffix):

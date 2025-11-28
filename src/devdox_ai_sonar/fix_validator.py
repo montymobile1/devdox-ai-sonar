@@ -13,6 +13,12 @@ setup_logging(level='DEBUG', log_file='demo.log')
 logger = get_logger(__name__)
 
 try:
+    from together import AsyncTogether, Together
+    HAS_TOGETHER = True
+except ImportError:
+    HAS_TOGETHER = False
+
+try:
     import openai
 
     HAS_OPENAI = True
@@ -96,8 +102,18 @@ class FixValidator:
         """
         self.provider = provider.lower()
         self.min_confidence_threshold = min_confidence_threshold
+        if self.provider == "togetherai":
+            if not HAS_TOGETHER:
+                raise ImportError("Together AI library not installed. Install with: pip install together")
+            self.model = model or "gpt-4o"
+            self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
 
-        if self.provider == "openai":
+            if not self.api_key:
+                raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+
+            self.client = Together(api_key=self.api_key)
+
+        elif self.provider == "openai":
             if not HAS_OPENAI:
                 raise ImportError("OpenAI library not installed. Install with: pip install openai")
 
@@ -120,7 +136,7 @@ class FixValidator:
             self.client = genai.Client(api_key=self.api_key)
 
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
+            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini' or 'togetherai'.")
 
     def validate_fix(
             self,

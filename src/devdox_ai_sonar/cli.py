@@ -155,7 +155,7 @@ def select_fixes_interactively(fixes: List):
 @click.option("--project-path", required=True, type=click.Path(exists=True, path_type=Path), help="Path to local project directory")
 @click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
 @click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
-@click.option("--provider", type=click.Choice(["openai", "gemini"]), default="openai", help="LLM provider")
+@click.option("--provider", type=click.Choice(["openai", "gemini","togetherai"]), default="togetherai", help="LLM provider")
 @click.option("--types",type=str,help="Comma-separated issue types (BUG, VULNERABILITY, CODE_SMELL, SECURITY_HOTSPOT)")
 @click.option("--severity", type=str,help="Comma-separated severities (BLOCKER, CRITICAL, MAJOR, MINOR)")
 @click.option("--model", help="LLM model name")
