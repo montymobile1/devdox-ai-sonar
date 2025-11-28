@@ -1100,73 +1100,73 @@ class LLMFixer:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False
 
-    def _validate_modified_content(self, content: str, file_path: Path,original_content:str) -> Union[bool, str]:
-        """
-        Perform basic validation on modified content to catch obvious corruption.
-
-        This is a safety net that runs BEFORE writing any changes to disk.
-        If validation fails, NO changes are written.
-
-        Checks:
-        1. Content is not empty
-        2. Brackets/parentheses are balanced
-        3. Python syntax is valid (for .py files)
-        4. No duplicate function definitions
-
-        Args:
-            content: Modified file content
-            file_path: Path to the file (to determine language)
-            original_content : Original file content before applying fixes
-
-        Returns:
-            True if content passes validation, False otherwise
-        """
-        message_error = ""
-        try:
-            # CHECK 1: File is not empty
-            if not content or not content.strip():
-                message_error="Validation failed: Modified content is empty"
-                logger.error(message_error)
-                return False,message_error,content
-
-            # # CHECK 2: Basic bracket/parenthesis matching
-            # if not self._check_bracket_balance(content):
-            #     logger.error("Validation failed: Unbalanced brackets/parentheses/braces")
-            #     return False
-
-            # CHECK 3: Python-specific syntax validation
-            if file_path.suffix == '.py':
-                try:
-                    import ast
-                    ast.parse(content)
-                    validated = True
-
-                except SyntaxError as e:
-                    message_error=f"Validation failed: Python syntax error at line {e.lineno}: {e.msg}"
-                    logger.error(message_error)
-                    validated=False
-            if not validated:
-
-                logger.error(message_error)
-
-                content = fix_code_indentation(content, original_content)
-
-
-            # CHECK 4: No duplicate function/class definitions
-            if not self._check_no_duplicate_definitions(content, file_path.suffix):
-                message_error="Validation failed: Detected duplicate function/class definitions"
-
-                logger.error(message_error)
-                return False, message_error,content
-
-
-            return True,"",content
-
-        except Exception as e:
-            message_error=f"Error during content validation: {e}"
-            logger.error(message_error, exc_info=True)
-            # On validation error, fail safe - don't write
-            return False,message_error,content
+    # def _validate_modified_content(self, content: str, file_path: Path,original_content:str) -> Union[bool, str]:
+    #     """
+    #     Perform basic validation on modified content to catch obvious corruption.
+    # 
+    #     This is a safety net that runs BEFORE writing any changes to disk.
+    #     If validation fails, NO changes are written.
+    # 
+    #     Checks:
+    #     1. Content is not empty
+    #     2. Brackets/parentheses are balanced
+    #     3. Python syntax is valid (for .py files)
+    #     4. No duplicate function definitions
+    # 
+    #     Args:
+    #         content: Modified file content
+    #         file_path: Path to the file (to determine language)
+    #         original_content : Original file content before applying fixes
+    # 
+    #     Returns:
+    #         True if content passes validation, False otherwise
+    #     """
+    #     message_error = ""
+    #     try:
+    #         # CHECK 1: File is not empty
+    #         if not content or not content.strip():
+    #             message_error="Validation failed: Modified content is empty"
+    #             logger.error(message_error)
+    #             return False,message_error,content
+    # 
+    #         # # CHECK 2: Basic bracket/parenthesis matching
+    #         # if not self._check_bracket_balance(content):
+    #         #     logger.error("Validation failed: Unbalanced brackets/parentheses/braces")
+    #         #     return False
+    # 
+    #         # CHECK 3: Python-specific syntax validation
+    #         if file_path.suffix == '.py':
+    #             try:
+    #                 import ast
+    #                 ast.parse(content)
+    #                 validated = True
+    # 
+    #             except SyntaxError as e:
+    #                 message_error=f"Validation failed: Python syntax error at line {e.lineno}: {e.msg}"
+    #                 logger.error(message_error)
+    #                 validated=False
+    #         if not validated:
+    # 
+    #             logger.error(message_error)
+    # 
+    #             content = fix_code_indentation(content, original_content)
+    # 
+    # 
+    #         # CHECK 4: No duplicate function/class definitions
+    #         if not self._check_no_duplicate_definitions(content, file_path.suffix):
+    #             message_error="Validation failed: Detected duplicate function/class definitions"
+    # 
+    #             logger.error(message_error)
+    #             return False, message_error,content
+    # 
+    # 
+    #         return True,"",content
+    # 
+    #     except Exception as e:
+    #         message_error=f"Error during content validation: {e}"
+    #         logger.error(message_error, exc_info=True)
+    #         # On validation error, fail safe - don't write
+    #         return False,message_error,content
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
