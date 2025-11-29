@@ -73,6 +73,8 @@ class FixSuggestion(BaseModel):
     issue_key: str = Field(..., description="Related issue key")
     original_code: str = Field(..., description="Original problematic code")
     fixed_code: str = Field(..., description="Suggested fix")
+    helper_code: Optional[str] = Field("", description="Additional helper code")
+    placement_helper: Optional[str] = Field("", description="Additional helper code for placing the fix")
     explanation: str = Field(..., description="Explanation of the fix")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0-1)")
     llm_model: str = Field(..., description="LLM model used for fixing")

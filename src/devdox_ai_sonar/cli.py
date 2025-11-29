@@ -107,13 +107,13 @@ def select_fixes_interactively(fixes: List):
     table.add_column("Issue", width=20)
     table.add_column("Original", width=50)
     table.add_column("Fixed", width=100,overflow="crop")
-    table.add_column("Confidence", width=20)
+    table.add_column("Confidence", width=15)
 
     for idx, fix in enumerate(fixes, start=1):
         confidence_str = f"{fix.confidence:.2f}"
         table.add_row(
             str(idx),
-            fix.issue_key[-20:],  # Show last 20 chars of issue key
+            fix.issue_key[-15:],  # Show last 20 chars of issue key
             fix.original_code[:47] + "..." if len(fix.original_code) > 50 else fix.original_code,
             fix.fixed_code[:97] + "..." if len(fix.fixed_code) > 100 else fix.fixed_code,
             confidence_str

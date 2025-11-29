@@ -5,6 +5,7 @@ import re
 import shutil
 import autopep8
 from pathlib import Path
+import json
 from typing import List, Optional, Dict, Any, Union, Tuple
 from datetime import datetime
 
@@ -174,6 +175,8 @@ class LLMFixer:
                     issue_key=issue.key,
                     original_code=context["context"],
                     fixed_code=fix_response["fixed_code"],
+                    helper_code = fix_response.get("helper_code"),
+                    placement_helper=fix_response.get("placement_helper"),
                     explanation=fix_response["explanation"],
                     confidence=fix_response["confidence"],
                     llm_model=self.model,
@@ -278,7 +281,7 @@ class LLMFixer:
             - is_complete_function: Boolean indicating if complete function was extracted
             - function_name: Name of function if applicable
         """
-        import re
+        
 
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
@@ -311,7 +314,7 @@ class LLMFixer:
 
         Supports Python, JavaScript/TypeScript, Java, and C# function patterns.
         """
-        import re
+        
 
         stripped_line = line.strip()
 
@@ -393,7 +396,7 @@ class LLMFixer:
         """
         Find the end line of a function/method based on language-specific rules.
         """
-        import re
+        
 
         if start_idx >= len(lines):
             return None
@@ -487,7 +490,7 @@ class LLMFixer:
         """
         Remove string literals and comments to avoid counting braces inside them.
         """
-        import re
+        
 
         # Remove single-line comments
         line = re.sub(r'//.*$', '', line)  # // comments
@@ -504,7 +507,7 @@ class LLMFixer:
         """
         Extract function name from function definition line.
         """
-        import re
+        
 
         # Python function name extraction
         python_match = re.search(r'def\s+(\w+)', function_line)
@@ -814,188 +817,157 @@ class LLMFixer:
         return "Extract complex nested logic into focused helper methos"
 
     def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], rule_info: Dict[str, Any], language: str,
-                        error_message: str = "") -> str:
-        """Create a focused prompt for the LLM to generate a fix."""
-        error_section = f"\n**Error Context:**\n{error_message}\n" if error_message else ""
-        base_indent = calculate_base_indentation(context.get('context', ''))
+                           error_message: str = "") -> str:
+        """Create a concise, focused prompt for the LLM to generate a fix."""
 
-        # Detect indentation style and count
-        indent_style = "spaces" if base_indent > 0 else "detect from code"
-        indent_count = base_indent if base_indent > 0 else 0
+        # 1. Context Setup
+        code_chunk = context.get('context', '')
+        base_indent = calculate_base_indentation(code_chunk)
 
-        # Extract specific rule guidance
-        root_cause = rule_info.get('root_cause', 'Code quality issue detected')
-        fix_description = rule_info.get('how_to_fix', {}).get('description', 'Apply appropriate fix')
-        fix_steps = rule_info.get('how_to_fix', {}).get('steps', [])
-        priority = rule_info.get('how_to_fix', {}).get('priority', 'Medium')
+        # 2. Strategy Detection
+        strategies = [
+            f"• PRESERVE indentation ({base_indent} spaces) and existing logic flow.",
+            "• Make MINIMAL changes necessary to satisfy the rule."
+        ]
 
-        # Format steps as numbered list
-        steps_text = ""
-        if fix_steps:
-            steps_text = "\n".join([f"   {i+1}. {step}" for i, step in enumerate(fix_steps)])
+        msg_lower = issue.message.lower()
 
-        # Special handling for common rule patterns
-        is_unused_code = "unused" in issue.rule.lower() or "unused" in issue.message.lower()
-        is_literal_duplication = "duplicating this literal" in issue.message.lower() or "define a constant" in issue.message.lower()
-        is_null_check = "null" in issue.rule.lower() or "nullable" in issue.message.lower()
-        is_cognitive_complexity = "cognitive complexity" in issue.message.lower() or "complexity" in issue.rule.lower()
+        # Cognitive Complexity
+        if "cognitive complexity" in msg_lower:
+            # Extract numbers if available
+            comp_info = self._extract_complexity_info(issue.message)
+            target = comp_info.get('target', '15')
 
-        # Detect if this is an __init__ method or constructor
-        is_init_method = self._is_init_method(context.get('context', ''))
+            strategies.extend([
+                f"• REDUCE complexity to < {target}.",
+                "• EXTRACT logic to new helper methods/functions.",
+                "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
+                "• If the original code snippet calls functions or methods (e.g., validate(), "
+                "normalize(), process_data()), DO NOT create new helper definitions for them."
+                "Assume they already exist in the project and should not be recreated."
+                "• Only extract logic into a helper function if that logic does not already"
+                "correspond to any existing function call present in the snippet."
+                "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
+                "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
+                "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
+                "• NEVER put the same function definition in both sections."
+            ])
+            if self._is_init_method(code_chunk):
+                strategies.append("• Keep __init__ signature intact; extract validation logic to helpers.")
 
-        # Extract complexity numbers for cognitive complexity issues
-        complexity_info = self._extract_complexity_info(issue.message) if is_cognitive_complexity else None
+        # Unused Code
+        elif "unused" in issue.rule.lower() or "unused" in msg_lower:
+            strategies.append("• Remove ONLY the specific unused variable/import.")
+            strategies.append("• Do not break code that references adjacent lines.")
 
-        # Extract literal value for duplication issues
-        literal_match = None
-        if is_literal_duplication:
-            import re
-            literal_pattern = r'duplicating this literal "([^"]+)"'
-            match = re.search(literal_pattern, issue.message)
-            if match:
-                literal_match = match.group(1)
+        # Literal Duplication
+        elif "duplicating this literal" in msg_lower:
+            
+            match = re.search(r'duplicating this literal "([^"]+)"', issue.message)
+            literal = match.group(1) if match else "the repeated value"
+            strategies.append(f"• Extract the literal \"{literal}\" to a constant/variable.")
+            strategies.append("• Place the constant at the class or module level (not inside the function).")
+            strategies.append("• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE.")
+            strategies.append("• CRITICAL: Put the code that USES the constant in FIXED_SELECTION.")
+            strategies.append("• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP).")
+            strategies.append("• Use the constant in [FIXED_SELECTION].")
 
-        prompt = f"""Fix this {language} code issue following SonarQube rule {issue.rule}.
-        
-        ## ISSUE ANALYSIS
-        **Rule:** {issue.rule} | **Severity:** {issue.severity} | **Type:** {issue.type}
-        **Root Cause:** {root_cause}
-        **Fix Strategy:** {fix_description}
-        
-        **Steps to Follow:**
-        {steps_text if steps_text else "   1. Analyze the specific issue\n   2. Apply minimal fix\n   3. Preserve functionality"}
-        
-        **Issue Message:** {issue.message}
-        **Location:** Line {issue.first_line}{f"-{issue.last_line}" if issue.last_line != issue.first_line else ""}
-        {error_section}
-        
+        # Null Checks
+        elif "null" in issue.rule.lower() or "nullable" in msg_lower:
+            strategies.append("• Add defensive null/None checks before usage.")
+
+        # 3. Construct Prompt
+        # We join strategies with newlines for a clean list
+        strategy_text = "\n".join(strategies)
+
+        prompt = f"""
+        Fix {language} code for SonarQube rule: "{issue.message}
+         **Rule:** {issue.rule} | **Severity:** {issue.severity} | **Type:** {issue.type}
+         **Root Cause:** { rule_info.get('root_cause', 'Code quality issue detected')}
+
         ## CODE CONTEXT (Lines {context['start_line']}-{context['end_line']})
         ```{language}
-        {context['context']}
+        {code_chunk}
+        {f"## ERROR CONTEXT: {error_message}" if error_message else ""}
+        
+        ## CRITICAL SEPARATION RULES
+        
+        🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
+        
+        1. **FIXED_SELECTION** = The modified version of the original lines
+           - Contains CALLS to new functions/constants
+           - Contains the actual logic changes
+           - Should NOT contain new function/constant DEFINITIONS
+        
+        2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
+           - Contains DEFINITIONS of new functions/constants
+           - Should NOT repeat any code from FIXED_SELECTION
+           - Should NOT contain the original problematic code
+        
+        ## EXAMPLES OF CORRECT SEPARATION:
+        
+        🚨 **FIXED_SELECTION MUST BE A SINGLE COMPLETE STRING**
+
+        ❌ **DO NOT DO THIS (Breaking into parts):**
+        ```json
+        {{
+          "FIXED_SELECTION": "def function_name(self, args):",
+          "code": "function_name", 
+          "docstring": "doc here",
+          "logic": "logic here"
+        }}
         ```
         
-        **Problematic Line {issue.first_line}:**
-        ```{language}
-        {context['problem_line']}
+        ### ❌ WRONG (Duplication):
+        ```
+        FIXED_SELECTION: "def validate():\\n    if value is None:\\n        return False\\n    return True"
+        NEW_HELPER_CODE: "def validate():\\n    if value is None:\\n        return False\\n    return True"
         ```
         
-        ## FIX REQUIREMENTS
+        ### ✅ CORRECT (Cognitive Complexity):
+        ```
+        FIXED_SELECTION: "def process_data(data):\\n    if not is_valid_data(data):\\n        return None\\n    return transform_data(data)"
+        NEW_HELPER_CODE: "def is_valid_data(data):\\n    return data is not None and len(data) > 0\\n\\ndef transform_data(data):\\n    return data.upper()"
+        ```
         
-        **Focus:** Rule {issue.rule} | Priority: {priority} | Minimal surgical change only
+        ### ✅ CORRECT (Literal Duplication):
+        ```
+        FIXED_SELECTION: "def show_error():\\n    print(ERROR_COLOR)\\n\\ndef highlight_text():\\n    return ERROR_COLOR"
+        NEW_HELPER_CODE: "ERROR_COLOR = \\"red\\""
+        ```
+
+        INSTRUCTIONS
+        {rule_info.get('how_to_fix', {}).get('steps', [])}
+        {strategy_text}
         
         ### OUTPUT SCOPE
-        - Return EXACTLY lines {context['start_line']}-{context['end_line']} (inclusive)
-        - Include ALL lines from this range, even if unchanged
-        - NO additional imports, classes, or function headers outside this range
-        
-        ### FORMATTING
-        - Preserve indentation: {indent_count} {indent_style}
-        - Maintain original code style and formatting
-        - Keep syntax valid and error-free
-        
-        ### CHANGE STRATEGY
-        - Make MINIMAL changes - only what's needed for the rule
-        - Preserve variable names unless renaming is the fix
-        - Maintain identical functionality and behavior
-        - Don't refactor unrelated code
-        
-        {f'''
-        ### UNUSED CODE SPECIAL RULES
-        - Remove ONLY the unused variables/imports on the problematic lines
-        - If removing a line leaves empty space, maintain proper structure
-        - Ensure removal doesn't break syntax or references
-        ''' if is_unused_code else ''}
-        
-        {f'''
-        ### LITERAL DUPLICATION SPECIAL RULES
-        - Target literal: "{literal_match or '[extract from message]'}"
-        - Define a constant with descriptive UPPER_CASE name
-        - Replace ALL occurrences of this literal in the provided scope
-        - Place constant definition at appropriate scope level (class/function start)
-        ''' if is_literal_duplication else ''}
-        
-        {f'''
-        ### NULL CHECK SPECIAL RULES
-        - Add proper null/None checks before usage
-        - Use appropriate null-safe operators for {language}
-        - Ensure defensive programming without changing logic flow
-        ''' if is_null_check else ''}
-        
-        {f'''
-        ### COGNITIVE COMPLEXITY REDUCTION SPECIAL RULES
-        **Current Complexity:** {complexity_info.get('current', 'Unknown')} | **Target:** {complexity_info.get('target', '15')} | **Method Type:** {"__init__ constructor" if is_init_method else "regular method"}
+         - Return EXACTLY lines {context['start_line']}-{context['end_line']} (inclusive)
+         - Include ALL lines from this range, even if unchanged
+         - NO additional imports, classes, or function headers outside this range
     
-        **CRITICAL CONSTRAINTS:**
-        - This is {"an __init__ method - KEEP initialization logic at the top" if is_init_method else "a regular method"}
-        - Extract ONLY complex logic into helper methods
-        - {"Preserve all parameter assignments and basic initialization in __init__" if is_init_method else "Focus on extracting nested logic and complex conditions"}
+       Return EXACTLY lines {context['start_line']}-{context['end_line']} with minimal changes.
         
-        **COMPLEXITY REDUCTION STRATEGY:**
-        1. **Identify complexity sources:** nested if/else, loops within conditions, multiple logical operators
-        2. **Extract helper methods:** Pull out complex logic blocks that can be isolated
-        3. **{"Keep core initialization simple:" if is_init_method else "Simplify control flow:"} 
-           - {"Basic assignments stay in __init__" if is_init_method else "Use early returns to reduce nesting"}
-           - {"Complex validation/setup goes to helper methods" if is_init_method else "Break down complex conditions"}
-        4. **Method naming:** Use descriptive names like _validate_params(), _setup_defaults(), _configure_options()
-    
-        **EXTRACTION GUIDELINES:**
-        - Extract methods that reduce complexity by at least 3-5 points
-        - Keep extracted methods focused and cohesive
-        - Avoid creating trivial one-liner methods
-        - Maintain logical grouping of related operations
-        {"- Keep __init__ readable with clear initialization flow" if is_init_method else "- Use guard clauses and early returns where possible"}
-    
-        **FORBIDDEN ACTIONS:**
-        - {"Don't move basic parameter assignments out of __init__" if is_init_method else "Don't create overly fragmented logic"}
-        - Don't create helper methods for simple single operations
-        - Don't break functional cohesion for the sake of complexity
-        - Don't introduce unnecessary abstraction layers
-    
-        **EXAMPLE STRATEGY FOR {language.upper()}:**
-        {self._get_complexity_example(language, is_init_method)}
-        ''' if is_cognitive_complexity else ''}
-    
-        ## VALIDATION CHECKLIST
-        Before submitting, verify:
-        □ Output contains ONLY lines {context['start_line']}-{context['end_line']}
-        □ Indentation preserved exactly ({indent_count} {indent_style})
-        □ Syntax is valid {language} code
-        □ Functionality unchanged (same inputs → same outputs)
-        □ Rule {issue.rule} violation is resolved
-        □ No new issues introduced
-        {f"□ Cognitive complexity reduced to target level ({complexity_info.get('target', '15')} or below)" if is_cognitive_complexity else ""}
-        {f"□ __init__ method still handles core initialization properly" if is_cognitive_complexity and is_init_method else ""}
-
+        ## CRITICAL JSON FORMAT REQUIREMENTS
         
+        1. Your ENTIRE response must be a single JSON object
+        2. Do NOT use markdown code blocks (no ``` json ```)
+        3. Do NOT use triple quotes (\"\"\") for multi-line strings
+        4. Use \\n for line breaks in strings
+        5. Escape quotes properly with \"
+        6. Do NOT include any text before or after the JSON
         
-        ## REQUIRED OUTPUT FORMAT
+        ## JSON STRUCTURE REQUIRED
         
-        FIXED_CODE:
-        ```{language}
-        [Exact lines {context['start_line']}-{context['end_line']} with minimal fix applied]
-        ```
+        {{"FIXED_SELECTION": "Code with \\n for newlines and \\" for quotes", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Brief explanation", "CONFIDENCE": 0.8}}
         
-        EXPLANATION:
-        [Brief explanation: what changed and why it fixes rule {issue.rule}]
+        **PLACEMENT OPTIONS:** "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
         
-        CONFIDENCE: [0.0-1.0]
-        - 0.9-1.0: Certain fix is correct and safe
-        - 0.7-0.8: Confident but edge cases possible  
-        - 0.5-0.6: Fix likely works but needs validation
-        - 0.0-0.4: Uncertain or cannot provide safe fix
+        **EXAMPLE VALID RESPONSE:**
+        {{"FIXED_SELECTION": "def example():\\n    \\"\\"\\"Documentation.\\"\\"\\"\\n    return True", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Added documentation", "CONFIDENCE": 0.9}}
         
-        ---
-        **Focus:** Rule {issue.rule} | Priority: {priority} | Minimal surgical change only
-        {f"**Critical:** For literal duplication, ALL occurrences must be replaced" if is_literal_duplication else ""}
-        {f"**Critical:** Remove unused code without breaking syntax" if is_unused_code else ""}
-        {f"**Critical:** Reduce complexity while preserving initialization structure" if is_cognitive_complexity and is_init_method else ""}
-        {f"**Critical:** Extract meaningful helper methods, avoid over-fragmentation" if is_cognitive_complexity and not is_init_method else ""}
-
+        YOUR ENTIRE RESPONSE MUST BE VALID JSON THAT PASSES json.loads()
         """
-
-        return prompt
-
-
+        return prompt.strip()
 
     def _parse_openai_response(self, response) -> Optional[Dict[str, Any]]:
         """Parse OpenAI API response."""
@@ -1021,42 +993,135 @@ class LLMFixer:
         try:
             content =  response.choices[0].message.content
 
-
             return self._extract_fix_from_response(content)
         except Exception as e:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
 
+    def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
+        """Fallback extraction using regex for malformed JSON."""
+        logger.info("🔄 Using regex fallback extraction...")
 
-
-    def _extract_fix_from_response(self, content: str) -> Optional[Dict[str, Any]]:
-        """Extract fix information from LLM response."""
         try:
-            # Extract fixed code
-            fixed_code_pattern = r'FIXED_CODE:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
-            fixed_code_match = re.search(fixed_code_pattern, content, re.DOTALL)
-            fixed_code = fixed_code_match.group(1).strip() if fixed_code_match else ""
+            # Regex patterns for JSON-like structure
+            patterns = {
+                'FIXED_SELECTION': r'"FIXED_SELECTION":\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\':\s*\'((?:[^\'\\]|\\.)*)\'',
+                'NEW_HELPER_CODE': r'"NEW_HELPER_CODE":\s*"((?:[^"\\]|\\.)*)"|\'NEW_HELPER_CODE\':\s*\'((?:[^\'\\]|\\.)*)\'',
+                'PLACEMENT': r'"PLACEMENT":\s*"([^"]*)"|\'PLACEMENT\':\s*\'([^\']*)\' ',
+                'EXPLANATION': r'"EXPLANATION":\s*"((?:[^"\\]|\\.)*)"|\'EXPLANATION\':\s*\'((?:[^\'\\]|\\.)*)\'',
+                'CONFIDENCE': r'"CONFIDENCE":\s*([0-9]*\.?[0-9]+)'
+            }
 
-            # Extract explanation
-            explanation_match = re.search(r'EXPLANATION:\s*(.*?)(?=CONFIDENCE:|$)', content, re.DOTALL)
-            explanation = explanation_match.group(1).strip() if explanation_match else ""
-            # Extract confidence
-            confidence_match = re.search(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+)', content)
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-            confidence = max(0.0, min(1.0, confidence))  # Clamp to [0, 1]
+            results = {}
 
-            if not fixed_code or not explanation:
-                logger.warning("Failed to extract fixed code or explanation from LLM response")
+            for key, pattern in patterns.items():
+                match = re.search(pattern, content, re.DOTALL)
+                if match:
+                    # Get the first non-None group
+                    value = match.group(1) or match.group(2) or ""
+
+                    # Unescape JSON strings
+                    if key != 'CONFIDENCE':
+                        value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\',
+                                                                                                            '\\')
+                        results[key] = value.strip()
+                    else:
+                        results[key] = float(value) if value else 0.5
+                else:
+                    # Provide defaults
+                    if key == 'CONFIDENCE':
+                        results[key] = 0.5
+                    elif key == 'PLACEMENT':
+                        results[key] = 'SIBLING'
+                    else:
+                        results[key] = ""
+
+            # Validate
+            if not results.get('FIXED_SELECTION'):
+                logger.error("❌ Regex fallback failed - no FIXED_SELECTION found")
                 return None
+
+            logger.info("✅ Regex fallback extraction successful")
+
             return {
-                "fixed_code": fixed_code,
-                "explanation": explanation,
-                "confidence": confidence
+                "fixed_code": results['FIXED_SELECTION'],
+                "helper_code": results['NEW_HELPER_CODE'],
+                "placement_helper": results['PLACEMENT'].upper(),
+                "explanation": results['EXPLANATION'] or "Code fix applied",
+                "confidence": max(0.0, min(1.0, results['CONFIDENCE']))
             }
 
         except Exception as e:
-            logger.error(f"Error extracting fix from response: {e}", exc_info=True)
+            logger.error(f"Regex fallback failed: {e}")
             return None
+
+
+    def _extract_fields_from_parsed_json(self, fix_data: dict) -> Optional[Dict[str, Any]]:
+        """Extract and validate fields from parsed JSON."""
+
+        # Extract with type conversion and defaults
+        fixed_code = str(fix_data.get("FIXED_SELECTION", "")).strip()
+        helper_code = str(fix_data.get("NEW_HELPER_CODE", "")).strip()
+        placement = str(fix_data.get("PLACEMENT", "SIBLING")).strip().upper()
+        explanation = str(fix_data.get("EXPLANATION", "")).strip()
+        confidence = fix_data.get("CONFIDENCE", 0.5)
+
+        # Convert confidence to float
+        try:
+            confidence = float(confidence)
+        except (ValueError, TypeError):
+            confidence = 0.5
+        confidence = max(0.0, min(1.0, confidence))
+
+        # Validate placement
+        if placement not in ["SIBLING", "GLOBAL_TOP", "GLOBAL_BOTTOM"]:
+            placement = "SIBLING"
+
+        # Provide default explanation
+        if not explanation:
+            explanation = "Code fix applied"
+
+        # Require fixed_code
+        if not fixed_code:
+            logger.error("❌ FIXED_SELECTION is empty")
+            return None
+
+        logger.debug(f"✅ Fields extracted successfully: {len(fixed_code)} chars code")
+
+        return {
+            "fixed_code": fixed_code,
+            "helper_code": helper_code,
+            "placement_helper": placement,
+            "explanation": explanation,
+            "confidence": confidence
+        }
+
+    def _extract_fix_from_response(self, content: str) -> Optional[Dict[str, Any]]:
+        """
+        Robust extraction that handles various JSON response formats.
+        """
+        try:
+            logger.debug(f"Processing response: {len(content)} chars")
+
+            # Step 1: Try direct JSON parsing first (for well-formed responses)
+            cleaned_content = content.strip()
+            if cleaned_content.startswith('{') and cleaned_content.endswith('}'):
+                try:
+                    fix_data = json.loads(cleaned_content)
+                    logger.debug("✅ Direct JSON parsing successful")
+                    return self._extract_fields_from_parsed_json(fix_data)
+                except json.JSONDecodeError:
+                    pass  # Continue to cleaning steps
+
+
+            # Step 2: Last resort - regex extraction
+            logger.info("Using regex fallback extraction")
+            return self._extract_using_regex_fallback(content)
+
+        except Exception as e:
+            logger.error(f"Error in extraction: {e}", exc_info=True)
+            return None
+
 
     def _get_language_from_extension(self, extension: str) -> str:
         """Get programming language from file extension."""
@@ -1299,6 +1364,7 @@ class LLMFixer:
                 end = fix.last_line_number - 1
 
                 base_indent = self.calculate_base_indentation(lines, fix.line_number)
+
                 logger.debug(f"Line { fix.line_number}: Base indentation = '{base_indent}' (length: {len(base_indent)})")
 
                 # Apply indentation to the fixed code
@@ -1312,15 +1378,32 @@ class LLMFixer:
                 # Get the base indentation from the first line of the original block
                 original_line = lines[start]
 
+                if fix.helper_code != "" and fix.placement_helper == "SIBLING":
+                    # CRITICAL FIX: Update lines array directly, don't create separate variable
+                    lines = (
+                            lines[:fix.line_number - 1] +
+                            [indented_fixed_code,'\n']+
+                            [fix.helper_code, '\n']+
+                            lines[fix.last_line_number:]
+                    )
+                elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_BOTTOM":
+                    lines = (
+                            lines[:start] +
+                            [indented_fixed_code, '\n'] +
+                            lines[end + 1:, '\n']+
+                            [fix.helper_code, '\n']
+                    )
+                elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_TOP":
+                    lines = (
+                            lines[:start] +
+                            [fix.helper_code, '\n'] +
+                            lines[end + 1:, '\n'] +
 
 
-                # CRITICAL FIX: Update lines array directly, don't create separate variable
-                lines = (
-                        lines[:fix.line_number - 1] +
-                        [indented_fixed_code,'\n']+
-
-                        lines[fix.last_line_number:]
-                )
+                            [fix.helper_code, '\n']
+                    )
+                else:
+                    lines = lines[:start] + [indented_fixed_code] + lines[end + 1:]
 
                 applied_fixes.append(fix)
 
@@ -1445,7 +1528,7 @@ class LLMFixer:
         if file_extension != '.py':
             return True  # Only check Python files for now
 
-        import re
+        
 
         # Find all function and class definitions
         func_pattern = r'^\s*(async\s+)?def\s+(\w+)\s*\('
