@@ -168,6 +168,7 @@ class LLMFixer:
 
             # Generate fix using LLM
             fix_response = self._call_llm(issue, context, file_path.suffix, rule_info, error_message)
+
             if fix_response:
                 logger.info(f"Successfully generated fix for issue {issue.key} with confidence {fix_response['confidence']}")
 
@@ -627,6 +628,7 @@ class LLMFixer:
 
 
             )
+
             return  self._parse_togetherai_response(response)
         except Exception as e:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
@@ -704,118 +706,6 @@ class LLMFixer:
             'target': '15'
         }
 
-    def _get_complexity_example(self, language: str, is_init_method: bool) -> str:
-        """
-        Get language-specific complexity reduction example.
-
-        Args:
-            language: Programming language
-            is_init_method: Whether this is an init/constructor method
-
-        Returns:
-            Example code snippet
-        """
-        if language.lower() == 'python':
-            if is_init_method:
-                return '''
-        # BEFORE (High Complexity):
-        def __init__(self, config):
-            self.config = config
-            if config.get('validate', True):
-                if config.get('strict_mode'):
-                    if not self._check_required_fields(config):
-                        raise ValueError("Missing required fields")
-                    if not self._validate_types(config):
-                        raise TypeError("Invalid types")
-            self.data = config.get('data', {})
-
-        # AFTER (Reduced Complexity):
-        def __init__(self, config):
-            self.config = config
-            self.data = config.get('data', {})
-            self._validate_config_if_needed(config)  # Extract complex logic
-
-        def _validate_config_if_needed(self, config):
-            if not config.get('validate', True):
-                return
-            if config.get('strict_mode'):
-                self._perform_strict_validation(config)
-                '''
-            else:
-                return '''
-        # BEFORE (High Complexity):
-        def process_data(self, items):
-            results = []
-            for item in items:
-                if item.is_valid():
-                    if item.needs_processing():
-                        if item.priority == 'high':
-                            results.append(self._process_high_priority(item))
-                        else:
-                            results.append(self._process_normal(item))
-            return results
-
-        # AFTER (Reduced Complexity):
-        def process_data(self, items):
-            results = []
-            for item in items:
-                if not self._should_process_item(item):
-                    continue
-                processed = self._process_item_by_priority(item)
-                results.append(processed)
-            return results
-                '''
-
-        elif language.lower() in ['java', 'javascript', 'typescript', 'csharp']:
-            if is_init_method:
-                return '''
-        // BEFORE (High Complexity):
-        constructor(config) {
-            this.config = config;
-            if (config.validate && config.strictMode) {
-                if (!this.checkRequired(config) || !this.validateTypes(config)) {
-                    throw new Error("Validation failed");
-                }
-            }
-            this.data = config.data || {};
-        }
-
-        // AFTER (Reduced Complexity):
-        constructor(config) {
-            this.config = config;
-            this.data = config.data || {};
-            this.validateConfigIfNeeded(config);  // Extract complex logic
-        }
-                '''
-            else:
-                return '''
-        // BEFORE (High Complexity):
-        processItems(items) {
-            const results = [];
-            for (const item of items) {
-                if (item.isValid()) {
-                    if (item.needsProcessing()) {
-                        if (item.priority === 'high') {
-                            results.push(this.processHighPriority(item));
-                        } else {
-                            results.push(this.processNormal(item));
-                        }
-                    }
-                }
-            }
-            return results;
-        }
-
-        // AFTER (Reduced Complexity):
-        processItems(items) {
-            return items
-                .filter(item => this.shouldProcessItem(item))
-                .map(item => this.processItemByPriority(item));
-        }
-                '''
-
-        return "Extract complex nested logic into focused helper methos"
-
     def _create_fix_prompt(self, issue: SonarIssue, context: Dict[str, Any], rule_info: Dict[str, Any], language: str,
                            error_message: str = "") -> str:
         """Create a concise, focused prompt for the LLM to generate a fix."""
@@ -850,7 +740,12 @@ class LLMFixer:
                 "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
                 "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
                 "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
-                "• NEVER put the same function definition in both sections."
+                "• NEVER put the same function definition in both sections.",
+                "• If the original function is a class method (uses `self` or `cls`), "
+                "then any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
+                "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
+                "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP."
+
             ])
             if self._is_init_method(code_chunk):
                 strategies.append("• Keep __init__ signature intact; extract validation logic to helpers.")
@@ -871,6 +766,7 @@ class LLMFixer:
             strategies.append("• CRITICAL: Put the code that USES the constant in FIXED_SELECTION.")
             strategies.append("• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP).")
             strategies.append("• Use the constant in [FIXED_SELECTION].")
+
 
         # Null Checks
         elif "null" in issue.rule.lower() or "nullable" in msg_lower:
@@ -940,6 +836,46 @@ class LLMFixer:
         {rule_info.get('how_to_fix', {}).get('steps', [])}
         {strategy_text}
         
+        
+                
+        ## PLACEMENT DECISION LOGIC
+        
+        **Follow this decision tree:**
+        
+        1. **Is the NEW_HELPER_CODE an import or constant?**
+           → YES: Use "GLOBAL_TOP"
+        
+        2. **Is the original code inside a class?**
+           → YES:
+                a. Does the helper function definition contain `self` or `cls`?
+                   → YES: Use "SIBLING"
+                   → NO: The helper is NOT a class method → Use "GLOBAL_BOTTOM"
+           → NO:
+                Continue below
+        
+        3. **Is the original code a module-level function?**
+           → YES: Is NEW_HELPER_CODE a function that logically relates?
+                   → YES: Use "SIBLING"
+                   → NO: Use "GLOBAL_BOTTOM"
+        
+        4. **When in doubt:** 
+           - Constants/imports → "GLOBAL_TOP"
+           - Class-related methods → "SIBLING"
+           - Standalone utilities → "GLOBAL_BOTTOM"
+           
+        # CRITICAL PYTHON SYNTAX RULES (EXTREMELY IMPORTANT)
+            
+            • ALL code you produce in FIXED_SELECTION and NEW_HELPER_CODE must be syntactically valid Python.
+            • NEVER produce broken or unterminated Python string literals.
+            • NEVER include unescaped internal quotes. Always escape internal " as \".
+            • ALWAYS generate clean indentation using the original code's indentation style.
+            • MULTILINE code MUST use \n inside JSON strings. Never use triple quotes (\"\"\" or ''').
+            • DO NOT wrap code inside markdown fences. No ```python, ```json, etc.
+            • DO NOT include stray commas, dangling backslashes, or partially escaped characters.
+            • If the original function is a class method (has `self` or `cls` in signature),
+            helper functions MUST also include the same parameter if placed as a SIBLING.
+            • Helper functions WITHOUT `self` or `cls` MUST NOT be placed as SIBLING.
+
         ### OUTPUT SCOPE
          - Return EXACTLY lines {context['start_line']}-{context['end_line']} (inclusive)
          - Include ALL lines from this range, even if unchanged
@@ -962,6 +898,8 @@ class LLMFixer:
         
         **PLACEMENT OPTIONS:** "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
         
+
+
         **EXAMPLE VALID RESPONSE:**
         {{"FIXED_SELECTION": "def example():\\n    \\"\\"\\"Documentation.\\"\\"\\"\\n    return True", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Added documentation", "CONFIDENCE": 0.9}}
         
@@ -1000,61 +938,68 @@ class LLMFixer:
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
         """Fallback extraction using regex for malformed JSON."""
-        logger.info("🔄 Using regex fallback extraction...")
+        logger.info(" Using regex fallback extraction...")
 
         try:
-            # Regex patterns for JSON-like structure
-            patterns = {
-                'FIXED_SELECTION': r'"FIXED_SELECTION":\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\':\s*\'((?:[^\'\\]|\\.)*)\'',
-                'NEW_HELPER_CODE': r'"NEW_HELPER_CODE":\s*"((?:[^"\\]|\\.)*)"|\'NEW_HELPER_CODE\':\s*\'((?:[^\'\\]|\\.)*)\'',
-                'PLACEMENT': r'"PLACEMENT":\s*"([^"]*)"|\'PLACEMENT\':\s*\'([^\']*)\' ',
-                'EXPLANATION': r'"EXPLANATION":\s*"((?:[^"\\]|\\.)*)"|\'EXPLANATION\':\s*\'((?:[^\'\\]|\\.)*)\'',
-                'CONFIDENCE': r'"CONFIDENCE":\s*([0-9]*\.?[0-9]+)'
-            }
-
-            results = {}
-
-            for key, pattern in patterns.items():
-                match = re.search(pattern, content, re.DOTALL)
-                if match:
-                    # Get the first non-None group
-                    value = match.group(1) or match.group(2) or ""
-
-                    # Unescape JSON strings
-                    if key != 'CONFIDENCE':
-                        value = value.replace('\\"', '"').replace('\\n', '\n').replace('\\t', '\t').replace('\\\\',
-                                                                                                            '\\')
-                        results[key] = value.strip()
-                    else:
-                        results[key] = float(value) if value else 0.5
-                else:
-                    # Provide defaults
-                    if key == 'CONFIDENCE':
-                        results[key] = 0.5
-                    elif key == 'PLACEMENT':
-                        results[key] = 'SIBLING'
-                    else:
-                        results[key] = ""
-
-            # Validate
-            if not results.get('FIXED_SELECTION'):
-                logger.error("❌ Regex fallback failed - no FIXED_SELECTION found")
-                return None
-
-            logger.info("✅ Regex fallback extraction successful")
-
-            return {
-                "fixed_code": results['FIXED_SELECTION'],
-                "helper_code": results['NEW_HELPER_CODE'],
-                "placement_helper": results['PLACEMENT'].upper(),
-                "explanation": results['EXPLANATION'] or "Code fix applied",
-                "confidence": max(0.0, min(1.0, results['CONFIDENCE']))
-            }
-
+            results = self._apply_regex_patterns(content)
+            return self._validate_results(results)
         except Exception as e:
             logger.error(f"Regex fallback failed: {e}")
             return None
 
+    def _apply_regex_patterns(self, content: str) -> Dict[str, Any]:
+        patterns = {
+            'FIXED_SELECTION': r'"FIXED_SELECTION"\s*:\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
+            'NEW_HELPER_CODE': r'"NEW_HELPER_CODE"\s*:\s*"((?:[^"\\]|\\.)*)"|\'NEW_HELPER_CODE\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
+            'PLACEMENT': r'"PLACEMENT"\s*:\s*"([^"]*)"|\'PLACEMENT\'\s*:\s*\'([^\']*)\'',
+            'EXPLANATION': r'"EXPLANATION"\s*:\s*"((?:[^"\\]|\\.)*)"|\'EXPLANATION\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
+            'CONFIDENCE': r'"CONFIDENCE"\s*:\s*([0-9]*\.?[0-9]+)'
+        }
+
+        results = {}
+
+        for key, pattern in patterns.items():
+            match = re.search(pattern, content, re.DOTALL)
+
+            if match:
+                # Pick group 1 or group 2 if present
+                value = match.group(1) or (match.group(2) if match.lastindex and match.lastindex >= 2 else "")
+
+                if key != 'CONFIDENCE':
+                    # Properly unescape JSON-style sequences
+                    value = (
+                        value
+                        .replace('\\"', '"')  # escaped quotes
+                        .replace('\\\\', '\\')  # escaped backslashes
+                    )
+                    results[key] = value.strip()
+                else:
+                    results[key] = float(value)
+            else:
+                # Default values when missing
+                if key == 'CONFIDENCE':
+                    results[key] = 0.5
+                elif key == 'PLACEMENT':
+                    results[key] = 'SIBLING'
+                else:
+                    results[key] = ""
+
+        return results
+
+    def _validate_results(self, results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not results.get('FIXED_SELECTION'):
+            logger.error(" No FIXED_SELECTION found")
+            return None
+
+        logger.info(" Regex fallback extraction successful")
+
+        return {
+            "fixed_code": results['FIXED_SELECTION'],
+            "helper_code": results['NEW_HELPER_CODE'],
+            "placement_helper": results['PLACEMENT'].upper(),
+            "explanation": results['EXPLANATION'] or "Code fix applied",
+            "confidence": max(0.0, min(1.0, results['CONFIDENCE']))
+        }
 
     def _extract_fields_from_parsed_json(self, fix_data: dict) -> Optional[Dict[str, Any]]:
         """Extract and validate fields from parsed JSON."""
@@ -1380,13 +1325,16 @@ class LLMFixer:
 
                 if fix.helper_code != "" and fix.placement_helper == "SIBLING":
                     # CRITICAL FIX: Update lines array directly, don't create separate variable
+                    indented_helper_code = self.apply_indentation_to_fix(fix.helper_code, base_indent)
+                    print("should have same indent as original block")
                     lines = (
                             lines[:fix.line_number - 1] +
                             [indented_fixed_code,'\n']+
-                            [fix.helper_code, '\n']+
+                            [indented_helper_code, '\n']+
                             lines[fix.last_line_number:]
                     )
                 elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_BOTTOM":
+                    print("should be in bottom")
                     lines = (
                             lines[:start] +
                             [indented_fixed_code, '\n'] +
@@ -1394,9 +1342,10 @@ class LLMFixer:
                             [fix.helper_code, '\n']
                     )
                 elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_TOP":
+                    print("should be checked")
                     lines = (
                             lines[:start] +
-                            [fix.helper_code, '\n'] +
+                            [indented_fixed_code, '\n'] +
                             lines[end + 1:, '\n'] +
 
 
