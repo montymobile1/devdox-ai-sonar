@@ -846,7 +846,6 @@ class LLMFixer:
             return None
 
 
-
     def _apply_regex_patterns(self, content: str) -> Dict[str, Any]:
         patterns = {
             'FIXED_SELECTION': r'"FIXED_SELECTION"\s*:\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
@@ -860,31 +859,32 @@ class LLMFixer:
 
         for key, pattern in patterns.items():
             match = re.search(pattern, content, re.DOTALL)
-
-            if match:
-                # Pick group 1 or group 2 if present
-                value = match.group(1) or (match.group(2) if match.lastindex and match.lastindex >= 2 else "")
-
-                if key != 'CONFIDENCE':
-                    # Properly unescape JSON-style sequences
-                    value = (
-                        value
-                        .replace('\\"', '"')  # escaped quotes
-                        .replace('\\\\', '\\')  # escaped backslashes
-                    )
-                    results[key] = value.strip()
-                else:
-                    results[key] = float(value)
-            else:
-                # Default values when missing
-                if key == 'CONFIDENCE':
-                    results[key] = 0.5
-                elif key == 'PLACEMENT':
-                    results[key] = 'SIBLING'
-                else:
-                    results[key] = ""
-
+            value = self._get_match_value(match)
+            results[key] = self._process_match_value(key, value)
         return results
+
+    def _get_match_value(self, match):
+        if match:
+            return match.group(1) or (match.group(2) if match.lastindex and match.lastindex >= 2 else "")
+        return None
+
+    def _process_match_value(self, key, value):
+        if key != 'CONFIDENCE':
+            value = (
+                value
+                .replace('\"', '"')  # escaped quotes
+                .replace('\\\\', '\\')  # escaped backslashes
+            )
+            return value.strip()
+        elif value is not None:
+            return float(value)
+        if key == 'CONFIDENCE':
+            return 0.5
+        elif key == 'PLACEMENT':
+            return 'SIBLING'
+        else:
+            return ""
+
 
     def _validate_results(self, results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not results.get('FIXED_SELECTION'):
