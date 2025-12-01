@@ -85,58 +85,52 @@ class FixValidator:
     """
 
     def __init__(
-            self,
-            provider: str = "openai",
-            model: Optional[str] = None,
-            api_key: Optional[str] = None,
-            min_confidence_threshold: float = 0.7
-    ):
-        """
-        Initialize the fix validator.
+                self,
+                provider: str = "openai",
+                model: Optional[str] = None,
+                api_key: Optional[str] = None,
+                min_confidence_threshold: float = 0.7
+        ):
+            self.provider = provider.lower()
+            self.min_confidence_threshold = min_confidence_threshold
+            self._setup_provider(model, api_key)
 
-        Args:
-            provider: LLM provider ("openai" or "gemini")
-            model: Model name (defaults to provider's default)
-            api_key: API key (uses environment variables if not provided)
-            min_confidence_threshold: Minimum confidence to approve a fix
-        """
-        self.provider = provider.lower()
-        self.min_confidence_threshold = min_confidence_threshold
+    def _setup_provider(self, model, api_key):
         if self.provider == "togetherai":
-            if not HAS_TOGETHER:
-                raise ImportError("Together AI library not installed. Install with: pip install together")
-            self.model = model or "gpt-4o"
-            self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
-
-            if not self.api_key:
-                raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
-
-            self.client = Together(api_key=self.api_key)
-
+            self._setup_together_ai(model, api_key)
         elif self.provider == "openai":
-            if not HAS_OPENAI:
-                raise ImportError("OpenAI library not installed. Install with: pip install openai")
-
-            self.model = model or "gpt-4o"
-            self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not self.api_key:
-                raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
-
-            self.client = openai.OpenAI(api_key=self.api_key)
-
+            self._setup_open_ai(model, api_key)
         elif self.provider == "gemini":
-            if not HAS_GEMINI:
-                raise ImportError("Gemini library not installed. Install with: pip install google-genai")
-
-            self.model = model or "claude-3-5-sonnet-20241022"
-            self.api_key = api_key
-            if not self.api_key:
-                raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
-
-            self.client = genai.Client(api_key=self.api_key)
-
+            self._setup_gemini(model, api_key)
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini' or 'togetherai'.")
+            raise ValueError(f"Unsupported provider: {self.provider}. Use 'openai' or 'gemini' or 'togetherai'.")
+
+    def _setup_together_ai(self, model, api_key):
+        if not HAS_TOGETHER:
+            raise ImportError("Together AI library not installed. Install with: pip install together")
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        if not self.api_key:
+            raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+        self.client = Together(api_key=self.api_key)
+
+    def _setup_open_ai(self, model, api_key):
+        if not HAS_OPENAI:
+            raise ImportError("OpenAI library not installed. Install with: pip install openai")
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
+        self.client = openai.OpenAI(api_key=self.api_key)
+
+    def _setup_gemini(self, model, api_key):
+        if not HAS_GEMINI:
+            raise ImportError("Gemini library not installed. Install with: pip install google-genai")
+        self.model = model or "claude-3-5-sonnet-20241022"
+        self.api_key = api_key
+        if not self.api_key:
+            raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
+        self.client = genai.Client(api_key=self.api_key)
 
     def validate_fix(
             self,
