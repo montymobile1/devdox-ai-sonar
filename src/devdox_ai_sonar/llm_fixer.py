@@ -180,7 +180,6 @@ class LLMFixer:
 
             # Generate fix using LLM
             fix_response = self._call_llm(issue, context, file_path.suffix, rule_info, error_message)
-
             if fix_response:
                 logger.info(f"Successfully generated fix for issue {issue.key} with confidence {fix_response['confidence']}")
 
@@ -827,7 +826,9 @@ class LLMFixer:
         """Parse Together API response."""
         try:
             content =  response.choices[0].message.content
-
+            print("content ")
+            print(content)
+            print("end of content")
             return self._extract_fix_from_response(content)
         except Exception as e:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
@@ -843,6 +844,8 @@ class LLMFixer:
         except Exception as e:
             logger.error(f"Regex fallback failed: {e}")
             return None
+
+
 
     def _apply_regex_patterns(self, content: str) -> Dict[str, Any]:
         patterns = {
@@ -908,6 +911,8 @@ class LLMFixer:
         explanation = str(fix_data.get("EXPLANATION", "")).strip()
         confidence = fix_data.get("CONFIDENCE", 0.5)
 
+
+
         # Convert confidence to float
         try:
             confidence = float(confidence)
@@ -947,6 +952,14 @@ class LLMFixer:
 
             # Step 1: Try direct JSON parsing first (for well-formed responses)
             cleaned_content = content.strip()
+            cleaned_content = cleaned_content.split('{', 1)[1]
+            cleaned_content = '{' + cleaned_content
+
+
+            # 2. Trim after last }
+            end = cleaned_content.rfind('}')
+            cleaned_content = cleaned_content[:end + 1] if end != -1 else cleaned_content
+
             if cleaned_content.startswith('{') and cleaned_content.endswith('}'):
                 try:
                     fix_data = json.loads(cleaned_content)
