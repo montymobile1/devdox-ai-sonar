@@ -47,7 +47,8 @@ dependencies = [
     "gitpython==3.1.0",
     "pathlib2==2.3.0",
     "langchain-together==0.3.0",
-     "together==1.5.17",
+    "together==1.5.17",
+    "Jinja2==3.1.6"
 ]
 
 [project.optional-dependencies]
@@ -78,6 +79,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+devdox_ai_sonar = ["prompts/*.j2","*.j2"]
 
 [tool.black]
 line-length = 88

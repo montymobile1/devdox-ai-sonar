@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import autopep8
+from jinja2 import Environment, FileSystemLoader
 from pathlib import Path
 import json
 from typing import List, Optional, Dict, Any, Union, Tuple
@@ -77,9 +78,20 @@ class LLMFixer:
         self.provider = provider.lower()
         self.context_lines = context_lines
         self.model = model
-
+        self.prompt_dir = Path(__file__).parent / "prompts"
         self._validate_and_configure_provider(provider, model, api_key)
+        self._setup_jinja_env()
 
+
+    def _setup_jinja_env(self) -> None:
+        """Setup Jinja2 environment with custom filters"""
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(str(self.prompt_dir)),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            autoescape=False,
+        )
 
     def _validate_and_configure_provider(self, provider: str, model: Optional[str], api_key: Optional[str]):
         if provider == "togetherai":
@@ -776,135 +788,20 @@ class LLMFixer:
         # We join strategies with newlines for a clean list
         strategy_text = "\n".join(strategies)
 
-        prompt = f"""
-        Fix {language} code for SonarQube rule: "{issue.message}
-         **Rule:** {issue.rule} | **Severity:** {issue.severity} | **Type:** {issue.type}
-         **Root Cause:** { rule_info.get('root_cause', 'Code quality issue detected')}
+        template = self.jinja_env.get_template("fix_issues.j2")
 
-        ## CODE CONTEXT (Lines {context['start_line']}-{context['end_line']})
-        ```{language}
-        {code_chunk}
-        {f"## ERROR CONTEXT: {error_message}" if error_message else ""}
-        
-        ## CRITICAL SEPARATION RULES
-        
-        🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
-        
-        1. **FIXED_SELECTION** = The modified version of the original lines
-           - Contains CALLS to new functions/constants
-           - Contains the actual logic changes
-           - Should NOT contain new function/constant DEFINITIONS
-        
-        2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
-           - Contains DEFINITIONS of new functions/constants
-           - Should NOT repeat any code from FIXED_SELECTION
-           - Should NOT contain the original problematic code
-        
-        ## EXAMPLES OF CORRECT SEPARATION:
-        
-        🚨 **FIXED_SELECTION MUST BE A SINGLE COMPLETE STRING**
-
-        ❌ **DO NOT DO THIS (Breaking into parts):**
-        ```json
-        {{
-          "FIXED_SELECTION": "def function_name(self, args):",
-          "code": "function_name", 
-          "docstring": "doc here",
-          "logic": "logic here"
-        }}
-        ```
-        
-        ### ❌ WRONG (Duplication):
-        ```
-        FIXED_SELECTION: "def validate():\\n    if value is None:\\n        return False\\n    return True"
-        NEW_HELPER_CODE: "def validate():\\n    if value is None:\\n        return False\\n    return True"
-        ```
-        
-        ### ✅ CORRECT (Cognitive Complexity):
-        ```
-        FIXED_SELECTION: "def process_data(data):\\n    if not is_valid_data(data):\\n        return None\\n    return transform_data(data)"
-        NEW_HELPER_CODE: "def is_valid_data(data):\\n    return data is not None and len(data) > 0\\n\\ndef transform_data(data):\\n    return data.upper()"
-        ```
-        
-        ### ✅ CORRECT (Literal Duplication):
-        ```
-        FIXED_SELECTION: "def show_error():\\n    print(ERROR_COLOR)\\n\\ndef highlight_text():\\n    return ERROR_COLOR"
-        NEW_HELPER_CODE: "ERROR_COLOR = \\"red\\""
-        ```
-
-        INSTRUCTIONS
-        {rule_info.get('how_to_fix', {}).get('steps', [])}
-        {strategy_text}
-        
-        
-                
-        ## PLACEMENT DECISION LOGIC
-        
-        **Follow this decision tree:**
-        
-        1. **Is the NEW_HELPER_CODE an import or constant?**
-           → YES: Use "GLOBAL_TOP"
-        
-        2. **Is the original code inside a class?**
-           → YES:
-                a. Does the helper function definition contain `self` or `cls`?
-                   → YES: Use "SIBLING"
-                   → NO: The helper is NOT a class method → Use "GLOBAL_BOTTOM"
-           → NO:
-                Continue below
-        
-        3. **Is the original code a module-level function?**
-           → YES: Is NEW_HELPER_CODE a function that logically relates?
-                   → YES: Use "SIBLING"
-                   → NO: Use "GLOBAL_BOTTOM"
-        
-        4. **When in doubt:** 
-           - Constants/imports → "GLOBAL_TOP"
-           - Class-related methods → "SIBLING"
-           - Standalone utilities → "GLOBAL_BOTTOM"
-           
-        # CRITICAL PYTHON SYNTAX RULES (EXTREMELY IMPORTANT)
-            
-            • ALL code you produce in FIXED_SELECTION and NEW_HELPER_CODE must be syntactically valid Python.
-            • NEVER produce broken or unterminated Python string literals.
-            • NEVER include unescaped internal quotes. Always escape internal " as \".
-            • ALWAYS generate clean indentation using the original code's indentation style.
-            • MULTILINE code MUST use \n inside JSON strings. Never use triple quotes (\"\"\" or ''').
-            • DO NOT wrap code inside markdown fences. No ```python, ```json, etc.
-            • DO NOT include stray commas, dangling backslashes, or partially escaped characters.
-            • If the original function is a class method (has `self` or `cls` in signature),
-            helper functions MUST also include the same parameter if placed as a SIBLING.
-            • Helper functions WITHOUT `self` or `cls` MUST NOT be placed as SIBLING.
-
-        ### OUTPUT SCOPE
-         - Return EXACTLY lines {context['start_line']}-{context['end_line']} (inclusive)
-         - Include ALL lines from this range, even if unchanged
-         - NO additional imports, classes, or function headers outside this range
-    
-       Return EXACTLY lines {context['start_line']}-{context['end_line']} with minimal changes.
-        
-        ## CRITICAL JSON FORMAT REQUIREMENTS
-        
-        1. Your ENTIRE response must be a single JSON object
-        2. Do NOT use markdown code blocks (no ``` json ```)
-        3. Do NOT use triple quotes (\"\"\") for multi-line strings
-        4. Use \\n for line breaks in strings
-        5. Escape quotes properly with \"
-        6. Do NOT include any text before or after the JSON
-        
-        ## JSON STRUCTURE REQUIRED
-        
-        {{"FIXED_SELECTION": "Code with \\n for newlines and \\" for quotes", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Brief explanation", "CONFIDENCE": 0.8}}
-        
-        **PLACEMENT OPTIONS:** "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
-        
-
-
-        **EXAMPLE VALID RESPONSE:**
-        {{"FIXED_SELECTION": "def example():\\n    \\"\\"\\"Documentation.\\"\\"\\"\\n    return True", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Added documentation", "CONFIDENCE": 0.9}}
-        
-        YOUR ENTIRE RESPONSE MUST BE VALID JSON THAT PASSES json.loads()
-        """
+        # Prepare context for template
+        context = {
+            "language": language,
+            "issue": issue,
+            "rule_info": rule_info,
+            "context":context,
+            "code_chunk":code_chunk,
+            "error_message":error_message,
+            "strategy_text":strategy_text
+        }
+        # Render enhanced content
+        prompt = template.render(**context)
         return prompt.strip()
 
     def _parse_openai_response(self, response) -> Optional[Dict[str, Any]]:
