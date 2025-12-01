@@ -80,6 +80,7 @@ class FixSuggestion(BaseModel):
     llm_model: str = Field(..., description="LLM model used for fixing")
     rule_description: Optional[str] = Field(None, description="SonarCloud rule description")
     file_path: Optional[str] = Field(None, description="Path to the file being fixed")
+    sonar_line_number: Optional[int] = Field(None, description="SonarCloud line number of the issue")
     line_number: Optional[int] = Field(None, description="Line number of the issue")
     last_line_number: Optional[int] = Field(None, description="Last line number of the issue")
 

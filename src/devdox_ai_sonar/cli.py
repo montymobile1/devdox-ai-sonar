@@ -105,17 +105,20 @@ def select_fixes_interactively(fixes: List):
     table = Table(show_header=True, header_style=BOLD_MAGENTA)
     table.add_column("Number", width=10)
     table.add_column("Issue", width=20)
-    table.add_column("Original", width=50)
+    table.add_column("File and line", width=50)
     table.add_column("Fixed", width=100,overflow="crop")
     table.add_column("Confidence", width=15)
 
     for idx, fix in enumerate(fixes, start=1):
         confidence_str = f"{fix.confidence:.2f}"
+        file_path = os.path.basename(fix.file_path) or "N/A"
+        line_info = f"{file_path}:{fix.sonar_line_number}" if fix.sonar_line_number else file_path
+
         table.add_row(
             str(idx),
             fix.issue_key[-15:],  # Show last 20 chars of issue key
-            fix.original_code[:47] + "..." if len(fix.original_code) > 50 else fix.original_code,
-            fix.fixed_code[:97] + "..." if len(fix.fixed_code) > 100 else fix.fixed_code,
+            line_info,
+            fix.explanation,
             confidence_str
         )
 

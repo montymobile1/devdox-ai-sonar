@@ -1,4 +1,6 @@
-Fix {{ language }} code for SonarQube rule: "{{ issue.message }}"
+🚨 **CRITICAL: RETURN ONLY JSON - NO OTHER TEXT** 🚨
+
+As senior software engenieer specialized in  {{ language }} fix  code for SonarQube rule: "{{ issue.message }}"
 
 **Rule:** {{ issue.rule }} | **Severity:** {{ issue.severity }} | **Type:** {{ issue.type }}
 **Root Cause:** {{ rule_info.get('root_cause', 'Code quality issue detected') }}
@@ -7,6 +9,7 @@ Fix {{ language }} code for SonarQube rule: "{{ issue.message }}"
 ```{{ language }}
 {{ code_chunk }}
 ```
+**Problem line :** {{ context["problem_line"] }}
 {% if error_message %}## ERROR CONTEXT: {{ error_message }}{% endif %}
 
 ## CRITICAL SEPARATION RULES
@@ -49,15 +52,34 @@ NEW_HELPER_CODE: "def validate():\n    if value is None:\n        return False\n
 ```
 
 ### ✅ CORRECT (Cognitive Complexity):
+
 ```
-FIXED_SELECTION: "def process_data(data):\n    if not is_valid_data(data):\n        return None\n    return transform_data(data)"
-NEW_HELPER_CODE: "def is_valid_data(data):\n    return data is not None and len(data) > 0\n\ndef transform_data(data):\n    return data.upper()"
+FIXED_SELECTION: "def process_data(self, data):\n    if not is_valid_input(data):\n        return None\n    return transform_data(data)"
+
+NEW_HELPER_CODE: "def is_valid_input(data):\n    return data is not None and len(data) > 0\n\ndef transform_data(data):\n    return data.upper()"
+
+PLACEMENT: "SIBLING"
+
+```
+
+
+### ✅ CORRECT (True Class Method - Needs Class State):
+
+```
+
+FIXED_SELECTION: "def process_data(self, data):\n    if not self._validate_with_config(data):\n        return None\n    return data"
+
+NEW_HELPER_CODE: "def _validate_with_config(self, data):\n    return len(data) <= self.max_length"
+
+PLACEMENT: "SIBLING"
+
 ```
 
 ### ✅ CORRECT (Literal Duplication):
 ```
 FIXED_SELECTION: "def show_error():\n    print(ERROR_COLOR)\n\ndef highlight_text():\n    return ERROR_COLOR"
 NEW_HELPER_CODE: "ERROR_COLOR = \\"red\\""
+PLACEMENT: "GLOBAL_TOP"
 ```
 
 ## INSTRUCTIONS
@@ -115,62 +137,192 @@ def validate_input(data):
    → YES: Use "GLOBAL_TOP"
 
 2. **Is the original code inside a class?**
-   → YES:
-   a. Does the helper function definition contain `self` or `cls`?
-      → YES: Use "SIBLING"
-      → NO: The helper is NOT a class method → Use "GLOBAL_BOTTOM"
-   → NO: Continue below
+  → YES: Continue to step 2a
+   → NO: Go to step 3
+
+2a. **Does the helper function NEED class state or methods?**
+    Check if helper needs:
+    - Access to self.attributes (self.config, self.state)
+    - Calls to self.other_methods()
+    - Access to class variables
+    → YES: Helper is a TRUE class method → Use "SIBLING" + include self
+    → NO: Helper is a utility function → Use "SIBLING" + NO self
 
 3. **Is the original code a module-level function?**
    → YES: Is NEW_HELPER_CODE a function that logically relates?
-   → YES: Use "SIBLING"
+   → YES: Use "SIBLING" + NO self (module level)
    → NO: Use "GLOBAL_BOTTOM"
 
 4. **When in doubt:**
    - Constants/imports → "GLOBAL_TOP"
-   - Class-related methods → "SIBLING"
+    - True class methods (need self) → "SIBLING" + self
+   - Utility functions → "SIBLING" + NO self
    - Standalone utilities → "GLOBAL_BOTTOM"
 
-## CRITICAL PYTHON SYNTAX RULES (EXTREMELY IMPORTANT)
+## CRITICAL SELF PARAMETER RULES
 
-• ALL code you produce in FIXED_SELECTION and NEW_HELPER_CODE must be syntactically valid Python.
-• NEVER produce broken or unterminated Python string literals.
-• NEVER include unescaped internal quotes. Always escape internal " as \".
-• ALWAYS generate clean indentation using the original code's indentation style.
-• MULTILINE code MUST use \n inside JSON strings. Never use triple quotes.
-• DO NOT wrap code inside markdown fences. No ```python, ```json, etc.
-• DO NOT include stray commas, dangling backslashes, or partially escaped characters.
-• If the original function is a class method (has `self` or `cls` in signature),
-  helper functions MUST also include the same parameter if placed as a SIBLING.
-• Helper functions WITHOUT `self` or `cls` MUST NOT be placed as SIBLING.
 
-### OUTPUT SCOPE
-- Return EXACTLY lines {{ context['start_line'] }}-{{ context['end_line'] }} (inclusive)
-- Include ALL lines from this range, even if unchanged
-- NO additional imports, classes, or function headers outside this range
 
-Return EXACTLY lines {{ context['start_line'] }}-{{ context['end_line'] }} with minimal changes.
+### ✅ **Include self when helper function:**
 
-## CRITICAL JSON FORMAT REQUIREMENTS
+- Accesses class attributes (self.config, self.data)
 
-1. Your ENTIRE response must be a single JSON object
-2. Do NOT use markdown code blocks (no ``` json ```)
-3. Do NOT use triple quotes for multi-line strings
-4. Use \n for line breaks in strings
-5. Escape quotes properly with \"
-6. Do NOT include any text before or after the JSON
+- Calls other class methods (self.validate(), self.process())
+
+- Needs class state or instance variables
+
+- Is genuinely a class method
+
+
+
+### ❌ **DON'T include self when helper function:**
+
+- Is pure utility (validation, transformation, calculation)
+
+- Doesn't access class state
+
+- Could work as standalone function
+
+- Only processes input parameters
+
+
+
+### **CRITICAL EXAMPLES:**
+
+
+
+#### ✅ **Include self (True class method):**
+
+```
+
+Original: def process(self, data):
+
+          if len(data) > self.max_size:
+
+Fixed:    def process(self, data):
+
+          if self._exceeds_limit(data):
+
+Helper:   def _exceeds_limit(self, data):
+
+          return len(data) > self.max_size
+
+Reason:   Helper needs self.max_size
+
+```
+
+
+
+#### ❌ **Don't include self (Utility function):**
+
+```
+
+Original: def process(self, data):
+
+          if data and len(data) > 0 and data.strip():
+
+Fixed:    def process(self, data):
+
+          if is_valid_data(data):
+
+Helper:   def is_valid_data(data):
+
+          return data and len(data) > 0 and data.strip()
+
+Reason:   Helper doesn't need class state
+
+```
+
+
+
+## CODE FORMATTING REQUIREMENTS
+
+
+
+• Use proper indentation (4 spaces for Python)
+
+• Each logical line should be on a separate \n
+
+• Functions should be well-formed and complete
+
+• Return EXACTLY lines {{ context['start_line'] }}-{{ context['end_line'] }} in FIXED_SELECTION
+
+
+
+## CRITICAL PYTHON SYNTAX RULES
+
+
+
+• ALL code must be syntactically valid Python
+
+• NEVER include unescaped internal quotes. Always escape internal " as \"
+
+• MULTILINE code MUST use \n inside JSON strings
+
+• DO NOT wrap code inside markdown fences
+
+• Helper function parameters must match their usage in FIXED_SELECTION
+
+
+
+### **PARAMETER MATCHING RULE:**
+
+If FIXED_SELECTION calls `is_valid(data)` → Helper must be `def is_valid(data):`
+
+If FIXED_SELECTION calls `self._validate(data)` → Helper must be `def _validate(self, data):`
+
+
+
+## 🚨 CRITICAL: JSON-ONLY RESPONSE REQUIRED 🚨
+
+
+
+**ABSOLUTELY NO TEXT OUTSIDE JSON**
+
+**ABSOLUTELY NO EXPLANATIONS BEFORE JSON**
+
+**ABSOLUTELY NO COMMENTS AFTER JSON**
+
+
+
+❌ **FORBIDDEN:**
+
+```
+
+Here's the solution:
+
+{"FIXED_SELECTION": "code"}
+
+```
+
+
+
+✅ **REQUIRED (YOUR ENTIRE RESPONSE):**
+
+```
+
+{"FIXED_SELECTION": "code", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "explanation", "CONFIDENCE": 0.8}
+
+```
+
+
 
 ## JSON STRUCTURE REQUIRED
 
+
+
 {% raw %}
-{"FIXED_SELECTION": "Code with \n for newlines and \\" for quotes", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Brief explanation", "CONFIDENCE": 0.8}
+
+{"FIXED_SELECTION": "Complete code with \\n for newlines", "NEW_HELPER_CODE": "Helper code or empty", "PLACEMENT": "SIBLING", "EXPLANATION": "Brief explanation", "CONFIDENCE": 0.8}
+
 {% endraw %}
+
 
 **PLACEMENT OPTIONS:** "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
 
-**EXAMPLE VALID RESPONSE:**
-{% raw %}
-{"FIXED_SELECTION": "def example():\n    \\"\\"\\"Documentation.\\"\\"\\"\n    return True", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "Added documentation", "CONFIDENCE": 0.9}
-{% endraw %}
 
-YOUR ENTIRE RESPONSE MUST BE VALID JSON THAT PASSES json.loads()
+🚨 **START YOUR RESPONSE WITH { AND END WITH } - NOTHING ELSE** 🚨
+
+🚨 **PARAMETER MATCHING: Helper parameters must match how they're called** 🚨
+
+🚨 **NO TEXT OUTSIDE JSON WILL BREAK THE EXTRACTION SYSTEM** 🚨

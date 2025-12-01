@@ -138,6 +138,7 @@ class LLMFixer:
             raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
 
         self.client = genai.Client(api_key=self.api_key)
+
     def generate_fix(self, issue: SonarIssue, project_path: Path,rule_info: Dict[str, Any],modified_content: str="", error_message: str="") -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for a SonarCloud issue.
@@ -194,8 +195,9 @@ class LLMFixer:
                     llm_model=self.model,
                     rule_description=fix_response.get("rule_description"),
                     file_path=str(file_path.relative_to(project_path)),  # Store relative path
-                    line_number=issue.first_line,
-                    last_line_number=issue.last_line
+                    line_number=context.get("start_line"),
+                    sonar_line_number=issue.first_line,
+                    last_line_number=context.get("end_line")
                 )
 
         except Exception as e:
@@ -303,7 +305,6 @@ class LLMFixer:
             return self._get_empty_context(first_line_number)
 
         problem_line = lines[first_line_idx].rstrip()
-
         # Check if first line contains function/method definition
         if self._is_function_definition(problem_line):
             function_context = self._extract_complete_function(lines, first_line_idx)
@@ -1150,7 +1151,11 @@ class LLMFixer:
         indented_lines = []
         for line in lines:
             if line.strip():  # Non-empty line
-                indented_lines.append(base_indent + line)
+                if line.startswith(base_indent):
+                    indented_lines.append(line)
+                else:
+                    # Only add base indentation if the line doesn't already have it
+                    indented_lines.append(base_indent + line)
             else:  # Empty line
                 indented_lines.append(line)
 
@@ -1230,13 +1235,11 @@ class LLMFixer:
                     skipped_fixes.append(fix)
                     continue
 
-                # Get the base indentation from the first line of the original block
-                original_line = lines[start]
+
 
                 if fix.helper_code != "" and fix.placement_helper == "SIBLING":
                     # CRITICAL FIX: Update lines array directly, don't create separate variable
                     indented_helper_code = self.apply_indentation_to_fix(fix.helper_code, base_indent)
-                    print("should have same indent as original block")
                     lines = (
                             lines[:fix.line_number - 1] +
                             [indented_fixed_code,'\n']+
@@ -1244,7 +1247,6 @@ class LLMFixer:
                             lines[fix.last_line_number:]
                     )
                 elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_BOTTOM":
-                    print("should be in bottom")
                     lines = (
                             lines[:start] +
                             [indented_fixed_code, '\n'] +
