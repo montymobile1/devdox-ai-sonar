@@ -1775,7 +1775,7 @@ class LLMFixer:
                     else:
                         # No validator available, mark all as failed
                         result.failed_fixes.extend([
-                            {"fix": fix, "error": f"Direct application failed and no validator available"}
+                            {"fix": fix, "error": "Direct application failed and no validator available"}
                             for fix in file_fixes
                         ])
                         logger.error(f"✗ Failed to apply fixes to {file_path} (no validator fallback)")
@@ -1788,3 +1788,4 @@ class LLMFixer:
                 logger.error(f"✗ Error processing file {file_path_str}: {e}", exc_info=True)
 
         return result
+
