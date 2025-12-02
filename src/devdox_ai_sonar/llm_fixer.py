@@ -1372,42 +1372,48 @@ class LLMFixer:
                 return 0
 
     def _process_import_line(self, i: int, line: str, state: dict) -> tuple:
-            stripped = line.strip()
-            # Shebang / encoding lines
-            if i < 3 and stripped.startswith('#') and ('coding' in stripped or 'encoding' in stripped):
-                state["last_shebang_encoding_line"] = i
-                return state, False
-            if i == 0 and stripped.startswith('#!'):
-                state["last_shebang_encoding_line"] = i
-                return state, False
+        stripped = line.strip()
+        # Shebang / encoding lines
+        if self._is_shebang_or_encoding(i, stripped, state):
+            return state, False
+        # Docstring handling
+        if self._handle_docstring(i, stripped, state):
+            return state, False
+        # Import statements
+        if stripped.startswith(('import ', 'from ')):
+            state["last_import_line"] = i
+            return state, False
+        # Actual code (non‑comment, non‑empty)
+        if stripped and not stripped.startswith('#'):
+            return state, True
+        return state, False
 
-            # Docstring handling
-            if not state["in_docstring"]:
-                if stripped.startswith('"""') or stripped.startswith("'''"):
-                    state["docstring_quote"] = stripped[:3]
-                    state["in_docstring"] = True
-                    if stripped.count(state["docstring_quote"]) >= 2:  # single line docstring
-                        state["in_docstring"] = False
-                        state["last_docstring_line"] = i
-                    return state, False
-            else:
-                if state["docstring_quote"] in stripped:
+    def _is_shebang_or_encoding(self, i: int, stripped: str, state: dict) -> bool:
+        if i < 3 and stripped.startswith('#') and ('coding' in stripped or 'encoding' in stripped):
+            state["last_shebang_encoding_line"] = i
+            return True
+        if i == 0 and stripped.startswith('#!'):
+            state["last_shebang_encoding_line"] = i
+            return True
+        return False
+
+    def _handle_docstring(self, i: int, stripped: str, state: dict) -> bool:
+        if not state.get("in_docstring"):
+            if stripped.startswith('"""') or stripped.startswith("'''"):
+                state["docstring_quote"] = stripped[:3]
+                state["in_docstring"] = True
+                if stripped.count(state["docstring_quote"]) >= 2:
                     state["in_docstring"] = False
                     state["last_docstring_line"] = i
-                    return state, False
-                # still inside multi‑line docstring
-                return state, False
-
-            # Import statements
-            if stripped.startswith(('import ', 'from ')):
-                state["last_import_line"] = i
-                return state, False
-
-            # Actual code (non‑comment, non‑empty)
-            if stripped and not stripped.startswith('#'):
-                return state, True
-
-            return state, False
+                return True
+        else:
+            if state["docstring_quote"] in stripped:
+                state["in_docstring"] = False
+                state["last_docstring_line"] = i
+                return True
+            # still inside multi‑line docstring
+            return True
+        return False
 
     def _find_global_top_insertion_point(self, lines: List[str]) -> int:
         """
