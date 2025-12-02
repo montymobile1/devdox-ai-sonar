@@ -171,7 +171,6 @@ def select_fixes_interactively(fixes: List):
 @click.pass_context
 def fix(ctx: click.Context, **options) -> None:
     """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
-    # Extract options passed via Click
     token = options.get('token')
     organization = options.get('organization')
     project = options.get('project')
@@ -191,23 +190,10 @@ def fix(ctx: click.Context, **options) -> None:
     VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
     VALID_SEVERETIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
     try:
-        severity_list=None
-        types_list=None
-        if severity and severity!="":
-            severity_list = [t.strip() for t in severity.split(",")]
-            unknown = set(severity_list) - VALID_SEVERETIES
-            if unknown:
-                raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
+        severity_list, types_list = _parse_filters(severity, types, VALID_TYPES, VALID_SEVERETIES)
 
-        if types and types!="":
-            types_list = [t.strip() for t in types.split(",")]
-            unknown = set(types_list) - VALID_TYPES
-            if unknown:
-                raise click.BadParameter(f"Invalid issue types: {', '.join(unknown)}")
-        # Initialize analyzer
         analyzer = SonarCloudAnalyzer(token, organization)
 
-        # Initialize LLM fixer
         fixer = LLMFixer(
             provider=provider,
             model=model,
@@ -217,20 +203,15 @@ def fix(ctx: click.Context, **options) -> None:
         console.print(f"[blue]Analyzing project: {project}[/blue]")
         console.print(f"[blue]Local path: {project_path}[/blue]")
 
-        # Get fixable issues
-        with Progress() as progress:
-            task = progress.add_task("Fetching fixable issues...", total=None)
-
-            fixable_issues = analyzer.get_fixable_issues(
-                project_key=project,
-                branch=branch,
-                pull_request=pull_request,
-                max_issues=max_fixes,
-                severities=severity_list if severity_list else None,
-                types_list=types_list if types else None
-            )
-
-            progress.remove_task(task)
+        fixable_issues = _fetch_fixable_issues(
+            analyzer,
+            project,
+            branch,
+            pull_request,
+            max_fixes,
+            severity_list,
+            types_list
+        )
 
         if not fixable_issues:
             console.print("[yellow]No fixable issues found[/yellow]")
@@ -238,49 +219,85 @@ def fix(ctx: click.Context, **options) -> None:
 
         console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
 
-        # Generate fixes
-        fixes = []
-        with Progress() as progress:
-            task = progress.add_task("Generating fixes...", total=len(fixable_issues))
+        fixes = _generate_fixes(fixer, analyzer, fixable_issues, project_path)
 
-            for issue in fixable_issues:
-                rule_info = analyzer.get_rule_by_key(issue.rule)
-                fix = fixer.generate_fix(issue, project_path,rule_info)
-                if fix:
-                    fixes.append(fix)
-
-                progress.advance(task)
         if not fixes:
             console.print("[yellow]No fixes could be generated[/yellow]")
             return
 
-
-
-        # Apply fixes if requested
-        if apply or dry_run:
-            if not dry_run:
-                selected_fixes = fixes if dry_run else select_fixes_interactively(fixes)
-
-                if not selected_fixes:
-                    click.echo("No fixes selected. Exiting.")
-                    return
-
-                if not click.confirm(f"Apply {len(selected_fixes)} fixes to the codebase?"):
-                    return
-            result = fixer.apply_fixes_with_validation(fixes=selected_fixes,issues=fixable_issues, project_path=project_path,
-
-                                                       create_backup=backup and not dry_run,dry_run=dry_run,use_validator=True,
-                                                       validator_provider=provider,validator_model=model,validator_api_key=api_key)
-            _display_fix_results(result)
-
+        _apply_fixes_if_requested(apply, dry_run, fixes, fixable_issues, fixer, project_path, backup)
 
     except Exception as e:
-
         console.print(f"Error: {str(e)}", style="red", markup=False)
         if ctx.obj.get("verbose"):
             console.print_exception()
         sys.exit(1)
 
+def _parse_filters(severity, types, VALID_TYPES, VALID_SEVERETIES):
+    severity_list = None
+    types_list = None
+    if severity and severity != "":
+        severity_list = [t.strip() for t in severity.split(",")]
+        unknown = set(severity_list) - VALID_SEVERETIES
+        if unknown:
+            raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
+    if types and types != "":
+        types_list = [t.strip() for t in types.split(",")]
+        unknown = set(types_list) - VALID_TYPES
+        if unknown:
+            raise click.BadParameter(f"Invalid issue types: {', '.join(unknown)}")
+    return severity_list, types_list
+
+def _fetch_fixable_issues(analyzer, project_key, branch, pull_request, max_issues, severity_list, types_list):
+    with Progress() as progress:
+        task = progress.add_task("Fetching fixable issues...", total=None)
+        issues = analyzer.get_fixable_issues(
+            project_key=project_key,
+            branch=branch,
+            pull_request=pull_request,
+            max_issues=max_issues,
+            severities=severity_list if severity_list else None,
+            types_list=types_list if types_list else None,
+        )
+        progress.remove_task(task)
+    return issues
+
+def _generate_fixes(fixer, analyzer, issues, project_path):
+    fixes = []
+    with Progress() as progress:
+        task = progress.add_task("Generating fixes...", total=len(issues))
+        for issue in issues:
+            rule_info = analyzer.get_rule_by_key(issue.rule)
+            fix = fixer.generate_fix(issue, project_path, rule_info)
+            if fix:
+                fixes.append(fix)
+            progress.advance(task)
+    return fixes
+
+def _apply_fixes_if_requested(apply, dry_run, fixes, issues, fixer, project_path, backup):
+    if not (apply or dry_run):
+        return
+    if not dry_run:
+        selected_fixes = fixes if dry_run else select_fixes_interactively(fixes)
+        if not selected_fixes:
+            click.echo("No fixes selected. Exiting.")
+            return
+        if not click.confirm(f"Apply {len(selected_fixes)} fixes to the codebase?"):
+            return
+    else:
+        selected_fixes = fixes
+    result = fixer.apply_fixes_with_validation(
+        fixes=selected_fixes,
+        issues=issues,
+        project_path=project_path,
+        create_backup=backup and not dry_run,
+        dry_run=dry_run,
+        use_validator=True,
+        validator_provider=fixer.provider,
+        validator_model=fixer.model,
+        validator_api_key=fixer.api_key,
+    )
+    _display_fix_results(result)
 
 @main.command()
 @click.argument("project_path", type=click.Path(exists=True, path_type=Path))
