@@ -10,6 +10,7 @@ from devdox_ai_sonar.models import (
     Severity,
     IssueType,
 )
+from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.llm_fixer import calculate_base_indentation
 
 
@@ -385,6 +386,181 @@ class TestFileOperations:
         assert len(matches) >= 1
         assert any("test1.py" in str(f) or "test3.js" in str(f) for f in matches)
 
+
+class TestTogetherAIInitialization:
+    """Test TogetherAI provider specific initialization."""
+
+    def test_togetherai_initialization(self):
+        """Test TogetherAI provider initialization."""
+        with patch("devdox_ai_sonar.llm_fixer.Together") as mock_together:
+            mock_together.return_value = MagicMock()
+            # Mock the import check constant
+            with patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", True):
+                fixer = LLMFixer(provider="togetherai", api_key="test-together-key")
+                assert fixer.provider == "togetherai"
+                assert fixer.model == "gpt-4o"  # Default fallback in code
+                assert fixer.api_key == "test-together-key"
+                mock_together.assert_called_once_with(api_key="test-together-key")
+
+    def test_togetherai_missing_library(self):
+        """Test error when TogetherAI lib is missing."""
+        with patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", False):
+            with pytest.raises(ImportError, match="Together AI library not installed"):
+                LLMFixer(provider="togetherai", api_key="key")
+
+
+class TestDecoratorHandling:
+    """Test logic for identifying and handling Python decorators."""
+
+    def test_is_decorator(self, mock_llm_fixer):
+        """Test the regex patterns for decorator detection."""
+        # Positive cases
+        assert mock_llm_fixer._is_decorator("@staticmethod")
+        assert mock_llm_fixer._is_decorator("@app.route('/index')")
+        assert mock_llm_fixer._is_decorator("  @classmethod")  # indented
+        assert mock_llm_fixer._is_decorator("@pytest.fixture(scope='module')")
+
+        # Negative cases
+        assert not mock_llm_fixer._is_decorator("email@example.com")
+        assert not mock_llm_fixer._is_decorator("x = @value")
+        assert not mock_llm_fixer._is_decorator("# @commented_out")
+
+    def test_find_function_start_with_decorators(self, mock_llm_fixer):
+        """Test finding the top decorator of a function."""
+        lines = [
+            "import something\n",  # 0
+            "@app.route('/')\n",  # 1
+            "@auth_required\n",  # 2
+            "def index():\n",  # 3
+            "    pass\n"
+        ]
+        # If we target the def line (3), it should backtrack to line 1
+        start_index = mock_llm_fixer._find_function_start_with_decorators(lines, 3)
+        assert start_index == 1
+
+
+class TestSmartContextExtraction:
+    """Test the logic that finds parent functions and containment."""
+
+    def test_find_containing_function(self, mock_llm_fixer):
+        """Test locating the parent function of a specific line."""
+        lines = [
+            "def parent_function():\n",  # 0
+            "    x = 1\n",  # 1
+            "    y = 2\n",  # 2
+            "    return x + y\n"  # 3
+        ]
+
+        # Mock _find_function_end to return the last line
+        with patch.object(mock_llm_fixer, '_find_function_end', return_value=3):
+            # Target line 2 (inside function)
+            parent_idx = mock_llm_fixer._find_containing_function(lines, 2)
+            assert parent_idx == 0
+
+    def test_check_indentation_containment(self, mock_llm_fixer):
+        """Test fallback logic using indentation levels."""
+        lines = [
+            "def func():\n",  # 0 (indent 0)
+            "    if True:\n",  # 1 (indent 4)
+            "        return\n"  # 2 (indent 8)
+        ]
+
+        # Line 1 is deeper than Line 0 -> True
+        assert mock_llm_fixer._check_indentation_containment(lines, 1, 0)
+        # Line 2 is deeper than Line 0 -> True
+        assert mock_llm_fixer._check_indentation_containment(lines, 2, 0)
+
+        lines_broken = [
+            "def func():\n",  # 0
+            "return\n"  # 1 (Same indent as def, technically outside or broken)
+        ]
+        # Line 1 is same indent -> False
+        assert not mock_llm_fixer._check_indentation_containment(lines_broken, 1, 0)
+
+    def test_extract_context_with_modified_content(self, mock_llm_fixer, sample_issue, tmp_path):
+        """Test generate_fix when modified_content is explicitly passed."""
+        # Create a dummy file just to satisfy the file existence check
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.touch()
+
+        modified_content = "def patched_func():\n    return 'fixed'"
+
+        # Mock the LLM call to ensure it actually runs
+        with patch.object(mock_llm_fixer, "_call_llm") as mock_call:
+            mock_call.return_value = {
+                "fixed_code": "code", "explanation": "exp", "confidence": 1.0
+            }
+
+            mock_llm_fixer.generate_fix(
+                sample_issue,
+                tmp_path,
+                rule_info={},
+                modified_content=modified_content
+            )
+
+            # Verify _call_llm was called with the modified content in the context
+            # args[1] is the context dict
+            call_args = mock_call.call_args
+            assert call_args[0][1] == modified_content
+
+
+class TestAdvancedFixApplication:
+    """Test complex fix application scenarios."""
+
+    def test_apply_fixes_grouping_logic(self, mock_llm_fixer, tmp_path):
+        """Test that multiple fixes for the same file are grouped correctly."""
+        file_path = tmp_path / "test.py"
+        file_path.write_text("line1\nline2\nline3")
+
+        fix1 = FixSuggestion(
+            issue_key="1", original_code="line1", fixed_code="fixed1",
+            explanation="e", confidence=1, llm_model="gpt",
+            file_path="test.py", line_number=1, last_line_number=1
+        )
+        fix2 = FixSuggestion(
+            issue_key="2", original_code="line3", fixed_code="fixed3",
+            explanation="e", confidence=1, llm_model="gpt",
+            file_path="test.py", line_number=3, last_line_number=3
+        )
+
+        with patch.object(mock_llm_fixer, '_apply_fixes_to_file', return_value=True) as mock_apply:
+            result = mock_llm_fixer.apply_fixes([fix1, fix2], tmp_path, create_backup=False)
+
+            # Should be called once per file, containing list of 2 fixes
+            assert mock_apply.call_count == 1
+            args = mock_apply.call_args
+            assert str(args[0][0]) == str(file_path)  # First arg is path
+            assert len(args[0][1]) == 2  # Second arg is list of fixes
+
+    def test_apply_fixes_failure_handling(self, mock_llm_fixer, tmp_path):
+        """Test handling when individual file application fails."""
+        file_path = tmp_path / "test.py"
+        file_path.write_text("content")
+
+        fix = FixSuggestion(
+            issue_key="1", original_code="c", fixed_code="f",
+            explanation="e", confidence=1, llm_model="m",
+            file_path="test.py", line_number=1, last_line_number=1
+        )
+
+        # Simulate exception during file processing
+        with patch.object(mock_llm_fixer, '_apply_fixes_to_file', side_effect=Exception("Disk full")):
+            result = mock_llm_fixer.apply_fixes([fix], tmp_path, create_backup=False)
+
+            assert len(result.successful_fixes) == 0
+            assert len(result.failed_fixes) == 1
+            assert "Disk full" in result.failed_fixes[0]['error']
+
+    def test_generate_fix_llm_exception(self, mock_llm_fixer, sample_issue, tmp_path):
+        """Test graceful handling of LLM API failures."""
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True, exist_ok=True)
+        test_file.write_text("code")
+
+        with patch.object(mock_llm_fixer, "_call_llm", side_effect=Exception("API Rate Limit")):
+            fix = mock_llm_fixer.generate_fix(sample_issue, tmp_path, rule_info={})
+            assert fix is None  # Should return None, not crash
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
