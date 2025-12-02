@@ -375,6 +375,7 @@ class TestGetFixableIssues:
 class TestRuleFetching:
     """Test SonarCloud rule fetching."""
 
+
     def test_fetch_all_rules(self, analyzer):
         """Test fetching all rules."""
         mock_response = Mock()
@@ -421,6 +422,72 @@ class TestRuleFetching:
         assert rule is not None
         assert rule["name"] == "Unused local variables"
 
+    def test_infer_root_cause_unused_code(self, analyzer):
+        rule = {"name": "Unused variable", "htmlDesc": "", "tags": ["unused"], "type": "CODE_SMELL"}
+        root_cause = analyzer._infer_root_cause(rule)
+        assert "Unused code" in root_cause
+
+    def test_infer_root_cause_empty_dic(self,analyzer):
+        rule = {}
+        result = analyzer._infer_root_cause(rule)
+        assert result == "Unknown rule type or insufficient data for analysis"
+
+    def test_infer_root_cause_missing_param(self,analyzer):
+        rule = {"key": "test-rule"}
+        result = analyzer._infer_root_cause(rule)
+        assert result == "Unknown rule type or insufficient data for analysis"
+
+    def test_infer_root_cause_unkown_rule(self, analyzer):
+        rule = {
+            "name": "some strange rule",
+            "htmlDesc": "does something unusual",
+            "tags": ["custom"],
+            "type": "unknown_type"
+        }
+        result = analyzer._infer_root_cause(rule)
+        assert result == "Unknown rule type or insufficient data for analysis"
+
+    def test_infer_root_cause_empty_string(self,analyzer):
+        rule = {"name": "", "htmlDesc": "", "tags": [], "type": ""}
+        result = analyzer._infer_root_cause(rule)
+        assert result == "Unknown rule type or insufficient data for analysis"
+
+    def test_infer_root_cause_unexcpected_tags(self,analyzer):
+        rule = {"name": "Check for foo", "htmlDesc": "desc", "tags": ["nonexistenttag"], "type": "code_smell"}
+        result = analyzer._infer_root_cause(rule)
+        assert result == "Code quality issue that affects readability, maintainability, or follows poor practices"
+
+    def test_generate_fix_guidance_null(self,analyzer):
+        rule = {"name": "NullPointerException", "type": "BUG"}
+        guidance = analyzer._generate_fix_guidance(rule)
+        assert guidance["priority"] == "High"
+        assert "null checks" in guidance["description"].lower()
+
+    def test_generate_fix_guidance_empty_rule(self, analyzer):
+        rule = {}
+        result = analyzer._generate_fix_guidance(rule)
+        assert result["description"] == "Improve code quality following best practices"
+
+    def test_generate_fix_guidance_missing_name(self,analyzer):
+        rule = {"type": "BUG"}
+        result = analyzer._generate_fix_guidance(rule)
+        assert result["description"] == "Fix logical error or potential runtime issue"
+
+    def test_generate_fix_guidance_unkown_type(self,analyzer):
+        rule = {"name": "strange rule", "type": "weird_type"}
+        result = analyzer._generate_fix_guidance(rule)
+        assert result["description"] == "Improve code quality following best practices"
+
+    def test_generate_fix_guidance_malformd_name(self,analyzer):
+        rule = {"name": "1234!@#$", "type": ""}
+        result = analyzer._generate_fix_guidance(rule)
+        assert result["description"] == "Improve code quality following best practices"
+
+    def test_generate_fix_guidance_none_values(self,analyzer):
+        rule = {"name": None, "type": None}
+        result = analyzer._generate_fix_guidance(rule)
+        assert result["description"] == "Improve code quality following best practices"
+
 
 class TestContextManager:
     """Test context manager functionality."""
@@ -442,6 +509,7 @@ class TestContextManager:
             mock_session.close.assert_called_once()
 
 
+
 class TestProjectAnalysis:
     """Test project directory analysis."""
 
@@ -460,6 +528,7 @@ class TestProjectAnalysis:
         assert analysis["total_files"] >= 3
         assert analysis["python_files"] >= 3
         assert analysis["has_git"] is True
+
 
     def test_analyze_project_invalid_path(self, analyzer):
         """Test analyzing non-existent project directory."""
