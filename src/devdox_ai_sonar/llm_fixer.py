@@ -363,7 +363,7 @@ class LLMFixer:
             - is_complete_function: Boolean indicating if complete function was extracted
             - function_name: Name of function if applicable
         """
-        
+
 
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
@@ -406,7 +406,7 @@ class LLMFixer:
 
         Supports Python, JavaScript/TypeScript, Java, and C# function patterns.
         """
-        
+
 
         stripped_line = line.strip()
 
@@ -568,7 +568,7 @@ class LLMFixer:
         """
         Find the end line of a function/method based on language-specific rules.
         """
-        
+
 
         if start_idx >= len(lines):
             return None
@@ -655,7 +655,7 @@ class LLMFixer:
         """
         Remove string literals and comments to avoid counting braces inside them.
         """
-        
+
 
         # Remove single-line comments
         line = re.sub(r'//.*$', '', line)  # // comments
@@ -672,7 +672,7 @@ class LLMFixer:
         """
         Extract function name from function definition line.
         """
-        
+
 
         # Python function name extraction
         python_match = re.search(r'def\s+(\w+)', function_line)
@@ -922,7 +922,7 @@ class LLMFixer:
 
         # Literal Duplication
         elif "duplicating this literal" in msg_lower:
-            
+
             match = re.search(r'duplicating this literal "([^"]+)"', issue.message)
             literal = match.group(1) if match else "the repeated value"
             strategies.append(f"• Extract the literal \"{literal}\" to a constant/variable.")
@@ -1524,11 +1524,6 @@ class LLMFixer:
             # Validate final code
             modified_content = ''.join(lines)
 
-            # validated, message_error, modified_content = self._validate_modified_content(modified_content, file_path,original_content=original_content)
-            # if not validated:
-            #     logger.error(f"Validation failed — not writing changes. Error: {message_error}")
-            #     return False
-
             # Write file
             with open(file_path, "w", encoding="utf-8") as f:
                 f.write(modified_content)
@@ -1541,74 +1536,6 @@ class LLMFixer:
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False
-
-    # def _validate_modified_content(self, content: str, file_path: Path,original_content:str) -> Union[bool, str]:
-    #     """
-    #     Perform basic validation on modified content to catch obvious corruption.
-    # 
-    #     This is a safety net that runs BEFORE writing any changes to disk.
-    #     If validation fails, NO changes are written.
-    # 
-    #     Checks:
-    #     1. Content is not empty
-    #     2. Brackets/parentheses are balanced
-    #     3. Python syntax is valid (for .py files)
-    #     4. No duplicate function definitions
-    # 
-    #     Args:
-    #         content: Modified file content
-    #         file_path: Path to the file (to determine language)
-    #         original_content : Original file content before applying fixes
-    # 
-    #     Returns:
-    #         True if content passes validation, False otherwise
-    #     """
-    #     message_error = ""
-    #     try:
-    #         # CHECK 1: File is not empty
-    #         if not content or not content.strip():
-    #             message_error="Validation failed: Modified content is empty"
-    #             logger.error(message_error)
-    #             return False,message_error,content
-    # 
-    #         # # CHECK 2: Basic bracket/parenthesis matching
-    #         # if not self._check_bracket_balance(content):
-    #         #     logger.error("Validation failed: Unbalanced brackets/parentheses/braces")
-    #         #     return False
-    # 
-    #         # CHECK 3: Python-specific syntax validation
-    #         if file_path.suffix == '.py':
-    #             try:
-    #                 import ast
-    #                 ast.parse(content)
-    #                 validated = True
-    # 
-    #             except SyntaxError as e:
-    #                 message_error=f"Validation failed: Python syntax error at line {e.lineno}: {e.msg}"
-    #                 logger.error(message_error)
-    #                 validated=False
-    #         if not validated:
-    # 
-    #             logger.error(message_error)
-    # 
-    #             content = fix_code_indentation(content, original_content)
-    # 
-    # 
-    #         # CHECK 4: No duplicate function/class definitions
-    #         if not self._check_no_duplicate_definitions(content, file_path.suffix):
-    #             message_error="Validation failed: Detected duplicate function/class definitions"
-    # 
-    #             logger.error(message_error)
-    #             return False, message_error,content
-    # 
-    # 
-    #         return True,"",content
-    # 
-    #     except Exception as e:
-    #         message_error=f"Error during content validation: {e}"
-    #         logger.error(message_error, exc_info=True)
-    #         # On validation error, fail safe - don't write
-    #         return False,message_error,content
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
@@ -1642,7 +1569,7 @@ class LLMFixer:
         if file_extension != '.py':
             return True  # Only check Python files for now
 
-        
+
 
         # Find all function and class definitions
         func_pattern = r'^\s*(async\s+)?def\s+(\w+)\s*\('
@@ -1862,4 +1789,3 @@ class LLMFixer:
                 logger.error(f"✗ Error processing file {file_path_str}: {e}", exc_info=True)
 
         return result
-
