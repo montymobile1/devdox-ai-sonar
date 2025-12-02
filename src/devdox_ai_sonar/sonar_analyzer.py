@@ -368,10 +368,7 @@ class SonarCloudAnalyzer:
             return "Unknown rule type or insufficient data for analysis"
 
     def _contains_keywords(self, name: str, desc: str, keywords: List[str]) -> bool:
-            return any(keyword in name or keyword in desc for keyword in keywords)
-
-
-            return "Code quality or correctness issue that should be addressed to improve software quality"
+                return any(keyword in name or keyword in desc for keyword in keywords)
 
     def _generate_fix_guidance(self, rule: Dict) -> Dict[str, Any]:
 
