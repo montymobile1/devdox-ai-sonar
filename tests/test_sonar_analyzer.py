@@ -180,11 +180,8 @@ class TestGetProjectIssues:
         )
 
         # Verify filters were applied
-        call_args = analyzer.session.get.call_args
-        print("call args ")
-        print(call_args)
-        params = call_args[1]["params"]
-        print("line 185 ", params)
+        call_args = analyzer.session.get.call_args_list
+        params = call_args[0][1]["params"]
         assert "OPEN" in params["issueStatuses"]
         assert "BLOCKER" in params.get("severities", "")
 
@@ -192,19 +189,29 @@ class TestGetProjectIssues:
         """Test handling of HTTP errors."""
         mock_response = Mock()
         mock_response.status_code = 404
-        mock_response.raise_for_status.side_effect = requests.HTTPError()
+        mock_response.text = "Not Found"
 
+        # Create HTTPError with response attached
+        http_error = requests.HTTPError("404 Client Error")
+        http_error.response = mock_response
+
+        mock_response.raise_for_status.side_effect = http_error
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_issues(
-            project_key="nonexistent-project", branch="main"
+            project_key="nonexistent-project",
+            branch="main",
+
         )
 
         assert result is None
 
+
+
     def test_get_project_issues_timeout(self, analyzer):
         """Test handling of request timeout."""
         analyzer.session.get.side_effect = requests.Timeout()
+
 
         result = analyzer.get_project_issues(
             project_key="test-project", branch="main"
