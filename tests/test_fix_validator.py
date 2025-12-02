@@ -3,6 +3,9 @@
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
+from devdox_ai_sonar.fix_validator import (ValidationStatus,
+    ValidationResult,
+    FixValidator,)
 from devdox_ai_sonar.models import (
     SonarIssue,
     FixSuggestion,
@@ -374,7 +377,6 @@ class TestValidationResultProperties:
 
     def test_should_apply_approved(self, sample_fix):
         """Test should_apply for approved fix."""
-        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
         
         result = ValidationResult(
             status=ValidationStatus.APPROVED,
@@ -386,7 +388,7 @@ class TestValidationResultProperties:
 
     def test_should_apply_modified(self, sample_fix):
         """Test should_apply for modified fix."""
-        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
         
         modified_fix = FixSuggestion(
             issue_key=sample_fix.issue_key,
@@ -412,7 +414,7 @@ class TestValidationResultProperties:
 
     def test_should_apply_rejected(self, sample_fix):
         """Test should_apply for rejected fix."""
-        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
         
         result = ValidationResult(
             status=ValidationStatus.REJECTED,
@@ -424,7 +426,7 @@ class TestValidationResultProperties:
 
     def test_should_apply_needs_review(self, sample_fix):
         """Test should_apply for fix needing review."""
-        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
         
         result = ValidationResult(
             status=ValidationStatus.NEEDS_REVIEW,
@@ -436,7 +438,7 @@ class TestValidationResultProperties:
 
     def test_final_fix_original(self, sample_fix):
         """Test final_fix returns original when not modified."""
-        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
         
         result = ValidationResult(
             status=ValidationStatus.APPROVED,
@@ -578,6 +580,132 @@ class TestErrorHandling:
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
+
+class TestTogetherAIInitializationValidator:
+    """Test TogetherAI provider specific initialization for FixValidator."""
+
+    def test_togetherai_initialization(self):
+        """Test TogetherAI provider initialization."""
+        # Mock Together client and set the HAS_TOGETHER flag to True
+        with patch("devdox_ai_sonar.fix_validator.Together") as mock_together:
+            with patch("devdox_ai_sonar.fix_validator.HAS_TOGETHER", True):
+                mock_together.return_value = MagicMock()
+                fixer = FixValidator(provider="togetherai", api_key="test-together-key")
+                assert fixer.provider == "togetherai"
+                assert fixer.model == "gpt-4o"
+                assert fixer.api_key == "test-together-key"
+                mock_together.assert_called_once()
+
+    def test_togetherai_missing_library(self):
+        """Test error when TogetherAI lib is missing."""
+        with patch("devdox_ai_sonar.fix_validator.HAS_TOGETHER", False):
+            with pytest.raises(ImportError, match="Together AI library not installed"):
+                FixValidator(provider="togetherai", api_key="key")
+
+    @patch.dict("os.environ", {"TOGETHER_API_KEY": "env-key"}, clear=True)
+    def test_togetherai_api_key_from_env(self):
+        """Test API key is loaded from environment variables."""
+        with patch("devdox_ai_sonar.fix_validator.Together"):
+            with patch("devdox_ai_sonar.fix_validator.HAS_TOGETHER", True):
+                fixer = FixValidator(provider="togetherai", api_key=None)
+                assert fixer.api_key == "env-key"
+
+class TestPromptGeneration:
+    """Test the content and structure of the LLM validation prompt."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_create_validation_prompt_content(self, mock_openai, sample_fix, sample_issue):
+        """Test that all required issue and fix details are present in the prompt."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        context = {
+            "full_context": "context lines...",
+            "problem_lines": "problem line",
+            "start_line": 5,
+            "end_line": 15,
+            "issue_start": 10,
+            "issue_end": 10
+        }
+
+        prompt = validator._create_validation_prompt(sample_fix, sample_issue, context)
+
+        # Check Issue details
+        assert sample_issue.rule in prompt
+        assert sample_issue.message in prompt
+        assert str(sample_issue.severity) in prompt
+        assert f"{sample_issue.first_line}-{sample_issue.last_line}" in prompt
+
+        # Check Fix details
+        assert f"{sample_fix.confidence:.2f}" in prompt
+        assert sample_fix.llm_model in prompt
+        assert sample_fix.fixed_code in prompt
+
+        # Check Context details
+        assert "context lines..." in prompt
+        assert "lines 5-15" in prompt
+        assert "Your Task:" in prompt
+        assert "Response Format:" in prompt
+        assert "STATUS:" in prompt
+        assert "CONCERNS:" in prompt
+
+class TestAdvancedContextExtraction:
+    """Test context extraction for validation, particularly boundary conditions."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_extract_context_at_file_start(self, mock_openai):
+        """Test context extraction at the very beginning of the file."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        file_content = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6"
+
+        # Issue on line 1 (first_line=1, last_line=1). context_lines=20 (maximum)
+        context = validator._extract_validation_context(file_content, 1, 1, context_lines=20)
+
+        # Should start at line 1 and end at the end of the file (line 6)
+        assert context["start_line"] == 1
+        assert context["end_line"] == 6
+        assert context["issue_start"] == 1
+        assert context["full_context"] == file_content
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_extract_context_at_file_end(self, mock_openai):
+        """Test context extraction at the very end of the file."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        file_content = "line 1\nline 2\nline 3\nline 4\nline 5\nline 6"
+        lines = file_content.split('\n')
+
+        # Issue on line 6 (first_line=6, last_line=6). context_lines=20
+        context = validator._extract_validation_context(file_content, 6, 6, context_lines=20)
+
+        # Should start at line 1 and end at the end of the file (line 6)
+        assert context["start_line"] == 1
+        assert context["end_line"] == 6
+        assert context["issue_start"] == 6
+        assert context["full_context"] == file_content
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_extract_context_multi_line_issue(self, mock_openai):
+        """Test extraction for an issue spanning multiple lines."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        file_content = "line 1\nline 2 (start issue)\nline 3\nline 4 (end issue)\nline 5\nline 6"
+
+        # Issue spans lines 2 to 4. context_lines=1
+        context = validator._extract_validation_context(file_content, 2, 4, context_lines=1)
+
+        # Start Index: max(0, 2-1-1) = 0. Start Line: 1
+        # End Index: min(6, 4-1+1+1) = 5. End Line: 5
+        assert context["start_line"] == 1
+        assert context["end_line"] == 5
+        assert context["issue_start"] == 2
+        assert context["issue_end"] == 4
+        # Full Context should be lines 1 through 5
+        assert context["full_context"].count('\n') == 4
 
 
 if __name__ == "__main__":
