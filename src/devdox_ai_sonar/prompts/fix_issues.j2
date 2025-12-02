@@ -12,18 +12,21 @@ As senior software engenieer specialized in  {{ language }} fix  code for SonarQ
 **Problem line :** {{ context["problem_line"] }}
 {% if error_message %}## ERROR CONTEXT: {{ error_message }}{% endif %}
 
-## CRITICAL SEPARATION RULES
+## CRITICAL INSTRUCTIONS
 
 🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
 
 1. **FIXED_SELECTION** = The modified version of the original lines
    - Return ONLY the original lines range {context[start_line]}–{context[end_line]} (inclusive), with fixes applied.
+   - Preserve all decorators, leading comments, imports, type hints, and unrelated code outside this range.
    - If those lines include decorators, annotations, or leading comments immediately above a function (e.g. @click.option lines, @main.command(), type hints, docstring start), they MUST be preserved in the FIXED_SELECTION. Do not drop or truncate them.
    - Contains CALLS to new functions/constants
    - Contains the actual logic changes
    - Should NOT contain new function/constant DEFINITIONS
+   - Maintain original indentation and formatting.
 
 2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
+   - Must not repeat any code from FIXED_SELECTION.
    - Contains DEFINITIONS of new functions/constants
    - Should NOT repeat any code from FIXED_SELECTION or part of it
    - Should NOT contain the original problematic code
