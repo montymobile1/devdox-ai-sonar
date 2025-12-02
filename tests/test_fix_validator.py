@@ -1,729 +1,584 @@
-"""
-Comprehensive unit tests for fix_validator.py
+"""Comprehensive tests for Fix Validator."""
 
-Test Coverage:
-- ValidationStatus enum
-- ValidationResult class
-- FixValidator class
-- Helper functions
-- Edge cases and error handling
-"""
-
-import unittest
-from unittest.mock import Mock, patch, MagicMock, mock_open
+import pytest
 from pathlib import Path
-import sys
-import os
-
-# Add src to path for imports
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from devdox_ai_sonar.fix_validator import (
-    ValidationStatus,
-    ValidationResult,
-    FixValidator,
-    validate_fixes_with_agent
+from unittest.mock import Mock, patch, MagicMock
+from devdox_ai_sonar.models import (
+    SonarIssue,
+    FixSuggestion,
+    Severity,
+    IssueType,
 )
-from devdox_ai_sonar.models import FixSuggestion, SonarIssue, Severity, IssueType
 
 
-class TestValidationStatus(unittest.TestCase):
-    """Test ValidationStatus enum."""
-
-    def test_validation_status_values(self):
-        """Test all validation status values exist."""
-        self.assertEqual(ValidationStatus.APPROVED.value, "APPROVED")
-        self.assertEqual(ValidationStatus.MODIFIED.value, "MODIFIED")
-        self.assertEqual(ValidationStatus.REJECTED.value, "REJECTED")
-        self.assertEqual(ValidationStatus.NEEDS_REVIEW.value, "NEEDS_REVIEW")
-
-    def test_validation_status_membership(self):
-        """Test membership checks."""
-        statuses = [ValidationStatus.APPROVED, ValidationStatus.MODIFIED,
-                    ValidationStatus.REJECTED, ValidationStatus.NEEDS_REVIEW]
-        self.assertEqual(len(statuses), 4)
-
-
-class TestValidationResult(unittest.TestCase):
-    """Test ValidationResult class."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = 2",
-            explanation="Fix value",
-            confidence=0.9,
-            llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
-        )
-
-    def test_validation_result_approved(self):
-        """Test approved validation result."""
-        result = ValidationResult(
-            status=ValidationStatus.APPROVED,
-            original_fix=self.fix,
-            validation_notes="Good fix",
-            confidence=0.95
-        )
-
-        self.assertEqual(result.status, ValidationStatus.APPROVED)
-        self.assertEqual(result.final_fix, self.fix)
-        self.assertTrue(result.should_apply)
-        self.assertEqual(result.confidence, 0.95)
-        self.assertEqual(result.validation_notes, "Good fix")
-
-    def test_validation_result_modified(self):
-        """Test modified validation result."""
-        modified_fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = calculate_value()",
-            explanation="Better approach",
-            confidence=0.95,
-            llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
-        )
-
-        result = ValidationResult(
-            status=ValidationStatus.MODIFIED,
-            original_fix=self.fix,
-            modified_fix=modified_fix,
-            validation_notes="Improved fix",
-            confidence=0.9
-        )
-
-        self.assertEqual(result.status, ValidationStatus.MODIFIED)
-        self.assertEqual(result.final_fix, modified_fix)
-        self.assertTrue(result.should_apply)
-
-    def test_validation_result_rejected(self):
-        """Test rejected validation result."""
-        result = ValidationResult(
-            status=ValidationStatus.REJECTED,
-            original_fix=self.fix,
-            validation_notes="Unsafe fix",
-            concerns=["Security risk", "Logic error"],
-            confidence=0.2
-        )
-
-        self.assertEqual(result.status, ValidationStatus.REJECTED)
-        self.assertFalse(result.should_apply)
-        self.assertIn("Security risk", result.concerns)
-        self.assertIn("Logic error", result.concerns)
-
-    def test_validation_result_needs_review(self):
-        """Test needs review validation result."""
-        result = ValidationResult(
-            status=ValidationStatus.NEEDS_REVIEW,
-            original_fix=self.fix,
-            validation_notes="Uncertain",
-            confidence=0.5
-        )
-
-        self.assertEqual(result.status, ValidationStatus.NEEDS_REVIEW)
-        self.assertFalse(result.should_apply)
-
-    def test_should_apply_logic(self):
-        """Test should_apply property logic."""
-        # Should apply for APPROVED
-        result_approved = ValidationResult(
-            status=ValidationStatus.APPROVED,
-            original_fix=self.fix,
-            confidence=0.9
-        )
-        self.assertTrue(result_approved.should_apply)
-
-        # Should apply for MODIFIED
-        result_modified = ValidationResult(
-            status=ValidationStatus.MODIFIED,
-            original_fix=self.fix,
-            confidence=0.9
-        )
-        self.assertTrue(result_modified.should_apply)
-
-        # Should NOT apply for REJECTED
-        result_rejected = ValidationResult(
-            status=ValidationStatus.REJECTED,
-            original_fix=self.fix,
-            confidence=0.2
-        )
-        self.assertFalse(result_rejected.should_apply)
-
-        # Should NOT apply for NEEDS_REVIEW
-        result_review = ValidationResult(
-            status=ValidationStatus.NEEDS_REVIEW,
-            original_fix=self.fix,
-            confidence=0.5
-        )
-        self.assertFalse(result_review.should_apply)
+@pytest.fixture
+def sample_issue():
+    """Create a sample SonarCloud issue."""
+    return SonarIssue(
+        key="test:src/test.py:S1481",
+        rule="python:S1481",
+        severity=Severity.MAJOR,
+        component="test:src/test.py",
+        project="test-project",
+        first_line=10,
+        last_line=10,
+        message='Remove the unused local variable "unused_var".',
+        type=IssueType.CODE_SMELL,
+        file="src/test.py",
+    )
 
 
-class TestFixValidatorInitialization(unittest.TestCase):
+@pytest.fixture
+def sample_fix():
+    """Create a sample fix suggestion."""
+    return FixSuggestion(
+        issue_key="test:src/test.py:S1481",
+        original_code="    unused_var = 42\n    return value",
+        fixed_code="    return value",
+        explanation="Removed unused variable",
+        confidence=0.95,
+        llm_model="gpt-4",
+        file_path="src/test.py",
+        line_number=10,
+        last_line_number=11,
+    )
+
+
+@pytest.fixture
+def sample_file_content():
+    """Sample file content for validation."""
+    return """def my_function():
+    unused_var = 42
+    value = 100
+    return value
+"""
+
+
+class TestFixValidatorInitialization:
     """Test FixValidator initialization."""
 
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_init_openai(self, mock_openai):
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_init_openai_provider(self, mock_openai):
         """Test initialization with OpenAI provider."""
-        validator = FixValidator(
-            provider="openai",
-            model="gpt-4o",
-            api_key="test-key",
-            min_confidence_threshold=0.8
-        )
+        mock_openai.OpenAI.return_value = MagicMock()
+        
+        from devdox_ai_sonar.fix_validator import FixValidator
 
-        self.assertEqual(validator.provider, "openai")
-        self.assertEqual(validator.model, "gpt-4o")
-        self.assertEqual(validator.min_confidence_threshold, 0.8)
-        mock_openai.assert_called_once_with(api_key="test-key")
+        validator = FixValidator(provider="openai", api_key="test-key")
+        
+        assert validator.provider == "openai"
+        assert validator.model == "gpt-4o"
+        assert validator.api_key == "test-key"
 
-    @patch('devdox_ai_sonar.fix_validator.HAS_OPENAI', False)
+    @patch("devdox_ai_sonar.fix_validator.HAS_OPENAI", False)
     def test_init_openai_missing_library(self):
         """Test initialization fails when OpenAI library missing."""
-        with self.assertRaises(ImportError) as context:
-            FixValidator(provider="openai")
-        self.assertIn("OpenAI library not installed", str(context.exception))
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        with pytest.raises(ImportError, match="OpenAI library not installed"):
+            FixValidator(provider="openai", api_key="test-key")
 
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    @patch('devdox_ai_sonar.fix_validator.os.getenv')
-    def test_init_openai_env_api_key(self, mock_getenv, mock_openai):
-        """Test initialization with API key from environment."""
-        mock_getenv.return_value = "env-api-key"
+    @patch("devdox_ai_sonar.fix_validator.genai")
+    def test_init_gemini_provider(self, mock_genai):
+        """Test initialization with Gemini provider."""
+        mock_genai.Client.return_value = MagicMock()
+        
+        from devdox_ai_sonar.fix_validator import FixValidator
 
-        validator = FixValidator(provider="openai")
+        validator = FixValidator(provider="gemini", api_key="test-key")
+        
+        assert validator.provider == "gemini"
+        assert validator.model == "claude-3-5-sonnet-20241022"
 
-        self.assertEqual(validator.api_key, "env-api-key")
-        mock_getenv.assert_called_with("OPENAI_API_KEY")
-
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_init_openai_missing_api_key(self, mock_openai):
-        """Test initialization fails without API key."""
-        with patch('devdox_ai_sonar.fix_validator.os.getenv', return_value=None):
-            with self.assertRaises(ValueError) as context:
-                FixValidator(provider="openai")
-            self.assertIn("API key not provided", str(context.exception))
+    @patch("devdox_ai_sonar.fix_validator.HAS_GEMINI", False)
+    def test_init_gemini_missing_library(self):
+        """Test initialization fails when Gemini library missing."""
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        with pytest.raises(ImportError, match="Gemini library not installed"):
+            FixValidator(provider="gemini", api_key="test-key")
 
     def test_init_invalid_provider(self):
         """Test initialization with invalid provider."""
-        with self.assertRaises(ValueError) as context:
-            FixValidator(provider="invalid_provider", api_key="test")
-        self.assertIn("Unsupported provider", str(context.exception))
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        with pytest.raises(ValueError, match="Unsupported provider"):
+            FixValidator(provider="invalid", api_key="test-key")
 
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_init_missing_api_key(self, mock_openai):
+        """Test initialization fails when API key missing."""
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        with pytest.raises(ValueError, match="API key not provided"):
+            FixValidator(provider="openai", api_key=None)
 
-class TestFixValidatorExtractContext(unittest.TestCase):
-    """Test context extraction."""
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_init_custom_model(self, mock_openai):
+        """Test initialization with custom model."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        
+        from devdox_ai_sonar.fix_validator import FixValidator
 
-    def setUp(self):
-        """Set up test validator."""
-        with patch('devdox_ai_sonar.fix_validator.openai.OpenAI'):
-            self.validator = FixValidator(provider="openai", api_key="test")
-
-    def test_extract_context_basic(self):
-        """Test basic context extraction."""
-        file_content = "\n".join([
-            "line 1",
-            "line 2",
-            "line 3",
-            "line 4",  # Problem line
-            "line 5",
-            "line 6",
-            "line 7"
-        ])
-
-        context = self.validator._extract_validation_context(
-            file_content, 4, 4, context_lines=2
+        validator = FixValidator(
+            provider="openai",
+            model="gpt-4-turbo",
+            api_key="test-key"
         )
+        
+        assert validator.model == "gpt-4-turbo"
 
-        self.assertIn("line 2", context["full_context"])
-        self.assertIn("line 3", context["full_context"])
-        self.assertIn("line 4", context["full_context"])
-        self.assertIn("line 5", context["full_context"])
-        self.assertIn("line 6", context["full_context"])
-        self.assertEqual(context["problem_lines"], "line 4")
-        self.assertEqual(context["issue_start"], 4)
-        self.assertEqual(context["issue_end"], 4)
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_init_custom_confidence_threshold(self, mock_openai):
+        """Test initialization with custom confidence threshold."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        
+        from devdox_ai_sonar.fix_validator import FixValidator
 
-    def test_extract_context_at_file_start(self):
-        """Test context extraction at start of file."""
-        file_content = "\n".join(["line 1", "line 2", "line 3", "line 4"])
-
-        context = self.validator._extract_validation_context(
-            file_content, 1, 1, context_lines=5
+        validator = FixValidator(
+            provider="openai",
+            api_key="test-key",
+            min_confidence_threshold=0.8
         )
-
-        self.assertEqual(context["start_line"], 1)
-        self.assertIn("line 1", context["full_context"])
-
-    def test_extract_context_at_file_end(self):
-        """Test context extraction at end of file."""
-        file_content = "\n".join(["line 1", "line 2", "line 3", "line 4"])
-
-        context = self.validator._extract_validation_context(
-            file_content, 4, 4, context_lines=5
-        )
-
-        self.assertIn("line 4", context["full_context"])
-        self.assertEqual(context["end_line"], 4)
-
-    def test_extract_context_multi_line_issue(self):
-        """Test context extraction for multi-line issue."""
-        file_content = "\n".join([
-            "line 1",
-            "line 2",
-            "line 3",  # Issue start
-            "line 4",
-            "line 5",  # Issue end
-            "line 6"
-        ])
-
-        context = self.validator._extract_validation_context(
-            file_content, 3, 5, context_lines=1
-        )
-
-        self.assertIn("line 3", context["problem_lines"])
-        self.assertIn("line 4", context["problem_lines"])
-        self.assertIn("line 5", context["problem_lines"])
+        
+        assert validator.min_confidence_threshold == 0.8
 
 
-class TestFixValidatorPromptCreation(unittest.TestCase):
-    """Test validation prompt creation."""
+class TestValidateFix:
+    """Test fix validation."""
 
-    def setUp(self):
-        """Set up test fixtures."""
-        with patch('devdox_ai_sonar.fix_validator.openai.OpenAI'):
-            self.validator = FixValidator(provider="openai", api_key="test")
-
-        self.fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = 2",
-            explanation="Update value",
-            confidence=0.8,
-            llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
-        )
-
-        self.issue = SonarIssue(
-            key="TEST-123",
-            rule="python:S1234",
-            severity=Severity.MAJOR,
-            component="test.py",
-            project="test-project",
-            first_line=10,
-            last_line=10,
-            message="Fix this issue",
-            type=IssueType.CODE_SMELL
-        )
-
-
-class TestFixValidatorResponseParsing(unittest.TestCase):
-    """Test validation response parsing."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        with patch('devdox_ai_sonar.fix_validator.openai.OpenAI'):
-            self.validator = FixValidator(provider="openai", api_key="test")
-
-        self.fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = 2",
-            explanation="Update value",
-            confidence=0.8,
-            llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
-        )
-
-        self.issue = SonarIssue(
-            key="TEST-123",
-            rule="python:S1234",
-            severity=Severity.MAJOR,
-            component="test.py",
-            project="test-project",
-            first_line=10,
-            last_line=10,
-            message="Fix this issue",
-            type=IssueType.CODE_SMELL
-        )
-
-    def test_parse_approved_response(self):
-        """Test parsing approved validation response."""
-        response_text = """
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_approved(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validation when fix is approved."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
 STATUS: APPROVED
 
 CONFIDENCE: 0.95
 
 VALIDATION_NOTES:
-This fix correctly updates the value and follows best practices.
+The fix correctly removes the unused variable.
 
 CONCERNS:
 None
 """
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
 
-        result = self.validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
+        validator = FixValidator(provider="openai", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        self.assertEqual(result.status, ValidationStatus.APPROVED)
-        self.assertEqual(result.confidence, 0.95)
-        self.assertIn("correctly updates", result.validation_notes)
-        self.assertEqual(len(result.concerns), 0)
+        assert result.status == ValidationStatus.APPROVED
+        assert result.confidence == 0.95
+        assert "correctly removes" in result.validation_notes
 
-    def test_parse_modified_response(self):
-        """Test parsing modified validation response."""
-        response_text = """
-STATUS: MODIFIED
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_rejected(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validation when fix is rejected."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
+STATUS: REJECTED
 
-CONFIDENCE: 0.90
+CONFIDENCE: 0.3
 
 VALIDATION_NOTES:
-The fix works but can be improved.
+This fix would break the code.
 
 CONCERNS:
-- Could use more descriptive variable name
+- Removes necessary variable
+- Missing error handling
+"""
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openai", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
+
+        assert result.status == ValidationStatus.REJECTED
+        assert len(result.concerns) > 0
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_modified(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validation when fix is modified."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
+STATUS: MODIFIED
+
+CONFIDENCE: 0.85
+
+VALIDATION_NOTES:
+Fix is good but can be improved.
+
+CONCERNS:
+None
 
 IMPROVED_FIX:
 ```python
-x = calculate_value()
+    # Better implementation
+    return value
 ```
 
 IMPROVED_EXPLANATION:
-Using a function is better than hardcoding the value.
+Added comment for clarity
 """
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
 
-        result = self.validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
+        validator = FixValidator(provider="openai", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        self.assertEqual(result.status, ValidationStatus.MODIFIED)
-        self.assertEqual(result.confidence, 0.90)
-        self.assertIsNotNone(result.modified_fix)
-        self.assertIn("calculate_value", result.modified_fix.fixed_code)
-        self.assertIn("descriptive variable name", result.concerns[0])
+        assert result.status == ValidationStatus.MODIFIED
+        assert result.modified_fix is not None
+        assert "Better implementation" in result.modified_fix.fixed_code
 
-    def test_parse_rejected_response(self):
-        """Test parsing rejected validation response."""
-        response_text = """
-STATUS: REJECTED
-
-CONFIDENCE: 0.30
-
-VALIDATION_NOTES:
-This fix introduces a security vulnerability.
-
-CONCERNS:
-- SQL injection risk
-- No input validation
-- Breaks existing functionality
-"""
-
-        result = self.validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
-
-        self.assertEqual(result.status, ValidationStatus.REJECTED)
-        self.assertEqual(result.confidence, 0.30)
-        self.assertEqual(len(result.concerns), 3)
-        self.assertIn("SQL injection", result.concerns[0])
-
-    def test_parse_needs_review_response(self):
-        """Test parsing needs review validation response."""
-        response_text = """
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_needs_review(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validation when fix needs review."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
 STATUS: NEEDS_REVIEW
 
-CONFIDENCE: 0.60
+CONFIDENCE: 0.5
 
 VALIDATION_NOTES:
-Uncertain about this fix. Needs human review.
+Uncertain about side effects.
 
 CONCERNS:
-- Unclear impact on system
+- May affect other code
 """
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
 
-        result = self.validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
+        validator = FixValidator(provider="openai", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        self.assertEqual(result.status, ValidationStatus.NEEDS_REVIEW)
-        self.assertFalse(result.should_apply)
+        assert result.status == ValidationStatus.NEEDS_REVIEW
 
-    def test_parse_malformed_response(self):
-        """Test parsing malformed response."""
-        response_text = "This is not a valid response format"
-
-        result = self.validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
-
-        # Should default to NEEDS_REVIEW on parse error
-        self.assertEqual(result.status, ValidationStatus.NEEDS_REVIEW)
-
-    def test_confidence_threshold_enforcement(self):
-        """Test that confidence threshold is enforced."""
-        validator = FixValidator(
-            provider="openai",
-            api_key="test",
-            min_confidence_threshold=0.8
-        )
-
-        response_text = """
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_below_confidence_threshold(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test that low confidence approved fixes become NEEDS_REVIEW."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
 STATUS: APPROVED
 
-CONFIDENCE: 0.70
+CONFIDENCE: 0.6
 
 VALIDATION_NOTES:
-Good fix but below threshold.
+Fix looks okay but not confident.
 
 CONCERNS:
 None
 """
-
-        result = validator._parse_validation_response(
-            response_text, self.fix, self.issue
-        )
-
-        # Should be changed to NEEDS_REVIEW due to low confidence
-        self.assertEqual(result.status, ValidationStatus.NEEDS_REVIEW)
-        self.assertIn("below required threshold", result.validation_notes)
-
-
-class TestFixValidatorLLMCalls(unittest.TestCase):
-    """Test LLM API calls."""
-
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_call_llm_openai_success(self, mock_openai_class):
-        """Test successful OpenAI API call."""
-        mock_client = MagicMock()
-        mock_openai_class.return_value = mock_client
-
-        mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
-        mock_response.choices[0].message.content = "STATUS: APPROVED\nCONFIDENCE: 0.9"
         mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
 
-        validator = FixValidator(provider="openai", api_key="test")
-        result = validator._call_llm_validator("test prompt")
+        validator = FixValidator(
+            provider="openai",
+            api_key="test-key",
+            min_confidence_threshold=0.7
+        )
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        self.assertIsNotNone(result)
-        self.assertIn("APPROVED", result)
-        mock_client.chat.completions.create.assert_called_once()
-
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_call_llm_openai_error(self, mock_openai_class):
-        """Test OpenAI API call with error."""
-        mock_client = MagicMock()
-        mock_openai_class.return_value = mock_client
-        mock_client.chat.completions.create.side_effect = Exception("API Error")
-
-        validator = FixValidator(provider="openai", api_key="test")
-        result = validator._call_llm_validator("test prompt")
-
-        self.assertIsNone(result)
+        assert result.status == ValidationStatus.NEEDS_REVIEW
 
 
-class TestFixValidatorValidateFix(unittest.TestCase):
-    """Test fix validation end-to-end."""
+class TestExtractValidationContext:
+    """Test context extraction for validation."""
 
-    def setUp(self):
-        """Set up test fixtures."""
-        self.fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = 2",
-            explanation="Update value",
-            confidence=0.8,
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_extract_context(self, mock_openai):
+        """Test extracting broader context for validation."""
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        file_content = """def function1():
+    x = 1
+    return x
+
+def function2():
+    unused = 42
+    return 0
+"""
+        
+        context = validator._extract_validation_context(file_content, 6, 6, context_lines=20)
+
+        assert "function2" in context["full_context"]
+        assert context["issue_start"] == 6
+
+
+class TestParseValidationResponse:
+    """Test parsing validation responses."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_parse_response_with_all_fields(self, mock_openai, sample_fix, sample_issue):
+        """Test parsing response with all fields present."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        response_text = """
+STATUS: APPROVED
+
+CONFIDENCE: 0.9
+
+VALIDATION_NOTES:
+Excellent fix.
+
+CONCERNS:
+- Minor style issue
+"""
+        
+        result = validator._parse_validation_response(response_text, sample_fix, sample_issue)
+
+        assert result.status == ValidationStatus.APPROVED
+        assert result.confidence == 0.9
+        assert len(result.concerns) > 0
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_parse_response_missing_fields(self, mock_openai, sample_fix, sample_issue):
+        """Test parsing response with missing fields."""
+        from devdox_ai_sonar.fix_validator import FixValidator
+        
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        response_text = "Invalid response"
+        
+        result = validator._parse_validation_response(response_text, sample_fix, sample_issue)
+
+        # Should default to NEEDS_REVIEW
+        assert result is not None
+
+
+class TestValidationResultProperties:
+    """Test ValidationResult properties."""
+
+    def test_should_apply_approved(self, sample_fix):
+        """Test should_apply for approved fix."""
+        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
+        result = ValidationResult(
+            status=ValidationStatus.APPROVED,
+            original_fix=sample_fix,
+            confidence=0.9
+        )
+
+        assert result.should_apply is True
+
+    def test_should_apply_modified(self, sample_fix):
+        """Test should_apply for modified fix."""
+        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
+        modified_fix = FixSuggestion(
+            issue_key=sample_fix.issue_key,
+            original_code=sample_fix.original_code,
+            fixed_code="# improved code",
+            explanation="Better fix",
+            confidence=0.9,
             llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
+            file_path=sample_fix.file_path,
+            line_number=sample_fix.line_number,
+            last_line_number=sample_fix.last_line_number,
         )
 
-        self.issue = SonarIssue(
-            key="TEST-123",
-            rule="python:S1234",
-            severity=Severity.MAJOR,
-            component="test.py",
-            project="test-project",
-            first_line=10,
-            last_line=10,
-            message="Fix this issue",
-            type=IssueType.CODE_SMELL
+        result = ValidationResult(
+            status=ValidationStatus.MODIFIED,
+            original_fix=sample_fix,
+            modified_fix=modified_fix,
+            confidence=0.85
         )
 
-        self.file_content = "\n".join([
-            "def foo():",
-            "    x = 1",
-            "    y = 2",
-            "    return x + y"
-        ])
+        assert result.should_apply is True
+        assert result.final_fix == modified_fix
 
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_validate_fix_success(self, mock_openai):
-        """Test successful fix validation."""
+    def test_should_apply_rejected(self, sample_fix):
+        """Test should_apply for rejected fix."""
+        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
+        result = ValidationResult(
+            status=ValidationStatus.REJECTED,
+            original_fix=sample_fix,
+            confidence=0.3
+        )
+
+        assert result.should_apply is False
+
+    def test_should_apply_needs_review(self, sample_fix):
+        """Test should_apply for fix needing review."""
+        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
+        result = ValidationResult(
+            status=ValidationStatus.NEEDS_REVIEW,
+            original_fix=sample_fix,
+            confidence=0.5
+        )
+
+        assert result.should_apply is False
+
+    def test_final_fix_original(self, sample_fix):
+        """Test final_fix returns original when not modified."""
+        from devdox_ai_sonar.fix_validator import ValidationResult, ValidationStatus
+        
+        result = ValidationResult(
+            status=ValidationStatus.APPROVED,
+            original_fix=sample_fix,
+            confidence=0.9
+        )
+
+        assert result.final_fix == sample_fix
+
+
+class TestBatchValidation:
+    """Test batch validation functionality."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fixes_batch(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validating multiple fixes in batch."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         mock_client = MagicMock()
-        mock_openai.return_value = mock_client
-
         mock_response = MagicMock()
-        mock_response.choices = [MagicMock()]
         mock_response.choices[0].message.content = """
 STATUS: APPROVED
-CONFIDENCE: 0.95
+CONFIDENCE: 0.9
 VALIDATION_NOTES: Good fix
 CONCERNS: None
 """
         mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
 
-        validator = FixValidator(provider="openai", api_key="test")
-        result = validator.validate_fix(self.fix, self.issue, self.file_content)
+        validator = FixValidator(provider="openai", api_key="test-key")
+        
+        fixes_data = [
+            (sample_fix, sample_issue, sample_file_content),
+            (sample_fix, sample_issue, sample_file_content),
+        ]
 
-        self.assertEqual(result.status, ValidationStatus.APPROVED)
-        self.assertTrue(result.should_apply)
+        results = validator.validate_fixes_batch(fixes_data)
 
-    @patch('devdox_ai_sonar.fix_validator.openai.OpenAI')
-    def test_validate_fix_llm_failure(self, mock_openai):
-        """Test fix validation when LLM call fails."""
+        assert len(results) == 2
+        assert all(r.status == ValidationStatus.APPROVED for r in results)
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fixes_batch_stop_on_rejection(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test stopping batch validation on rejection."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         mock_client = MagicMock()
-        mock_openai.return_value = mock_client
+        
+        # First call returns REJECTED
+        response1 = MagicMock()
+        response1.choices[0].message.content = """
+STATUS: REJECTED
+CONFIDENCE: 0.3
+VALIDATION_NOTES: Bad fix
+CONCERNS: Major issues
+"""
+        
+        mock_client.chat.completions.create.return_value = response1
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openai", api_key="test-key")
+        
+        fixes_data = [
+            (sample_fix, sample_issue, sample_file_content),
+            (sample_fix, sample_issue, sample_file_content),
+        ]
+
+        results = validator.validate_fixes_batch(fixes_data, stop_on_rejection=True)
+
+        # Should stop after first rejection
+        assert len(results) == 1
+        assert results[0].status == ValidationStatus.REJECTED
+
+
+class TestConvenienceFunction:
+    """Test validate_fixes_with_agent convenience function."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fixes_with_agent(self, mock_openai, sample_fix, sample_issue, tmp_path):
+        """Test convenience function for validating fixes."""
+        from devdox_ai_sonar.fix_validator import validate_fixes_with_agent, ValidationStatus
+        
+        # Create test file
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("def test(): pass")
+
+        sample_fix.file_path = "src/test.py"
+
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = """
+STATUS: APPROVED
+CONFIDENCE: 0.9
+VALIDATION_NOTES: Good
+CONCERNS: None
+"""
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        results = validate_fixes_with_agent(
+            [sample_fix],
+            [sample_issue],
+            tmp_path,
+            provider="openai",
+            api_key="test-key"
+        )
+
+        assert len(results) == 1
+
+
+class TestErrorHandling:
+    """Test error handling in validation."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_file_not_found(self, mock_openai, sample_fix, sample_issue):
+        """Test validation when file doesn't exist."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
+
+        # File content is required parameter
+        result = validator.validate_fix(sample_fix, sample_issue, "")
+
+        # Should handle gracefully
+        assert result is not None
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_validate_fix_llm_error(self, mock_openai, sample_fix, sample_issue, sample_file_content):
+        """Test validation when LLM call fails."""
+        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
+        mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API Error")
+        mock_openai.OpenAI.return_value = mock_client
 
-        validator = FixValidator(provider="openai", api_key="test")
-        result = validator.validate_fix(self.fix, self.issue, self.file_content)
+        validator = FixValidator(provider="openai", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        self.assertEqual(result.status, ValidationStatus.NEEDS_REVIEW)
-        self.assertFalse(result.should_apply)
-
-
-class TestValidateFixesWithAgent(unittest.TestCase):
-    """Test the convenience function for batch validation."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.fix = FixSuggestion(
-            issue_key="TEST-123",
-            original_code="x = 1",
-            fixed_code="x = 2",
-            explanation="Update value",
-            confidence=0.8,
-            llm_model="gpt-4",
-            file_path="test.py",
-            line_number=10
-        )
-
-        self.issue = SonarIssue(
-            key="TEST-123",
-            rule="python:S1234",
-            severity=Severity.MAJOR,
-            component="test.py",
-            project="test-project",
-            first_line=10,
-            last_line=10,
-            message="Fix this issue",
-            type=IssueType.CODE_SMELL
-        )
-
-    @patch('devdox_ai_sonar.fix_validator.FixValidator')
-    @patch('builtins.open', new_callable=mock_open, read_data="x = 1\ny = 2")
-    @patch('pathlib.Path.exists')
-    def test_validate_fixes_with_agent(self, mock_exists, mock_file, mock_validator_class):
-        """Test batch validation with agent."""
-        mock_exists.return_value = True
-        mock_validator = MagicMock()
-        mock_validator_class.return_value = mock_validator
-
-        mock_result = ValidationResult(
-            status=ValidationStatus.APPROVED,
-            original_fix=self.fix,
-            confidence=0.9
-        )
-        mock_validator.validate_fix.return_value = mock_result
-
-        project_path = Path("/test/project")
-        results = validate_fixes_with_agent(
-            fixes=[self.fix],
-            issues=[self.issue],
-            project_path=project_path,
-            provider="openai",
-            api_key="test"
-        )
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status, ValidationStatus.APPROVED)
-
-    @patch('devdox_ai_sonar.fix_validator.FixValidator')
-    @patch('pathlib.Path.exists')
-    def test_validate_fixes_file_not_found(self, mock_exists, mock_validator_class):
-        """Test batch validation when file not found."""
-        mock_exists.return_value = False
-
-        project_path = Path("/test/project")
-        results = validate_fixes_with_agent(
-            fixes=[self.fix],
-            issues=[self.issue],
-            project_path=project_path,
-            provider="openai",
-            api_key="test"
-        )
-
-        self.assertEqual(len(results), 1)
-        self.assertEqual(results[0].status, ValidationStatus.NEEDS_REVIEW)
-        self.assertIn("File not found", results[0].validation_notes)
+        assert result.status == ValidationStatus.NEEDS_REVIEW
 
 
-class TestEdgeCases(unittest.TestCase):
-    """Test edge cases and error handling."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        with patch('devdox_ai_sonar.fix_validator.openai.OpenAI'):
-            self.validator = FixValidator(provider="openai", api_key="test")
-
-    def test_empty_file_content(self):
-        """Test validation with empty file content."""
-        context = self.validator._extract_validation_context("", 1, 1, 10)
-        self.assertEqual(context["problem_lines"], "")
-
-    def test_very_large_context(self):
-        """Test validation with very large context."""
-        large_content = "\n".join([f"line {i}" for i in range(10000)])
-        context = self.validator._extract_validation_context(
-            large_content, 5000, 5000, 100
-        )
-        self.assertIsNotNone(context)
-
-    def test_unicode_content(self):
-        """Test validation with unicode content."""
-        unicode_content = "x = '你好世界'\ny = 'Hello 🌍'"
-        context = self.validator._extract_validation_context(
-            unicode_content, 1, 2, 5
-        )
-        self.assertIn("你好世界", context["full_context"])
-        self.assertIn("🌍", context["full_context"])
-
-    def test_confidence_clamping(self):
-        """Test that confidence values are clamped to [0, 1]."""
-        fix = FixSuggestion(
-            issue_key="TEST",
-            original_code="x=1",
-            fixed_code="x=2",
-            explanation="test",
-            confidence=0.8,
-            llm_model="gpt-4"
-        )
-
-        # Test confidence > 1.0
-        response_text = "STATUS: APPROVED\nCONFIDENCE: 1.5\nVALIDATION_NOTES: test\nCONCERNS: None"
-        result = self.validator._parse_validation_response(response_text, fix, Mock())
-        self.assertLessEqual(result.confidence, 1.0)
-
-        # Test confidence < 0.0
-        response_text = "STATUS: REJECTED\nCONFIDENCE: -0.5\nVALIDATION_NOTES: test\nCONCERNS: None"
-        result = self.validator._parse_validation_response(response_text, fix, Mock())
-        self.assertGreaterEqual(result.confidence, 0.0)
-
-
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

@@ -1,249 +1,491 @@
-#!/usr/bin/env python3
-"""
-Test Suite Summary and Validator for DevDox AI Sonar
+"""Comprehensive tests for SonarCloud analyzer."""
 
-This script provides a summary of all test coverage and validates that
-all source files have corresponding tests.
-"""
+import pytest
+import requests
+from unittest.mock import Mock, patch, MagicMock
+from devdox_ai_sonar.models import (
+    SonarIssue,
+    AnalysisResult,
+    ProjectMetrics,
+    Severity,
+    IssueType,
+    Impact,
+)
 
-import os
-import sys
-from pathlib import Path
-import ast
-import re
-from typing import Dict, List, Set, Tuple
+
+@pytest.fixture
+def mock_session():
+    """Create a mock requests session."""
+    session = Mock(spec=requests.Session)
+    session.headers = {}
+    return session
 
 
-class TestCoverageAnalyzer:
-    """Analyzes test coverage for the DevDox AI Sonar project."""
+@pytest.fixture
+def analyzer(mock_session):
+    """Create a SonarCloudAnalyzer with mocked session."""
+    with patch("devdox_ai_sonar.sonar_analyzer.requests.Session", return_value=mock_session):
+        from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
-    def __init__(self, project_root: Path):
-        self.project_root = project_root
-        self.src_dir = project_root / "src" / "devdox_ai_sonar"
-        self.tests_dir = project_root / "tests"
+        analyzer = SonarCloudAnalyzer(
+            token="test-token", organization="test-org",
+        )
+        analyzer.session = mock_session
+        return analyzer
 
-    def get_source_files(self) -> List[Path]:
-        """Get all Python source files."""
-        if not self.src_dir.exists():
-            return []
 
-        return [
-            f for f in self.src_dir.rglob("*.py")
-            if not f.name.startswith("__")
-        ]
+@pytest.fixture
+def sample_issue_data():
+    """Sample issue data from SonarCloud API."""
+    return {
+        "key": "AXqT8...example",
+        "rule": "python:S1481",
+        "severity": "MAJOR",
+        "component": "project:src/main.py",
+        "project": "my-project",
+        "line": 42,
+        "message": 'Remove the unused local variable "unused_var".',
+        "type": "CODE_SMELL",
+        "status": "OPEN",
+        "creationDate": "2024-01-01T10:00:00+0000",
+        "updateDate": "2024-01-02T10:00:00+0000",
+        "tags": ["unused"],
+        "impacts": [{"softwareQuality": "MAINTAINABILITY", "severity": "MEDIUM"}],
+        "flows": [
+            {
+                "locations": [
+                    {
+                        "textRange": {
+                            "startLine": 42,
+                            "endLine": 45,
+                            "startOffset": 0,
+                            "endOffset": 20,
+                        }
+                    }
+                ]
+            }
+        ],
+    }
 
-    def get_test_files(self) -> List[Path]:
-        """Get all test files."""
-        if not self.tests_dir.exists():
-            return []
 
-        return [
-            f for f in self.tests_dir.rglob("test_*.py")
-        ]
+class TestSonarCloudAnalyzerInitialization:
+    """Test SonarCloudAnalyzer initialization."""
 
-    def extract_classes_and_functions(self, file_path: Path) -> Tuple[Set[str], Set[str]]:
-        """Extract classes and functions from a Python file."""
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                tree = ast.parse(f.read())
-        except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
-            return set(), set()
+    def test_initialization_with_defaults(self):
+        """Test analyzer initialization with default values."""
+        with patch("devdox_ai_sonar.sonar_analyzer.requests.Session"):
+            from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
-        classes = set()
-        functions = set()
+            analyzer = SonarCloudAnalyzer(
+                token="test-token", organization="test-org"
+            )
 
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ClassDef):
-                classes.add(node.name)
-            elif isinstance(node, ast.FunctionDef):
-                if not node.name.startswith('_'):  # Exclude private functions
-                    functions.add(node.name)
+            assert analyzer.token == "test-token"
+            assert analyzer.organization == "test-org"
+            assert analyzer.base_url == "https://sonarcloud.io"
+            assert analyzer.timeout == 30
 
-        return classes, functions
+    def test_initialization_with_custom_params(self):
+        """Test analyzer initialization with custom parameters."""
+        with patch("devdox_ai_sonar.sonar_analyzer.requests.Session"):
+            from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
-    def extract_test_cases(self, test_file: Path) -> Dict[str, int]:
-        """Extract test case counts from a test file."""
-        try:
-            with open(test_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except Exception as e:
-            print(f"Error reading {test_file}: {e}")
-            return {}
+            analyzer = SonarCloudAnalyzer(
+                token="test-token",
+                organization="test-org",
+                base_url="https://custom.sonarcloud.io",
+                timeout=60,
+                max_retries=5,
+            )
 
-        # Count test methods
-        test_methods = len(re.findall(r'def test_\w+\(self', content))
+            assert analyzer.base_url == "https://custom.sonarcloud.io"
+            assert analyzer.timeout == 60
 
-        # Count test classes
-        test_classes = len(re.findall(r'class Test\w+\(', content))
+    def test_session_headers_configured(self, analyzer):
+        """Test that session headers are properly configured."""
+        assert "Authorization" in analyzer.session.headers
+        assert analyzer.session.headers["Authorization"] == "Bearer test-token"
+        assert analyzer.session.headers["Accept"] == "application/json"
 
-        # Count assertions
-        assertions = len(re.findall(r'self\.assert', content))
 
-        return {
-            'methods': test_methods,
-            'classes': test_classes,
-            'assertions': assertions
+class TestGetProjectIssues:
+    """Test fetching project issues."""
+
+    def test_get_project_issues_success(self, analyzer, sample_issue_data):
+        """Test successful issue retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [sample_issue_data],
+            "paging": {"total": 1, "pageIndex": 1, "pageSize": 500},
         }
 
-    def generate_report(self) -> str:
-        """Generate a comprehensive test coverage report."""
-        report = []
-        report.append("=" * 80)
-        report.append("DevDox AI Sonar - Test Coverage Report")
-        report.append("=" * 80)
-        report.append("")
+        analyzer.session.get.return_value = mock_response
 
-        # Source files analysis
-        source_files = self.get_source_files()
-        report.append(f"📂 Source Files: {len(source_files)}")
-        report.append("-" * 80)
+        result = analyzer.get_project_issues(
+            project_key="test-project", branch="main"
+        )
 
-        total_classes = 0
-        total_functions = 0
+        assert result is not None
+        assert result.project_key == "test-project"
+        assert result.total_issues == 1
+        assert len(result.issues) == 1
+        assert result.issues[0].rule == "python:S1481"
 
-        for src_file in source_files:
-            classes, functions = self.extract_classes_and_functions(src_file)
-            total_classes += len(classes)
-            total_functions += len(functions)
+    def test_get_project_issues_pagination(self, analyzer, sample_issue_data):
+        """Test handling of paginated results."""
+        # First page
+        response1 = Mock()
+        response1.status_code = 200
+        response1.json.return_value = {
+            "issues": [sample_issue_data],
+            "paging": {"total": 2, "pageIndex": 1, "pageSize": 1},
+        }
 
-            report.append(f"\n📄 {src_file.name}")
-            report.append(f"   Classes: {len(classes)}")
-            if classes:
-                report.append(f"   - {', '.join(sorted(classes))}")
-            report.append(f"   Functions: {len(functions)}")
-            if functions:
-                report.append(f"   - {', '.join(sorted(functions))}")
+        # Second page
+        response2 = Mock()
+        response2.status_code = 200
+        response2.json.return_value = {
+            "issues": [sample_issue_data],
+            "paging": {"total": 2, "pageIndex": 2, "pageSize": 1},
+        }
 
-        report.append("")
-        report.append(f"Total Classes: {total_classes}")
-        report.append(f"Total Functions: {total_functions}")
-        report.append("")
+        analyzer.session.get.side_effect = [response1, response2]
 
-        # Test files analysis
-        test_files = self.get_test_files()
-        report.append(f"🧪 Test Files: {len(test_files)}")
-        report.append("-" * 80)
+        result = analyzer.get_project_issues(
+            project_key="test-project", branch="main"
+        )
 
-        total_test_methods = 0
-        total_test_classes = 0
-        total_assertions = 0
+        assert result is not None
+        assert result.total_issues == 2
+        assert analyzer.session.get.call_count == 2
 
-        for test_file in test_files:
-            stats = self.extract_test_cases(test_file)
-            total_test_methods += stats['methods']
-            total_test_classes += stats['classes']
-            total_assertions += stats['assertions']
+    def test_get_project_issues_with_filters(self, analyzer):
+        """Test issue retrieval with filters."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
 
-            report.append(f"\n📋 {test_file.name}")
-            report.append(f"   Test Classes: {stats['classes']}")
-            report.append(f"   Test Methods: {stats['methods']}")
-            report.append(f"   Assertions: {stats['assertions']}")
+        analyzer.session.get.return_value = mock_response
 
-        report.append("")
-        report.append(f"Total Test Classes: {total_test_classes}")
-        report.append(f"Total Test Methods: {total_test_methods}")
-        report.append(f"Total Assertions: {total_assertions}")
-        report.append("")
+        result = analyzer.get_project_issues(
+            project_key="test-project",
+            branch="develop",
+            statuses=["OPEN", "CONFIRMED"],
+            severities=["BLOCKER", "CRITICAL"],
+            types=["BUG"],
+        )
 
-        # Coverage summary
-        report.append("=" * 80)
-        report.append("📊 Coverage Summary")
-        report.append("=" * 80)
-        report.append("")
+        # Verify filters were applied
+        call_args = analyzer.session.get.call_args
+        print("call args ")
+        print(call_args)
+        params = call_args[1]["params"]
+        print("line 185 ", params)
+        assert "OPEN" in params["issueStatuses"]
+        assert "BLOCKER" in params.get("severities", "")
 
-        coverage_table = [
-            ("Component", "Source Files", "Test Files", "Status"),
-            ("-" * 30, "-" * 12, "-" * 10, "-" * 15),
-            ("fix_validator.py", "1", "1", "✅ Covered"),
-            ("improved_fix_application.py", "1", "1", "✅ Covered"),
-            ("models.py", "0*", "1", "⚠️  Reference only"),
-            ("sonar_analyzer.py", "0*", "1", "⚠️  Reference only"),
-            ("integration", "-", "1", "✅ Covered"),
+    def test_get_project_issues_http_error(self, analyzer):
+        """Test handling of HTTP errors."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = requests.HTTPError()
+
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_issues(
+            project_key="nonexistent-project", branch="main"
+        )
+
+        assert result is None
+
+    def test_get_project_issues_timeout(self, analyzer):
+        """Test handling of request timeout."""
+        analyzer.session.get.side_effect = requests.Timeout()
+
+        result = analyzer.get_project_issues(
+            project_key="test-project", branch="main"
+        )
+
+        assert result is None
+
+
+class TestGetProjectMetrics:
+    """Test fetching project metrics."""
+
+    def test_get_project_metrics_success(self, analyzer):
+        """Test successful metrics retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "component": {
+                "measures": [
+                    {"metric": "ncloc", "value": "1000"},
+                    {"metric": "coverage", "value": "85.5"},
+                    {"metric": "bugs", "value": "5"},
+                    {"metric": "vulnerabilities", "value": "2"},
+                    {"metric": "code_smells", "value": "15"},
+                    {"metric": "sqale_rating", "value": "A"},
+                    {"metric": "reliability_rating", "value": "B"},
+                    {"metric": "security_rating", "value": "A"},
+                ]
+            }
+        }
+
+        analyzer.session.get.return_value = mock_response
+
+        metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+        assert metrics.lines_of_code == 1000
+        assert metrics.coverage == 85.5
+        assert metrics.bugs == 5
+        assert metrics.vulnerabilities == 2
+        assert metrics.code_smells == 15
+
+    def test_get_project_metrics_empty_response(self, analyzer):
+        """Test handling of empty metrics response."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"component": {"measures": []}}
+
+        analyzer.session.get.return_value = mock_response
+
+        metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+        assert metrics.lines_of_code is None
+        assert metrics.coverage is None
+
+    def test_get_project_metrics_http_error(self, analyzer):
+        """Test handling of HTTP error in metrics retrieval."""
+        mock_response = Mock()
+        mock_response.status_code = 403
+        mock_response.text = "Forbidden"
+        mock_response.raise_for_status.side_effect = requests.HTTPError(response=mock_response)
+
+        analyzer.session.get.return_value = mock_response
+
+        metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is None
+
+
+class TestParseIssues:
+    """Test issue parsing."""
+
+    def test_parse_issues_success(self, analyzer, sample_issue_data):
+        """Test successful issue parsing."""
+        issues = analyzer._parse_issues([sample_issue_data])
+
+        assert len(issues) == 1
+        issue = issues[0]
+        assert issue.key == sample_issue_data["key"]
+        assert issue.rule == sample_issue_data["rule"]
+        assert issue.severity == Severity.MAJOR
+        assert issue.type == IssueType.CODE_SMELL
+        assert issue.first_line == 42
+        assert issue.last_line == 45
+
+    def test_parse_issues_with_invalid_data(self, analyzer):
+        """Test parsing with invalid issue data."""
+        invalid_data = [
+            {
+                "key": "test-key",
+                # Missing required fields
+            }
         ]
 
-        for row in coverage_table:
-            report.append(f"{row[0]:<32} {row[1]:<13} {row[2]:<11} {row[3]}")
+        issues = analyzer._parse_issues(invalid_data)
 
-        report.append("")
-        report.append("* Reference tests exist but source files are not in accessible directory")
-        report.append("")
+        # Should handle gracefully, possibly returning empty list or partial data
+        assert isinstance(issues, list)
 
-        # Test quality metrics
-        report.append("=" * 80)
-        report.append("📈 Test Quality Metrics")
-        report.append("=" * 80)
-        report.append("")
+    def test_parse_issues_severity_mapping(self, analyzer):
+        """Test severity enum mapping."""
+        test_data = [
+            {"severity": "BLOCKER", "type": "BUG", "key": "1", "rule": "rule1", "component": "c", "project": "p", "message": "m"},
+            {"severity": "CRITICAL", "type": "BUG", "key": "2", "rule": "rule2", "component": "c", "project": "p", "message": "m"},
+            {"severity": "MAJOR", "type": "BUG", "key": "3", "rule": "rule3", "component": "c", "project": "p", "message": "m"},
+            {"severity": "MINOR", "type": "BUG", "key": "4", "rule": "rule4", "component": "c", "project": "p", "message": "m"},
+            {"severity": "INFO", "type": "BUG", "key": "5", "rule": "rule5", "component": "c", "project": "p", "message": "m"},
+        ]
 
-        if total_test_methods > 0:
-            assertions_per_test = total_assertions / total_test_methods
-            report.append(f"✓ Assertions per test: {assertions_per_test:.1f}")
-            report.append(f"✓ Test classes: {total_test_classes}")
-            report.append(f"✓ Test methods: {total_test_methods}")
-            report.append(f"✓ Total assertions: {total_assertions}")
+        issues = analyzer._parse_issues(test_data)
 
-        report.append("")
-        report.append("Quality Indicators:")
-        report.append("  ✅ Comprehensive test coverage (500+ assertions)")
-        report.append("  ✅ Multiple test categories (unit, integration)")
-        report.append("  ✅ Edge case testing included")
-        report.append("  ✅ Error handling tested")
-        report.append("  ✅ Mock-based testing (no external dependencies)")
-        report.append("")
-
-        # Test execution guide
-        report.append("=" * 80)
-        report.append("🚀 Running Tests")
-        report.append("=" * 80)
-        report.append("")
-        report.append("Run all tests:")
-        report.append("  cd tests && python run_tests.py")
-        report.append("")
-        report.append("Run specific suite:")
-        report.append("  python run_tests.py --suite validator")
-        report.append("  python run_tests.py --suite models")
-        report.append("  python run_tests.py --suite application")
-        report.append("  python run_tests.py --suite sonar")
-        report.append("  python run_tests.py --suite integration")
-        report.append("")
-        report.append("Run with coverage:")
-        report.append("  python run_tests.py --coverage")
-        report.append("")
-        report.append("Run with verbose output:")
-        report.append("  python run_tests.py --verbose")
-        report.append("")
-
-        report.append("=" * 80)
-        report.append("Status: ✅ Test Suite Complete and Production Ready")
-        report.append("=" * 80)
-
-        return "\n".join(report)
+        assert len(issues) == 5
+        assert issues[0].severity == Severity.BLOCKER
+        assert issues[1].severity == Severity.CRITICAL
+        assert issues[2].severity == Severity.MAJOR
+        assert issues[3].severity == Severity.MINOR
+        assert issues[4].severity == Severity.INFO
 
 
-def main():
-    """Main entry point."""
-    # Determine project root
-    script_dir = Path(__file__).parent
-    project_root = script_dir.parent if script_dir.name == "tests" else script_dir
+class TestExtractFilePath:
+    """Test file path extraction."""
 
-    # Create analyzer
-    analyzer = TestCoverageAnalyzer(project_root)
+    def test_extract_file_path_with_colon(self, analyzer):
+        """Test extracting file path from component with colon."""
+        component = "project-key:src/main/java/MyClass.java"
+        file_path = analyzer._extract_file_path(component)
 
-    # Generate report
-    report = analyzer.generate_report()
+        assert file_path == "src/main/java/MyClass.java"
 
-    # Print report
-    print(report)
+    def test_extract_file_path_without_colon(self, analyzer):
+        """Test extracting file path from component without colon."""
+        component = "src/main.py"
+        file_path = analyzer._extract_file_path(component)
 
-    # Save report to file
-    report_file = project_root / "tests" / "COVERAGE_REPORT.txt"
-    try:
-        with open(report_file, 'w', encoding='utf-8') as f:
-            f.write(report)
-        print(f"\n✅ Report saved to: {report_file}")
-    except Exception as e:
-        print(f"\n⚠️  Could not save report: {e}")
+        assert file_path == "src/main.py"
+
+    def test_extract_file_path_empty(self, analyzer):
+        """Test extracting file path from empty component."""
+        file_path = analyzer._extract_file_path("")
+
+        assert file_path is None
+
+
+class TestGetFixableIssues:
+    """Test filtering fixable issues."""
+
+    def test_get_fixable_issues(self, analyzer, sample_issue_data):
+        """Test retrieving only fixable issues."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [sample_issue_data],
+            "paging": {"total": 1, "pageIndex": 1, "pageSize": 500},
+        }
+
+        analyzer.session.get.return_value = mock_response
+
+        fixable = analyzer.get_fixable_issues(
+            project_key="test-project", branch="main"
+        )
+
+        assert isinstance(fixable, list)
+        # Should only include issues that are fixable
+        for issue in fixable:
+            assert issue.is_fixable
+
+    def test_get_fixable_issues_with_max_limit(self, analyzer, sample_issue_data):
+        """Test limiting number of fixable issues."""
+        # Create multiple issues
+        issues = [dict(sample_issue_data, key=f"issue-{i}") for i in range(10)]
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": issues,
+            "paging": {"total": 10, "pageIndex": 1, "pageSize": 500},
+        }
+
+        analyzer.session.get.return_value = mock_response
+
+        fixable = analyzer.get_fixable_issues(
+            project_key="test-project", branch="main", max_issues=5
+        )
+
+        assert len(fixable) <= 5
+
+
+class TestRuleFetching:
+    """Test SonarCloud rule fetching."""
+
+    def test_fetch_all_rules(self, analyzer):
+        """Test fetching all rules."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rules": [
+                {
+                    "key": "python:S1481",
+                    "name": "Unused local variables",
+                    "lang": "python",
+                    "type": "CODE_SMELL",
+                    "severity": "MAJOR",
+                    "htmlDesc": "Unused variables should be removed",
+                }
+            ],
+            "total": 1,
+        }
+
+        analyzer.session.get.return_value = mock_response
+
+        rules = analyzer.fetch_all_rules()
+
+        assert "rules" in rules
+        assert "metadata" in rules
+        assert rules["metadata"]["total_rules"] > 0
+
+    def test_get_rule_by_key(self, analyzer):
+        """Test fetching specific rule by key."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rule": {
+                "key": "python:S1481",
+                "name": "Unused local variables",
+                "lang": "python",
+                "htmlDesc": "Description",
+            }
+        }
+
+        analyzer.session.get.return_value = mock_response
+
+        rule = analyzer.get_rule_by_key("python:S1481")
+
+        assert rule is not None
+        assert rule["name"] == "Unused local variables"
+
+
+class TestContextManager:
+    """Test context manager functionality."""
+
+    def test_context_manager_enter_exit(self):
+        """Test using analyzer as context manager."""
+        with patch("devdox_ai_sonar.sonar_analyzer.requests.Session") as mock_session_class:
+            mock_session = Mock()
+            mock_session_class.return_value = mock_session
+
+            from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
+
+            with SonarCloudAnalyzer(
+                token="test-token", organization="test-org"
+            ) as analyzer:
+                assert analyzer is not None
+
+            # Session should be closed after exiting context
+            mock_session.close.assert_called_once()
+
+
+class TestProjectAnalysis:
+    """Test project directory analysis."""
+
+    def test_analyze_project_directory(self, analyzer, tmp_path):
+        """Test analyzing a project directory structure."""
+        # Create test project structure
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "main.py").write_text("print('hello')")
+        (tmp_path / "src" / "utils.py").write_text("def helper(): pass")
+        (tmp_path / "tests").mkdir()
+        (tmp_path / "tests" / "test_main.py").write_text("def test_main(): pass")
+        (tmp_path / ".git").mkdir()
+
+        analysis = analyzer.analyze_project_directory(tmp_path)
+
+        assert analysis["total_files"] >= 3
+        assert analysis["python_files"] >= 3
+        assert analysis["has_git"] is True
+
+    def test_analyze_project_invalid_path(self, analyzer):
+        """Test analyzing non-existent project directory."""
+        with pytest.raises(ValueError):
+            analyzer.analyze_project_directory("/nonexistent/path")
 
 
 if __name__ == "__main__":
-    main()
+    pytest.main([__file__, "-v"])
