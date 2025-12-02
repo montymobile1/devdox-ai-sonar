@@ -151,6 +151,7 @@ def select_fixes_interactively(fixes: List):
 
     return selected
 
+
 @main.command()
 @click.option("--token", "-t", required=True, help="SonarCloud authentication token")
 @click.option("--organization", "--org", required=True, help="SonarCloud organization key")
@@ -168,25 +169,25 @@ def select_fixes_interactively(fixes: List):
 @click.option("--dry-run", is_flag=True, help="Show what would be changed without applying fixes")
 @click.option("--backup/--no-backup", default=True, help="Create backup before applying fixes (default: true)")
 @click.pass_context
-def fix(
-    ctx: click.Context,
-    token: str,
-    organization: str,
-    project: str,
-    project_path: Path,
-    branch: str,
-    pull_request: int,
-    provider: str,
-    types: Optional[str],
-    severity:Optional[str],
-    model: Optional[str],
-    api_key: Optional[str],
-    max_fixes: int,
-    apply: bool,
-    dry_run: bool,
-    backup: bool
-) -> None:
+def fix(ctx: click.Context, **options) -> None:
     """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
+    # Extract options passed via Click
+    token = options.get('token')
+    organization = options.get('organization')
+    project = options.get('project')
+    project_path = options.get('project_path')
+    branch = options.get('branch')
+    pull_request = options.get('pull_request')
+    provider = options.get('provider')
+    types = options.get('types')
+    severity = options.get('severity')
+    model = options.get('model')
+    api_key = options.get('api_key')
+    max_fixes = options.get('max_fixes')
+    apply = options.get('apply')
+    dry_run = options.get('dry_run')
+    backup = options.get('backup')
+
     VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
     VALID_SEVERETIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
     try:

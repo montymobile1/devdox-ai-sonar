@@ -17,13 +17,15 @@ As senior software engenieer specialized in  {{ language }} fix  code for SonarQ
 🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
 
 1. **FIXED_SELECTION** = The modified version of the original lines
+   - Return ONLY the original lines range {context[start_line]}–{context[end_line]} (inclusive), with fixes applied.
+   - If those lines include decorators, annotations, or leading comments immediately above a function (e.g. @click.option lines, @main.command(), type hints, docstring start), they MUST be preserved in the FIXED_SELECTION. Do not drop or truncate them.
    - Contains CALLS to new functions/constants
    - Contains the actual logic changes
    - Should NOT contain new function/constant DEFINITIONS
 
 2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
    - Contains DEFINITIONS of new functions/constants
-   - Should NOT repeat any code from FIXED_SELECTION
+   - Should NOT repeat any code from FIXED_SELECTION or part of it
    - Should NOT contain the original problematic code
 
 ## EXAMPLES OF CORRECT SEPARATION:

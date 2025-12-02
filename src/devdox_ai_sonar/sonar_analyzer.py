@@ -841,110 +841,94 @@ class SonarCloudAnalyzer:
         logger.info(f"Exported {rules_data['metadata']['total_rules']} rules to {filename}")
 
     def get_project_issues(
-        self,
-        project_key: str,
-        branch: str = "",
-        pull_request_number: Optional[int] = 0,
-        statuses: List[str] = None,
-        severities: List[str] = None,
-        types: List[str] = None
-    ) -> Optional[AnalysisResult]:
-        """
-        Fetch SonarCloud issues for a project using REST API.
+            self,
+            project_key: str,
+            branch: str = "",
+            pull_request_number: Optional[int] = 0,
+            statuses: List[str] = None,
+            severities: List[str] = None,
+            types: List[str] = None
+        ) -> Optional[AnalysisResult]:
+            logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
 
-        API Endpoint: GET /api/issues/search
-        Documentation: https://sonarcloud.io/web_api/api/issues/search
+            if statuses is None:
+                statuses = ["OPEN"]
 
-        Args:
-            project_key: SonarCloud project key (componentKeys)
-            branch: Branch to analyze (default: main)
-            statuses: Issue statuses to fetch (default: OPEN,ACCEPTED)
-            severities: Issue severities to filter by
-            types: Issue types to filter by
+            url = urljoin(self.base_url, "/api/issues/search")
 
-        Returns:
-            AnalysisResult with issues and metadata, or None if error
-        """
+            try:
+                params = self._build_query_params(project_key, branch, pull_request_number, statuses, severities, types)
+                issues = self._fetch_issues(url, params)
+                parsed_issues = self._parse_issues(issues)
+                metrics = self.get_project_metrics(project_key)
+                return AnalysisResult(
+                    project_key=project_key,
+                    organization=self.organization,
+                    branch=branch,
+                    total_issues=len(parsed_issues),
+                    issues=parsed_issues,
+                    metrics=metrics,
+                    analysis_timestamp=datetime.now().isoformat()
+                )
+            except requests.RequestException as e:
+                return self._handle_exceptions(e, project_key)
+            except Exception as e:
+                logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
+                return None
 
-        def _build_query_params():
-            nonlocal branch
-            params = {
-                'componentKeys': project_key,
-                'organization': self.organization,
-                'issueStatuses': ','.join(statuses if statuses else ["OPEN"]),
-                'ps': 500  # Page size (max 500)
-            }
-            if branch != '':
-                params['branch'] = branch
+    def _build_query_params(self, project_key, branch, pull_request_number, statuses, severities, types):
+        params = {
+            'componentKeys': project_key,
+            'organization': self.organization,
+            'issueStatuses': ','.join(statuses),
+            'ps': 500  # Page size (max 500)
+        }
+        if branch != '':
+            params['branch'] = branch
+        else:
+            if pull_request_number != 0:
+                params['pullRequest'] = str(pull_request_number)
             else:
-                if pull_request_number != 0:
-                    params['pullRequest'] = str(pull_request_number)
-                else:
-                    params['branch'] = 'main'
-            if severities:
-                params['severities'] = ','.join(severities)
-            if types:
-                params['types'] = ','.join(types)
-            return params
+                params['branch'] = 'main'
+        if severities:
+            params['severities'] = ','.join(severities)
+        if types:
+            params['types'] = ','.join(types)
+        return params
 
-        def _fetch_issues(params):
-            all_issues = []
-            page = 1
-            while True:
-                params['p'] = page
-                response = self.session.get(url, params=params, timeout=self.timeout)
-                response.raise_for_status()
-                data = response.json()
-                issues = data.get('issues', [])
-                all_issues.extend(issues)
-                paging = data.get('paging', {})
-                total = paging.get('total', 0)
-                if len(all_issues) >= total:
-                    break
-                page += 1
-            return all_issues
 
-        def _handle_exceptions(e):
-            status_code = e.response.status_code if hasattr(e, 'response') else None
-            logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
-            if isinstance(e, requests.Timeout):
-                pass
-            elif isinstance(e, requests.HTTPError):
-                error_text = e.response.text
-                if status_code == 401:
-                    logger.error("Authentication failed. Check your SonarCloud token.")
-                elif status_code == 403:
-                    logger.error("Access forbidden. Check organization and project permissions.")
-                elif status_code == 404:
-                    logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
-            return None
+    def _fetch_issues(self, url, params):
+        all_issues = []
+        page = 1
+        while True:
+            params['p'] = page
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            issues = data.get('issues', [])
+            all_issues.extend(issues)
+            paging = data.get('paging', {})
+            total = paging.get('total', 0)
+            if len(all_issues) >= total:
+                break
+            page += 1
+        return all_issues
 
-        logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
 
-        if statuses is None:
-            statuses = ["OPEN"]
-
-        url = urljoin(self.base_url, "/api/issues/search")
-
-        try:
-            params = _build_query_params()
-            issues = _fetch_issues(params)
-            parsed_issues = self._parse_issues(issues)
-            metrics = self.get_project_metrics(project_key)
-            return AnalysisResult(
-                project_key=project_key,
-                organization=self.organization,
-                branch=branch,
-                total_issues=len(parsed_issues),
-                issues=parsed_issues,
-                metrics=metrics,
-                analysis_timestamp=datetime.now().isoformat()
-            )
-        except requests.RequestException as e:
-            return _handle_exceptions(e)
-        except Exception as e:
-            logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
-            return None
+    def _handle_exceptions(self, e, project_key):
+        status_code = e.response.status_code if hasattr(e, 'response') else None
+        logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
+        if isinstance(e, requests.Timeout):
+            pass
+        elif isinstance(e, requests.HTTPError):
+            error_text = e.response.text
+            if status_code == 401:
+                logger.error("Authentication failed. Check your SonarCloud token.")
+            elif status_code == 403:
+                logger.error("Access forbidden. Check organization and project permissions.")
+            elif status_code == 404:
+                logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
+        return None
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
         """
         Fetch project metrics from SonarCloud.
