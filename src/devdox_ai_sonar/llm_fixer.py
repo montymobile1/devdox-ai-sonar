@@ -1345,65 +1345,69 @@ class LLMFixer:
         return normalized_lines
 
     def _find_import_insertion_point(self, lines: List[str]) -> int:
-        """
-        Find the best position to insert import statements.
-        Returns the line index where imports should be inserted.
-        """
-        last_import_line = -1
-        last_docstring_line = -1
-        last_shebang_encoding_line = -1
+            """
+            Find the best position to insert import statements.
+            Returns the line index where imports should be inserted.
+            """
+            state = {
+                "last_import_line": -1,
+                "last_docstring_line": -1,
+                "last_shebang_encoding_line": -1,
+                "in_docstring": False,
+                "docstring_quote": None,
+            }
 
-        in_docstring = False
-        docstring_quote = None
+            for i, line in enumerate(lines):
+                state, stop = self._process_import_line(i, line, state)
+                if stop:
+                    break
 
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-
-            # Skip shebang and encoding declarations
-            if i < 3 and (stripped.startswith('#') and ('coding' in stripped or 'encoding' in stripped)):
-                last_shebang_encoding_line = i
-                continue
-            if i == 0 and stripped.startswith('#!'):
-                last_shebang_encoding_line = i
-                continue
-
-            # Handle docstrings
-            if not in_docstring:
-                if (stripped.startswith('"""') or stripped.startswith("'''")):
-                    docstring_quote = stripped[:3]
-                    in_docstring = True
-                    if stripped.count(docstring_quote) >= 2:  # Single line docstring
-                        in_docstring = False
-                        last_docstring_line = i
-                    continue
+            if state["last_import_line"] >= 0:
+                return state["last_import_line"] + 1
+            elif state["last_docstring_line"] >= 0:
+                return state["last_docstring_line"] + 1
+            elif state["last_shebang_encoding_line"] >= 0:
+                return state["last_shebang_encoding_line"] + 1
             else:
-                if docstring_quote in stripped:
-                    in_docstring = False
-                    last_docstring_line = i
-                    continue
+                return 0
 
-            # Skip if we're still in a docstring
-            if in_docstring:
-                continue
+    def _process_import_line(self, i: int, line: str, state: dict) -> tuple:
+            stripped = line.strip()
+            # Shebang / encoding lines
+            if i < 3 and stripped.startswith('#') and ('coding' in stripped or 'encoding' in stripped):
+                state["last_shebang_encoding_line"] = i
+                return state, False
+            if i == 0 and stripped.startswith('#!'):
+                state["last_shebang_encoding_line"] = i
+                return state, False
 
-            # Track import statements
+            # Docstring handling
+            if not state["in_docstring"]:
+                if stripped.startswith('"""') or stripped.startswith("'''"):
+                    state["docstring_quote"] = stripped[:3]
+                    state["in_docstring"] = True
+                    if stripped.count(state["docstring_quote"]) >= 2:  # single line docstring
+                        state["in_docstring"] = False
+                        state["last_docstring_line"] = i
+                    return state, False
+            else:
+                if state["docstring_quote"] in stripped:
+                    state["in_docstring"] = False
+                    state["last_docstring_line"] = i
+                    return state, False
+                # still inside multi‑line docstring
+                return state, False
+
+            # Import statements
             if stripped.startswith(('import ', 'from ')):
-                last_import_line = i
-                continue
+                state["last_import_line"] = i
+                return state, False
 
-            # If we hit actual code (not comments/empty lines), stop
+            # Actual code (non‑comment, non‑empty)
             if stripped and not stripped.startswith('#'):
-                break
+                return state, True
 
-        # Determine insertion point
-        if last_import_line >= 0:
-            return last_import_line + 1
-        elif last_docstring_line >= 0:
-            return last_docstring_line + 1
-        elif last_shebang_encoding_line >= 0:
-            return last_shebang_encoding_line + 1
-        else:
-            return 0
+            return state, False
 
     def _find_global_top_insertion_point(self, lines: List[str]) -> int:
         """
