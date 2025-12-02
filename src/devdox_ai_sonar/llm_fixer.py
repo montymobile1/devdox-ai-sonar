@@ -1021,22 +1021,19 @@ class LLMFixer:
         return None
 
     def _process_match_value(self, key, value):
-        if key != 'CONFIDENCE':
-            value = (
-                value
-                .replace('\"', '"')  # escaped quotes
-                .replace('\\\\', '\\')  # escaped backslashes
-            )
-            return value.strip()
-        elif value is not None:
-            return float(value)
         if key == 'CONFIDENCE':
+            if value is not None:
+                return float(value)
             return 0.5
-        elif key == 'PLACEMENT':
+        if key == 'PLACEMENT':
             return 'SIBLING'
-        else:
-            return ""
-
+        # default processing for other keys
+        value = (
+            value
+            .replace('"', '"')  # escaped quotes
+            .replace('\\\\', '\\')  # escaped backslashes
+        )
+        return value.strip()
 
     def _validate_results(self, results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not results.get('FIXED_SELECTION'):
@@ -1471,7 +1468,6 @@ class LLMFixer:
                     logger.warning(f"Fix {fix.issue_key} has invalid line range, skipping")
                     skipped_fixes.append(fix)
                     continue
-
                 if fix.helper_code != "" and fix.placement_helper == "SIBLING":
                     # CRITICAL FIX: Update lines array directly, don't create separate variable
                     indented_helper_code = self.apply_indentation_to_fix(fix.helper_code, base_indent)

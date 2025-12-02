@@ -233,20 +233,21 @@ def fix(ctx: click.Context, **options) -> None:
             console.print_exception()
         sys.exit(1)
 
-def _parse_filters(severity, types, VALID_TYPES, VALID_SEVERETIES):
+def _parse_filters(severity, types, valid_types, valid_severities):
     severity_list = None
     types_list = None
     if severity and severity != "":
         severity_list = [t.strip() for t in severity.split(",")]
-        unknown = set(severity_list) - VALID_SEVERETIES
+        unknown = set(severity_list) - valid_severities
         if unknown:
             raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
     if types and types != "":
         types_list = [t.strip() for t in types.split(",")]
-        unknown = set(types_list) - VALID_TYPES
+        unknown = set(types_list) - valid_types
         if unknown:
             raise click.BadParameter(f"Invalid issue types: {', '.join(unknown)}")
     return severity_list, types_list
+
 
 def _fetch_fixable_issues(analyzer, project_key, branch, pull_request, max_issues, severity_list, types_list):
     with Progress() as progress:
@@ -361,7 +362,6 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
     severity_counts = result.issues_by_severity
     console.print(f"\n[bold]Issues by Severity:[/bold]")
     for severity in Severity:
-        color="green"
         count = len(severity_counts[severity])
         if count > 0:
             color = _get_severity_color(severity)
@@ -387,7 +387,7 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
                 issue.type,
                 issue.file or "N/A",
                 str(issue.first_line) if issue.first_line else "N/A",
-                issue.message[:47] + "..." if len(issue.message) > 50 else issue.message  # Still need to escape this
+                issue.message[:47] + "..." if len(issue.message) > 50 else issue.message
             )
 
 
@@ -396,7 +396,6 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 
         if limit and len(result.issues) > limit:
             console.print(f"\n[dim]... and {len(result.issues) - limit} more issues[/dim]")
-
 
 def _display_fix_results(result) -> None:
     """Display fix application results."""
