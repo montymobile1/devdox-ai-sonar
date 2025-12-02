@@ -916,19 +916,20 @@ class SonarCloudAnalyzer:
 
 
     def _handle_exceptions(self, e, project_key):
-        status_code = e.response.status_code if hasattr(e, 'response') else None
-        logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
-        if isinstance(e, requests.Timeout):
-            pass
-        elif isinstance(e, requests.HTTPError):
-            error_text = e.response.text
-            if status_code == 401:
-                logger.error("Authentication failed. Check your SonarCloud token.")
-            elif status_code == 403:
-                logger.error("Access forbidden. Check organization and project permissions.")
-            elif status_code == 404:
-                logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
-        return None
+            status_code = e.response.status_code if hasattr(e, 'response') else None
+            logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
+            if isinstance(e, requests.Timeout):
+                logger.warning(f"Request timed out while fetching issues for {project_key}.")
+            elif isinstance(e, requests.HTTPError):
+                error_text = e.response.text
+                if status_code == 401:
+                    logger.error("Authentication failed. Check your SonarCloud token.")
+                elif status_code == 403:
+                    logger.error("Access forbidden. Check organization and project permissions.")
+                elif status_code == 404:
+                    logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
+            return None
+
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
         """
         Fetch project metrics from SonarCloud.

@@ -375,13 +375,14 @@ class LLMFixer:
         problem_line = lines[first_line_idx].rstrip()
         # Check if first line contains function/method definition
         if self._is_function_definition(problem_line):
-            function_context = self._extract_complete_function(lines, first_line_idx)
+            function_context = self._extract_complete_function(lines, first_line_idx, first_line_idx)
             if function_context:
+
                 return function_context
 
         function_start_idx = self._find_containing_function(lines, first_line_idx)
         if function_start_idx is not None:
-            function_context = self._extract_complete_function(lines, function_start_idx)
+            function_context = self._extract_complete_function(lines, function_start_idx, first_line_idx)
             if function_context:
 
                 return function_context
@@ -389,9 +390,11 @@ class LLMFixer:
         # Check if issue spans multiple lines and any line is a function definition
         for line_idx in range(first_line_idx, min(last_line_idx + 1, len(lines))):
             if self._is_function_definition(lines[line_idx]):
-                function_context = self._extract_complete_function(lines, line_idx)
+                function_context = self._extract_complete_function(lines, line_idx, first_line_idx)
                 if function_context:
+
                     return function_context
+
 
 
         # Fall back to normal context extraction
@@ -496,7 +499,7 @@ class LLMFixer:
         return start_idx
 
 
-    def _extract_complete_function(self, lines: List[str], start_idx: int) -> Optional[Dict[str, Any]]:
+    def _extract_complete_function(self, lines: List[str], start_idx: int, problem_line_idx:int) -> Optional[Dict[str, Any]]:
         """
         Extract complete function/method from start to end, including decorators.
 
@@ -538,14 +541,14 @@ class LLMFixer:
 
         # Get the actual function definition line
         function_def_line = lines[function_def_line_idx].rstrip()
-        problem_line = lines[start_idx].rstrip()
+
         # Extract decorators
         decorators = []
         for i in range(function_start, function_def_line_idx):
             decorator_line = lines[i].strip()
             if decorator_line:  # Skip empty lines
                 decorators.append(decorator_line)
-
+        problem_line = lines[problem_line_idx].rstrip()
         return {
             "context": context_text,
             "function_definition_line": function_def_line,
@@ -1453,6 +1456,7 @@ class LLMFixer:
 
                 # Apply indentation to the fixed code
                 indented_fixed_code = self.apply_indentation_to_fix(fix.fixed_code, base_indent)
+
                 if start < 0 or end >= len(lines) or start > end:
                     logger.warning(f"Fix {fix.issue_key} has invalid line range, skipping")
                     skipped_fixes.append(fix)
