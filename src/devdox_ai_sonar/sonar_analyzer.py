@@ -372,295 +372,293 @@ class SonarCloudAnalyzer:
 
     def _generate_fix_guidance(self, rule: Dict) -> Dict[str, Any]:
 
-        """
+            """
 
-        Generate comprehensive fix guidance based on rule type and patterns.
+            Generate comprehensive fix guidance based on rule type and patterns.
 
 
 
-        Args:
+            Args:
 
-            rule: Rule dictionary from SonarCloud API
+                rule: Rule dictionary from SonarCloud API
 
 
 
-        Returns:
+            Returns:
 
-            Fix guidance dictionary with description, steps, and examples
+                Fix guidance dictionary with description, steps, and examples
 
-        """
+            """
 
-        name = rule.get('name', '').lower()
+            name = rule.get('name', '').lower()
 
-        rule_type = rule.get('type', '').lower()
+            rule_type = rule.get('type', '').lower()
 
-        desc = rule.get('htmlDesc', '').lower()
+            # Pattern-based fix guidance
 
-        # Pattern-based fix guidance
+            if 'unused' in name:
 
-        if 'unused' in name:
+                return {
 
-            return {
+                    'description': 'Remove unused code or implement its intended functionality',
 
-                'description': 'Remove unused code or implement its intended functionality',
+                    'steps': [
 
-                'steps': [
+                        'Identify all unused elements (variables, methods, imports, etc.)',
 
-                    'Identify all unused elements (variables, methods, imports, etc.)',
+                        'Verify they are truly not needed by checking references',
 
-                    'Verify they are truly not needed by checking references',
+                        'Remove unused elements or implement their intended purpose',
 
-                    'Remove unused elements or implement their intended purpose',
+                        'Run tests to ensure no functionality is broken'
 
-                    'Run tests to ensure no functionality is broken'
+                    ],
 
-                ],
+                    'priority': 'Medium',
 
-                'priority': 'Medium',
+                    'effort': 'Low'
 
-                'effort': 'Low'
+                }
 
-            }
 
 
+            elif 'null' in name or 'npe' in name:
 
-        elif 'null' in name or 'npe' in name:
+                return {
 
-            return {
+                    'description': 'Add null checks before dereferencing objects',
 
-                'description': 'Add null checks before dereferencing objects',
+                    'steps': [
 
-                'steps': [
+                        'Identify all potential null dereferences',
 
-                    'Identify all potential null dereferences',
+                        'Add null checks using if statements or Optional classes',
 
-                    'Add null checks using if statements or Optional classes',
+                        'Handle null cases appropriately (return, throw exception, use default)',
 
-                    'Handle null cases appropriately (return, throw exception, use default)',
+                        'Consider using null-safe operators where available'
 
-                    'Consider using null-safe operators where available'
+                    ],
 
-                ],
+                    'priority': 'High',
 
-                'priority': 'High',
+                    'effort': 'Medium'
 
-                'effort': 'Medium'
+                }
 
-            }
 
 
+            elif 'sql' in name or 'injection' in name:
 
-        elif 'sql' in name or 'injection' in name:
+                return {
 
-            return {
+                    'description': 'Use parameterized queries instead of string concatenation',
 
-                'description': 'Use parameterized queries instead of string concatenation',
+                    'steps': [
 
-                'steps': [
+                        'Identify dynamic SQL query construction',
 
-                    'Identify dynamic SQL query construction',
+                        'Replace string concatenation with parameterized queries',
 
-                    'Replace string concatenation with parameterized queries',
+                        'Use prepared statements or ORM frameworks',
 
-                    'Use prepared statements or ORM frameworks',
+                        'Validate and sanitize all user inputs'
 
-                    'Validate and sanitize all user inputs'
+                    ],
 
-                ],
+                    'priority': 'Critical',
 
-                'priority': 'Critical',
+                    'effort': 'Medium'
 
-                'effort': 'Medium'
+                }
 
-            }
 
 
+            elif 'password' in name or 'secret' in name or 'credential' in name:
 
-        elif 'password' in name or 'secret' in name or 'credential' in name:
+                return {
 
-            return {
+                    'description': 'Move credentials to environment variables or secure storage',
 
-                'description': 'Move credentials to environment variables or secure storage',
+                    'steps': [
 
-                'steps': [
+                        'Remove hard-coded credentials from source code',
 
-                    'Remove hard-coded credentials from source code',
+                        'Store credentials in environment variables',
 
-                    'Store credentials in environment variables',
+                        'Use secure credential management systems',
 
-                    'Use secure credential management systems',
+                        'Update deployment scripts to set environment variables',
 
-                    'Update deployment scripts to set environment variables',
+                        'Remove credentials from version control history'
 
-                    'Remove credentials from version control history'
+                    ],
 
-                ],
+                    'priority': 'Critical',
 
-                'priority': 'Critical',
+                    'effort': 'Medium'
 
-                'effort': 'Medium'
+                }
 
-            }
 
 
+            elif 'complex' in name or 'cognitive' in name:
 
-        elif 'complex' in name or 'cognitive' in name:
+                return {
 
-            return {
+                    'description': 'Refactor complex code into smaller, focused methods',
 
-                'description': 'Refactor complex code into smaller, focused methods',
+                    'steps': [
 
-                'steps': [
+                        'Identify the most complex parts of the method',
 
-                    'Identify the most complex parts of the method',
+                        'Extract complex logic into separate methods with descriptive names',
 
-                    'Extract complex logic into separate methods with descriptive names',
+                        'Use early returns to reduce nesting levels',
 
-                    'Use early returns to reduce nesting levels',
+                        'Simplify conditional expressions using guard clauses',
 
-                    'Simplify conditional expressions using guard clauses',
+                        'Consider using strategy pattern for complex conditional logic'
 
-                    'Consider using strategy pattern for complex conditional logic'
+                    ],
 
-                ],
+                    'priority': 'Medium',
 
-                'priority': 'Medium',
+                    'effort': 'High'
 
-                'effort': 'High'
+                }
 
-            }
 
 
+            elif 'duplicate' in name or 'repeated' in name:
 
-        elif 'duplicate' in name or 'repeated' in name:
+                return {
 
-            return {
+                    'description': 'Extract common code into reusable methods or constants',
 
-                'description': 'Extract common code into reusable methods or constants',
+                    'steps': [
 
-                'steps': [
+                        'Identify all instances of duplicated code',
 
-                    'Identify all instances of duplicated code',
+                        'Extract common logic into a shared method or constant',
 
-                    'Extract common logic into a shared method or constant',
+                        'Replace all duplicated instances with calls to the extracted code',
 
-                    'Replace all duplicated instances with calls to the extracted code',
+                        'Ensure the extracted code handles all use cases correctly'
 
-                    'Ensure the extracted code handles all use cases correctly'
+                    ],
 
-                ],
+                    'priority': 'Medium',
 
-                'priority': 'Medium',
+                    'effort': 'Medium'
 
-                'effort': 'Medium'
+                }
 
-            }
 
 
+            elif 'empty' in name:
 
-        elif 'empty' in name:
+                return {
 
-            return {
+                    'description': 'Implement proper logic or remove unnecessary empty blocks',
 
-                'description': 'Implement proper logic or remove unnecessary empty blocks',
+                    'steps': [
 
-                'steps': [
+                        'Determine the intended purpose of the empty block',
 
-                    'Determine the intended purpose of the empty block',
+                        'Either implement the missing functionality',
 
-                    'Either implement the missing functionality',
+                        'Or remove the empty block if not needed',
 
-                    'Or remove the empty block if not needed',
+                        'Add TODO comments for future implementation if appropriate'
 
-                    'Add TODO comments for future implementation if appropriate'
+                    ],
 
-                ],
+                    'priority': 'High',
 
-                'priority': 'High',
+                    'effort': 'Low'
 
-                'effort': 'Low'
+                }
 
-            }
 
 
+            elif rule_type == 'vulnerability':
 
-        elif rule_type == 'vulnerability':
+                return {
 
-            return {
+                    'description': 'Address security vulnerability following secure coding practices',
 
-                'description': 'Address security vulnerability following secure coding practices',
+                    'steps': [
 
-                'steps': [
+                        'Review the security implications of the vulnerable code',
 
-                    'Review the security implications of the vulnerable code',
+                        'Apply appropriate security controls and validation',
 
-                    'Apply appropriate security controls and validation',
+                        'Follow security best practices for the specific vulnerability type',
 
-                    'Follow security best practices for the specific vulnerability type',
+                        'Test security fixes thoroughly',
 
-                    'Test security fixes thoroughly',
+                        'Consider security code review'
 
-                    'Consider security code review'
+                    ],
 
-                ],
+                    'priority': 'Critical',
 
-                'priority': 'Critical',
+                    'effort': 'High'
 
-                'effort': 'High'
+                }
 
-            }
 
 
+            elif rule_type == 'bug':
 
-        elif rule_type == 'bug':
+                return {
 
-            return {
+                    'description': 'Fix logical error or potential runtime issue',
 
-                'description': 'Fix logical error or potential runtime issue',
+                    'steps': [
 
-                'steps': [
+                        'Understand the root cause of the bug',
 
-                    'Understand the root cause of the bug',
+                        'Implement the correct logic',
 
-                    'Implement the correct logic',
+                        'Add comprehensive tests to prevent regression',
 
-                    'Add comprehensive tests to prevent regression',
+                        'Verify the fix doesn\'t introduce new issues'
 
-                    'Verify the fix doesn\'t introduce new issues'
+                    ],
 
-                ],
+                    'priority': 'High',
 
-                'priority': 'High',
+                    'effort': 'Medium'
 
-                'effort': 'Medium'
+                }
 
-            }
 
 
+            else:
 
-        else:
+                return {
 
-            return {
+                    'description': 'Improve code quality following best practices',
 
-                'description': 'Improve code quality following best practices',
+                    'steps': [
 
-                'steps': [
+                        'Review the rule documentation for specific guidance',
 
-                    'Review the rule documentation for specific guidance',
+                        'Apply the recommended changes',
 
-                    'Apply the recommended changes',
+                        'Verify improvements don\'t break functionality',
 
-                    'Verify improvements don\'t break functionality',
+                        'Consider similar issues elsewhere in the codebase'
 
-                    'Consider similar issues elsewhere in the codebase'
+                    ],
 
-                ],
+                    'priority': 'Low',
 
-                'priority': 'Low',
+                    'effort': 'Low'
 
-                'effort': 'Low'
-
-            }
+                }
 
     def _get_category_stats(self, rules: Dict) -> Dict[str, int]:
 
