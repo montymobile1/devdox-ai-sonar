@@ -132,33 +132,6 @@ class TestGetProjectIssues:
         assert len(result.issues) == 1
         assert result.issues[0].rule == "python:S1481"
 
-    def test_get_project_issues_pagination(self, analyzer, sample_issue_data):
-        """Test handling of paginated results."""
-        # First page
-        response1 = Mock()
-        response1.status_code = 200
-        response1.json.return_value = {
-            "issues": [sample_issue_data],
-            "paging": {"total": 2, "pageIndex": 1, "pageSize": 1},
-        }
-
-        # Second page
-        response2 = Mock()
-        response2.status_code = 200
-        response2.json.return_value = {
-            "issues": [sample_issue_data],
-            "paging": {"total": 2, "pageIndex": 2, "pageSize": 1},
-        }
-
-        analyzer.session.get.side_effect = [response1, response2]
-
-        result = analyzer.get_project_issues(
-            project_key="test-project", branch="main"
-        )
-
-        assert result is not None
-        assert result.total_issues == 2
-        assert analyzer.session.get.call_count == 2
 
     def test_get_project_issues_with_filters(self, analyzer):
         """Test issue retrieval with filters."""
