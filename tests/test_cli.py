@@ -4,7 +4,9 @@ import pytest
 import json
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock, call
+import click
 from click.testing import CliRunner
+from devdox_ai_sonar.cli import main, analyze, fix, inspect, _parse_filters, _get_severity_color, select_fixes_interactively
 from devdox_ai_sonar.models import (
     SonarIssue,
     FixSuggestion,
@@ -554,6 +556,79 @@ class TestFixCommand:
         )
 
         assert result.exit_code == 0
+
+    def test_main_invocation(self,runner):
+        """Test that the main CLI can be invoked with no commands."""
+        result = runner.invoke(main, ["--help"])
+        assert result.exit_code == 0
+        assert "SonarCloud Analyzer" in result.output
+
+    def test_parse_filters_empty(self):
+        """Test that empty filters return None."""
+        severity_list, types_list = _parse_filters(None, None, {"BUG"}, {"BLOCKER"})
+        assert severity_list is None
+        assert types_list is None
+
+    def test_get_severity_color_default(self):
+        """Test unknown severity returns white."""
+        from devdox_ai_sonar.models import Severity
+        class FakeSeverity:
+            pass
+
+        assert _get_severity_color(FakeSeverity()) == "white"
+
+    @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
+    def test_analyze_invalid_token(self, mock_analyzer_class, runner):
+        """Test analyze exits on exception."""
+        mock_analyzer = MagicMock()
+        mock_analyzer.get_project_issues.side_effect = Exception("Invalid token")
+        mock_analyzer_class.return_value = mock_analyzer
+
+        result = runner.invoke(analyze, ["--token", "bad", "--organization", "org", "--project", "proj"])
+        assert result.exit_code == 1
+        assert "Error" in result.output
+
+    @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
+    def test_inspect_nonexistent_path(self, runner):
+        """Test inspect exits on invalid path."""
+        result = runner.invoke(inspect, ["/does/not/exist"])
+        assert result.exit_code != 0
+
+    @patch("devdox_ai_sonar.cli.click.prompt")
+    def test_select_fixes_invalid_input(self,mock_prompt, sample_fix_suggestion):
+        """Test interactive fix selection with invalid input."""
+        mock_prompt.return_value = "invalid"
+        selected = select_fixes_interactively([sample_fix_suggestion])
+        assert selected == []
+
+    @patch("devdox_ai_sonar.cli.LLMFixer")
+    @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
+    def test_fix_dry_run_behavior(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+        """Test fix dry-run executes without applying changes."""
+        from devdox_ai_sonar.cli import fix
+        mock_analyzer = MagicMock()
+        mock_analyzer.get_fixable_issues.return_value = []
+        mock_analyzer_class.return_value = mock_analyzer
+
+        mock_fixer = MagicMock()
+        mock_fixer_class.return_value = mock_fixer
+
+        result = runner.invoke(fix, [
+            "--token", "t", "--organization", "o", "--project", "p",
+            "--project-path", str(tmp_path),
+            "--dry-run",
+            "--provider", "openai",
+            "--api-key", "key"
+        ])
+        assert result.exit_code == 0
+
+    def test_parse_filters_invalid_severity_type(self):
+        """Test _parse_filters raises BadParameter on invalid inputs."""
+
+        with pytest.raises(click.BadParameter):
+            _parse_filters("INVALID", None, {"BUG"}, {"BLOCKER"})
+        with pytest.raises(click.BadParameter):
+            _parse_filters(None, "INVALID", {"BUG"}, {"BLOCKER"})
 
 
 class TestInspectCommand:
