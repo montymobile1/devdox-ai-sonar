@@ -390,9 +390,9 @@ class SonarCloudAnalyzer:
 
             """
 
-            name = rule.get('name', '').lower()
+            name = str(rule.get('name', '')).lower()
 
-            rule_type = rule.get('type', '').lower()
+            rule_type = str(rule.get('type', '')).lower()
 
             # Pattern-based fix guidance
 
