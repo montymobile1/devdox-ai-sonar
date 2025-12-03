@@ -266,6 +266,19 @@ def _fetch_fixable_issues(analyzer, project_key, branch, pull_request, max_issue
         progress.remove_task(task)
     return issues
 
+def _fetch_fixable_security_issues(analyzer, project_key, branch, pull_request, max_issues):
+    with Progress() as progress:
+        task = progress.add_task("Fetching fixable Security issues...", total=None)
+        issues = analyzer.get_fixable_security_issues(
+            project_key=project_key,
+            branch=branch,
+            pull_request=pull_request,
+            max_issues=max_issues
+        )
+
+        progress.remove_task(task)
+    return issues
+
 def _generate_fixes(fixer, analyzer, issues, project_path):
     fixes = []
     with Progress() as progress:
@@ -440,6 +453,79 @@ def _get_severity_color(severity: Severity) -> str:
         Severity.INFO: "green"
     }
     return color_map.get(severity, "white")
+
+@main.command(name="fix_security_issues")
+@click.option("--token", "-t", required=True, help="SonarCloud authentication token")
+@click.option("--organization", "--org", required=True, help="SonarCloud organization key")
+@click.option("--project", "-p", required=True, help="SonarCloud project key")
+@click.option("--project-path", required=True, type=click.Path(exists=True, path_type=Path), help="Path to local project directory")
+@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
+@click.option("--pull-request", "-pr", type=int,default=0, help="Pull request number to analyze (optional)")
+@click.option("--provider", type=click.Choice(["openai", "gemini","togetherai"]), default="togetherai", help="LLM provider")
+@click.option("--model", help="LLM model name")
+@click.option("--api-key", help="LLM API key (or set environment variable)")
+@click.option("--max-fixes", type=int, default=10, help="Maximum number of fixes to generate (default: 10)")
+@click.option("--apply", is_flag=True, help="Apply fixes to the codebase")
+@click.option("--dry-run", is_flag=True, help="Show what would be changed without applying fixes")
+@click.option("--backup/--no-backup", default=True, help="Create backup before applying fixes (default: true)")
+@click.pass_context
+def fix_security_issues(ctx: click.Context, **options) -> None:
+    """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
+    token = options.get('token')
+    organization = options.get('organization')
+    project = options.get('project')
+    project_path = options.get('project_path')
+    branch = options.get('branch')
+    pull_request = options.get('pull_request')
+    provider = options.get('provider')
+    model = options.get('model')
+    api_key = options.get('api_key')
+    max_fixes = options.get('max_fixes')
+    apply = options.get('apply')
+    dry_run = options.get('dry_run')
+    backup = options.get('backup')
+
+
+    try:
+
+
+        analyzer = SonarCloudAnalyzer(token, organization)
+
+        fixer = LLMFixer(
+            provider=provider,
+            model=model,
+            api_key=api_key
+        )
+
+        console.print(f"[blue]Analyzing project: {project}[/blue]")
+        console.print(f"[blue]Local path: {project_path}[/blue]")
+
+        fixable_issues = _fetch_fixable_security_issues(
+            analyzer,
+            project,
+            branch,
+            pull_request,
+            max_fixes,
+        )
+
+        if not fixable_issues:
+            console.print("[yellow]No fixable issues found[/yellow]")
+            return
+        console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
+
+        fixes = _generate_fixes(fixer, analyzer, fixable_issues, project_path)
+
+        if not fixes:
+            console.print("[yellow]No fixes could be generated[/yellow]")
+            return
+
+        _apply_fixes_if_requested(apply, dry_run, fixes, fixable_issues, fixer, project_path, backup)
+
+    except Exception as e:
+        console.print(f"Error: {str(e)}", style="red", markup=False)
+        if ctx.obj.get("verbose"):
+            console.print_exception()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

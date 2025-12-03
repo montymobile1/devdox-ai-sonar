@@ -11,7 +11,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from .models import SonarIssue, AnalysisResult, ProjectMetrics, Severity, IssueType, Impact
+from .models import SonarIssue, SonarSecurityIssue, AnalysisResult,SecurityAnalysisResult, ProjectMetrics, Severity, IssueType, Impact
 from .logging_config import setup_logging, get_logger
 
 setup_logging(level='DEBUG',log_file='demo.log')
@@ -853,7 +853,7 @@ class SonarCloudAnalyzer:
 
             try:
                 params = self._build_query_params(project_key, branch, pull_request_number, statuses, severities, types)
-                issues = self._fetch_issues(url, params)
+                issues = self._fetch_issues(url, params,'issues')
                 parsed_issues = self._parse_issues(issues)
                 metrics = self.get_project_metrics(project_key)
                 return AnalysisResult(
@@ -871,13 +871,15 @@ class SonarCloudAnalyzer:
                 logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
                 return None
 
-    def _build_query_params(self, project_key, branch, pull_request_number, statuses, severities, types):
+    def _build_query_params(self, project_key, branch, pull_request_number, statuses:List[str]=None, severities:str=None, types:List[str]=None, field_key:str='componentKeys'):
         params = {
-            'componentKeys': project_key,
+            field_key: project_key,
             'organization': self.organization,
-            'issueStatuses': ','.join(statuses),
+
             'ps': 500  # Page size (max 500)
         }
+        if statuses:
+            params['issueStatuses'] = ','.join(statuses)
         if branch != '':
             params['branch'] = branch
         else:
@@ -892,7 +894,7 @@ class SonarCloudAnalyzer:
         return params
 
 
-    def _fetch_issues(self, url, params):
+    def _fetch_issues(self, url, params, key_name):
         all_issues = []
         page = 1
         while True:
@@ -900,7 +902,7 @@ class SonarCloudAnalyzer:
             response = self.session.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
             data = response.json()
-            issues = data.get('issues', [])
+            issues = data.get(key_name, [])
             all_issues.extend(issues)
             paging = data.get('paging', {})
             total = paging.get('total', 0)
@@ -1116,6 +1118,56 @@ class SonarCloudAnalyzer:
         logger.info(f"Successfully parsed {len(issues)} issues")
         return issues
 
+    def _parse_security_issues(self, issues_data: List[Dict[str, Any]], project_key: str) -> List[SonarSecurityIssue]:
+        issues = []
+
+        for issue_data in issues_data:
+
+            try:
+
+                # Extract file path from component
+                component = issue_data.get("component", "")
+                file_path = self._extract_file_path(component)
+
+                first_line = issue_data.get("line")
+                if first_line:
+                    first_line = int(first_line)
+
+                last_line = issue_data.get("textRange", {}).get("endLine",first_line)
+
+
+
+                issue = SonarSecurityIssue(
+                    key=issue_data.get("key", ""),
+                    rule=issue_data.get("ruleKey", ""),
+                    component=component,
+                    project=project_key,
+                    security_category=issue_data.get("securityCategory", ""),
+                    vulnerability_probability=issue_data.get("vulnerabilityProbability", ""),
+                    status=issue_data.get("status", "OPEN"),
+                    first_line=first_line,
+                    last_line=last_line,
+                    message=issue_data.get("message", ""),
+                    file=file_path,
+
+                    creation_date=issue_data.get("creationDate"),
+                    update_date=issue_data.get("updateDate"),
+
+                )
+
+                issues.append(issue)
+
+            except Exception as e:
+                logger.error(
+                    f"Error parsing issue {issue_data.get('key', 'unknown')}: {e}",
+                    exc_info=True
+                )
+                continue
+
+        logger.info(f"Successfully parsed {len(issues)} security issues")
+        return issues
+
+
     def _extract_file_path(self, component: str) -> Optional[str]:
         """
         Extract file path from SonarCloud component string.
@@ -1134,6 +1186,7 @@ class SonarCloudAnalyzer:
             return component.split(":", 1)[1]
 
         return component
+
 
     def get_fixable_issues(
             self,
@@ -1177,6 +1230,71 @@ class SonarCloudAnalyzer:
             fixable = fixable[:max_issues]
 
         return fixable
+
+    def get_fixable_security_issues(
+            self,
+            project_key: str,
+            branch: str = "",
+            pull_request: Optional[int] = 0,
+            max_issues: Optional[int] = None
+    ) -> List[SonarSecurityIssue]:
+        """
+        Get issues that are potentially fixable by LLM.
+
+        Args:
+            project_key: SonarCloud project key
+            branch: Branch to analyze
+            max_issues: Maximum number of issues to return
+            types_list: Optional list of issue types to filter by
+
+        Returns:
+            List of fixable SonarIssue objects
+        """
+        analysis = self.get_project_security_issues(project_key, branch,pull_request_number=pull_request)
+
+        if not analysis:
+            return []
+        if max_issues:
+            return analysis.issues[:max_issues]
+        else:
+            return analysis.issues
+
+    def get_project_security_issues(
+            self,
+            project_key: str,
+            branch: str = "",
+            pull_request_number: Optional[int] = 0
+
+    ) -> Optional[SecurityAnalysisResult]:
+        logger.info(
+            f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
+
+
+
+        url = urljoin(self.base_url, "/api/hotspots/search")
+
+        try:
+            params = self._build_query_params(project_key, branch, pull_request_number, field_key='projectKey')
+            issues = self._fetch_issues(url, params,'hotspots')
+            parsed_issues = self._parse_security_issues(issues, project_key)
+
+
+            logger.info(f"Successfully parsed {len(parsed_issues)} security issues")
+
+            return SecurityAnalysisResult(
+                project_key=project_key,
+                organization=self.organization,
+                branch=branch,
+                total_issues=len(parsed_issues),
+                issues=parsed_issues,
+                analysis_timestamp=datetime.now().isoformat()
+            )
+        except requests.RequestException as e:
+            return self._handle_exceptions(e, project_key)
+        except Exception as e:
+            logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
+            return None
+
 
     def analyze_project_directory(self, project_path) -> Dict[str, Any]:
         """
