@@ -66,6 +66,32 @@ class SonarIssue(BaseModel):
         fixable_types = {IssueType.BUG, IssueType.CODE_SMELL}
         return self.type in fixable_types and self.first_line is not None and self.last_line is not None
 
+class SonarSecurityIssue(BaseModel):
+    model_config = ConfigDict(use_enum_values=True)
+
+    key: str = Field(..., description="Unique issue key")
+    component: str = Field(..., description="Component path")
+    rule: str = Field(..., description="Rule identifier")
+    project: str = Field(..., description="Project key")
+    security_category: str = Field(..., description="Security category")
+    vulnerability_probability: str = Field(..., description="Vulnerability probability")
+    status: str = Field(default="OPEN", description="Issue status")
+    first_line: Optional[int] = Field(None, description="First Line number")
+    last_line: Optional[int] = Field(None, description="Last Line number")
+    message: str = Field(..., description="Issue description")
+    file: Optional[str] = Field(None, description="File path")
+    creation_date: Optional[str] = Field(None, description="Creation date")
+    update_date: Optional[str] = Field(None, description="Last update date")
+
+
+    @property
+    def file_path(self) -> Optional[Path]:
+        """Get the file path as a Path object."""
+        if self.file:
+            return Path(self.file)
+        return None
+
+
 
 class FixSuggestion(BaseModel):
     """Represents an LLM-generated fix suggestion."""
@@ -105,6 +131,14 @@ class ProjectMetrics(BaseModel):
     code_smells: Optional[int] = Field(None, description="Number of code smells")
     technical_debt: Optional[str] = Field(None, description="Technical debt time")
 
+class SecurityAnalysisResult(BaseModel):
+
+    project_key: str = Field(..., description="Project key")
+    organization: str = Field(..., description="Organization key")
+    branch: str = Field(default="main", description="Branch analyzed")
+    total_issues: int = Field(..., description="Total number of issues")
+    issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
+    analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
 
 class AnalysisResult(BaseModel):
     """Results from SonarCloud analysis."""

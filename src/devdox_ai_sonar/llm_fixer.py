@@ -89,7 +89,7 @@ class LLMFixer:
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
-            autoescape=False,
+            autoescape=True,
         )
 
     def _validate_and_configure_provider(self, provider: str, model: Optional[str], api_key: Optional[str]):
@@ -1453,6 +1453,7 @@ class LLMFixer:
 
                 start = fix.line_number - 1
                 end = fix.last_line_number - 1
+                fix.helper_code = fix.helper_code.replace("\\n", "\n")
 
                 base_indent = self.calculate_base_indentation(lines, start)
 
