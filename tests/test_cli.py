@@ -11,6 +11,7 @@ from click.testing import CliRunner
 from devdox_ai_sonar.cli import (
     main ,
     _display_fix_results,
+    _apply_fixes_if_requested,
     analyze,
     fix,
     inspect,
