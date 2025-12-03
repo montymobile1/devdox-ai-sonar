@@ -4,7 +4,7 @@ import os
 import re
 import shutil
 import autopep8
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import json
 from typing import List, Optional, Dict, Any, Union, Tuple
@@ -12,7 +12,6 @@ from datetime import datetime
 
 from .fix_validator import FixValidator, ValidationStatus
 from .models import SonarIssue, FixSuggestion, FixResult
-
 from .logging_config import setup_logging, get_logger
 
 setup_logging(level='DEBUG',log_file='demo.log')
@@ -89,7 +88,7 @@ class LLMFixer:
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
-            autoescape=True,
+            autoescape=select_autoescape(['html', 'xml']),
         )
 
     def _validate_and_configure_provider(self, provider: str, model: Optional[str], api_key: Optional[str]):
