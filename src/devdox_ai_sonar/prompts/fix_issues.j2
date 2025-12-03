@@ -16,8 +16,23 @@ As senior software engenieer specialized in  {{ language }} fix  code for SonarQ
 
 🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
 
+
 1. **FIXED_SELECTION** = The modified version of the original lines
-   - Return ONLY the original lines range {context[start_line]}–{context[end_line]} (inclusive), with fixes applied.
+    - Function Preservation Requirement (CRITICAL)
+
+        •  If the selected code range begins with, contains, or ends with a function definition (def ...:):
+
+        • You MUST return the entire function definition and its full body (lines {{ context['start_line'] }}–{{ context['end_line'] }}), with only the required fixes applied.
+
+        • The function signature MUST be preserved exactly unless the fix requires updating it.
+
+        • All indentation, nested blocks, decorators, docstrings, type hints, and annotations MUST be preserved.
+
+        • You MUST NOT restructure, collapse, or relocate any part of the function.
+
+        • You MUST NOT remove or replace the function with a helper definition.
+
+        •  FIXED_SELECTION may include calls to helper functions but may NOT define new ones.
    - Preserve all decorators, leading comments, imports, type hints, and unrelated code outside this range.
    - If those lines include decorators, annotations, or leading comments immediately above a function (e.g. @click.option lines, @main.command(), type hints, docstring start), they MUST be preserved in the FIXED_SELECTION. Do not drop or truncate them.
    - Contains CALLS to new functions/constants

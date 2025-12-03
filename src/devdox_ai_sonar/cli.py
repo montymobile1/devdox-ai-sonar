@@ -106,7 +106,10 @@ def select_fixes_interactively(fixes: List):
     table.add_column("Number", width=10)
     table.add_column("Issue", width=20)
     table.add_column("File and line", width=50)
-    table.add_column("Fixed", width=100,overflow="crop")
+    table.add_column("Fixed", width=100,no_wrap=False,
+    overflow="fold",
+    max_width=None,
+    min_width=None,    )
     table.add_column("Confidence", width=15)
 
     for idx, fix in enumerate(fixes, start=1):
@@ -118,7 +121,7 @@ def select_fixes_interactively(fixes: List):
             str(idx),
             fix.issue_key[-15:],  # Show last 20 chars of issue key
             line_info,
-            fix.explanation,
+            fix.fixed_code[:500],
             confidence_str
         )
 

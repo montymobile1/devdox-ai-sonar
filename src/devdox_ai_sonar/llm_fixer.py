@@ -1298,9 +1298,7 @@ class LLMFixer:
         indented_lines = []
         for line in lines:
             if line.strip():  # Non-empty line
-
                 indented_lines.append(base_indent + line)
-
             else:  # Empty line
                 indented_lines.append(line)
 
@@ -1456,67 +1454,80 @@ class LLMFixer:
                 start = fix.line_number - 1
                 end = fix.last_line_number - 1
 
-                base_indent = self.calculate_base_indentation(lines, fix.line_number)
+                base_indent = self.calculate_base_indentation(lines, start)
 
                 logger.debug(f"Line { fix.line_number}: Base indentation = '{base_indent}' (length: {len(base_indent)})")
 
                 # Apply indentation to the fixed code
-                indented_fixed_code = self.apply_indentation_to_fix(fix.fixed_code, base_indent)
 
                 if start < 0 or end >= len(lines) or start > end:
                     logger.warning(f"Fix {fix.issue_key} has invalid line range, skipping")
                     skipped_fixes.append(fix)
                     continue
-                if fix.helper_code != "" and fix.placement_helper == "SIBLING":
-                    # CRITICAL FIX: Update lines array directly, don't create separate variable
-                    indented_helper_code = self.apply_indentation_to_fix(fix.helper_code, base_indent)
-                    lines = (
-                            lines[:fix.line_number - 1] +
-                            [indented_fixed_code,'\n']+
-                            [indented_helper_code, '\n']+
-                            lines[fix.last_line_number:]
-                    )
-                elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_BOTTOM":
-                    lines = (
-                            lines[:start] +
-                            [indented_fixed_code, '\n'] +
-                            lines[end + 1:] + ['\n'] +
-                            [fix.helper_code, '\n']
-                    )
-                elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_TOP":
-                    lines =(
-                            lines[:start] +
-                            [indented_fixed_code, '\n'] +
-                            lines[fix.last_line_number:]
-                    )
-                    helper_lines = fix.helper_code.split('\n')
-                    is_import_block = any(
-                        line.strip().startswith(('import ', 'from '))
-                        for line in helper_lines if line.strip()
-                    )
+                line_count = fix.fixed_code.count('\n')
+                if line_count == 0 and fix.sonar_line_number != 0 and fix.helper_code == "":
+                    base_indent_number = calculate_base_indentation(lines[fix.sonar_line_number-1])
+                    indent_spaces = " " * base_indent_number
+                    indented_fixed_code = self.apply_indentation_to_fix(fix.fixed_code, indent_spaces)
+                    lines[fix.sonar_line_number - 1] = indented_fixed_code +'\n'
 
-                    if is_import_block:
-                        # Find the best position after existing imports
-                        insert_position = self._find_import_insertion_point(lines)
-                        logger.debug(f"Inserting import block at line {insert_position + 1}")
+
+
+                else :
+
+                    indented_fixed_code = self.apply_indentation_to_fix(fix.fixed_code, base_indent)
+
+                    if fix.helper_code != "" and fix.placement_helper == "SIBLING":
+                        # CRITICAL FIX: Update lines array directly, don't create separate variable
+                        indented_helper_code = self.apply_indentation_to_fix(fix.helper_code, base_indent)
+                        lines = (
+                                lines[:fix.line_number - 1] +
+                                [indented_fixed_code,'\n']+
+                                [indented_helper_code, '\n']+
+                                lines[fix.last_line_number:]
+                        )
+                    elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_BOTTOM":
+                        lines = (
+                                lines[:start] +
+                                [indented_fixed_code, '\n'] +
+                                lines[end + 1:] + ['\n'] +
+                                [fix.helper_code, '\n']
+                        )
+                    elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_TOP":
+                        lines =(
+                                lines[:start] +
+                                [indented_fixed_code, '\n'] +
+                                lines[fix.last_line_number:]
+                        )
+                        helper_lines = fix.helper_code.split('\n')
+                        is_import_block = any(
+                            line.strip().startswith(('import ', 'from '))
+                            for line in helper_lines if line.strip()
+                        )
+
+                        if is_import_block:
+                            # Find the best position after existing imports
+                            insert_position = self._find_import_insertion_point(lines)
+                            logger.debug(f"Inserting import block at line {insert_position + 1}")
+                        else:
+                            # Non-import code goes at the very top (after shebang/encoding)
+                            insert_position = self._find_global_top_insertion_point(lines)
+                            logger.debug(f"Inserting global code at line {insert_position + 1}")
+
+                        # Insert the helper code
+                        helper_code_with_newlines = fix.helper_code
+                        if not helper_code_with_newlines.endswith('\n'):
+                            helper_code_with_newlines += '\n'
+
+                        lines.insert(insert_position, helper_code_with_newlines + '\n')
                     else:
-                        # Non-import code goes at the very top (after shebang/encoding)
-                        insert_position = self._find_global_top_insertion_point(lines)
-                        logger.debug(f"Inserting global code at line {insert_position + 1}")
 
-                    # Insert the helper code
-                    helper_code_with_newlines = fix.helper_code
-                    if not helper_code_with_newlines.endswith('\n'):
-                        helper_code_with_newlines += '\n'
+                        lines = (
+                                lines[:start] +
+                                [indented_fixed_code, '\n','\n'] +
+                                lines[end + 1:]
+                        )
 
-                    lines.insert(insert_position, helper_code_with_newlines + '\n')
-                else:
-
-                    lines = (
-                            lines[:start] +
-                            [indented_fixed_code, '\n','\n'] +
-                            lines[end + 1:]
-                    )
 
                 applied_fixes.append(fix)
 
