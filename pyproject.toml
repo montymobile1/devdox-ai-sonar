@@ -32,8 +32,8 @@ classifiers = [
 
 # Core dependencies
 dependencies = [
-    "click==8.0.0",
-    "rich==13.0.0",
+    "click===8.1.7",
+    "rich==13.8.1",
     "requests==2.32",
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
@@ -42,8 +42,13 @@ dependencies = [
     "openai==2.8.1",
     "google-genai==1.51.0",
     "sonar-tools==3.16.2",
+    "pycodestyle==2.14.0",
+    "autopep8==2.3.2",
     "gitpython==3.1.0",
     "pathlib2==2.3.0",
+    "langchain-together==0.3.0",
+    "together==1.5.17",
+    "Jinja2==3.1.6"
 ]
 
 [project.optional-dependencies]
@@ -74,6 +79,9 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+devdox_ai_sonar = ["prompts/*.j2","*.j2"]
 
 [tool.black]
 line-length = 88

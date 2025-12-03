@@ -1,0 +1,348 @@
+🚨 **CRITICAL: RETURN ONLY JSON - NO OTHER TEXT** 🚨
+
+As senior software engenieer specialized in  {{ language }} fix  code for SonarQube rule: "{{ issue.message }}"
+
+**Rule:** {{ issue.rule }} | **Severity:** {{ issue.severity }} | **Type:** {{ issue.type }}
+**Root Cause:** {{ rule_info.get('root_cause', 'Code quality issue detected') }}
+
+## CODE CONTEXT (Lines {{ context['start_line'] }}-{{ context['end_line'] }})
+```{{ language }}
+{{ code_chunk }}
+```
+**Problem line :** {{ context["problem_line"] }}
+{% if error_message %}## ERROR CONTEXT: {{ error_message }}{% endif %}
+
+## CRITICAL INSTRUCTIONS
+
+🚨 **AVOID CODE DUPLICATION BETWEEN SECTIONS:**
+
+
+1. **FIXED_SELECTION** = The modified version of the original lines
+    - Function Preservation Requirement (CRITICAL)
+
+        •  If the selected code range begins with, contains, or ends with a function definition (def ...:):
+
+        • You MUST return the entire function definition and its full body (lines {{ context['start_line'] }}–{{ context['end_line'] }}), with only the required fixes applied.
+
+        • The function signature MUST be preserved exactly unless the fix requires updating it.
+
+        • All indentation, nested blocks, decorators, docstrings, type hints, and annotations MUST be preserved.
+
+        • You MUST NOT restructure, collapse, or relocate any part of the function.
+
+        • You MUST NOT remove or replace the function with a helper definition.
+
+        •  FIXED_SELECTION may include calls to helper functions but may NOT define new ones.
+   - Preserve all decorators, leading comments, imports, type hints, and unrelated code outside this range.
+   - If those lines include decorators, annotations, or leading comments immediately above a function (e.g. @click.option lines, @main.command(), type hints, docstring start), they MUST be preserved in the FIXED_SELECTION. Do not drop or truncate them.
+   - Contains CALLS to new functions/constants
+   - Contains the actual logic changes
+   - Should NOT contain new function/constant DEFINITIONS
+   - Maintain original indentation and formatting.
+
+2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
+   - Must not repeat any code from FIXED_SELECTION.
+   - Contains DEFINITIONS of new functions/constants
+   - Should NOT repeat any code from FIXED_SELECTION or part of it
+   - Should NOT contain the original problematic code
+
+## EXAMPLES OF CORRECT SEPARATION:
+
+🚨 **FIXED_SELECTION MUST BE A SINGLE COMPLETE STRING**
+
+❌ **DO NOT DO THIS (Breaking into parts):**
+{% raw %}
+{
+  "FIXED_SELECTION": "def function_name(self, args):",
+  "code": "function_name",
+  "docstring": "doc here",
+  "logic": "logic here"
+}
+{% endraw %}
+
+✅ **CORRECT FORMAT:**
+{% raw %}
+{"FIXED_SELECTION": "def example():\n    return True", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}
+{% endraw %}
+
+### ❌ WRONG (Duplication):
+```
+FIXED_SELECTION: "def validate():\n    if value is None:\n        return False\n    return True"
+NEW_HELPER_CODE: "def validate():\n    if value is None:\n        return False\n    return True"
+```
+
+### ✅ CORRECT (Cognitive Complexity):
+
+```
+FIXED_SELECTION: "def process_data(self, data):\n    if not is_valid_input(data):\n        return None\n    return transform_data(data)"
+
+NEW_HELPER_CODE: "def is_valid_input(data):\n    return data is not None and len(data) > 0\n\ndef transform_data(data):\n    return data.upper()"
+
+PLACEMENT: "SIBLING"
+
+```
+
+
+### ✅ CORRECT (True Class Method - Needs Class State):
+
+```
+
+FIXED_SELECTION: "def process_data(self, data):\n    if not self._validate_with_config(data):\n        return None\n    return data"
+
+NEW_HELPER_CODE: "def _validate_with_config(self, data):\n    return len(data) <= self.max_length"
+
+PLACEMENT: "SIBLING"
+
+```
+
+### ✅ CORRECT (Literal Duplication):
+```
+FIXED_SELECTION: "def show_error():\n    print(ERROR_COLOR)\n\ndef highlight_text():\n    return ERROR_COLOR"
+NEW_HELPER_CODE: "ERROR_COLOR = \\"red\\""
+PLACEMENT: "GLOBAL_TOP"
+```
+
+## INSTRUCTIONS
+{% set fix_steps = rule_info.get('how_to_fix', {}).get('steps', []) %}
+{% if fix_steps %}
+{% for step in fix_steps %}
+• {{ step }}
+{% endfor %}
+{% else %}
+• Apply the appropriate fix for this SonarQube rule
+• Follow code quality best practices
+{% endif %}
+
+{% if strategy_text %}
+## ADDITIONAL STRATEGIES
+{{ strategy_text }}
+{% endif %}
+
+## CRITICAL CODE FORMATTING REQUIREMENTS
+
+🚨 **CODE MUST BE READABLE AND PROPERLY STRUCTURED**
+
+### FORMATTING RULES:
+• Use proper indentation (4 spaces for Python, 2 spaces for JavaScript)
+• Each logical line should be on a separate \n
+• Maintain consistent code structure and style
+• Functions should be well-formed and complete
+• Preserve original indentation patterns from the context
+
+### PYTHON INDENTATION REQUIREMENTS:
+• Function definitions: No leading indentation (unless in class)
+• Function body: 4 spaces from function definition
+• Nested blocks: Additional 4 spaces per level
+• Class methods: 4 spaces from class definition
+• Method body: 8 spaces from class definition
+
+### EXAMPLE PROPER JSON FORMATTING:
+{% raw %}
+"NEW_HELPER_CODE": "def validate_input(data):\n    if not data:\n        return False\n    return isinstance(data, str) and len(data.strip()) > 0"
+{% endraw %}
+
+This represents properly formatted code:
+```python
+def validate_input(data):
+    if not data:
+        return False
+    return isinstance(data, str) and len(data.strip()) > 0
+```
+
+## PLACEMENT DECISION LOGIC
+
+**Follow this decision tree:**
+
+1. **Is the NEW_HELPER_CODE an import or constant?**
+   → YES: Use "GLOBAL_TOP"
+
+2. **Is the original code inside a class?**
+  → YES: Continue to step 2a
+   → NO: Go to step 3
+
+2a. **Does the helper function NEED class state or methods?**
+    Check if helper needs:
+    - Access to self.attributes (self.config, self.state)
+    - Calls to self.other_methods()
+    - Access to class variables
+    → YES: Helper is a TRUE class method → Use "SIBLING" + include self
+    → NO: Helper is a utility function → Use "SIBLING" + NO self
+
+3. **Is the original code a module-level function?**
+   → YES: Is NEW_HELPER_CODE a function that logically relates?
+   → YES: Use "SIBLING" + NO self (module level)
+   → NO: Use "GLOBAL_BOTTOM"
+
+4. **When in doubt:**
+   - Constants/imports → "GLOBAL_TOP"
+    - True class methods (need self) → "SIBLING" + self
+   - Utility functions → "SIBLING" + NO self
+   - Standalone utilities → "GLOBAL_BOTTOM"
+
+## CRITICAL SELF PARAMETER RULES
+
+
+
+### ✅ **Include self when helper function:**
+
+- Accesses class attributes (self.config, self.data)
+
+- Calls other class methods (self.validate(), self.process())
+
+- Needs class state or instance variables
+
+- Is genuinely a class method
+
+
+
+### ❌ **DON'T include self when helper function:**
+
+- Is pure utility (validation, transformation, calculation)
+
+- Doesn't access class state
+
+- Could work as standalone function
+
+- Only processes input parameters
+
+
+
+### **CRITICAL EXAMPLES:**
+
+
+
+#### ✅ **Include self (True class method):**
+
+```
+
+Original: def process(self, data):
+
+          if len(data) > self.max_size:
+
+Fixed:    def process(self, data):
+
+          if self._exceeds_limit(data):
+
+Helper:   def _exceeds_limit(self, data):
+
+          return len(data) > self.max_size
+
+Reason:   Helper needs self.max_size
+
+```
+
+
+
+#### ❌ **Don't include self (Utility function):**
+
+```
+
+Original: def process(self, data):
+
+          if data and len(data) > 0 and data.strip():
+
+Fixed:    def process(self, data):
+
+          if is_valid_data(data):
+
+Helper:   def is_valid_data(data):
+
+          return data and len(data) > 0 and data.strip()
+
+Reason:   Helper doesn't need class state
+
+```
+
+
+
+## CODE FORMATTING REQUIREMENTS
+
+
+
+• Use proper indentation (4 spaces for Python)
+
+• Each logical line should be on a separate \n
+
+• Functions should be well-formed and complete
+
+• Return EXACTLY lines {{ context['start_line'] }}-{{ context['end_line'] }} in FIXED_SELECTION
+
+
+
+## CRITICAL PYTHON SYNTAX RULES
+
+
+
+• ALL code must be syntactically valid Python
+
+• NEVER include unescaped internal quotes. Always escape internal " as \"
+
+• MULTILINE code MUST use \n inside JSON strings
+
+• DO NOT wrap code inside markdown fences
+
+• Helper function parameters must match their usage in FIXED_SELECTION
+
+
+
+### **PARAMETER MATCHING RULE:**
+
+If FIXED_SELECTION calls `is_valid(data)` → Helper must be `def is_valid(data):`
+
+If FIXED_SELECTION calls `self._validate(data)` → Helper must be `def _validate(self, data):`
+
+
+
+## 🚨 CRITICAL: JSON-ONLY RESPONSE REQUIRED 🚨
+
+
+
+**ABSOLUTELY NO TEXT OUTSIDE JSON**
+
+**ABSOLUTELY NO EXPLANATIONS BEFORE JSON**
+
+**ABSOLUTELY NO COMMENTS AFTER JSON**
+
+
+
+❌ **FORBIDDEN:**
+
+```
+
+Here's the solution:
+
+{"FIXED_SELECTION": "code"}
+
+```
+
+
+
+✅ **REQUIRED (YOUR ENTIRE RESPONSE):**
+
+```
+
+{"FIXED_SELECTION": "code", "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING", "EXPLANATION": "explanation", "CONFIDENCE": 0.8}
+
+```
+
+
+
+## JSON STRUCTURE REQUIRED
+
+
+
+{% raw %}
+
+{"FIXED_SELECTION": "Complete code with \\n for newlines", "NEW_HELPER_CODE": "Helper code or empty", "PLACEMENT": "SIBLING", "EXPLANATION": "Brief explanation", "CONFIDENCE": 0.8}
+
+{% endraw %}
+
+
+**PLACEMENT OPTIONS:** "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
+
+
+🚨 **START YOUR RESPONSE WITH { AND END WITH } - NOTHING ELSE** 🚨
+
+🚨 **PARAMETER MATCHING: Helper parameters must match how they're called** 🚨
+
+🚨 **NO TEXT OUTSIDE JSON WILL BREAK THE EXTRACTION SYSTEM** 🚨

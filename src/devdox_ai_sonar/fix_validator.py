@@ -13,6 +13,12 @@ setup_logging(level='DEBUG', log_file='demo.log')
 logger = get_logger(__name__)
 
 try:
+    from together import AsyncTogether, Together
+    HAS_TOGETHER = True
+except ImportError:
+    HAS_TOGETHER = False
+
+try:
     import openai
 
     HAS_OPENAI = True
@@ -79,48 +85,52 @@ class FixValidator:
     """
 
     def __init__(
-            self,
-            provider: str = "openai",
-            model: Optional[str] = None,
-            api_key: Optional[str] = None,
-            min_confidence_threshold: float = 0.7
-    ):
-        """
-        Initialize the fix validator.
+                self,
+                provider: str = "openai",
+                model: Optional[str] = None,
+                api_key: Optional[str] = None,
+                min_confidence_threshold: float = 0.7
+        ):
+            self.provider = provider.lower()
+            self.min_confidence_threshold = min_confidence_threshold
+            self._setup_provider(model, api_key)
 
-        Args:
-            provider: LLM provider ("openai" or "gemini")
-            model: Model name (defaults to provider's default)
-            api_key: API key (uses environment variables if not provided)
-            min_confidence_threshold: Minimum confidence to approve a fix
-        """
-        self.provider = provider.lower()
-        self.min_confidence_threshold = min_confidence_threshold
-
-        if self.provider == "openai":
-            if not HAS_OPENAI:
-                raise ImportError("OpenAI library not installed. Install with: pip install openai")
-
-            self.model = model or "gpt-4o"
-            self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-            if not self.api_key:
-                raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
-
-            self.client = openai.OpenAI(api_key=self.api_key)
-
+    def _setup_provider(self, model, api_key):
+        if self.provider == "togetherai":
+            self._setup_together_ai(model, api_key)
+        elif self.provider == "openai":
+            self._setup_open_ai(model, api_key)
         elif self.provider == "gemini":
-            if not HAS_GEMINI:
-                raise ImportError("Gemini library not installed. Install with: pip install google-genai")
-
-            self.model = model or "claude-3-5-sonnet-20241022"
-            self.api_key = api_key
-            if not self.api_key:
-                raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
-
-            self.client = genai.Client(api_key=self.api_key)
-
+            self._setup_gemini(model, api_key)
         else:
-            raise ValueError(f"Unsupported provider: {provider}. Use 'openai' or 'gemini'.")
+            raise ValueError(f"Unsupported provider: {self.provider}. Use 'openai' or 'gemini' or 'togetherai'.")
+
+    def _setup_together_ai(self, model, api_key):
+        if not HAS_TOGETHER:
+            raise ImportError("Together AI library not installed. Install with: pip install together")
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        if not self.api_key:
+            raise ValueError("Together API key not provided. Set TOGETHER_API_KEY environment variable.")
+        self.client = Together(api_key=self.api_key)
+
+    def _setup_open_ai(self, model, api_key):
+        if not HAS_OPENAI:
+            raise ImportError("OpenAI library not installed. Install with: pip install openai")
+        self.model = model or "gpt-4o"
+        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+        if not self.api_key:
+            raise ValueError("OpenAI API key not provided. Set OPENAI_API_KEY environment variable.")
+        self.client = openai.OpenAI(api_key=self.api_key)
+
+    def _setup_gemini(self, model, api_key):
+        if not HAS_GEMINI:
+            raise ImportError("Gemini library not installed. Install with: pip install google-genai")
+        self.model = model or "claude-3-5-sonnet-20241022"
+        self.api_key = api_key
+        if not self.api_key:
+            raise ValueError("Gemini API key not provided. Set GEMINI_KEY environment variable.")
+        self.client = genai.Client(api_key=self.api_key)
 
     def validate_fix(
             self,
@@ -358,180 +368,180 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             return None
 
     def _parse_validation_response(
-            self,
-            response_text: str,
-            original_fix: FixSuggestion,
-            issue: SonarIssue
-    ) -> ValidationResult:
-        """Parse the validation response from LLM."""
+                self,
+                response_text: str,
+                original_fix: FixSuggestion,
+                issue: SonarIssue
+        ) -> ValidationResult:
+            """Parse the validation response from LLM."""
 
 
+            try:
+                # Extract status
 
-        try:
-            # Extract status
+                status_match = re.search(
+                    r'STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)',
+                    response_text,
+                    re.IGNORECASE
+                )
+                status_str = status_match.group(1).upper() if status_match else "NEEDS_REVIEW"
+                status = ValidationStatus(status_str)
 
-            status_match = re.search(
-                r'STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)',
-                response_text,
-                re.IGNORECASE
-            )
-            status_str = status_match.group(1).upper() if status_match else "NEEDS_REVIEW"
-            status = ValidationStatus(status_str)
+                # Extract confidence
+                confidence_match = re.search(r'CONFIDENCE:\s*(-?\d{1,3}.?\d*)', response_text)
+                confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+                confidence = max(0.0, min(1.0, confidence))
 
-            # Extract confidence
-            confidence_match = re.search(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+)', response_text)
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-            confidence = max(0.0, min(1.0, confidence))
-
-            # Extract validation notes
-            notes_match = re.search(
-                r'VALIDATION_NOTES:\s*(.*?)(?=CONCERNS:|IMPROVED_FIX:|$)',
-                response_text,
-                re.DOTALL
-            )
-            validation_notes = notes_match.group(1).strip() if notes_match else ""
-
-            # Extract concerns
-            concerns_match = re.search(
-                r'CONCERNS:\s*(.*?)(?=IMPROVED_FIX:|IMPROVED_EXPLANATION:|$)',
-                response_text,
-                re.DOTALL
-            )
-            concerns_text = concerns_match.group(1).strip() if concerns_match else ""
-            concerns = [
-                line.strip('- ').strip()
-                for line in concerns_text.split('\n')
-                if line.strip() and line.strip() != 'None'
-            ]
-
-            # Handle MODIFIED status - extract improved fix
-            modified_fix = None
-            if status == ValidationStatus.MODIFIED:
-                improved_code_pattern = r'IMPROVED_FIX:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
-                improved_code_match = re.search(
-                    improved_code_pattern,
+                # Extract validation notes
+                notes_match = re.search(
+                    r'VALIDATION_NOTES:\s*(.*?)(?=CONCERNS:|IMPROVED_FIX:|$)',
                     response_text,
                     re.DOTALL
                 )
+                validation_notes = notes_match.group(1).strip() if notes_match else ""
 
-                improved_explanation_match = re.search(
-                    r'IMPROVED_EXPLANATION:\s*(.*?)(?=$)',
+                # Extract concerns
+                concerns_match = re.search(
+                    r'CONCERNS:\s*(.*?)(?=IMPROVED_FIX:|IMPROVED_EXPLANATION:|$)',
                     response_text,
                     re.DOTALL
                 )
+                concerns_text = concerns_match.group(1).strip() if concerns_match else ""
+                concerns = [
+                    line.strip('- ').strip()
+                    for line in concerns_text.split('\n')
+                    if line.strip() and line.lower().strip() != 'none' and line.lower().strip() != 'n/a'
+                ]
 
-                if improved_code_match:
-                    improved_code = improved_code_match.group(1).strip()
-                    improved_explanation = improved_explanation_match.group(
-                        1).strip() if improved_explanation_match else validation_notes
-
-                    # Create modified fix suggestion
-                    modified_fix = FixSuggestion(
-                        issue_key=original_fix.issue_key,
-                        original_code=original_fix.original_code,
-                        fixed_code=improved_code,
-                        explanation=f"{original_fix.explanation}\n\nValidator Improvement: {improved_explanation}",
-                        confidence=confidence,
-                        llm_model=f"{original_fix.llm_model} + {self.model} (validated)",
-                        rule_description=original_fix.rule_description,
-                        file_path=original_fix.file_path,
-                        line_number=original_fix.line_number,
-                        last_line_number=original_fix.last_line_number
+                # Handle MODIFIED status - extract improved fix
+                modified_fix = None
+                if status == ValidationStatus.MODIFIED:
+                    improved_code_pattern = r'IMPROVED_FIX:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
+                    improved_code_match = re.search(
+                        improved_code_pattern,
+                        response_text,
+                        re.DOTALL
                     )
-                else:
-                    # If no improved fix provided, treat as NEEDS_REVIEW
-                    logger.warning("MODIFIED status but no improved fix found")
+
+                    improved_explanation_match = re.search(
+                        r'IMPROVED_EXPLANATION:\s*(.*?)(?=$)',
+                        response_text,
+                        re.DOTALL
+                    )
+
+                    if improved_code_match:
+                        improved_code = improved_code_match.group(1).strip()
+                        improved_explanation = improved_explanation_match.group(
+                            1).strip() if improved_explanation_match else validation_notes
+
+                        # Create modified fix suggestion
+                        modified_fix = FixSuggestion(
+                            issue_key=original_fix.issue_key,
+                            original_code=original_fix.original_code,
+                            fixed_code=improved_code,
+                            explanation=f"{original_fix.explanation}\n\nValidator Improvement: {improved_explanation}",
+                            confidence=confidence,
+                            llm_model=f"{original_fix.llm_model} + {self.model} (validated)",
+                            rule_description=original_fix.rule_description,
+                            file_path=original_fix.file_path,
+                            line_number=original_fix.line_number,
+                            last_line_number=original_fix.last_line_number
+                        )
+                    else:
+                        # If no improved fix provided, treat as NEEDS_REVIEW
+                        logger.warning("MODIFIED status but no improved fix found")
+                        status = ValidationStatus.NEEDS_REVIEW
+
+                # Apply confidence threshold
+                if status == ValidationStatus.APPROVED and confidence < self.min_confidence_threshold:
                     status = ValidationStatus.NEEDS_REVIEW
+                    validation_notes += f"\n\nNote: Confidence {confidence:.2f} is below required threshold {self.min_confidence_threshold}"
 
-            # Apply confidence threshold
-            if status == ValidationStatus.APPROVED and confidence < self.min_confidence_threshold:
-                status = ValidationStatus.NEEDS_REVIEW
-                validation_notes += f"\n\nNote: Confidence {confidence:.2f} is below required threshold {self.min_confidence_threshold}"
+                return ValidationResult(
+                    status=status,
+                    original_fix=original_fix,
+                    modified_fix=modified_fix,
+                    validation_notes=validation_notes,
+                    concerns=concerns,
+                    confidence=confidence
+                )
 
-            return ValidationResult(
-                status=status,
-                original_fix=original_fix,
-                modified_fix=modified_fix,
-                validation_notes=validation_notes,
-                concerns=concerns,
-                confidence=confidence
-            )
-
-        except Exception as e:
-            logger.error(f"Error parsing validation response: {e}", exc_info=True)
-            return ValidationResult(
-                status=ValidationStatus.NEEDS_REVIEW,
-                original_fix=original_fix,
-                validation_notes=f"Failed to parse validation response: {str(e)}",
-                confidence=0.0
-            )
-
-
-def validate_fixes_with_agent(
-        fixes: List[FixSuggestion],
-        issues: List[SonarIssue],
-        project_path: Path,
-        provider: str = "openai",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        min_confidence: float = 0.7
-) -> List[ValidationResult]:
-    """
-    Convenience function to validate a list of fixes.
-
-    Args:
-        fixes: List of fix suggestions
-        issues: List of corresponding SonarCloud issues
-        project_path: Path to the project
-        provider: LLM provider
-        model: LLM model name
-        api_key: API key
-        min_confidence: Minimum confidence threshold
-
-    Returns:
-        List of validation results
-    """
-    validator = FixValidator(
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        min_confidence_threshold=min_confidence
-    )
-
-    results = []
-
-    for fix, issue in zip(fixes, issues):
-        # Read file content
-        file_path = project_path / fix.file_path if fix.file_path else None
-
-        if not file_path or not file_path.exists():
-            logger.warning(f"File not found for fix {fix.issue_key}: {file_path}")
-            results.append(
-                ValidationResult(
+            except Exception as e:
+                logger.error(f"Error parsing validation response: {e}", exc_info=True)
+                return ValidationResult(
                     status=ValidationStatus.NEEDS_REVIEW,
-                    original_fix=fix,
-                    validation_notes="File not found for validation",
+                    original_fix=original_fix,
+                    validation_notes=f"Failed to parse validation response: {str(e)}",
                     confidence=0.0
                 )
-            )
-            continue
 
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                file_content = f.read()
+    def validate_fixes_with_agent(
+            self,
+            fixes: List[FixSuggestion],
+            issues: List[SonarIssue],
+            project_path: Path,
+            provider: str = "openai",
+            model: Optional[str] = None,
+            api_key: Optional[str] = None,
+            min_confidence: float = 0.7
+    ) -> List[ValidationResult]:
 
-            result = validator.validate_fix(fix, issue, file_content)
-            results.append(result)
+        """
+        Convenience function to validate a list of fixes.
 
-        except Exception as e:
-            logger.error(f"Error reading file for validation: {e}", exc_info=True)
-            results.append(
-                ValidationResult(
-                    status=ValidationStatus.NEEDS_REVIEW,
-                    original_fix=fix,
-                    validation_notes=f"Error reading file: {str(e)}",
-                    confidence=0.0
+        Args:
+            fixes: List of fix suggestions
+            issues: List of corresponding SonarCloud issues
+            project_path: Path to the project
+            provider: LLM provider
+            model: LLM model name
+            api_key: API key
+            min_confidence: Minimum confidence threshold
+
+        Returns:
+            List of validation results
+        """
+        validator = FixValidator(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            min_confidence_threshold=min_confidence
+        )
+
+        results = []
+
+        for fix, issue in zip(fixes, issues):
+            # Read file content
+            file_path = project_path / fix.file_path if fix.file_path else None
+
+            if not file_path or not file_path.exists():
+                logger.warning(f"File not found for fix {fix.issue_key}: {file_path}")
+                results.append(
+                    ValidationResult(
+                        status=ValidationStatus.NEEDS_REVIEW,
+                        original_fix=fix,
+                        validation_notes="File not found for validation",
+                        confidence=0.0
+                    )
                 )
-            )
+                continue
 
-    return results
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    file_content = f.read()
+
+                result = validator.validate_fix(fix, issue, file_content)
+                results.append(result)
+
+            except Exception as e:
+                logger.error(f"Error reading file for validation: {e}", exc_info=True)
+                results.append(
+                    ValidationResult(
+                        status=ValidationStatus.NEEDS_REVIEW,
+                        original_fix=fix,
+                        validation_notes=f"Error reading file: {str(e)}",
+                        confidence=0.0
+                    )
+                )
+
+        return results

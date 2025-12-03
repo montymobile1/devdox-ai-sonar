@@ -4,7 +4,9 @@ import logging
 from typing import List, Optional, Dict, Any
 from datetime import datetime
 from urllib.parse import urljoin
-
+import re
+import time
+import json
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -78,135 +80,848 @@ class SonarCloudAnalyzer:
             'Accept': 'application/json'
         })
 
+    def fetch_all_rules(self, languages: Optional[List[str]] = None) -> Dict[str, Any]:
 
-    def get_project_issues(
-            self,
-            project_key: str,
-            branch: str = "main",
-            statuses: List[str] = None,
-            severities: List[str] = None,
-            types: List[str] = None
-    ) -> Optional[AnalysisResult]:
         """
-        Fetch SonarCloud issues for a project using REST API.
 
-        API Endpoint: GET /api/issues/search
-        Documentation: https://sonarcloud.io/web_api/api/issues/search
+        Fetch all SonarCloud rules with pagination.
+
+
 
         Args:
-            project_key: SonarCloud project key (componentKeys)
-            branch: Branch to analyze (default: main)
-            statuses: Issue statuses to fetch (default: OPEN,ACCEPTED)
-            severities: Issue severities to filter by
-            types: Issue types to filter by
+
+            languages: List of languages to filter by (e.g., ['java', 'python', 'javascript'])
+
+                      If None, fetches rules for all languages
+
+
 
         Returns:
-            AnalysisResult with issues and metadata, or None if error
+
+            Dictionary containing all rules with root causes and fix guidance
+
         """
-        if statuses is None:
-            statuses = ["OPEN", "ACCEPTED"]
+
+        logger.info("Starting to fetch all SonarCloud rules...")
+
+        all_rules = []
+
+        page = 1
+
+        page_size = 500
+
+        total_pages = None
 
         # Build API URL
-        url = urljoin(self.base_url, "/api/issues/search")
 
-        # Build query parameters
-        params = {
-            'componentKeys': project_key,
-            'organization': self.organization,
-            'branch': branch,
-            'issueStatuses': ','.join(statuses),  # Note: SonarCloud uses 'issueStatuses' not 'statuses'
-            'ps': 500  # Page size (max 500)
-        }
+        url = urljoin(self.base_url, "/api/rules/search")
 
-        # Add optional filters
-        if severities:
-            params['severities'] = ','.join(severities)
-        if types:
-            params['types'] = ','.join(types)
+        while True:
 
-        try:
+            logger.info(f"Fetching rules page {page}...")
 
+            params = {
 
-            # Fetch all issues with pagination
-            all_issues = []
-            page = 1
+                'ps': page_size,  # Page size
 
-            while True:
-                params['p'] = page
+                'p': page,  # Page number
 
+                'organization': self.organization
+            }
+
+            # Add language filter if specified
+
+            if languages:
+                params['languages'] = ','.join(languages)
+
+            try:
                 response = self.session.get(
+
                     url,
+
                     params=params,
+
                     timeout=self.timeout
+
                 )
 
-                # Raise exception for HTTP errors
                 response.raise_for_status()
 
                 data = response.json()
 
-                # Extract issues from response
-                issues = data.get('issues', [])
-                all_issues.extend(issues)
+                rules = data.get('rules', [])
 
-                # Check if we've fetched all issues
-                paging = data.get('paging', {})
-                total = paging.get('total', 0)
-                page_size = paging.get('pageSize', 500)
+                if not rules:
+                    break
 
+                all_rules.extend(rules)
 
-                if len(all_issues) >= total:
+                # Calculate total pages on first request
+
+                if total_pages is None:
+                    total_count = data.get('total', 0)
+
+                    total_pages = (total_count + page_size - 1) // page_size
+
+                    logger.info(f"Total rules: {total_count}, Total pages: {total_pages}")
+
+                # Check if we've reached the end
+
+                if page >= total_pages:
                     break
 
                 page += 1
 
+                time.sleep(0.1)  # Rate limiting
 
 
-            # Convert raw data to SonarIssue objects
-            parsed_issues = self._parse_issues(all_issues)
 
-            # Get project metrics
-            metrics = self.get_project_metrics(project_key)
+            except requests.exceptions.RequestException as e:
 
-            return AnalysisResult(
-                project_key=project_key,
-                organization=self.organization,
-                branch=branch,
-                total_issues=len(parsed_issues),
-                issues=parsed_issues,
-                metrics=metrics,
-                analysis_timestamp=datetime.now().isoformat()
+                logger.error(f"Error fetching rules page {page}: {e}")
+
+                break
+
+        logger.info(f"Fetched {len(all_rules)} total rules")
+
+        return self._process_rules(all_rules)
+
+    def _process_rules(self, raw_rules: List[Dict]) -> Dict[str, Any]:
+
+        """
+
+        Process raw rules into structured format with root causes and fixes.
+
+
+
+        Args:
+
+            raw_rules: List of raw rule dictionaries from SonarCloud API
+
+
+
+        Returns:
+
+            Processed rules dictionary with metadata
+
+        """
+
+        processed_rules = {}
+
+        # Group by language for statistics
+
+        languages = {}
+
+        for rule in raw_rules:
+
+            rule_key = rule.get('key', '')
+
+            # Extract rule information
+
+            processed_rule = {
+
+                'name': rule.get('name', ''),
+
+                'language': rule.get('lang', 'Generic'),
+
+                'category': rule.get('type', 'Unknown'),
+
+                'severity': rule.get('severity', 'INFO'),
+
+                'status': rule.get('status', 'READY'),
+
+                'description': self._clean_html_description(rule.get('htmlDesc', '')),
+
+                'tags': rule.get('tags', []),
+
+                'system_tags': rule.get('sysTags', []),
+
+                'created_at': rule.get('createdAt', ''),
+
+                'parameters': rule.get('params', []),
+
+                'root_cause': self._infer_root_cause(rule),
+
+                'how_to_fix': self._generate_fix_guidance(rule)
+
+            }
+
+            processed_rules[rule_key] = processed_rule
+
+            # Group by language for statistics
+
+            lang = processed_rule['language']
+
+            if lang not in languages:
+                languages[lang] = []
+
+            languages[lang].append(rule_key)
+
+        return {
+
+            'rules': processed_rules,
+
+            'metadata': {
+
+                'total_rules': len(processed_rules),
+
+                'languages': {lang: len(rules) for lang, rules in languages.items()},
+
+                'categories': self._get_category_stats(processed_rules),
+
+                'severities': self._get_severity_stats(processed_rules),
+
+                'generated_at': time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime()),
+
+                'organization': self.organization
+
+            }
+
+        }
+
+    def _clean_html_description(self, html_desc: str) -> str:
+
+        """
+
+        Clean HTML description to extract meaningful text.
+
+
+
+        Args:
+
+            html_desc: HTML description from SonarCloud API
+
+
+
+        Returns:
+
+            Cleaned text description
+
+        """
+
+        if not html_desc:
+            return ""
+
+        # Remove HTML tags
+
+        text = re.sub(r'<[^>]+>', ' ', html_desc)
+
+        # Clean up whitespace
+
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        # Truncate if too long
+
+        max_length = 1000
+
+        if len(text) > max_length:
+            text = text[:max_length] + '...'
+
+        return text
+
+    def _infer_root_cause(self, rule: Dict) -> str:
+        """
+        Infer root cause based on rule information.
+
+        Args:
+        rule: Rule dictionary from SonarCloud API
+
+        Returns:
+        Root cause description
+        """
+        name = rule.get('name', '').lower()
+        desc = rule.get('htmlDesc', '').lower()
+        tags = [tag.lower() for tag in rule.get('tags', [])]
+        rule_type = rule.get('type', '').lower()
+
+        # Pattern matching for root causes
+        return self._match_root_cause(name, desc, tags, rule_type)
+
+    def _match_root_cause(self, name: str, desc: str, tags: List[str], rule_type: str) -> str:
+        if self._contains_keywords(name, desc, ['unused', 'dead', 'never used']):
+            return "Unused code creates clutter and indicates incomplete implementation or copy-paste errors"
+        elif self._contains_keywords(name, desc, ['null', 'npe', 'null pointer']):
+            return "Null pointer access causes NullPointerException at runtime, crashing the application"
+        elif self._contains_keywords(name, desc, ['sql', 'injection', 'query']):
+            return "Improper input handling allows malicious SQL injection attacks that can compromise data"
+        elif self._contains_keywords(name, desc, ['password', 'secret', 'credential', 'api key']):
+            return "Hard-coded credentials in source code create security vulnerabilities and make rotation impossible"
+        elif self._contains_keywords(name, desc, ['complex', 'cognitive', 'cyclomatic']):
+            return "High code complexity makes code difficult to understand, test, debug, and maintain"
+        elif self._contains_keywords(name, desc, ['duplicate', 'repeated', 'copy']):
+            return "Code duplication increases maintenance burden and creates consistency risks when changes are needed"
+        elif self._contains_keywords(name, desc, ['empty', 'blank']):
+            return "Empty code blocks indicate incomplete implementation or missing error handling"
+        elif self._contains_keywords(name, desc, ['resource', 'leak', 'close']):
+            return "Unclosed resources (files, connections, streams) cause memory leaks and resource exhaustion"
+        elif self._contains_keywords(name, desc, ['thread', 'synchroniz', 'concurrenc']):
+            return "Improper thread handling can cause race conditions, deadlocks, and data corruption"
+        elif self._contains_keywords(name, desc, ['exception', 'error', 'catch']):
+            return "Poor exception handling can hide errors, cause unexpected behavior, or crash the application"
+        elif 'security' in tags or 'vulnerability' in rule_type:
+            return "Security-sensitive code requires careful review and proper security controls to prevent attacks"
+        elif rule_type == 'bug':
+            return "Coding error that can cause incorrect behavior, crashes, or unexpected results at runtime"
+        elif rule_type == 'code_smell':
+            return "Code quality issue that affects readability, maintainability, or follows poor practices"
+        else:
+            return "Unknown rule type or insufficient data for analysis"
+
+    def _contains_keywords(self, name: str, desc: str, keywords: List[str]) -> bool:
+                return any(keyword in name or keyword in desc for keyword in keywords)
+
+    def _generate_fix_guidance(self, rule: Dict) -> Dict[str, Any]:
+
+            """
+
+            Generate comprehensive fix guidance based on rule type and patterns.
+
+
+
+            Args:
+
+                rule: Rule dictionary from SonarCloud API
+
+
+
+            Returns:
+
+                Fix guidance dictionary with description, steps, and examples
+
+            """
+
+            name = str(rule.get('name', '')).lower()
+
+            rule_type = str(rule.get('type', '')).lower()
+
+            # Pattern-based fix guidance
+
+            if 'unused' in name:
+
+                return {
+
+                    'description': 'Remove unused code or implement its intended functionality',
+
+                    'steps': [
+
+                        'Identify all unused elements (variables, methods, imports, etc.)',
+
+                        'Verify they are truly not needed by checking references',
+
+                        'Remove unused elements or implement their intended purpose',
+
+                        'Run tests to ensure no functionality is broken'
+
+                    ],
+
+                    'priority': 'Medium',
+
+                    'effort': 'Low'
+
+                }
+
+
+
+            elif 'null' in name or 'npe' in name:
+
+                return {
+
+                    'description': 'Add null checks before dereferencing objects',
+
+                    'steps': [
+
+                        'Identify all potential null dereferences',
+
+                        'Add null checks using if statements or Optional classes',
+
+                        'Handle null cases appropriately (return, throw exception, use default)',
+
+                        'Consider using null-safe operators where available'
+
+                    ],
+
+                    'priority': 'High',
+
+                    'effort': 'Medium'
+
+                }
+
+
+
+            elif 'sql' in name or 'injection' in name:
+
+                return {
+
+                    'description': 'Use parameterized queries instead of string concatenation',
+
+                    'steps': [
+
+                        'Identify dynamic SQL query construction',
+
+                        'Replace string concatenation with parameterized queries',
+
+                        'Use prepared statements or ORM frameworks',
+
+                        'Validate and sanitize all user inputs'
+
+                    ],
+
+                    'priority': 'Critical',
+
+                    'effort': 'Medium'
+
+                }
+
+
+
+            elif 'password' in name or 'secret' in name or 'credential' in name:
+
+                return {
+
+                    'description': 'Move credentials to environment variables or secure storage',
+
+                    'steps': [
+
+                        'Remove hard-coded credentials from source code',
+
+                        'Store credentials in environment variables',
+
+                        'Use secure credential management systems',
+
+                        'Update deployment scripts to set environment variables',
+
+                        'Remove credentials from version control history'
+
+                    ],
+
+                    'priority': 'Critical',
+
+                    'effort': 'Medium'
+
+                }
+
+
+
+            elif 'complex' in name or 'cognitive' in name:
+
+                return {
+
+                    'description': 'Refactor complex code into smaller, focused methods',
+
+                    'steps': [
+
+                        'Identify the most complex parts of the method',
+
+                        'Extract complex logic into separate methods with descriptive names',
+
+                        'Use early returns to reduce nesting levels',
+
+                        'Simplify conditional expressions using guard clauses',
+
+                        'Consider using strategy pattern for complex conditional logic'
+
+                    ],
+
+                    'priority': 'Medium',
+
+                    'effort': 'High'
+
+                }
+
+
+
+            elif 'duplicate' in name or 'repeated' in name:
+
+                return {
+
+                    'description': 'Extract common code into reusable methods or constants',
+
+                    'steps': [
+
+                        'Identify all instances of duplicated code',
+
+                        'Extract common logic into a shared method or constant',
+
+                        'Replace all duplicated instances with calls to the extracted code',
+
+                        'Ensure the extracted code handles all use cases correctly'
+
+                    ],
+
+                    'priority': 'Medium',
+
+                    'effort': 'Medium'
+
+                }
+
+
+
+            elif 'empty' in name:
+
+                return {
+
+                    'description': 'Implement proper logic or remove unnecessary empty blocks',
+
+                    'steps': [
+
+                        'Determine the intended purpose of the empty block',
+
+                        'Either implement the missing functionality',
+
+                        'Or remove the empty block if not needed',
+
+                        'Add TODO comments for future implementation if appropriate'
+
+                    ],
+
+                    'priority': 'High',
+
+                    'effort': 'Low'
+
+                }
+
+
+
+            elif rule_type == 'vulnerability':
+
+                return {
+
+                    'description': 'Address security vulnerability following secure coding practices',
+
+                    'steps': [
+
+                        'Review the security implications of the vulnerable code',
+
+                        'Apply appropriate security controls and validation',
+
+                        'Follow security best practices for the specific vulnerability type',
+
+                        'Test security fixes thoroughly',
+
+                        'Consider security code review'
+
+                    ],
+
+                    'priority': 'Critical',
+
+                    'effort': 'High'
+
+                }
+
+
+
+            elif rule_type == 'bug':
+
+                return {
+
+                    'description': 'Fix logical error or potential runtime issue',
+
+                    'steps': [
+
+                        'Understand the root cause of the bug',
+
+                        'Implement the correct logic',
+
+                        'Add comprehensive tests to prevent regression',
+
+                        'Verify the fix doesn\'t introduce new issues'
+
+                    ],
+
+                    'priority': 'High',
+
+                    'effort': 'Medium'
+
+                }
+
+
+
+            else:
+
+                return {
+
+                    'description': 'Improve code quality following best practices',
+
+                    'steps': [
+
+                        'Review the rule documentation for specific guidance',
+
+                        'Apply the recommended changes',
+
+                        'Verify improvements don\'t break functionality',
+
+                        'Consider similar issues elsewhere in the codebase'
+
+                    ],
+
+                    'priority': 'Low',
+
+                    'effort': 'Low'
+
+                }
+
+    def _get_category_stats(self, rules: Dict) -> Dict[str, int]:
+
+        """Get statistics by category."""
+
+        stats = {}
+
+        for rule in rules.values():
+            category = rule['category']
+
+            stats[category] = stats.get(category, 0) + 1
+
+        return stats
+
+    def _get_severity_stats(self, rules: Dict) -> Dict[str, int]:
+
+        """Get statistics by severity."""
+
+        stats = {}
+
+        for rule in rules.values():
+            severity = rule['severity']
+
+            stats[severity] = stats.get(severity, 0) + 1
+
+        return stats
+
+    def get_rule_by_key(self, rule_key: str) -> Optional[Dict[str, Any]]:
+
+        """
+
+        Get detailed information for a specific rule.
+
+
+
+        Args:
+
+            rule_key: SonarCloud rule key (e.g., 'java:S1066')
+
+
+
+        Returns:
+
+            Rule information dictionary or None if not found
+
+        """
+
+        url = urljoin(self.base_url, "/api/rules/show")
+
+        params = {
+
+            'key': rule_key,
+
+            'organization': self.organization
+
+        }
+
+        try:
+
+            response = self.session.get(
+
+                url,
+
+                params=params,
+
+                timeout=self.timeout
+
             )
 
-        except requests.Timeout:
-            logger.error(f"Request timeout while fetching issues for {project_key}", exc_info=True)
+            response.raise_for_status()
+
+            data = response.json()
+
+            rule_data = data.get('rule', {})
+
+            if not rule_data:
+                return None
+
+            # Process single rule
+
+            processed = self._process_rules([rule_data])
+
+            return processed['rules'].get(rule_key)
+
+
+
+        except requests.exceptions.RequestException as e:
+
+            logger.error(f"Error fetching rule {rule_key}: {e}")
+
             return None
 
-        except requests.HTTPError as e:
-            status_code = e.response.status_code
-            error_text = e.response.text
+    def get_rules_for_language(self, language: str) -> Dict[str, Any]:
 
-            logger.error(
-                f"HTTP error {status_code} fetching issues for {project_key}: {error_text}",
-                exc_info=True
-            )
+        """
 
-            # Provide helpful error messages
+        Get all rules for a specific programming language.
+
+
+
+        Args:
+
+            language: Language code (e.g., 'java', 'python', 'javascript')
+
+
+
+        Returns:
+
+            Dictionary containing rules for the specified language
+
+        """
+
+        logger.info(f"Fetching rules for language: {language}")
+
+        return self.fetch_all_rules(languages=[language])
+
+    def get_rules_by_severity(self, severity: str) -> List[Dict[str, Any]]:
+
+        """
+
+        Get all rules filtered by severity level.
+
+
+
+        Args:
+
+            severity: Severity level ('BLOCKER', 'CRITICAL', 'MAJOR', 'MINOR', 'INFO')
+
+
+
+        Returns:
+
+            List of rules matching the severity level
+
+        """
+
+        all_rules = self.fetch_all_rules()
+
+        filtered_rules = []
+
+        for rule_key, rule_data in all_rules['rules'].items():
+
+            if rule_data['severity'] == severity:
+                rule_data['key'] = rule_key
+
+                filtered_rules.append(rule_data)
+
+        return filtered_rules
+
+    def export_rules_to_json(self, filename: str, languages: Optional[List[str]] = None):
+
+        """
+
+        Export all rules to a JSON file.
+
+
+
+        Args:
+
+            filename: Output filename
+
+            languages: Optional list of languages to filter by
+
+        """
+
+
+
+        logger.info(f"Exporting rules to {filename}")
+
+        rules_data = self.fetch_all_rules(languages=languages)
+
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(rules_data, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"Exported {rules_data['metadata']['total_rules']} rules to {filename}")
+
+    def get_project_issues(
+            self,
+            project_key: str,
+            branch: str = "",
+            pull_request_number: Optional[int] = 0,
+            statuses: List[str] = None,
+            severities: List[str] = None,
+            types: List[str] = None
+        ) -> Optional[AnalysisResult]:
+            logger.info(f"Fetching issues for project {project_key} on branch {branch} with pull request {pull_request_number}")
+
+            if statuses is None:
+                statuses = ["OPEN"]
+
+            url = urljoin(self.base_url, "/api/issues/search")
+
+            try:
+                params = self._build_query_params(project_key, branch, pull_request_number, statuses, severities, types)
+                issues = self._fetch_issues(url, params)
+                parsed_issues = self._parse_issues(issues)
+                metrics = self.get_project_metrics(project_key)
+                return AnalysisResult(
+                    project_key=project_key,
+                    organization=self.organization,
+                    branch=branch,
+                    total_issues=len(parsed_issues),
+                    issues=parsed_issues,
+                    metrics=metrics,
+                    analysis_timestamp=datetime.now().isoformat()
+                )
+            except requests.RequestException as e:
+                return self._handle_exceptions(e, project_key)
+            except Exception as e:
+                logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
+                return None
+
+    def _build_query_params(self, project_key, branch, pull_request_number, statuses, severities, types):
+        params = {
+            'componentKeys': project_key,
+            'organization': self.organization,
+            'issueStatuses': ','.join(statuses),
+            'ps': 500  # Page size (max 500)
+        }
+        if branch != '':
+            params['branch'] = branch
+        else:
+            if pull_request_number != 0:
+                params['pullRequest'] = str(pull_request_number)
+            else:
+                params['branch'] = 'main'
+        if severities:
+            params['severities'] = ','.join(severities)
+        if types:
+            params['types'] = ','.join(types)
+        return params
+
+
+    def _fetch_issues(self, url, params):
+        all_issues = []
+        page = 1
+        while True:
+            params['p'] = page
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            data = response.json()
+            issues = data.get('issues', [])
+            all_issues.extend(issues)
+            paging = data.get('paging', {})
+            total = paging.get('total', 0)
+            if len(all_issues) >= total:
+                break
+            page += 1
+        return all_issues
+
+
+    def _handle_exceptions(self, e, project_key):
+        status_code = e.response.status_code if hasattr(e, 'response') and e.response else None
+        logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=True)
+        if isinstance(e, requests.Timeout):
+            logger.warning(f"Request timed out while fetching issues for {project_key}.")
+        elif isinstance(e, requests.HTTPError):
             if status_code == 401:
                 logger.error("Authentication failed. Check your SonarCloud token.")
             elif status_code == 403:
                 logger.error("Access forbidden. Check organization and project permissions.")
             elif status_code == 404:
                 logger.error(f"Project '{project_key}' not found in organization '{self.organization}'.")
-
-            return None
-
-        except requests.RequestException as e:
-            logger.error(f"Network error fetching issues for {project_key}: {e}", exc_info=True)
-            return None
-
-        except Exception as e:
-            logger.error(f"Unexpected error fetching issues for {project_key}: {e}", exc_info=True)
             return None
 
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
@@ -367,9 +1082,6 @@ class SonarCloudAnalyzer:
                             end_line = int(end_line)
                             if end_line > last_line:
                                 last_line = end_line
-                logger.info(f"last line {last_line}")
-
-
 
                 issue = SonarIssue(
                     key=issue_data.get("key", ""),
@@ -426,8 +1138,11 @@ class SonarCloudAnalyzer:
     def get_fixable_issues(
             self,
             project_key: str,
-            branch: str = "main",
-            max_issues: Optional[int] = None
+            branch: str = "",
+            pull_request: Optional[int] = 0,
+            max_issues: Optional[int] = None,
+            severities: Optional[List[str]] = None,
+            types_list: Optional[List[str]] = None
     ) -> List[SonarIssue]:
         """
         Get issues that are potentially fixable by LLM.
@@ -436,11 +1151,13 @@ class SonarCloudAnalyzer:
             project_key: SonarCloud project key
             branch: Branch to analyze
             max_issues: Maximum number of issues to return
+            types_list: Optional list of issue types to filter by
 
         Returns:
             List of fixable SonarIssue objects
         """
-        analysis = self.get_project_issues(project_key, branch)
+        analysis = self.get_project_issues(project_key, branch,pull_request_number=pull_request,severities=severities, types=types_list)
+
         if not analysis:
             return []
 
@@ -521,6 +1238,7 @@ class SonarCloudAnalyzer:
 
 
         return analysis
+
 
     def close(self):
         """Close the session and release resources."""

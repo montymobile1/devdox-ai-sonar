@@ -6,8 +6,6 @@ This script provides a summary of all test coverage and validates that
 all source files have corresponding tests.
 """
 
-import os
-import sys
 from pathlib import Path
 import ast
 import re
@@ -27,24 +25,21 @@ class TestCoverageAnalyzer:
         if not self.src_dir.exists():
             return []
 
-        return [
-            f for f in self.src_dir.rglob("*.py")
-            if not f.name.startswith("__")
-        ]
+        return [f for f in self.src_dir.rglob("*.py") if not f.name.startswith("__")]
 
     def get_test_files(self) -> List[Path]:
         """Get all test files."""
         if not self.tests_dir.exists():
             return []
 
-        return [
-            f for f in self.tests_dir.rglob("test_*.py")
-        ]
+        return [f for f in self.tests_dir.rglob("test_*.py")]
 
-    def extract_classes_and_functions(self, file_path: Path) -> Tuple[Set[str], Set[str]]:
+    def extract_classes_and_functions(
+        self, file_path: Path
+    ) -> Tuple[Set[str], Set[str]]:
         """Extract classes and functions from a Python file."""
         try:
-            with open(file_path, 'r', encoding='utf-8') as f:
+            with open(file_path, "r", encoding="utf-8") as f:
                 tree = ast.parse(f.read())
         except Exception as e:
             print(f"Error parsing {file_path}: {e}")
@@ -57,7 +52,7 @@ class TestCoverageAnalyzer:
             if isinstance(node, ast.ClassDef):
                 classes.add(node.name)
             elif isinstance(node, ast.FunctionDef):
-                if not node.name.startswith('_'):  # Exclude private functions
+                if not node.name.startswith("_"):  # Exclude private functions
                     functions.add(node.name)
 
         return classes, functions
@@ -65,25 +60,25 @@ class TestCoverageAnalyzer:
     def extract_test_cases(self, test_file: Path) -> Dict[str, int]:
         """Extract test case counts from a test file."""
         try:
-            with open(test_file, 'r', encoding='utf-8') as f:
+            with open(test_file, "r", encoding="utf-8") as f:
                 content = f.read()
         except Exception as e:
             print(f"Error reading {test_file}: {e}")
             return {}
 
         # Count test methods
-        test_methods = len(re.findall(r'def test_\w+\(self', content))
+        test_methods = len(re.findall(r"def test_\w+\(self", content))
 
         # Count test classes
-        test_classes = len(re.findall(r'class Test\w+\(', content))
+        test_classes = len(re.findall(r"class Test\w+\(", content))
 
         # Count assertions
-        assertions = len(re.findall(r'self\.assert', content))
+        assertions = len(re.findall(r"self\.assert", content))
 
         return {
-            'methods': test_methods,
-            'classes': test_classes,
-            'assertions': assertions
+            "methods": test_methods,
+            "classes": test_classes,
+            "assertions": assertions,
         }
 
     def generate_report(self) -> str:
@@ -131,9 +126,9 @@ class TestCoverageAnalyzer:
 
         for test_file in test_files:
             stats = self.extract_test_cases(test_file)
-            total_test_methods += stats['methods']
-            total_test_classes += stats['classes']
-            total_assertions += stats['assertions']
+            total_test_methods += stats["methods"]
+            total_test_classes += stats["classes"]
+            total_assertions += stats["assertions"]
 
             report.append(f"\n📋 {test_file.name}")
             report.append(f"   Test Classes: {stats['classes']}")
@@ -166,7 +161,9 @@ class TestCoverageAnalyzer:
             report.append(f"{row[0]:<32} {row[1]:<13} {row[2]:<11} {row[3]}")
 
         report.append("")
-        report.append("* Reference tests exist but source files are not in accessible directory")
+        report.append(
+            "* Reference tests exist but source files are not in accessible directory"
+        )
         report.append("")
 
         # Test quality metrics
@@ -238,7 +235,7 @@ def main():
     # Save report to file
     report_file = project_root / "tests" / "COVERAGE_REPORT.txt"
     try:
-        with open(report_file, 'w', encoding='utf-8') as f:
+        with open(report_file, "w", encoding="utf-8") as f:
             f.write(report)
         print(f"\n✅ Report saved to: {report_file}")
     except Exception as e:
