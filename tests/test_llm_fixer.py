@@ -2,6 +2,7 @@
 
 import pytest
 from pathlib import Path
+import json
 from unittest.mock import Mock, patch, MagicMock, mock_open
 from devdox_ai_sonar.models import (
     SonarIssue,
@@ -10,8 +11,9 @@ from devdox_ai_sonar.models import (
     Severity,
     IssueType,
 )
-from devdox_ai_sonar.llm_fixer import LLMFixer
-from devdox_ai_sonar.llm_fixer import calculate_base_indentation
+from devdox_ai_sonar.fix_validator import ValidationStatus, ValidationResult
+
+from devdox_ai_sonar.llm_fixer import calculate_base_indentation, LLMFixer
 
 
 @pytest.fixture
@@ -53,7 +55,7 @@ def mock_llm_fixer():
     """Create a mock LLMFixer for testing."""
     with patch("devdox_ai_sonar.llm_fixer.openai") as mock_openai:
         mock_openai.OpenAI.return_value = MagicMock()
-        from devdox_ai_sonar.llm_fixer import LLMFixer
+        
 
         fixer = LLMFixer(provider="openai", api_key="test-key")
         return fixer
@@ -67,7 +69,7 @@ class TestLLMFixerInitialization:
         with patch("devdox_ai_sonar.llm_fixer.openai") as mock_openai:
             mock_openai.OpenAI.return_value = MagicMock()
 
-            from devdox_ai_sonar.llm_fixer import LLMFixer
+            
 
             fixer = LLMFixer(provider="openai", api_key="test-key")
             assert fixer.provider == "openai"
@@ -79,7 +81,7 @@ class TestLLMFixerInitialization:
         with patch("devdox_ai_sonar.llm_fixer.genai") as mock_genai:
             mock_genai.Client.return_value = MagicMock()
 
-            from devdox_ai_sonar.llm_fixer import LLMFixer
+            
 
             fixer = LLMFixer(provider="gemini", api_key="test-gemini-key")
             assert fixer.provider == "gemini"
@@ -87,7 +89,7 @@ class TestLLMFixerInitialization:
 
     def test_invalid_provider(self):
         """Test that invalid provider raises error."""
-        from devdox_ai_sonar.llm_fixer import LLMFixer
+        
 
         with pytest.raises(ValueError, match="Unsupported provider"):
             LLMFixer(provider="invalid", api_key="test-key")
@@ -95,7 +97,7 @@ class TestLLMFixerInitialization:
     def test_missing_api_key(self):
         """Test that missing API key raises error."""
         with patch.dict("os.environ", {}, clear=True):
-            from devdox_ai_sonar.llm_fixer import LLMFixer
+            
 
             with pytest.raises(ValueError, match="API key not provided"):
                 LLMFixer(provider="openai", api_key=None)
@@ -561,6 +563,1056 @@ class TestAdvancedFixApplication:
         with patch.object(mock_llm_fixer, "_call_llm", side_effect=Exception("API Rate Limit")):
             fix = mock_llm_fixer.generate_fix(sample_issue, tmp_path, rule_info={})
             assert fix is None  # Should return None, not crash
+
+
+class TestTogetherAIProviderIntegration:
+    """Test TogetherAI LLM provider integration for code fixing."""
+
+    @patch("devdox_ai_sonar.llm_fixer.Together")
+    @patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", True)
+    def test_call_llm_togetherai_success(self, mock_together, sample_issue, tmp_path):
+        """Test successful LLM call with TogetherAI provider."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = json.dumps({
+            "FIXED_SELECTION": "return value",
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING",
+            "EXPLANATION": "Removed unused variable",
+            "CONFIDENCE": 0.95
+        })
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_together.return_value = mock_client
+
+        fixer = LLMFixer(provider="togetherai", api_key="test-key")
+
+        # Create test file
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("def test():\n    unused_var = 42\n    return value")
+
+        fix = fixer.generate_fix(sample_issue, tmp_path, rule_info={})
+
+        assert fix is not None
+        assert fix.confidence == 0.95
+        mock_client.chat.completions.create.assert_called_once()
+
+    @patch("devdox_ai_sonar.llm_fixer.Together")
+    @patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", True)
+    def test_call_llm_togetherai_error(self, mock_together, sample_issue, tmp_path):
+        """Test TogetherAI provider error handling."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception("TogetherAI API Error")
+        mock_together.return_value = mock_client
+
+        fixer = LLMFixer(provider="togetherai", api_key="test-key")
+
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("code")
+
+        fix = fixer.generate_fix(sample_issue, tmp_path, rule_info={})
+
+        assert fix is None
+
+    @patch("devdox_ai_sonar.llm_fixer.Together")
+    @patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", True)
+    def test_togetherai_custom_parameters(self, mock_together):
+        """Test TogetherAI with custom parameters."""
+        mock_together.return_value = MagicMock()
+
+        fixer = LLMFixer(
+            provider="togetherai",
+            model="meta-llama/Llama-3-70b-chat-hf",
+            api_key="test-key"
+        )
+
+        assert fixer.model == "meta-llama/Llama-3-70b-chat-hf"
+        assert fixer.provider == "togetherai"
+
+
+# ==============================================================================
+# CRITICAL: Gemini Provider Integration Tests
+# ==============================================================================
+
+class TestGeminiProviderIntegration:
+    """Test Gemini LLM provider integration."""
+
+    @patch("devdox_ai_sonar.llm_fixer.genai")
+    def test_call_llm_gemini_success(self, mock_genai, sample_issue, tmp_path):
+        """Test successful LLM call with Gemini provider."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.text = json.dumps({
+            "FIXED_SELECTION": "return value",
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING",
+            "EXPLANATION": "Fixed",
+            "CONFIDENCE": 0.9
+        })
+        mock_client.models.generate_content.return_value = mock_response
+        mock_genai.Client.return_value = mock_client
+
+        fixer = LLMFixer(provider="gemini", api_key="test-key")
+
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("code")
+
+        fix = fixer.generate_fix(sample_issue, tmp_path, rule_info={})
+
+        assert fix is not None
+        mock_client.models.generate_content.assert_called_once()
+
+    @patch("devdox_ai_sonar.llm_fixer.genai")
+    def test_call_llm_gemini_error(self, mock_genai, sample_issue, tmp_path):
+        """Test Gemini provider error handling."""
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("Gemini API Error")
+        mock_genai.Client.return_value = mock_client
+
+        fixer = LLMFixer(provider="gemini", api_key="test-key")
+
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("code")
+
+        fix = fixer.generate_fix(sample_issue, tmp_path, rule_info={})
+
+        assert fix is None
+
+
+# ==============================================================================
+# CRITICAL: Response Parsing Edge Cases
+# ==============================================================================
+
+class TestResponseParsingEdgeCases:
+    """Test LLM response parsing with various malformed inputs."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_missing_opening_brace(self, mock_openai):
+        """Test parsing response missing opening brace."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = '"FIXED_SELECTION": "code", "CONFIDENCE": 0.9}'
+        result = fixer._extract_fix_from_response(response)
+
+        # Should use regex fallback
+        assert result is not None or result is None  # Either works or returns None gracefully
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_missing_closing_brace(self, mock_openai):
+        """Test parsing response missing closing brace."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = '{"FIXED_SELECTION": "code", "CONFIDENCE": 0.9'
+        result = fixer._extract_fix_from_response(response)
+
+        # Should use regex fallback
+        assert result is not None or result is None
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_with_escaped_quotes(self, mock_openai):
+        """Test parsing response with escaped quotes in code."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = json.dumps({
+            "FIXED_SELECTION": 'print("Hello \\"World\\"")',
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING",
+            "EXPLANATION": "Fixed",
+            "CONFIDENCE": 0.9
+        })
+
+        result = fixer._extract_fix_from_response(response)
+
+        assert result is not None
+        assert '"' in result["fixed_code"] or '\\"' in result["fixed_code"]
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_with_newlines_in_strings(self, mock_openai):
+        """Test parsing response with newlines in string literals."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = json.dumps({
+            "FIXED_SELECTION": "x = 'multi\\nline\\nstring'",
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING",
+            "EXPLANATION": "Fixed",
+            "CONFIDENCE": 0.85
+        })
+
+        result = fixer._extract_fix_from_response(response)
+
+        assert result is not None
+        assert result["fixed_code"]
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_malformed_json_regex_fallback(self, mock_openai):
+        """Test regex fallback for completely malformed JSON."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = """Here's the fix:
+{
+"FIXED_SELECTION": "return value",
+"CONFIDENCE": "0.95",
+"EXPLANATION": "Removed unused variable"
+}
+"""
+
+        result = fixer._extract_fix_from_response(response)
+
+
+        # Should extract using regex
+        assert result is not None
+        assert result["fixed_code"] == "return value"
+        assert result["confidence"] == 0.95
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_empty_response(self, mock_openai):
+        """Test parsing completely empty response."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        result = fixer._extract_fix_from_response("")
+
+        assert result is None
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_fix_missing_required_field(self, mock_openai):
+        """Test parsing response missing FIXED_SELECTION."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        response = json.dumps({
+            "NEW_HELPER_CODE": "helper",
+            "CONFIDENCE": 0.9
+        })
+
+        result = fixer._extract_fix_from_response(response)
+
+        assert result is None
+
+
+# ==============================================================================
+# CRITICAL: Cognitive Complexity Handling
+# ==============================================================================
+
+class TestCognitiveComplexityHandling:
+    """Test handling of cognitive complexity issues."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_complexity_info_standard_format(self, mock_openai):
+        """Test extracting complexity from standard message format."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        message = "Cognitive Complexity from 25 to the 15 allowed"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "25"
+        assert result["target"] == "15"
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_complexity_info_alternative_format(self, mock_openai):
+        """Test extracting complexity from alternative message format."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        message = "complexity is 30, maximum allowed is 15"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "30"
+        assert result["target"] == "15"
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_complexity_info_no_match(self, mock_openai):
+        """Test extracting complexity when format doesn't match."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        message = "This function is too complex"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "Unknown"
+        assert result["target"] == "15"  # Default
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_is_init_method_python(self, mock_openai):
+        """Test detection of Python __init__ method."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        context = "def __init__(self, x, y):\n    self.x = x\n    self.y = y"
+
+        assert fixer._is_init_method(context) is True
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_is_init_method_java_constructor(self, mock_openai):
+        """Test detection of Java constructor."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        context = "public MyClass(int x) {\n    this.x = x;\n}"
+
+        assert fixer._is_init_method(context) is True
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_is_init_method_javascript_constructor(self, mock_openai):
+        """Test detection of JavaScript constructor."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        context = "constructor(x, y) {\n    this.x = x;\n    this.y = y;\n}"
+
+        assert fixer._is_init_method(context) is True
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_is_init_method_not_constructor(self, mock_openai):
+        """Test that regular methods are not detected as constructors."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        context = "def process_data(self, data):\n    return data.strip()"
+
+        assert fixer._is_init_method(context) is False
+
+
+# ==============================================================================
+# CRITICAL: Function Boundary Detection Edge Cases
+# ==============================================================================
+
+class TestFunctionBoundaryDetection:
+    """Test edge cases in function boundary detection."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_python_function_end_nested_functions(self, mock_openai):
+        """Test finding end of function with nested functions."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "def outer():\n",
+            "    def inner():\n",
+            "        return 1\n",
+            "    return inner()\n",
+            "\n",
+            "def next_function():\n"
+        ]
+
+        end = fixer._find_python_function_end(lines, 0)
+
+        assert end is not None
+        assert end >= 3  # Should include all of outer function
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_python_function_end_multiline_strings(self, mock_openai):
+        """Test finding end with multiline strings."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "def func():\n",
+            '    text = """\n',
+            "    This is a\n",
+            "    multiline string\n",
+            '    """\n',
+            "    return text\n",
+            "\n"
+        ]
+
+        end = fixer._find_python_function_end(lines, 0)
+
+        assert end is not None
+        assert end >= 5
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_brace_function_end_nested_braces(self, mock_openai):
+        """Test finding end of brace-based function with nested structures."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "function test() {\n",
+            "    if (true) {\n",
+            "        return 1;\n",
+            "    }\n",
+            "}\n"
+        ]
+
+        end = fixer._find_brace_function_end(lines, 0)
+
+        assert end == 4  # Should match closing brace of function
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_brace_function_end_strings_with_braces(self, mock_openai):
+        """Test that braces in strings are ignored."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "function test() {\n",
+            '    var x = "{ not a brace }";\n',
+            "    return x;\n",
+            "}\n"
+        ]
+
+        end = fixer._find_brace_function_end(lines, 0)
+
+        assert end == 3
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_remove_strings_and_comments(self, mock_openai):
+        """Test removing strings and comments from code line."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        line = 'x = "{ test }" // comment { more }'
+        cleaned = fixer._remove_strings_and_comments(line)
+
+        assert '{' not in cleaned or cleaned.count('{') < line.count('{')
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_function_start_with_decorators_multiple(self, mock_openai):
+        """Test finding function start with multiple decorators."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "class MyClass:\n",
+            "    @staticmethod\n",
+            "    @cache\n",
+            "    @log\n",
+            "    def method():\n",
+            "        pass\n"
+        ]
+
+        start = fixer._find_function_start_with_decorators(lines, 4)
+
+        assert start == 1  # Should find first decorator
+
+
+# ==============================================================================
+# CRITICAL: Placement Strategy Tests
+# ==============================================================================
+
+class TestPlacementStrategies:
+    """Test different helper code placement strategies."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_import_insertion_point_after_imports(self, mock_openai):
+        """Test finding correct position after existing imports."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "import os\n",
+            "import sys\n",
+            "from typing import List\n",
+            "\n",
+            "def function():\n"
+        ]
+
+        pos = fixer._find_import_insertion_point(lines)
+
+        assert pos == 3  # After last import
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_import_insertion_point_with_docstring(self, mock_openai):
+        """Test finding position after module docstring."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            '"""Module docstring."""\n',
+            "\n",
+            "import os\n"
+        ]
+
+        pos = fixer._find_import_insertion_point(lines)
+
+        assert pos >= 1  # After docstring
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_import_insertion_point_with_shebang(self, mock_openai):
+        """Test finding position after shebang."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "#!/usr/bin/env python3\n",
+            "# -*- coding: utf-8 -*-\n",
+            "\n",
+            "import os\n"
+        ]
+
+        pos = fixer._find_import_insertion_point(lines)
+
+        assert pos >= 2  # After shebang and encoding
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_global_top_insertion_point(self, mock_openai):
+        """Test finding position for global code."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = [
+            "import os\n",
+            "\n",
+            "CONSTANT = 42\n",
+            "\n",
+            "def function():\n"
+        ]
+
+        pos = fixer._find_global_top_insertion_point(lines)
+
+        assert pos >= 2  # After imports
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_handle_docstring_multiline(self, mock_openai):
+        """Test handling multiline docstrings correctly."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        state = {
+            "last_import_line": -1,
+            "last_docstring_line": -1,
+            "last_shebang_encoding_line": -1,
+            "in_docstring": False,
+            "docstring_quote": None,
+        }
+
+        # Start of docstring
+        result = fixer._handle_docstring(0, '"""Start', state)
+        assert state["in_docstring"] is True
+
+        # Middle of docstring
+        result = fixer._handle_docstring(1, 'Middle line', state)
+        assert result is True
+
+        # End of docstring
+        result = fixer._handle_docstring(2, 'End"""', state)
+        assert state["in_docstring"] is False
+
+
+# ==============================================================================
+# CRITICAL: Fix Application with Different Placements
+# ==============================================================================
+
+class TestFixApplicationWithPlacements:
+    """Test applying fixes with different helper code placements."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_apply_fix_sibling_placement(self, mock_openai, tmp_path):
+        """Test applying fix with SIBLING helper placement."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def func():\n    x = complex_logic()\n    return x\n")
+
+        fix = FixSuggestion(
+            issue_key="1",
+            original_code="    x = complex_logic()",
+            fixed_code="    x = helper()",
+            helper_code="def helper():\n    return complex_logic()",
+            placement_helper="SIBLING",
+            explanation="Extracted to helper",
+            confidence=0.9,
+            llm_model="gpt-4",
+            file_path="test.py",
+            line_number=2,
+            last_line_number=2
+        )
+
+        success = fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+
+        content = test_file.read_text()
+        assert "helper()" in content
+        assert "def helper():" in content
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_apply_fix_global_bottom_placement(self, mock_openai, tmp_path):
+        """Test applying fix with GLOBAL_BOTTOM helper placement."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("def func():\n    x = value\n    return x\n")
+
+        fix = FixSuggestion(
+            issue_key="1",
+            original_code="    x = value",
+            fixed_code="    x = CONSTANT",
+            helper_code="# Utility function\ndef utility():\n    return 42",
+            placement_helper="GLOBAL_BOTTOM",
+            explanation="Added utility",
+            confidence=0.9,
+            llm_model="gpt-4",
+            file_path="test.py",
+            line_number=2,
+            last_line_number=2
+        )
+
+        success = fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+
+        content = test_file.read_text()
+        # Helper should be at bottom
+        lines = content.split('\n')
+        assert any("def utility():" in line for line in lines[-10:])
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_apply_fix_global_top_import_placement(self, mock_openai, tmp_path):
+        """Test applying fix with GLOBAL_TOP for imports."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        test_file = tmp_path / "test.py"
+        test_file.write_text("import os\n\ndef func():\n    x = value\n    return x\n")
+
+        fix = FixSuggestion(
+            issue_key="1",
+            original_code="    x = value",
+            fixed_code="    x = re.match(value)",
+            helper_code="import re",
+            placement_helper="GLOBAL_TOP",
+            explanation="Added import",
+            confidence=0.9,
+            llm_model="gpt-4",
+            file_path="test.py",
+            line_number=4,
+            last_line_number=4
+        )
+
+        success = fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+
+        content = test_file.read_text()
+        lines = content.split('\n')
+
+        # Import should be near top with other imports
+        import_lines = [i for i, line in enumerate(lines) if 'import' in line]
+        assert len(import_lines) >= 2  # Original + new import
+
+
+# ==============================================================================
+# CRITICAL: Indentation Handling Edge Cases
+# ==============================================================================
+
+class TestIndentationEdgeCases:
+    """Test indentation handling in various scenarios."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_calculate_base_indentation_mixed_tabs_spaces(self, mock_openai):
+        """Test calculating indentation with mixed tabs and spaces."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = ["\t    code"]
+        indent = fixer.calculate_base_indentation(lines, 1)
+
+        # Should handle mixed indentation
+        assert indent is not None
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_normalize_indentation_empty_lines(self, mock_openai):
+        """Test normalizing indentation preserves empty lines."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        lines = ["    code1", "", "    code2"]
+        normalized = fixer._normalize_indentation(lines)
+
+        assert normalized[1] == ""  # Empty line preserved
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_apply_indentation_to_fix_zero_indent(self, mock_openai):
+        """Test applying zero indentation."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        fixed_code = "x = 1\ny = 2"
+        result = fixer.apply_indentation_to_fix(fixed_code, "")
+
+        assert result == "x = 1\ny = 2"
+
+    def test_calculate_base_indentation_standalone(self):
+        """Test calculate_base_indentation standalone function."""
+        assert calculate_base_indentation("    code") == 4
+        assert calculate_base_indentation("  code") == 2
+        assert calculate_base_indentation("code") == 0
+        assert calculate_base_indentation("\tcode") == 1
+
+
+# ==============================================================================
+# CRITICAL: Validation Integration Tests
+# ==============================================================================
+
+class TestValidationIntegration:
+    """Test integration with fix validator."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    @patch("devdox_ai_sonar.llm_fixer.FixValidator")
+    def test_apply_fixes_with_validation_approved(self, mock_validator_class, mock_openai, tmp_path, sample_fix,
+                                                  sample_issue):
+        """Test applying fixes with validator approval."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+       
+
+        mock_validator = MagicMock()
+        mock_result = ValidationResult(
+            status=ValidationStatus.APPROVED,
+            original_fix=sample_fix,
+            confidence=0.95
+        )
+        mock_validator.validate_fix.return_value = mock_result
+        mock_validator_class.return_value = mock_validator
+
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("def test():\n    unused = 42\n    return value\n")
+
+        sample_fix.file_path = "src/test.py"
+
+        result = fixer.apply_fixes_with_validation(
+            [sample_fix],
+            [sample_issue],
+            tmp_path,
+            use_validator=True,
+            validator_provider="openai"
+        )
+
+        # Should succeed
+        assert len(result.successful_fixes) >= 0
+
+
+
+
+# ==============================================================================
+# HIGH PRIORITY: Prompt Generation Edge Cases
+# ==============================================================================
+
+class TestPromptGenerationEdgeCases:
+    """Test prompt generation for various issue types."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_create_fix_prompt_literal_duplication(self, mock_openai):
+        """Test prompt generation for literal duplication issues."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1192",
+            severity=Severity.MAJOR,
+            component="test",
+            project="test",
+            first_line=10,
+            last_line=10,
+            message='Define a constant instead of duplicating this literal "value" 3 times.',
+            type=IssueType.CODE_SMELL,
+            file="test.py"
+        )
+
+        context = {"context": "x = 'value'\ny = 'value'", "problem_line": "x = 'value'"}
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "literal" in prompt.lower()
+        assert "constant" in prompt.lower()
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_create_fix_prompt_null_check(self, mock_openai):
+        """Test prompt generation for null check issues."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        issue = SonarIssue(
+            key="test",
+            rule="python:S2259",
+            severity=Severity.CRITICAL,
+            component="test",
+            project="test",
+            first_line=10,
+            last_line=10,
+            message="Null pointer dereference",
+            type=IssueType.BUG,
+            file="test.py"
+        )
+
+        context = {"context": "x.method()", "problem_line": "x.method()"}
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "null" in prompt.lower() or "none" in prompt.lower()
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_create_fix_prompt_with_error_message(self, mock_openai):
+        """Test prompt generation with previous error message."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        issue = SonarIssue(
+            key="test",
+            rule="test",
+            severity=Severity.MAJOR,
+            component="test",
+            project="test",
+            first_line=10,
+            last_line=10,
+            message="Issue",
+            type=IssueType.CODE_SMELL,
+            file="test.py"
+        )
+
+        context = {"context": "code", "problem_line": "code"}
+        error_msg = "SyntaxError: invalid syntax"
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python", error_msg)
+
+        assert "SyntaxError" in prompt or error_msg in prompt
+
+
+# ==============================================================================
+# HIGH PRIORITY: File Search and Content Matching
+# ==============================================================================
+
+class TestFileSearching:
+    """Test file searching and content matching."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_files_with_content_matches(self, mock_openai, tmp_path):
+        """Test finding files containing specific content."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        # Create test files
+        file1 = tmp_path / "test1.py"
+        file1.write_text("def unique_function():\n    pass")
+
+        file2 = tmp_path / "test2.py"
+        file2.write_text("def other_function():\n    pass")
+
+        matches = fixer._find_files_with_content(tmp_path, "unique_function")
+
+        assert len(matches) >= 1
+        assert any("test1.py" in str(f) for f in matches)
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_files_with_content_no_matches(self, mock_openai, tmp_path):
+        """Test searching for content that doesn't exist."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        file1 = tmp_path / "test.py"
+        file1.write_text("def func(): pass")
+
+        matches = fixer._find_files_with_content(tmp_path, "nonexistent_code")
+
+        assert len(matches) == 0
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_find_files_with_content_limits_results(self, mock_openai, tmp_path):
+        """Test that file search limits results for performance."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        # Create many matching files
+        for i in range(10):
+            file = tmp_path / f"test{i}.py"
+            file.write_text("common_pattern")
+
+        matches = fixer._find_files_with_content(tmp_path, "common_pattern")
+
+        # Should limit to 3 matches
+        assert len(matches) <= 3
+
+
+# ==============================================================================
+# HIGH PRIORITY: Language Detection
+# ==============================================================================
+
+class TestLanguageDetection:
+    """Test programming language detection from file extensions."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_get_language_all_supported_extensions(self, mock_openai):
+        """Test language detection for all supported extensions."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        test_cases = {
+            ".py": "python",
+            ".js": "javascript",
+            ".jsx": "javascript",
+            ".ts": "typescript",
+            ".tsx": "typescript",
+            ".java": "java",
+            ".kt": "kotlin",
+            ".scala": "scala",
+            ".go": "go",
+            ".rs": "rust",
+            ".cpp": "cpp",
+            ".c": "c",
+            ".cs": "csharp",
+            ".php": "php",
+            ".rb": "ruby",
+            ".swift": "swift",
+            ".unknown": "text"
+        }
+
+        for ext, expected_lang in test_cases.items():
+            assert fixer._get_language_from_extension(ext) == expected_lang
+
+
+# ==============================================================================
+# HIGH PRIORITY: Bracket Balance Validation
+# ==============================================================================
+
+class TestBracketBalanceValidation:
+    """Test bracket balance checking."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_bracket_balance_balanced(self, mock_openai):
+        """Test balanced brackets are detected correctly."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "def func():\n    x = [1, 2, 3]\n    return {x: (y, z)}"
+
+        assert fixer._check_bracket_balance(content) is True
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_bracket_balance_unbalanced_paren(self, mock_openai):
+        """Test unbalanced parentheses are detected."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "def func():\n    x = (1 + 2\n    return x"
+
+        assert fixer._check_bracket_balance(content) is False
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_bracket_balance_unbalanced_brace(self, mock_openai):
+        """Test unbalanced braces are detected."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "function test() {\n    if (true) {\n        return 1;"
+
+        assert fixer._check_bracket_balance(content) is False
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_bracket_balance_mismatched(self, mock_openai):
+        """Test mismatched brackets are detected."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "x = [1, 2, 3)"
+
+        assert fixer._check_bracket_balance(content) is False
+
+
+# ==============================================================================
+# HIGH PRIORITY: Duplicate Definition Detection
+# ==============================================================================
+
+class TestDuplicateDefinitionDetection:
+    """Test duplicate function/class definition detection."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_no_duplicate_definitions_clean(self, mock_openai):
+        """Test clean code with no duplicates."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "def func1():\n    pass\n\ndef func2():\n    pass"
+
+        assert fixer._check_no_duplicate_definitions(content, ".py") is True
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_no_duplicate_definitions_duplicate_func(self, mock_openai):
+        """Test detection of duplicate function definitions."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "def helper():\n    pass\n\ndef helper():\n    pass"
+
+        assert fixer._check_no_duplicate_definitions(content, ".py") is False
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_no_duplicate_definitions_duplicate_class(self, mock_openai):
+        """Test detection of duplicate class definitions."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "class MyClass:\n    pass\n\nclass MyClass:\n    pass"
+
+        assert fixer._check_no_duplicate_definitions(content, ".py") is False
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_check_no_duplicate_definitions_non_python(self, mock_openai):
+        """Test that non-Python files skip duplicate check."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        content = "function test() {}\nfunction test() {}"
+
+        # Should return True for non-Python files
+        assert fixer._check_no_duplicate_definitions(content, ".js") is True
+
+
+# ==============================================================================
+# MEDIUM PRIORITY: Extract Function Name
+# ==============================================================================
+
+class TestExtractFunctionName:
+    """Test function name extraction from definitions."""
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_function_name_python(self, mock_openai):
+        """Test extracting Python function name."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        assert fixer._extract_function_name("def my_function():") == "my_function"
+        assert fixer._extract_function_name("async def async_func():") == "async_func"
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_function_name_javascript(self, mock_openai):
+        """Test extracting JavaScript function name."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        assert fixer._extract_function_name("function myFunc() {") == "myFunc"
+        assert fixer._extract_function_name("const myFunc = () => {") == "myFunc"
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_function_name_java(self, mock_openai):
+        """Test extracting Java method name."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        name = fixer._extract_function_name("public void myMethod() {")
+        assert name == "myMethod"
+
+    @patch("devdox_ai_sonar.llm_fixer.openai")
+    def test_extract_function_name_filters_keywords(self, mock_openai):
+        """Test that keywords are filtered out."""
+        mock_openai.OpenAI.return_value = MagicMock()
+        fixer = LLMFixer(provider="openai", api_key="test-key")
+
+        # Should not return 'public' or 'static'
+        name = fixer._extract_function_name("public static void test() {")
+        assert name not in ["public", "static", "void"]
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

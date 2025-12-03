@@ -1480,7 +1480,7 @@ class LLMFixer:
                     lines = (
                             lines[:start] +
                             [indented_fixed_code, '\n'] +
-                            lines[end + 1:, '\n']+
+                            lines[end + 1:] + ['\n'] +
                             [fix.helper_code, '\n']
                     )
                 elif fix.helper_code != "" and fix.placement_helper == "GLOBAL_TOP":
@@ -1504,12 +1504,12 @@ class LLMFixer:
                         insert_position = self._find_global_top_insertion_point(lines)
                         logger.debug(f"Inserting global code at line {insert_position + 1}")
 
-                        # Insert the helper code
-                        helper_code_with_newlines = fix.helper_code
-                        if not helper_code_with_newlines.endswith('\n'):
-                            helper_code_with_newlines += '\n'
+                    # Insert the helper code
+                    helper_code_with_newlines = fix.helper_code
+                    if not helper_code_with_newlines.endswith('\n'):
+                        helper_code_with_newlines += '\n'
 
-                        lines.insert(insert_position, helper_code_with_newlines + '\n')
+                    lines.insert(insert_position, helper_code_with_newlines + '\n')
                 else:
 
                     lines = (
