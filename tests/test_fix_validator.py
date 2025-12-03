@@ -1,10 +1,11 @@
 """Comprehensive tests for Fix Validator."""
+from wsgiref.validate import validator
 
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, patch, MagicMock
 
-from devdox_ai_sonar.fix_validator import (ValidationStatus,validate_fixes_with_agent,
+from devdox_ai_sonar.fix_validator import (ValidationStatus,
     ValidationResult,
     FixValidator,)
 from devdox_ai_sonar.models import (
@@ -155,7 +156,7 @@ class TestValidateFix:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_approved(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validation when fix is approved."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -183,7 +184,7 @@ None
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_rejected(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validation when fix is rejected."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -211,7 +212,7 @@ CONCERNS:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_modified(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validation when fix is modified."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -248,7 +249,7 @@ Added comment for clarity
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_needs_review(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validation when fix needs review."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -274,7 +275,7 @@ CONCERNS:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_below_confidence_threshold(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test that low confidence approved fixes become NEEDS_REVIEW."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -334,7 +335,7 @@ class TestParseValidationResponse:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_parse_response_with_all_fields(self, mock_openai, sample_fix, sample_issue):
         """Test parsing response with all fields present."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_openai.OpenAI.return_value = MagicMock()
         validator = FixValidator(provider="openai", api_key="test-key")
@@ -456,7 +457,7 @@ class TestBatchValidation:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fixes_batch(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validating multiple fixes in batch."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -484,7 +485,7 @@ CONCERNS: None
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fixes_batch_stop_on_rejection(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test stopping batch validation on rejection."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         
@@ -521,7 +522,7 @@ class TestConvenienceFunction:
     def test_validate_fixes_with_agent(self, mock_openai, sample_fix, sample_issue, tmp_path):
         """Test convenience function for validating fixes."""
 
-        
+        validator = FixValidator(provider="openai", api_key="test-key")
         # Create test file
         test_file = tmp_path / "src" / "test.py"
         test_file.parent.mkdir(parents=True)
@@ -540,10 +541,10 @@ CONCERNS: None
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
-        results = validate_fixes_with_agent(
-            [sample_fix],
-            [sample_issue],
-            tmp_path,
+        results = validator.validate_fixes_with_agent(
+            fixes=[sample_fix],
+            issues=[sample_issue],
+            project_path=tmp_path,
             provider="openai",
             api_key="test-key"
         )
@@ -557,7 +558,7 @@ class TestErrorHandling:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_file_not_found(self, mock_openai, sample_fix, sample_issue):
         """Test validation when file doesn't exist."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+    
         
         mock_openai.OpenAI.return_value = MagicMock()
         validator = FixValidator(provider="openai", api_key="test-key")
@@ -571,7 +572,7 @@ class TestErrorHandling:
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_llm_error(self, mock_openai, sample_fix, sample_issue, sample_file_content):
         """Test validation when LLM call fails."""
-        from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+        
         
         mock_client = MagicMock()
         mock_client.chat.completions.create.side_effect = Exception("API Error")
@@ -1244,9 +1245,9 @@ class TestFileReadingErrors:
         test_file.parent.mkdir(parents=True)
         test_file.write_text("code")
         sample_fix.file_path = "src/test.py"
-
+        validator = FixValidator(provider="openai", api_key="test-key")
         with patch("builtins.open", side_effect=PermissionError("Access denied")):
-            results = validate_fixes_with_agent(
+            results = validator.validate_fixes_with_agent(
                 [sample_fix],
                 [sample_issue],
                 tmp_path,
@@ -1262,12 +1263,13 @@ class TestFileReadingErrors:
     def test_file_is_directory(self, mock_openai, sample_fix, sample_issue, tmp_path):
         """Test handling when 'file' is actually a directory."""
         mock_openai.OpenAI.return_value = MagicMock()
+        validator = FixValidator(provider="openai", api_key="test-key")
 
         test_dir = tmp_path / "src"
         test_dir.mkdir(parents=True)
         sample_fix.file_path = "src"
 
-        results = validate_fixes_with_agent(
+        results = validator.validate_fixes_with_agent(
             [sample_fix],
             [sample_issue],
             tmp_path,
@@ -1280,6 +1282,7 @@ class TestFileReadingErrors:
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_file_encoding_error(self, mock_openai, sample_fix, sample_issue, tmp_path):
+        validator = FixValidator(provider="openai", api_key="test-key")
         """Test handling of non-UTF-8 encoding."""
         mock_openai.OpenAI.return_value = MagicMock()
 
@@ -1289,7 +1292,7 @@ class TestFileReadingErrors:
         sample_fix.file_path = "src/test.py"
 
         with patch("builtins.open", side_effect=UnicodeDecodeError("utf-8", b"", 0, 1, "invalid")):
-            results = validate_fixes_with_agent(
+            results = validator.validate_fixes_with_agent(
                 [sample_fix],
                 [sample_issue],
                 tmp_path,
@@ -1469,7 +1472,7 @@ class TestBatchValidationScenarios:
     def test_batch_with_file_errors(self, mock_openai, sample_fix, sample_issue, tmp_path):
         """Test batch where some files can't be read."""
         mock_openai.OpenAI.return_value = MagicMock()
-
+        validator = FixValidator(provider="openai", api_key="test-key")
         # Create one valid file, one missing
         test_file = tmp_path / "src" / "test.py"
         test_file.parent.mkdir(parents=True)
@@ -1490,7 +1493,7 @@ class TestBatchValidationScenarios:
             last_line_number=1,
         )
 
-        results = validate_fixes_with_agent(
+        results = validator.validate_fixes_with_agent(
             [fix1, fix2],
             [sample_issue, sample_issue],
             tmp_path,

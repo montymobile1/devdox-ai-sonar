@@ -476,6 +476,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
                 )
 
     def validate_fixes_with_agent(
+            self,
             fixes: List[FixSuggestion],
             issues: List[SonarIssue],
             project_path: Path,
