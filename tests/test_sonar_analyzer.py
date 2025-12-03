@@ -5,6 +5,7 @@ import requests
 from unittest.mock import Mock, patch
 from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.models import (
+SecurityAnalysisResult,SonarSecurityIssue,
     Severity,
     IssueType,
     Impact,
@@ -1716,6 +1717,939 @@ class TestSessionManagement:
 
             # Session should still be closed
             mock_session.close.assert_called_once()
+class TestGetProjectSecurityIssues:
+    """Test get_project_security_issues - COMPLETELY MISSING from tests."""
+
+    def test_get_project_security_issues_basic(self, analyzer):
+        """Test fetching security hotspots."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [
+                {
+                    "key": "hotspot-1",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/auth.py",
+                    "project": "test-project",
+                    "securityCategory": "weak-cryptography",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "line": 42,
+                    "message": "Weak cryptography detected",
+                    "textRange": {"endLine": 45},
+                    "creationDate": "2024-01-01T00:00:00+0000",
+                    "updateDate": "2024-01-02T00:00:00+0000",
+                }
+            ],
+            "paging": {"total": 1, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result is not None
+        assert isinstance(result, SecurityAnalysisResult)
+        assert result.project_key == "test-project"
+        assert result.total_issues == 1
+        assert len(result.issues) == 1
+
+    def test_get_project_security_issues_with_branch(self, analyzer):
+        """Test security issues for specific branch."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="develop"
+        )
+
+        # Verify branch parameter was used
+        call_args = analyzer.session.get.call_args_list
+        params = call_args[0][1]["params"]
+        assert params.get("branch") == "develop"
+
+    def test_get_project_security_issues_with_pr(self, analyzer):
+        """Test security issues for pull request."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="",
+            pull_request_number=456
+        )
+
+        # Verify PR parameter was used
+        call_args = analyzer.session.get.call_args_list
+        params = call_args[0][1]["params"]
+        assert params.get("pullRequest") == "456"
+
+    def test_get_project_security_issues_http_error(self, analyzer):
+        """Test security issues HTTP error handling."""
+        mock_response = Mock()
+        mock_response.status_code = 403
+        mock_response.text = "Forbidden"
+
+        http_error = requests.HTTPError("403 Forbidden")
+        http_error.response = mock_response
+        mock_response.raise_for_status.side_effect = http_error
+
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result is None
+
+    def test_get_project_security_issues_timeout(self, analyzer):
+        """Test security issues timeout handling."""
+        analyzer.session.get.side_effect = requests.Timeout("Request timeout")
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result is None
+
+    def test_get_project_security_issues_pagination(self, analyzer):
+        """Test security issues pagination."""
+        response_page1 = Mock()
+        response_page1.status_code = 200
+        response_page1.json.return_value = {
+            "hotspots": [
+                {
+                    "key": f"hotspot-{i}",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/file.py",
+                    "project": "test-project",
+                    "securityCategory": "weak-crypto",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "message": "Issue",
+                }
+                for i in range(500)
+            ],
+            "paging": {"total": 750, "pageIndex": 1, "pageSize": 500},
+        }
+
+        response_page2 = Mock()
+        response_page2.status_code = 200
+        response_page2.json.return_value = {
+            "hotspots": [
+                {
+                    "key": f"hotspot-{i}",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/file.py",
+                    "project": "test-project",
+                    "securityCategory": "weak-crypto",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "message": "Issue",
+                }
+                for i in range(500, 750)
+            ],
+            "paging": {"total": 750, "pageIndex": 2, "pageSize": 500},
+        }
+
+        analyzer.session.get.side_effect = [response_page1, response_page2]
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result.total_issues == 750
+        assert analyzer.session.get.call_count == 2
+
+    def test_get_project_security_issues_unexpected_exception(self, analyzer):
+        """Test security issues unexpected exception handling."""
+        analyzer.session.get.side_effect = Exception("Unexpected error")
+
+        result = analyzer.get_project_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result is None
+
+
+class TestParseSecurityIssues:
+    """Test _parse_security_issues - COMPLETELY MISSING from tests."""
+
+    def test_parse_security_issues_basic(self, analyzer):
+        """Test parsing basic security issue."""
+        issues_data = [
+            {
+                "key": "security-1",
+                "ruleKey": "python:S5122",
+                "component": "project:src/crypto.py",
+                "securityCategory": "weak-cryptography",
+                "vulnerabilityProbability": "HIGH",
+                "status": "TO_REVIEW",
+                "line": 100,
+                "textRange": {"endLine": 105},
+                "message": "Use strong cryptography",
+                "creationDate": "2024-01-01T00:00:00+0000",
+                "updateDate": "2024-01-02T00:00:00+0000",
+            }
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        assert len(issues) == 1
+        issue = issues[0]
+        assert isinstance(issue, SonarSecurityIssue)
+        assert issue.key == "security-1"
+        assert issue.rule == "python:S5122"
+        assert issue.security_category == "weak-cryptography"
+        assert issue.vulnerability_probability == "HIGH"
+        assert issue.first_line == 100
+        assert issue.last_line == 105
+        assert issue.file == "src/crypto.py"
+
+    def test_parse_security_issues_missing_line(self, analyzer):
+        """Test parsing security issue without line number."""
+        issues_data = [
+            {
+                "key": "security-1",
+                "ruleKey": "python:S5122",
+                "component": "project:src/file.py",
+                "securityCategory": "injection",
+                "vulnerabilityProbability": "MEDIUM",
+                "status": "TO_REVIEW",
+                "message": "SQL injection risk",
+                # No 'line' field
+            }
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        assert len(issues) == 1
+        assert issues[0].first_line is None
+
+    def test_parse_security_issues_missing_text_range(self, analyzer):
+        """Test parsing security issue without textRange."""
+        issues_data = [
+            {
+                "key": "security-1",
+                "ruleKey": "python:S5122",
+                "component": "project:src/file.py",
+                "securityCategory": "xss",
+                "vulnerabilityProbability": "LOW",
+                "status": "TO_REVIEW",
+                "line": 50,
+                "message": "XSS vulnerability",
+                # No 'textRange' field
+            }
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        assert len(issues) == 1
+        # Should default to first_line when textRange missing
+        assert issues[0].last_line == 50
+
+    def test_parse_security_issues_with_file_path_extraction(self, analyzer):
+        """Test file path extraction from component."""
+        issues_data = [
+            {
+                "key": "security-1",
+                "ruleKey": "python:S5122",
+                "component": "my-project:src/security/auth.py",
+                "securityCategory": "auth",
+                "vulnerabilityProbability": "HIGH",
+                "status": "TO_REVIEW",
+                "message": "Authentication issue",
+            }
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        assert len(issues) == 1
+        assert issues[0].file == "src/security/auth.py"
+
+    def test_parse_security_issues_malformed_data(self, analyzer):
+        """Test parsing with malformed security issue data."""
+        issues_data = [
+            {
+                "key": "security-1",
+                # Missing required fields
+            },
+            {
+                "key": "security-2",
+                "ruleKey": "python:S5122",
+                "component": "project:src/file.py",
+                "securityCategory": "injection",
+                "vulnerabilityProbability": "HIGH",
+                "status": "TO_REVIEW",
+                "message": "Valid issue",
+            },
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        # Should skip malformed and parse valid
+        assert len(issues) >= 1
+
+    def test_parse_security_issues_multiple_issues(self, analyzer):
+        """Test parsing multiple security issues."""
+        issues_data = [
+            {
+                "key": f"security-{i}",
+                "ruleKey": "python:S5122",
+                "component": f"project:src/file{i}.py",
+                "securityCategory": "weak-cryptography",
+                "vulnerabilityProbability": "HIGH",
+                "status": "TO_REVIEW",
+                "message": f"Issue {i}",
+            }
+            for i in range(10)
+        ]
+
+        issues = analyzer._parse_security_issues(issues_data, "test-project")
+
+        assert len(issues) == 10
+
+
+class TestGetFixableSecurityIssues:
+    """Test get_fixable_security_issues - COMPLETELY MISSING from tests."""
+
+    def test_get_fixable_security_issues_basic(self, analyzer):
+        """Test fetching fixable security issues."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [
+                {
+                    "key": "security-1",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/file.py",
+                    "securityCategory": "weak-crypto",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "message": "Issue",
+                }
+            ],
+            "paging": {"total": 1, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        issues = analyzer.get_fixable_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert len(issues) == 1
+
+    def test_get_fixable_security_issues_with_max_limit(self, analyzer):
+        """Test limiting fixable security issues."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [
+                {
+                    "key": f"security-{i}",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/file.py",
+                    "securityCategory": "weak-crypto",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "message": "Issue",
+                }
+                for i in range(20)
+            ],
+            "paging": {"total": 20, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        issues = analyzer.get_fixable_security_issues(
+            project_key="test-project",
+            branch="main",
+            max_issues=5
+        )
+
+        assert len(issues) == 5
+
+    def test_get_fixable_security_issues_with_pr(self, analyzer):
+        """Test fixable security issues for PR."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        issues = analyzer.get_fixable_security_issues(
+            project_key="test-project",
+            branch="",
+            pull_request=789
+        )
+
+        assert isinstance(issues, list)
+
+    def test_get_fixable_security_issues_no_results(self, analyzer):
+        """Test when no security issues returned."""
+        analyzer.get_project_security_issues = Mock(return_value=None)
+
+        issues = analyzer.get_fixable_security_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert issues == []
+
+    def test_get_fixable_security_issues_without_limit(self, analyzer):
+        """Test fetching all fixable security issues."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [
+                {
+                    "key": f"security-{i}",
+                    "ruleKey": "python:S5122",
+                    "component": "project:src/file.py",
+                    "securityCategory": "weak-crypto",
+                    "vulnerabilityProbability": "HIGH",
+                    "status": "TO_REVIEW",
+                    "message": "Issue",
+                }
+                for i in range(15)
+            ],
+            "paging": {"total": 15, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        issues = analyzer.get_fixable_security_issues(
+            project_key="test-project",
+            branch="main",
+            max_issues=None  # No limit
+        )
+
+        assert len(issues) == 15
+
+
+# ==============================================================================
+# CRITICAL MISSING: _build_query_params Tests
+# ==============================================================================
+
+class TestBuildQueryParams:
+    """Test _build_query_params - COMPLETELY MISSING from tests."""
+
+    def test_build_query_params_basic(self, analyzer):
+        """Test basic query params building."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            pull_request_number=0
+        )
+
+        assert params["componentKeys"] == "test-project"
+        assert params["organization"] == "test-org"
+        assert params["branch"] == "main"
+        assert params["ps"] == 500
+
+    def test_build_query_params_with_statuses(self, analyzer):
+        """Test query params with statuses."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            pull_request_number=0,
+            statuses=["OPEN", "CONFIRMED"]
+        )
+
+        assert "OPEN" in params["issueStatuses"]
+        assert "CONFIRMED" in params["issueStatuses"]
+
+    def test_build_query_params_with_severities(self, analyzer):
+        """Test query params with severities."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            pull_request_number=0,
+            severities=["BLOCKER", "CRITICAL"]
+        )
+
+        assert "BLOCKER" in params["severities"]
+        assert "CRITICAL" in params["severities"]
+
+    def test_build_query_params_with_types(self, analyzer):
+        """Test query params with types."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            pull_request_number=0,
+            types=["BUG", "VULNERABILITY"]
+        )
+
+        assert "BUG" in params["types"]
+        assert "VULNERABILITY" in params["types"]
+
+    def test_build_query_params_with_pr(self, analyzer):
+        """Test query params with pull request."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="",
+            pull_request_number=123
+        )
+
+        assert params.get("pullRequest") == "123"
+        assert "branch" not in params or params.get("branch") == ""
+
+    def test_build_query_params_defaults_to_main(self, analyzer):
+        """Test query params defaults to main branch."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="",
+            pull_request_number=0
+        )
+
+        assert params.get("branch") == "main"
+
+    def test_build_query_params_custom_field_key(self, analyzer):
+        """Test query params with custom field key."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            pull_request_number=0,
+            field_key="projectKey"  # For security hotspots
+        )
+
+        assert params["projectKey"] == "test-project"
+        assert "componentKeys" not in params
+
+    def test_build_query_params_all_filters(self, analyzer):
+        """Test query params with all filters combined."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="develop",
+            pull_request_number=0,
+            statuses=["OPEN"],
+            severities=["BLOCKER"],
+            types=["BUG"]
+        )
+
+        assert params["branch"] == "develop"
+        assert "OPEN" in params["issueStatuses"]
+        assert "BLOCKER" in params["severities"]
+        assert "BUG" in params["types"]
+
+
+# ==============================================================================
+# CRITICAL MISSING: _fetch_issues Tests
+# ==============================================================================
+
+class TestFetchIssues:
+    """Test _fetch_issues - COMPLETELY MISSING from tests."""
+
+    def test_fetch_issues_single_page(self, analyzer):
+        """Test fetching issues from single page."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [{"key": f"issue-{i}"} for i in range(10)],
+            "paging": {"total": 10, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        url = "https://sonarcloud.io/api/issues/search"
+        params = {"componentKeys": "test-project"}
+
+        issues = analyzer._fetch_issues(url, params, "issues")
+
+        assert len(issues) == 10
+
+    def test_fetch_issues_multiple_pages(self, analyzer):
+        """Test fetching issues across multiple pages."""
+        response_page1 = Mock()
+        response_page1.status_code = 200
+        response_page1.json.return_value = {
+            "issues": [{"key": f"issue-{i}"} for i in range(500)],
+            "paging": {"total": 750, "pageIndex": 1, "pageSize": 500},
+        }
+
+        response_page2 = Mock()
+        response_page2.status_code = 200
+        response_page2.json.return_value = {
+            "issues": [{"key": f"issue-{i}"} for i in range(500, 750)],
+            "paging": {"total": 750, "pageIndex": 2, "pageSize": 500},
+        }
+
+        analyzer.session.get.side_effect = [response_page1, response_page2]
+
+        url = "https://sonarcloud.io/api/issues/search"
+        params = {"componentKeys": "test-project"}
+
+        issues = analyzer._fetch_issues(url, params, "issues")
+
+        assert len(issues) == 750
+
+    def test_fetch_issues_with_hotspots_key(self, analyzer):
+        """Test fetching with 'hotspots' key instead of 'issues'."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "hotspots": [{"key": f"hotspot-{i}"} for i in range(5)],
+            "paging": {"total": 5, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        url = "https://sonarcloud.io/api/hotspots/search"
+        params = {"projectKey": "test-project"}
+
+        issues = analyzer._fetch_issues(url, params, "hotspots")
+
+        assert len(issues) == 5
+
+    def test_fetch_issues_empty_result(self, analyzer):
+        """Test fetching when no issues found."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        url = "https://sonarcloud.io/api/issues/search"
+        params = {"componentKeys": "test-project"}
+
+        issues = analyzer._fetch_issues(url, params, "issues")
+
+        assert len(issues) == 0
+
+
+# ==============================================================================
+# CRITICAL MISSING: _handle_exceptions Tests
+# ==============================================================================
+
+class TestHandleExceptions:
+    """Test _handle_exceptions - COMPLETELY MISSING from tests."""
+
+    def test_handle_exceptions_timeout(self, analyzer):
+        """Test timeout exception handling."""
+        timeout_error = requests.Timeout("Request timeout")
+
+        result = analyzer._handle_exceptions(timeout_error, "test-project")
+
+        assert result is None
+
+    def test_handle_exceptions_401(self, analyzer):
+        """Test 401 authentication error handling."""
+        mock_response = Mock()
+        mock_response.status_code = 401
+
+        http_error = requests.HTTPError("401 Unauthorized")
+        http_error.response = mock_response
+
+        result = analyzer._handle_exceptions(http_error, "test-project")
+
+        assert result is None
+
+    def test_handle_exceptions_403(self, analyzer):
+        """Test 403 forbidden error handling."""
+        mock_response = Mock()
+        mock_response.status_code = 403
+
+        http_error = requests.HTTPError("403 Forbidden")
+        http_error.response = mock_response
+
+        result = analyzer._handle_exceptions(http_error, "test-project")
+
+        assert result is None
+
+    def test_handle_exceptions_404(self, analyzer):
+        """Test 404 not found error handling."""
+        mock_response = Mock()
+        mock_response.status_code = 404
+
+        http_error = requests.HTTPError("404 Not Found")
+        http_error.response = mock_response
+
+        result = analyzer._handle_exceptions(http_error, "test-project")
+
+        assert result is None
+
+    def test_handle_exceptions_no_response_attribute(self, analyzer):
+        """Test exception without response attribute."""
+        error = requests.RequestException("Generic error")
+
+        result = analyzer._handle_exceptions(error, "test-project")
+
+        assert result is None
+
+    def test_handle_exceptions_other_http_error(self, analyzer):
+        """Test other HTTP errors (not 401, 403, 404)."""
+        mock_response = Mock()
+        mock_response.status_code = 500
+
+        http_error = requests.HTTPError("500 Internal Server Error")
+        http_error.response = mock_response
+
+        result = analyzer._handle_exceptions(http_error, "test-project")
+
+        assert result is None
+
+
+# ==============================================================================
+# HIGH PRIORITY MISSING: Fetch All Rules Edge Cases
+# ==============================================================================
+
+class TestFetchAllRulesEdgeCases:
+    """Additional edge cases for fetch_all_rules."""
+
+    def test_fetch_all_rules_with_language_filter(self, analyzer):
+        """Test fetching rules with language filter applied."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rules": [
+                {"key": "python:S1", "name": "Rule 1", "lang": "python"},
+                {"key": "python:S2", "name": "Rule 2", "lang": "python"},
+            ],
+            "total": 2,
+        }
+        analyzer.session.get.return_value = mock_response
+
+        rules = analyzer.fetch_all_rules(languages=["python"])
+
+        # Verify language filter was applied
+        call_args = analyzer.session.get.call_args_list
+        params = call_args[0][1]["params"]
+        assert "languages" in params
+        assert "python" in params["languages"]
+
+    def test_fetch_all_rules_multiple_languages(self, analyzer):
+        """Test fetching rules for multiple languages."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rules": [
+                {"key": "python:S1", "name": "Rule 1", "lang": "python"},
+                {"key": "java:S1", "name": "Rule 2", "lang": "java"},
+            ],
+            "total": 2,
+        }
+        analyzer.session.get.return_value = mock_response
+
+        rules = analyzer.fetch_all_rules(languages=["python", "java"])
+
+        # Verify multiple languages in filter
+        call_args = analyzer.session.get.call_args_list
+        params = call_args[0][1]["params"]
+        assert "python" in params["languages"]
+        assert "java" in params["languages"]
+
+    def test_fetch_all_rules_empty_response(self, analyzer):
+        """Test fetching rules with empty response."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rules": [],
+            "total": 0,
+        }
+        analyzer.session.get.return_value = mock_response
+
+        rules = analyzer.fetch_all_rules()
+
+        assert rules["metadata"]["total_rules"] == 0
+
+    def test_fetch_all_rules_request_exception(self, analyzer):
+        """Test fetch rules with request exception."""
+        analyzer.session.get.side_effect = requests.RequestException("Error")
+
+        rules = analyzer.fetch_all_rules()
+
+        # Should return empty result
+        assert "rules" in rules
+        assert len(rules["rules"]) == 0
+
+    def test_fetch_all_rules_rate_limiting_delay(self, analyzer):
+        """Test that rate limiting delay is applied."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "rules": [{"key": f"rule-{i}"} for i in range(100)],
+            "total": 600,
+        }
+        analyzer.session.get.return_value = mock_response
+
+        with patch("devdox_ai_sonar.sonar_analyzer.time.sleep") as mock_sleep:
+            rules = analyzer.fetch_all_rules()
+
+            # Should call sleep between pages (0.1s delay)
+            assert mock_sleep.called
+
+
+# ==============================================================================
+# HIGH PRIORITY MISSING: Clean HTML Description Edge Cases
+# ==============================================================================
+
+class TestCleanHtmlDescriptionAdditional:
+    """Additional edge cases for _clean_html_description."""
+
+    def test_clean_html_description_nested_tags(self, analyzer):
+        """Test cleaning deeply nested HTML tags."""
+        html = "<div><p><span><strong>Text</strong></span></p></div>"
+
+        cleaned = analyzer._clean_html_description(html)
+
+        assert "<" not in cleaned
+        assert "Text" in cleaned
+
+    def test_clean_html_description_special_entities(self, analyzer):
+        """Test HTML with special entities."""
+        html = "<p>Text with &nbsp; and &amp; and &lt; entities</p>"
+
+        cleaned = analyzer._clean_html_description(html)
+
+        assert "&nbsp;" in cleaned or " " in cleaned
+        assert "entities" in cleaned
+
+    def test_clean_html_description_script_tags(self, analyzer):
+        """Test removing script tags."""
+        html = "<p>Text</p><script>alert('xss')</script><p>More text</p>"
+
+        cleaned = analyzer._clean_html_description(html)
+
+        assert "script" not in cleaned.lower()
+        assert "Text" in cleaned
+        assert "More text" in cleaned
+
+    def test_clean_html_description_none_input(self, analyzer):
+        """Test handling None input."""
+        cleaned = analyzer._clean_html_description(None)
+
+        assert cleaned == ""
+
+    def test_clean_html_description_only_whitespace(self, analyzer):
+        """Test HTML with only whitespace."""
+        html = "<p>   \n\n\t   </p>"
+
+        cleaned = analyzer._clean_html_description(html)
+
+        assert cleaned.strip() == ""
+
+
+# ==============================================================================
+# MEDIUM PRIORITY MISSING: Additional Analysis Result Tests
+# ==============================================================================
+
+class TestAnalysisResultCreation:
+    """Test AnalysisResult object creation."""
+
+    def test_analysis_result_with_metrics(self, analyzer):
+        """Test AnalysisResult includes metrics."""
+        mock_response_issues = Mock()
+        mock_response_issues.status_code = 200
+        mock_response_issues.json.return_value = {
+            "issues": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+
+        mock_response_metrics = Mock()
+        mock_response_metrics.status_code = 200
+        mock_response_metrics.json.return_value = {
+            "component": {
+                "measures": [
+                    {"metric": "ncloc", "value": "1000"},
+                    {"metric": "bugs", "value": "5"},
+                ]
+            }
+        }
+
+        analyzer.session.get.side_effect = [mock_response_issues, mock_response_metrics]
+
+        result = analyzer.get_project_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result.metrics is not None
+        assert result.metrics.lines_of_code == 1000
+        assert result.metrics.bugs == 5
+
+    def test_analysis_result_timestamp_present(self, analyzer):
+        """Test AnalysisResult includes timestamp."""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [],
+            "paging": {"total": 0, "pageIndex": 1, "pageSize": 500},
+        }
+        analyzer.session.get.return_value = mock_response
+
+        result = analyzer.get_project_issues(
+            project_key="test-project",
+            branch="main"
+        )
+
+        assert result.analysis_timestamp is not None
+        assert isinstance(result.analysis_timestamp, str)
+
+
+# ==============================================================================
+# MEDIUM PRIORITY MISSING: Project Analysis Additional Tests
+# ==============================================================================
+
+class TestAnalyzeProjectDirectoryAdditional:
+    """Additional tests for project analysis."""
+
+    def test_analyze_project_with_typescript_files(self, analyzer, tmp_path):
+        """Test analyzing project with TypeScript files."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "app.ts").write_text("typescript code")
+        (tmp_path / "src" / "component.tsx").write_text("tsx code")
+
+        analysis = analyzer.analyze_project_directory(tmp_path)
+
+        # TypeScript files counted as JavaScript
+        assert analysis["javascript_files"] >= 2
+
+
+    def test_analyze_project_with_scala_files(self, analyzer, tmp_path):
+        """Test analyzing project with Scala files."""
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "Main.scala").write_text("scala code")
+
+        analysis = analyzer.analyze_project_directory(tmp_path)
+
+        assert analysis["java_files"] >= 1
+
+    def test_analyze_project_file_instead_of_directory(self, analyzer, tmp_path):
+        """Test error when path is a file, not directory."""
+        test_file = tmp_path / "file.txt"
+        test_file.write_text("content")
+
+        with pytest.raises(ValueError):
+            analyzer.analyze_project_directory(test_file)
+
+    def test_analyze_project_recursive_structure(self, analyzer, tmp_path):
+        """Test analyzing deeply nested directory structure."""
+        (tmp_path / "src" / "main" / "java" / "com" / "example").mkdir(parents=True)
+        (tmp_path / "src" / "main" / "java" / "com" / "example" / "App.java").write_text("code")
+
+        analysis = analyzer.analyze_project_directory(tmp_path)
+
+        assert analysis["java_files"] >= 1
+        assert analysis["total_files"] >= 1
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
