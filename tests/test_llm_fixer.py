@@ -27,7 +27,7 @@ def sample_issue():
         project="test-project",
         first_line=10,
         last_line=10,
-        message='Remove the unused local variable "unused_var".',
+        message='Remove the unused local variable',
         type=IssueType.CODE_SMELL,
         file="src/test.py",
         status="OPEN",
