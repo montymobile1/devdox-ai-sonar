@@ -389,7 +389,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             status = ValidationStatus(status_str)
 
             # Extract confidence
-            confidence_match = re.search(r'CONFIDENCE:\s*([0-9]*\.?[0-9]+)', response_text)
+            confidence_match = re.search(r'CONFIDENCE:\s*(-?[0-9]*\.?[0-9]+)', response_text)
             confidence = float(confidence_match.group(1)) if confidence_match else 0.5
             confidence = max(0.0, min(1.0, confidence))
 
@@ -411,7 +411,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             concerns = [
                 line.strip('- ').strip()
                 for line in concerns_text.split('\n')
-                if line.strip() and line.strip() != 'None'
+                if line.strip() and line.lower().strip() != 'none' and line.lower().strip() != 'n/a'
             ]
 
             # Handle MODIFIED status - extract improved fix
