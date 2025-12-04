@@ -2,8 +2,7 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-from pydantic import ValidationError
+from unittest.mock import patch
 
 
 @pytest.fixture

@@ -26,7 +26,6 @@ from devdox_ai_sonar.models import (
 )
 
 
-
 @pytest.fixture
 def minimal_sonar_issue():
     """Create a minimal valid SonarIssue."""
@@ -37,7 +36,7 @@ def minimal_sonar_issue():
         component="project:src/main.py",
         project="test-project",
         message="Test issue message",
-        type=IssueType.BUG
+        type=IssueType.BUG,
     )
 
 
@@ -54,7 +53,7 @@ def fixable_bug_issue():
         type=IssueType.BUG,
         first_line=42,
         last_line=42,
-        file="src/utils.py"
+        file="src/utils.py",
     )
 
 
@@ -79,7 +78,7 @@ def complete_sonar_issue():
         update_date="2025-01-02T15:30:00+0000",
         tags=["security", "sql", "injection"],
         effort="30min",
-        debt="1h"
+        debt="1h",
     )
 
 
@@ -96,7 +95,7 @@ def high_confidence_fix():
         file_path="src/main.py",
         sonar_line_number=10,
         line_number=10,
-        last_line_number=10
+        last_line_number=10,
     )
 
 
@@ -345,7 +344,7 @@ class TestSonarIssueCreation:
                 component="project:src/main.py",
                 project="test-project",
                 message="Test",
-                type=IssueType.BUG
+                type=IssueType.BUG,
             )
         assert "severity" in str(exc_info.value).lower()
 
@@ -359,7 +358,7 @@ class TestSonarIssueCreation:
                 component="project:src/main.py",
                 project="test-project",
                 message="Test",
-                type="UNKNOWN_TYPE"  # Invalid
+                type="UNKNOWN_TYPE",  # Invalid
             )
         assert "type" in str(exc_info.value).lower()
 
@@ -385,7 +384,7 @@ class TestSonarIssueFilePathProperty:
             project="test-project",
             message="Test",
             type=IssueType.BUG,
-            file=None
+            file=None,
         )
         assert issue.file_path is None
 
@@ -399,7 +398,7 @@ class TestSonarIssueFilePathProperty:
             project="test-project",
             message="Test",
             type=IssueType.BUG,
-            file="src/utils/helper.py"
+            file="src/utils/helper.py",
         )
         assert issue.file_path == Path("src/utils/helper.py")
         assert isinstance(issue.file_path, Path)
@@ -414,7 +413,7 @@ class TestSonarIssueFilePathProperty:
             project="test-project",
             message="Test",
             type=IssueType.BUG,
-            file="/home/user/project/src/main.py"
+            file="/home/user/project/src/main.py",
         )
         assert issue.file_path == Path("/home/user/project/src/main.py")
         assert issue.file_path.is_absolute()
@@ -429,7 +428,7 @@ class TestSonarIssueFilePathProperty:
             project="test-project",
             message="Test",
             type=IssueType.BUG,
-            file="C:\\Users\\dev\\project\\src\\main.py"
+            file="C:\\Users\\dev\\project\\src\\main.py",
         )
         assert issue.file_path == Path("C:\\Users\\dev\\project\\src\\main.py")
 
@@ -443,7 +442,7 @@ class TestSonarIssueFilePathProperty:
             project="test-project",
             message="Test",
             type=IssueType.BUG,
-            file="src/my file with spaces/日本語.py"
+            file="src/my file with spaces/日本語.py",
         )
         assert issue.file_path == Path("src/my file with spaces/日本語.py")
 
@@ -466,7 +465,7 @@ class TestSonarIssueIsFixable:
             message="Complex method",
             type=IssueType.CODE_SMELL,
             first_line=10,
-            last_line=50
+            last_line=50,
         )
         assert issue.is_fixable is True
 
@@ -481,7 +480,7 @@ class TestSonarIssueIsFixable:
             message="SQL injection",
             type=IssueType.VULNERABILITY,
             first_line=10,
-            last_line=15
+            last_line=15,
         )
         assert issue.is_fixable is False
 
@@ -496,7 +495,7 @@ class TestSonarIssueIsFixable:
             message="Review security",
             type=IssueType.SECURITY_HOTSPOT,
             first_line=10,
-            last_line=15
+            last_line=15,
         )
         assert issue.is_fixable is False
 
@@ -511,7 +510,7 @@ class TestSonarIssueIsFixable:
             message="Bug",
             type=IssueType.BUG,
             first_line=None,
-            last_line=15
+            last_line=15,
         )
         assert issue.is_fixable is False
 
@@ -526,7 +525,7 @@ class TestSonarIssueIsFixable:
             message="Bug",
             type=IssueType.BUG,
             first_line=10,
-            last_line=None
+            last_line=None,
         )
         assert issue.is_fixable is False
 
@@ -541,7 +540,7 @@ class TestSonarIssueIsFixable:
             message="Single line bug",
             type=IssueType.BUG,
             first_line=42,
-            last_line=42
+            last_line=42,
         )
         assert issue.is_fixable is True
 
@@ -556,7 +555,7 @@ class TestSonarIssueIsFixable:
             message="Multi-line bug",
             type=IssueType.BUG,
             first_line=10,
-            last_line=50
+            last_line=50,
         )
         assert issue.is_fixable is True
 
@@ -564,6 +563,7 @@ class TestSonarIssueIsFixable:
 # ============================================================================
 # SONAR SECURITY ISSUE TESTS
 # ============================================================================
+
 
 class TestSonarSecurityIssue:
     """Tests for SonarSecurityIssue model."""
@@ -580,7 +580,7 @@ class TestSonarSecurityIssue:
             first_line=15,
             last_line=20,
             message="Potential XSS vulnerability",
-            file="src/auth.py"
+            file="src/auth.py",
         )
         assert issue.key == "security-001"
         assert issue.security_category == "injection"
@@ -597,7 +597,7 @@ class TestSonarSecurityIssue:
             security_category="injection",
             vulnerability_probability="HIGH",
             message="XSS",
-            file="src/auth.py"
+            file="src/auth.py",
         )
         assert issue.file_path == Path("src/auth.py")
 
@@ -611,7 +611,7 @@ class TestSonarSecurityIssue:
             security_category="injection",
             vulnerability_probability="HIGH",
             message="XSS",
-            file=None
+            file=None,
         )
         assert issue.file_path is None
 
@@ -619,6 +619,7 @@ class TestSonarSecurityIssue:
 # ============================================================================
 # FIX SUGGESTION TESTS
 # ============================================================================
+
 
 class TestFixSuggestionCreation:
     """Tests for FixSuggestion model creation."""
@@ -631,7 +632,7 @@ class TestFixSuggestionCreation:
             fixed_code="good code",
             explanation="Fixed the issue",
             confidence=0.85,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.issue_key == "test-key"
         assert fix.confidence == 0.85
@@ -652,7 +653,7 @@ class TestFixSuggestionCreation:
             file_path="src/main.py",
             sonar_line_number=42,
             line_number=42,
-            last_line_number=43
+            last_line_number=43,
         )
         assert fix.helper_code == "# Helper imports\nimport logging"
         assert fix.placement_helper == "Insert after imports"
@@ -670,7 +671,7 @@ class TestFixSuggestionIsHighConfidence:
             fixed_code="good",
             explanation="Fixed",
             confidence=0.8,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.is_high_confidence is True
 
@@ -687,7 +688,7 @@ class TestFixSuggestionIsHighConfidence:
             fixed_code="good",
             explanation="Fixed",
             confidence=0.79,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.is_high_confidence is False
 
@@ -699,7 +700,7 @@ class TestFixSuggestionIsHighConfidence:
             fixed_code="good",
             explanation="Uncertain fix",
             confidence=0.3,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.is_high_confidence is False
 
@@ -711,7 +712,7 @@ class TestFixSuggestionIsHighConfidence:
             fixed_code="good",
             explanation="Certain fix",
             confidence=1.0,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.is_high_confidence is True
 
@@ -728,7 +729,7 @@ class TestFixSuggestionValidation:
                 fixed_code="good",
                 explanation="Fixed",
                 confidence=1.5,
-                llm_model="gpt-4"
+                llm_model="gpt-4",
             )
         assert "confidence" in str(exc_info.value).lower()
 
@@ -741,7 +742,7 @@ class TestFixSuggestionValidation:
                 fixed_code="good",
                 explanation="Fixed",
                 confidence=-0.1,
-                llm_model="gpt-4"
+                llm_model="gpt-4",
             )
         assert "confidence" in str(exc_info.value).lower()
 
@@ -753,7 +754,7 @@ class TestFixSuggestionValidation:
             fixed_code="good",
             explanation="No confidence",
             confidence=0.0,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert fix.confidence == 0.0
         assert not fix.is_high_confidence
@@ -762,6 +763,7 @@ class TestFixSuggestionValidation:
 # ============================================================================
 # PROJECT METRICS TESTS
 # ============================================================================
+
 
 class TestProjectMetrics:
     """Tests for ProjectMetrics model."""
@@ -786,7 +788,7 @@ class TestProjectMetrics:
             bugs=5,
             vulnerabilities=2,
             code_smells=150,
-            technical_debt="3d 5h"
+            technical_debt="3d 5h",
         )
         assert metrics.lines_of_code == 50000
         assert metrics.coverage == 85.5
@@ -797,6 +799,7 @@ class TestProjectMetrics:
 # ANALYSIS RESULT TESTS
 # ============================================================================
 
+
 class TestAnalysisResultCreation:
     """Tests for AnalysisResult model creation."""
 
@@ -806,7 +809,7 @@ class TestAnalysisResultCreation:
             project_key="test-project",
             organization="test-org",
             total_issues=0,
-            issues=[]
+            issues=[],
         )
         assert result.total_issues == 0
         assert len(result.issues) == 0
@@ -820,7 +823,7 @@ class TestAnalysisResultCreation:
             organization="test-org",
             branch="develop",
             total_issues=1,
-            issues=[fixable_bug_issue]
+            issues=[fixable_bug_issue],
         )
         assert result.total_issues == 1
         assert len(result.issues) == 1
@@ -841,7 +844,7 @@ class TestAnalysisResultPostInit:
             message="Fixable",
             type=IssueType.BUG,
             first_line=10,
-            last_line=15
+            last_line=15,
         )
 
         not_fixable = SonarIssue(
@@ -853,14 +856,14 @@ class TestAnalysisResultPostInit:
             message="Not fixable",
             type=IssueType.VULNERABILITY,
             first_line=20,
-            last_line=25
+            last_line=25,
         )
 
         result = AnalysisResult(
             project_key="test",
             organization="test-org",
             total_issues=2,
-            issues=[fixable, not_fixable]
+            issues=[fixable, not_fixable],
         )
 
         assert len(result.fixable_issues) == 1
@@ -878,7 +881,7 @@ class TestAnalysisResultPostInit:
                 message=f"Bug {i}",
                 type=IssueType.BUG,
                 first_line=i * 10,
-                last_line=i * 10 + 5
+                last_line=i * 10 + 5,
             )
             for i in range(5)
         ]
@@ -887,7 +890,7 @@ class TestAnalysisResultPostInit:
             project_key="test",
             organization="test-org",
             total_issues=len(issues),
-            issues=issues
+            issues=issues,
         )
 
         assert len(result.fixable_issues) == 5
@@ -904,7 +907,7 @@ class TestAnalysisResultPostInit:
                 message=f"Vulnerability {i}",
                 type=IssueType.VULNERABILITY,
                 first_line=i * 10,
-                last_line=i * 10 + 5
+                last_line=i * 10 + 5,
             )
             for i in range(3)
         ]
@@ -913,7 +916,7 @@ class TestAnalysisResultPostInit:
             project_key="test",
             organization="test-org",
             total_issues=len(issues),
-            issues=issues
+            issues=issues,
         )
 
         assert len(result.fixable_issues) == 0
@@ -931,7 +934,7 @@ class TestAnalysisResultIssuesBySeverity:
             component="project:src/main.py",
             project="test",
             message="Blocker",
-            type=IssueType.BUG
+            type=IssueType.BUG,
         )
 
         critical = SonarIssue(
@@ -941,7 +944,7 @@ class TestAnalysisResultIssuesBySeverity:
             component="project:src/main.py",
             project="test",
             message="Critical",
-            type=IssueType.BUG
+            type=IssueType.BUG,
         )
 
         major = SonarIssue(
@@ -951,14 +954,14 @@ class TestAnalysisResultIssuesBySeverity:
             component="project:src/main.py",
             project="test",
             message="Major",
-            type=IssueType.CODE_SMELL
+            type=IssueType.CODE_SMELL,
         )
 
         result = AnalysisResult(
             project_key="test",
             organization="test-org",
             total_issues=3,
-            issues=[blocker, critical, major]
+            issues=[blocker, critical, major],
         )
 
         by_severity = result.issues_by_severity
@@ -974,10 +977,7 @@ class TestAnalysisResultIssuesBySeverity:
     def test_empty_analysis_has_all_severity_groups(self):
         """Test that empty analysis has all severity groups initialized."""
         result = AnalysisResult(
-            project_key="test",
-            organization="test-org",
-            total_issues=0,
-            issues=[]
+            project_key="test", organization="test-org", total_issues=0, issues=[]
         )
 
         by_severity = result.issues_by_severity
@@ -999,7 +999,7 @@ class TestAnalysisResultIssuesByType:
             component="project:src/main.py",
             project="test",
             message="Bug",
-            type=IssueType.BUG
+            type=IssueType.BUG,
         )
 
         smell = SonarIssue(
@@ -1009,7 +1009,7 @@ class TestAnalysisResultIssuesByType:
             component="project:src/main.py",
             project="test",
             message="Smell",
-            type=IssueType.CODE_SMELL
+            type=IssueType.CODE_SMELL,
         )
 
         vuln = SonarIssue(
@@ -1019,14 +1019,14 @@ class TestAnalysisResultIssuesByType:
             component="project:src/main.py",
             project="test",
             message="Vulnerability",
-            type=IssueType.VULNERABILITY
+            type=IssueType.VULNERABILITY,
         )
 
         result = AnalysisResult(
             project_key="test",
             organization="test-org",
             total_issues=3,
-            issues=[bug, smell, vuln]
+            issues=[bug, smell, vuln],
         )
 
         by_type = result.issues_by_type
@@ -1039,10 +1039,7 @@ class TestAnalysisResultIssuesByType:
     def test_empty_analysis_has_all_type_groups(self):
         """Test that empty analysis has all type groups initialized."""
         result = AnalysisResult(
-            project_key="test",
-            organization="test-org",
-            total_issues=0,
-            issues=[]
+            project_key="test", organization="test-org", total_issues=0, issues=[]
         )
 
         by_type = result.issues_by_type
@@ -1056,15 +1053,13 @@ class TestAnalysisResultIssuesByType:
 # FIX RESULT TESTS
 # ============================================================================
 
+
 class TestFixResultCreation:
     """Tests for FixResult model creation."""
 
     def test_create_minimal_fix_result(self):
         """Test creating fix result with minimal fields."""
-        result = FixResult(
-            project_path=Path("/test/project"),
-            total_fixes_attempted=0
-        )
+        result = FixResult(project_path=Path("/test/project"), total_fixes_attempted=0)
         assert result.project_path == Path("/test/project")
         assert result.total_fixes_attempted == 0
         assert result.successful_fixes == []
@@ -1077,10 +1072,7 @@ class TestFixResultSuccessRate:
 
     def test_success_rate_with_zero_attempts(self):
         """Test success_rate returns 0.0 with no attempts."""
-        result = FixResult(
-            project_path=Path("/test"),
-            total_fixes_attempted=0
-        )
+        result = FixResult(project_path=Path("/test"), total_fixes_attempted=0)
         assert result.success_rate == 0.0
 
     def test_success_rate_with_perfect_success(self):
@@ -1092,15 +1084,13 @@ class TestFixResultSuccessRate:
                 fixed_code="good",
                 explanation="Fixed",
                 confidence=0.9,
-                llm_model="gpt-4"
+                llm_model="gpt-4",
             )
             for i in range(5)
         ]
 
         result = FixResult(
-            project_path=Path("/test"),
-            total_fixes_attempted=5,
-            successful_fixes=fixes
+            project_path=Path("/test"), total_fixes_attempted=5, successful_fixes=fixes
         )
         assert result.success_rate == 1.0
 
@@ -1113,15 +1103,13 @@ class TestFixResultSuccessRate:
                 fixed_code="good",
                 explanation="Fixed",
                 confidence=0.9,
-                llm_model="gpt-4"
+                llm_model="gpt-4",
             )
             for i in range(7)
         ]
 
         result = FixResult(
-            project_path=Path("/test"),
-            total_fixes_attempted=10,
-            successful_fixes=fixes
+            project_path=Path("/test"), total_fixes_attempted=10, successful_fixes=fixes
         )
         assert result.success_rate == 0.7
 
@@ -1130,7 +1118,7 @@ class TestFixResultSuccessRate:
         result = FixResult(
             project_path=Path("/test"),
             total_fixes_attempted=5,
-            failed_fixes=[{"error": "Failed"} for _ in range(5)]
+            failed_fixes=[{"error": "Failed"} for _ in range(5)],
         )
         assert result.success_rate == 0.0
 
@@ -1142,13 +1130,11 @@ class TestFixResultSuccessRate:
             fixed_code="good",
             explanation="Fixed",
             confidence=0.9,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
 
         result = FixResult(
-            project_path=Path("/test"),
-            total_fixes_attempted=1,
-            successful_fixes=[fix]
+            project_path=Path("/test"), total_fixes_attempted=1, successful_fixes=[fix]
         )
         assert result.success_rate == 1.0
 
@@ -1156,6 +1142,7 @@ class TestFixResultSuccessRate:
 # ============================================================================
 # SECURITY ANALYSIS RESULT TESTS
 # ============================================================================
+
 
 class TestSecurityAnalysisResult:
     """Tests for SecurityAnalysisResult model."""
@@ -1169,14 +1156,14 @@ class TestSecurityAnalysisResult:
             project="test-project",
             security_category="injection",
             vulnerability_probability="HIGH",
-            message="XSS vulnerability"
+            message="XSS vulnerability",
         )
 
         result = SecurityAnalysisResult(
             project_key="test-project",
             organization="test-org",
             total_issues=1,
-            issues=[security_issue]
+            issues=[security_issue],
         )
 
         assert result.total_issues == 1
@@ -1187,6 +1174,7 @@ class TestSecurityAnalysisResult:
 # ============================================================================
 # INTEGRATION TESTS
 # ============================================================================
+
 
 class TestModelSerialization:
     """Tests for JSON serialization/deserialization."""
@@ -1224,14 +1212,11 @@ class TestModelSerialization:
             message="Test",
             type=IssueType.BUG,
             first_line=10,
-            last_line=15
+            last_line=15,
         )
 
         result = AnalysisResult(
-            project_key="test",
-            organization="test-org",
-            total_issues=1,
-            issues=[issue]
+            project_key="test", organization="test-org", total_issues=1, issues=[issue]
         )
 
         json_str = result.model_dump_json()
@@ -1246,6 +1231,7 @@ class TestModelSerialization:
 # EDGE CASES AND BOUNDARY TESTS
 # ============================================================================
 
+
 class TestEdgeCases:
     """Tests for edge cases and boundary conditions."""
 
@@ -1258,7 +1244,7 @@ class TestEdgeCases:
             component="",
             project="",
             message="",
-            type=IssueType.CODE_SMELL
+            type=IssueType.CODE_SMELL,
         )
         assert issue.key == ""
 
@@ -1279,7 +1265,7 @@ def complex_function():
             fixed_code=code.replace("some_operation", "better_operation"),
             explanation="Improved operation",
             confidence=0.85,
-            llm_model="gpt-4"
+            llm_model="gpt-4",
         )
         assert "\n" in fix.original_code
 
@@ -1295,7 +1281,7 @@ def complex_function():
                 message=f"Issue {i}",
                 type=IssueType.CODE_SMELL,
                 first_line=i,
-                last_line=i
+                last_line=i,
             )
             for i in range(1000)
         ]
@@ -1304,14 +1290,13 @@ def complex_function():
             project_key="test",
             organization="test-org",
             total_issues=len(issues),
-            issues=issues
+            issues=issues,
         )
 
         # Should handle large datasets efficiently
         assert len(result.fixable_issues) == 1000
         by_severity = result.issues_by_severity
         assert len(by_severity[Severity.MINOR]) == 1000
-
 
 
 def main():

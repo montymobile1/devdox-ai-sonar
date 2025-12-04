@@ -2,12 +2,13 @@
 
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, TypedDict
 from pydantic import BaseModel, Field, ConfigDict
 
 
 class Severity(str, Enum):
     """SonarCloud issue severity levels."""
+
     BLOCKER = "BLOCKER"
     CRITICAL = "CRITICAL"
     MAJOR = "MAJOR"
@@ -17,6 +18,7 @@ class Severity(str, Enum):
 
 class IssueType(str, Enum):
     """SonarCloud issue types."""
+
     BUG = "BUG"
     VULNERABILITY = "VULNERABILITY"
     CODE_SMELL = "CODE_SMELL"
@@ -25,6 +27,7 @@ class IssueType(str, Enum):
 
 class Impact(str, Enum):
     """SonarCloud issue impact levels."""
+
     HIGH = "HIGH"
     MEDIUM = "MEDIUM"
     LOW = "LOW"
@@ -32,6 +35,7 @@ class Impact(str, Enum):
 
 class SonarIssue(BaseModel):
     """Represents a SonarCloud issue."""
+
     model_config = ConfigDict(use_enum_values=True)
 
     key: str = Field(..., description="Unique issue key")
@@ -64,7 +68,12 @@ class SonarIssue(BaseModel):
     def is_fixable(self) -> bool:
         """Check if the issue is potentially fixable by LLM."""
         fixable_types = {IssueType.BUG, IssueType.CODE_SMELL}
-        return self.type in fixable_types and self.first_line is not None and self.last_line is not None
+        return (
+            self.type in fixable_types
+            and self.first_line is not None
+            and self.last_line is not None
+        )
+
 
 class SonarSecurityIssue(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
@@ -83,14 +92,12 @@ class SonarSecurityIssue(BaseModel):
     creation_date: Optional[str] = Field(None, description="Creation date")
     update_date: Optional[str] = Field(None, description="Last update date")
 
-
     @property
     def file_path(self) -> Optional[Path]:
         """Get the file path as a Path object."""
         if self.file:
             return Path(self.file)
         return None
-
 
 
 class FixSuggestion(BaseModel):
@@ -100,15 +107,23 @@ class FixSuggestion(BaseModel):
     original_code: str = Field(..., description="Original problematic code")
     fixed_code: str = Field(..., description="Suggested fix")
     helper_code: Optional[str] = Field("", description="Additional helper code")
-    placement_helper: Optional[str] = Field("", description="Additional helper code for placing the fix")
+    placement_helper: Optional[str] = Field(
+        "", description="Additional helper code for placing the fix"
+    )
     explanation: str = Field(..., description="Explanation of the fix")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0-1)")
     llm_model: str = Field(..., description="LLM model used for fixing")
-    rule_description: Optional[str] = Field(None, description="SonarCloud rule description")
+    rule_description: Optional[str] = Field(
+        None, description="SonarCloud rule description"
+    )
     file_path: Optional[str] = Field(None, description="Path to the file being fixed")
-    sonar_line_number: Optional[int] = Field(None, description="SonarCloud line number of the issue")
+    sonar_line_number: Optional[int] = Field(
+        None, description="SonarCloud line number of the issue"
+    )
     line_number: Optional[int] = Field(None, description="Line number of the issue")
-    last_line_number: Optional[int] = Field(None, description="Last line number of the issue")
+    last_line_number: Optional[int] = Field(
+        None, description="Last line number of the issue"
+    )
 
     @property
     def is_high_confidence(self) -> bool:
@@ -120,25 +135,26 @@ class ProjectMetrics(BaseModel):
     """SonarCloud project metrics."""
 
     project_key: str = Field(..., description="Project key")
-    lines_of_code: Optional[int] = Field(None, description="Total lines of code")
-    coverage: Optional[float] = Field(None, description="Test coverage percentage")
-    duplicated_lines_density: Optional[float] = Field(None, description="Code duplication percentage")
-    maintainability_rating: Optional[str] = Field(None, description="Maintainability rating")
-    reliability_rating: Optional[str] = Field(None, description="Reliability rating")
-    security_rating: Optional[str] = Field(None, description="Security rating")
-    bugs: Optional[int] = Field(None, description="Number of bugs")
-    vulnerabilities: Optional[int] = Field(None, description="Number of vulnerabilities")
-    code_smells: Optional[int] = Field(None, description="Number of code smells")
-    technical_debt: Optional[str] = Field(None, description="Technical debt time")
+    lines_of_code: Optional[int] = None
+    coverage: Optional[float] = None
+    duplicated_lines_density: Optional[float] = None
+    maintainability_rating: Optional[str] = None
+    reliability_rating: Optional[str] = None
+    security_rating: Optional[str] = None
+    bugs: Optional[int] = None
+    vulnerabilities: Optional[int] = None
+    code_smells: Optional[int] = None
+    technical_debt: Optional[str] = None
+
 
 class SecurityAnalysisResult(BaseModel):
-
     project_key: str = Field(..., description="Project key")
     organization: str = Field(..., description="Organization key")
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")
     issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
+
 
 class AnalysisResult(BaseModel):
     """Results from SonarCloud analysis."""
@@ -149,7 +165,9 @@ class AnalysisResult(BaseModel):
     total_issues: int = Field(..., description="Total number of issues")
     issues: List[SonarIssue] = Field(..., description="List of issues")
     metrics: Optional[ProjectMetrics] = Field(None, description="Project metrics")
-    fixable_issues: List[SonarIssue] = Field(default_factory=list, description="Issues that can be fixed by LLM")
+    fixable_issues: List[SonarIssue] = Field(
+        default_factory=list, description="Issues that can be fixed by LLM"
+    )
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
 
     def model_post_init(self, __context: Any) -> None:
@@ -159,7 +177,9 @@ class AnalysisResult(BaseModel):
     @property
     def issues_by_severity(self) -> Dict[Severity, List[SonarIssue]]:
         """Group issues by severity."""
-        result: Dict[Severity, List[SonarIssue]] = {severity: [] for severity in Severity}
+        result: Dict[Severity, List[SonarIssue]] = {
+            severity: [] for severity in Severity
+        }
         for issue in self.issues:
             result[issue.severity].append(issue)
         return result
@@ -167,7 +187,9 @@ class AnalysisResult(BaseModel):
     @property
     def issues_by_type(self) -> Dict[IssueType, List[SonarIssue]]:
         """Group issues by type."""
-        result: Dict[IssueType, List[SonarIssue]] = {issue_type: [] for issue_type in IssueType}
+        result: Dict[IssueType, List[SonarIssue]] = {
+            issue_type: [] for issue_type in IssueType
+        }
         for issue in self.issues:
             result[issue.type].append(issue)
         return result
@@ -178,10 +200,18 @@ class FixResult(BaseModel):
 
     project_path: Path = Field(..., description="Path to the project")
     total_fixes_attempted: int = Field(..., description="Total fixes attempted")
-    successful_fixes: List[FixSuggestion] = Field(default_factory=list, description="Successfully applied fixes")
-    failed_fixes: List[Dict[str, Any]] = Field(default_factory=list, description="Failed fixes with error info")
-    skipped_issues: List[SonarIssue] = Field(default_factory=list, description="Issues that were skipped")
-    backup_created: bool = Field(default=False, description="Whether backup was created")
+    successful_fixes: List[FixSuggestion] = Field(
+        default_factory=list, description="Successfully applied fixes"
+    )
+    failed_fixes: List[Dict[str, Any]] = Field(
+        default_factory=list, description="Failed fixes with error info"
+    )
+    skipped_issues: List[SonarIssue] = Field(
+        default_factory=list, description="Issues that were skipped"
+    )
+    backup_created: bool = Field(
+        default=False, description="Whether backup was created"
+    )
     backup_path: Optional[Path] = Field(None, description="Path to backup")
 
     @property
@@ -190,3 +220,18 @@ class FixResult(BaseModel):
         if self.total_fixes_attempted == 0:
             return 0.0
         return len(self.successful_fixes) / self.total_fixes_attempted
+
+
+class ProcessedRules(TypedDict):
+    rules: Dict[str, Dict[str, Any]]
+    metadata: Dict[str, Any]
+
+
+class ImportState(TypedDict):
+    """State for tracking import insertion point."""
+
+    last_import_line: int
+    last_docstring_line: int
+    last_shebang_encoding_line: int
+    in_docstring: bool
+    docstring_quote: Optional[str]
