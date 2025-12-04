@@ -1138,14 +1138,14 @@ class SonarCloudAnalyzer:
 
         try:
             params = self._build_query_params(
-                project_key, branch, pull_request_number, field_key="projectKey"
+                project_key, branch, pull_request_number, field_key="projectKey", statuses=["OPEN"]
             )
             issues = self._fetch_issues(url, params, "hotspots")
             parsed_issues = self._parse_security_issues(issues, project_key)
 
             logger.info(f"Successfully parsed {len(parsed_issues)} security issues")
 
-            return SecurityAnalysisResult(
+            return  SecurityAnalysisResult(
                 project_key=project_key,
                 organization=self.organization,
                 branch=branch,
