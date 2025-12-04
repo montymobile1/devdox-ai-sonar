@@ -368,113 +368,113 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             return None
 
     def _parse_validation_response(
-                self,
-                response_text: str,
-                original_fix: FixSuggestion,
-                issue: SonarIssue
-        ) -> ValidationResult:
-            """Parse the validation response from LLM."""
+                    self,
+                    response_text: str,
+                    original_fix: FixSuggestion,
+                    issue: SonarIssue
+            ) -> ValidationResult:
+                """Parse the validation response from LLM."""
 
+                try:
+                    # Extract status
 
-            try:
-                # Extract status
+                    status_match = re.search(
+                        r'STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)',
+                        response_text,
+                        re.IGNORECASE
+                    )
+                    status_str = status_match.group(1).upper() if status_match else "NEEDS_REVIEW"
+                    status = ValidationStatus(status_str)
 
-                status_match = re.search(
-                    r'STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)',
-                    response_text,
-                    re.IGNORECASE
-                )
-                status_str = status_match.group(1).upper() if status_match else "NEEDS_REVIEW"
-                status = ValidationStatus(status_str)
+                    # Extract confidence
+                    confidence_match = re.search(r'CONFIDENCE:\s*(-?\d{1,3}.?\d*)', response_text)
+                    confidence = float(confidence_match.group(1)) if confidence_match else 0.5
+                    confidence = max(0.0, min(1.0, confidence))
 
-                # Extract confidence
-                confidence_match = re.search(r'CONFIDENCE:\s*(-?\d{1,3}.?\d*)', response_text)
-                confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-                confidence = max(0.0, min(1.0, confidence))
-
-                # Extract validation notes
-                notes_match = re.search(
-                    r'VALIDATION_NOTES:\s*(.*?)(?=CONCERNS:|IMPROVED_FIX:|$)',
-                    response_text,
-                    re.DOTALL
-                )
-                validation_notes = notes_match.group(1).strip() if notes_match else ""
-
-                # Extract concerns
-                concerns_match = re.search(
-                    r'CONCERNS:\s*(.*?)(?=IMPROVED_FIX:|IMPROVED_EXPLANATION:|$)',
-                    response_text,
-                    re.DOTALL
-                )
-                concerns_text = concerns_match.group(1).strip() if concerns_match else ""
-                concerns = [
-                    line.strip('- ').strip()
-                    for line in concerns_text.split('\n')
-                    if line.strip() and line.lower().strip() != 'none' and line.lower().strip() != 'n/a'
-                ]
-
-                # Handle MODIFIED status - extract improved fix
-                modified_fix = None
-                if status == ValidationStatus.MODIFIED:
-                    improved_code_pattern = r'IMPROVED_FIX:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```'
-                    improved_code_match = re.search(
-                        improved_code_pattern,
+                    # Extract validation notes
+                    notes_match = re.search(
+                        r'VALIDATION_NOTES:\s*(.*?)(?=CONCERNS:|IMPROVED_FIX:|$)',
                         response_text,
                         re.DOTALL
                     )
+                    validation_notes = notes_match.group(1).strip() if notes_match else ""
 
-                    improved_explanation_match = re.search(
-                        r'IMPROVED_EXPLANATION:\s*(.*?)(?=$)',
+                    # Extract concerns
+                    concerns_match = re.search(
+                        r'CONCERNS:\s*(.*?)(?=IMPROVED_FIX:|IMPROVED_EXPLANATION:|$)',
                         response_text,
                         re.DOTALL
                     )
+                    concerns_text = concerns_match.group(1).strip() if concerns_match else ""
+                    concerns = [
+                        line.strip('- ').strip()
+                        for line in concerns_text.split('\n')
+                        if line.strip() and line.lower().strip() != 'none' and line.lower().strip() != 'n/a'
+                    ]
 
-                    if improved_code_match:
-                        improved_code = improved_code_match.group(1).strip()
-                        improved_explanation = improved_explanation_match.group(
-                            1).strip() if improved_explanation_match else validation_notes
+                    # Handle MODIFIED status - extract improved fix
+                    modified_fix = None
+                    if status == ValidationStatus.MODIFIED:
+                        improved_code_match = self._extract_improved_code(response_text)
 
-                        # Create modified fix suggestion
-                        modified_fix = FixSuggestion(
-                            issue_key=original_fix.issue_key,
-                            original_code=original_fix.original_code,
-                            fixed_code=improved_code,
-                            explanation=f"{original_fix.explanation}\n\nValidator Improvement: {improved_explanation}",
-                            confidence=confidence,
-                            llm_model=f"{original_fix.llm_model} + {self.model} (validated)",
-                            rule_description=original_fix.rule_description,
-                            file_path=original_fix.file_path,
-                            line_number=original_fix.line_number,
-                            last_line_number=original_fix.last_line_number
+                        improved_explanation_match = re.search(
+                            r'IMPROVED_EXPLANATION:\s*(.*?)(?=$)',
+                            response_text,
+                            re.DOTALL
                         )
-                    else:
-                        # If no improved fix provided, treat as NEEDS_REVIEW
-                        logger.warning("MODIFIED status but no improved fix found")
+
+                        if improved_code_match:
+                            improved_code = improved_code_match.group(1).strip()
+                            improved_explanation = improved_explanation_match.group(
+                                1).strip() if improved_explanation_match else validation_notes
+
+                            # Create modified fix suggestion
+                            modified_fix = FixSuggestion(
+                                issue_key=original_fix.issue_key,
+                                original_code=original_fix.original_code,
+                                fixed_code=improved_code,
+                                explanation=f"{original_fix.explanation}\n\nValidator Improvement: {improved_explanation}",
+                                confidence=confidence,
+                                llm_model=f"{original_fix.llm_model} + {self.model} (validated)",
+                                rule_description=original_fix.rule_description,
+                                file_path=original_fix.file_path,
+                                line_number=original_fix.line_number,
+                                last_line_number=original_fix.last_line_number
+                            )
+                        else:
+                            # If no improved fix provided, treat as NEEDS_REVIEW
+                            logger.warning("MODIFIED status but no improved fix found")
+                            status = ValidationStatus.NEEDS_REVIEW
+
+                    # Apply confidence threshold
+                    if status == ValidationStatus.APPROVED and confidence < self.min_confidence_threshold:
                         status = ValidationStatus.NEEDS_REVIEW
+                        validation_notes += f"\n\nNote: Confidence {confidence:.2f} is below required threshold {self.min_confidence_threshold}"
 
-                # Apply confidence threshold
-                if status == ValidationStatus.APPROVED and confidence < self.min_confidence_threshold:
-                    status = ValidationStatus.NEEDS_REVIEW
-                    validation_notes += f"\n\nNote: Confidence {confidence:.2f} is below required threshold {self.min_confidence_threshold}"
+                    return ValidationResult(
+                        status=status,
+                        original_fix=original_fix,
+                        modified_fix=modified_fix,
+                        validation_notes=validation_notes,
+                        concerns=concerns,
+                        confidence=confidence
+                    )
 
-                return ValidationResult(
-                    status=status,
-                    original_fix=original_fix,
-                    modified_fix=modified_fix,
-                    validation_notes=validation_notes,
-                    concerns=concerns,
-                    confidence=confidence
-                )
-
-            except Exception as e:
-                logger.error(f"Error parsing validation response: {e}", exc_info=True)
-                return ValidationResult(
-                    status=ValidationStatus.NEEDS_REVIEW,
-                    original_fix=original_fix,
-                    validation_notes=f"Failed to parse validation response: {str(e)}",
-                    confidence=0.0
-                )
-
+                except Exception as e:
+                    logger.error(f"Error parsing validation response: {e}", exc_info=True)
+                    return ValidationResult(
+                        status=ValidationStatus.NEEDS_REVIEW,
+                        original_fix=original_fix,
+                        validation_notes=f"Failed to parse validation response: {str(e)}",
+                        confidence=0.0
+                    )
+    def _extract_improved_code(self, response_text):
+        pattern = r'IMPROVED_FIX:\s*```[a-zA-Z]*\s*(.*?)\s*```'
+        match = re.search(pattern, response_text, re.DOTALL)
+        if match:
+            return match
+        else:
+            return None
     def validate_fixes_with_agent(
             self,
             fixes: List[FixSuggestion],
