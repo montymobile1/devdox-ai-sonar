@@ -12,7 +12,7 @@ import re
 import pytest
 from typing import Dict, List, Set, Tuple
 from pydantic import ValidationError
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     Severity,
     IssueType,
     Impact,
@@ -239,7 +239,6 @@ class TestCoverageAnalyzer:
             ("-" * 30, "-" * 12, "-" * 10, "-" * 15),
             ("fix_validator.py", "1", "1", "✅ Covered"),
             ("improved_fix_application.py", "1", "1", "✅ Covered"),
-            ("models.py", "0*", "1", "⚠️  Reference only"),
             ("sonar_analyzer.py", "0*", "1", "⚠️  Reference only"),
             ("integration", "-", "1", "✅ Covered"),
         ]

@@ -7,7 +7,7 @@ from enum import Enum
 import re
 
 from .logging_config import setup_logging, get_logger
-from .models import FixSuggestion, SonarIssue, SonarSecurityIssue
+from devdox_ai_sonar.models.sonar import SonarIssue, SonarSecurityIssue, FixSuggestion
 
 setup_logging(level="DEBUG", log_file="demo.log")
 logger = get_logger(__name__)

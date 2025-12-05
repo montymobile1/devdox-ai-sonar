@@ -16,13 +16,13 @@ from rich.progress import Progress
 from . import __version__
 from .sonar_analyzer import SonarCloudAnalyzer
 from .llm_fixer import LLMFixer
-from .models import (
+from .models.sonar import (
     Severity,
     AnalysisResult,
+    SonarSecurityIssue,
     FixSuggestion,
     SonarIssue,
     FixResult,
-    SonarSecurityIssue,
 )
 
 

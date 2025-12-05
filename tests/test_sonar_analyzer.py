@@ -4,7 +4,7 @@ import pytest
 import requests
 from unittest.mock import Mock, patch
 from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     SecurityAnalysisResult,
     SonarSecurityIssue,
     Severity,

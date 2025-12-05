@@ -152,7 +152,6 @@ class TestCoverageAnalyzer:
             ("-" * 30, "-" * 12, "-" * 10, "-" * 15),
             ("fix_validator.py", "1", "1", "✅ Covered"),
             ("improved_fix_application.py", "1", "1", "✅ Covered"),
-            ("models.py", "0*", "1", "⚠️  Reference only"),
             ("sonar_analyzer.py", "0*", "1", "⚠️  Reference only"),
             ("integration", "-", "1", "✅ Covered"),
         ]

@@ -25,7 +25,7 @@ from devdox_ai_sonar.cli import (
     _parse_filters,
     _save_results,
 )
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     AnalysisResult,

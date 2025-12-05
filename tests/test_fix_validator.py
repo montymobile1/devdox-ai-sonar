@@ -8,7 +8,7 @@ from devdox_ai_sonar.fix_validator import (
     ValidationResult,
     FixValidator,
 )
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     Severity,

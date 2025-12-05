@@ -11,7 +11,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from pathlib import Path
 
-from .models import (
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     SonarSecurityIssue,
     AnalysisResult,

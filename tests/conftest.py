@@ -3,7 +3,7 @@
 import pytest
 from pathlib import Path
 from unittest.mock import Mock
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     AnalysisResult,

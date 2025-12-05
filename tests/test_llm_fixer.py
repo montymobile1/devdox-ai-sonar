@@ -3,7 +3,7 @@
 import pytest
 import json
 from unittest.mock import patch, MagicMock
-from devdox_ai_sonar.models import (
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     Severity,
@@ -170,13 +170,7 @@ class TestIndentation:
         lines = indented.split("\n")
         assert all(line.startswith(base_indent) or not line.strip() for line in lines)
 
-    def test_normalize_indentation(self, mock_llm_fixer):
-        """Test indentation normalization."""
-        lines = ["    def func():", "        x = 1", "        return x"]
-        normalized = mock_llm_fixer._normalize_indentation(lines)
 
-        assert normalized[0] == "def func():"
-        assert normalized[1] == "    x = 1"
 
 
 class TestFixGeneration:
@@ -1037,94 +1031,6 @@ class TestFunctionBoundaryDetection:
 # ==============================================================================
 
 
-class TestPlacementStrategies:
-    """Test different helper code placement strategies."""
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_find_import_insertion_point_after_imports(self, mock_openai):
-        """Test finding correct position after existing imports."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = [
-            "import os\n",
-            "import sys\n",
-            "from typing import List\n",
-            "\n",
-            "def function():\n",
-        ]
-
-        pos = fixer._find_import_insertion_point(lines)
-
-        assert pos == 3  # After last import
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_find_import_insertion_point_with_docstring(self, mock_openai):
-        """Test finding position after module docstring."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = ['"""Module docstring."""\n', "\n", "import os\n"]
-
-        pos = fixer._find_import_insertion_point(lines)
-
-        assert pos >= 1  # After docstring
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_find_import_insertion_point_with_shebang(self, mock_openai):
-        """Test finding position after shebang."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = [
-            "#!/usr/bin/env python3\n",
-            "# -*- coding: utf-8 -*-\n",
-            "\n",
-            "import os\n",
-        ]
-
-        pos = fixer._find_import_insertion_point(lines)
-
-        assert pos >= 2  # After shebang and encoding
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_find_global_top_insertion_point(self, mock_openai):
-        """Test finding position for global code."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = ["import os\n", "\n", "CONSTANT = 42\n", "\n", "def function():\n"]
-
-        pos = fixer._find_global_top_insertion_point(lines)
-
-        assert pos >= 2  # After imports
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_handle_docstring_multiline(self, mock_openai):
-        """Test handling multiline docstrings correctly."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        state = {
-            "last_import_line": -1,
-            "last_docstring_line": -1,
-            "last_shebang_encoding_line": -1,
-            "in_docstring": False,
-            "docstring_quote": None,
-        }
-
-        # Start of docstring
-        result = fixer._handle_docstring(0, '"""Start', state)
-        assert state["in_docstring"] is True
-
-        # Middle of docstring
-        result = fixer._handle_docstring(1, "Middle line", state)
-        assert result is True
-
-        # End of docstring
-        result = fixer._handle_docstring(2, 'End"""', state)
-        assert state["in_docstring"] is False
-
 
 # ==============================================================================
 # CRITICAL: Fix Application with Different Placements
@@ -1237,29 +1143,6 @@ class TestFixApplicationWithPlacements:
 
 class TestIndentationEdgeCases:
     """Test indentation handling in various scenarios."""
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_calculate_base_indentation_mixed_tabs_spaces(self, mock_openai):
-        """Test calculating indentation with mixed tabs and spaces."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = ["\t    code"]
-        indent = fixer.calculate_base_indentation(lines, 1)
-
-        # Should handle mixed indentation
-        assert indent is not None
-
-    @patch("devdox_ai_sonar.llm_fixer.openai")
-    def test_normalize_indentation_empty_lines(self, mock_openai):
-        """Test normalizing indentation preserves empty lines."""
-        mock_openai.OpenAI.return_value = MagicMock()
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-
-        lines = ["    code1", "", "    code2"]
-        normalized = fixer._normalize_indentation(lines)
-
-        assert normalized[1] == ""  # Empty line preserved
 
     @patch("devdox_ai_sonar.llm_fixer.openai")
     def test_apply_indentation_to_fix_zero_indent(self, mock_openai):

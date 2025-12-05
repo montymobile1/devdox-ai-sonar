@@ -10,13 +10,21 @@ from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 
 from .fix_validator import FixValidator, ValidationStatus
-from .models import (
+
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
+    SonarSecurityIssue,
     FixSuggestion,
     FixResult,
-    SonarSecurityIssue,
-    ImportState,
 )
+from devdox_ai_sonar.utils.file_indentation import (
+    apply_single_fix,
+    write_file_lines,
+    read_file_lines,
+    calculate_base_indentation,
+    normalize_indentation,
+)
+
 from .logging_config import setup_logging, get_logger
 
 setup_logging(level="DEBUG", log_file="demo.log")
@@ -46,22 +54,6 @@ except ImportError as e:
 
 java_extension = ".java"
 scala_extension = ".scala"
-
-
-def calculate_base_indentation(code: str) -> int:
-    """
-    Calculate the base indentation level from the first non-empty line.
-
-    Args:
-        code: Code string
-
-    Returns:
-        Number of leading spaces in the first non-empty line
-    """
-    for line in code.split("\n"):
-        if line.strip():
-            return len(line) - len(line.lstrip())
-    return 0
 
 
 class LLMFixer:
@@ -1385,39 +1377,6 @@ class LLMFixer:
 
         return matching_files
 
-    def calculate_base_indentation(self, lines: List[str], line_number: int) -> str:
-        """
-        Calculate the base indentation for a specific line.
-
-        Args:
-            lines: All lines in the file
-            line_number: Line number (1-indexed)
-
-        Returns:
-            Base indentation string (spaces or tabs)
-        """
-        if line_number < 1 or line_number > len(lines):
-            return ""
-
-        # Convert to 0-indexed
-        line_idx = line_number - 1
-
-        # Get the indentation of the target line
-        target_line = lines[line_idx]
-        if not target_line.strip():
-            # If target line is empty, look at surrounding lines
-            for offset in [1, -1, 2, -2]:
-                check_idx = line_idx + offset
-                if 0 <= check_idx < len(lines) and lines[check_idx].strip():
-                    target_line = lines[check_idx]
-                    break
-
-        if target_line.strip():
-            stripped = target_line.lstrip()
-            return target_line[: len(target_line) - len(stripped)]
-
-        return ""
-
     def apply_indentation_to_fix(self, fixed_code: str, base_indent: str) -> str:
         """
         Apply base indentation to fixed code while preserving relative indentation.
@@ -1437,7 +1396,7 @@ class LLMFixer:
             return fixed_code
 
         # Remove common leading whitespace (normalize)
-        lines = self._normalize_indentation(lines)
+        lines = normalize_indentation(lines)
 
         # Apply base indentation to all non-empty lines
         indented_lines = []
@@ -1449,298 +1408,35 @@ class LLMFixer:
 
         return "\n".join(indented_lines)
 
-    def _normalize_indentation(self, lines: List[str]) -> List[str]:
-        """
-        Remove common leading whitespace from all lines.
-
-        Args:
-            lines: Lines of code
-
-        Returns:
-            Lines with normalized indentation
-        """
-        if not lines:
-            return lines
-
-        # Find minimum indentation of non-empty lines
-        min_indent = 10**9
-        for line in lines:
-            if line.strip():  # Non-empty line
-                stripped = line.lstrip()
-                indent_length = len(line) - len(stripped)
-                min_indent = min(min_indent, indent_length)
-
-        if min_indent == float("inf") or min_indent == 0:
-            return lines
-
-        # Remove common leading whitespace
-        normalized_lines = []
-        for line in lines:
-            if line.strip():  # Non-empty line
-                normalized_lines.append(line[min_indent:])
-            else:  # Empty line
-                normalized_lines.append(line)
-
-        return normalized_lines
-
-    def _find_import_insertion_point(self, lines: List[str]) -> int:
-        """
-        Find the best position to insert import statements.
-        Returns the line index where imports should be inserted.
-        """
-        state: ImportState = {
-            "last_import_line": -1,
-            "last_docstring_line": -1,
-            "last_shebang_encoding_line": -1,
-            "in_docstring": False,
-            "docstring_quote": None,
-        }
-        for i, line in enumerate(lines):
-            state, stop = self._process_import_line(i, line, state)
-            if stop:
-                break
-            # ✅ Add explicit type assertions
-        if state["last_import_line"] >= 0:  # ✅ MyPy knows this is int
-            return state["last_import_line"] + 1
-        elif state["last_docstring_line"] >= 0:
-            return state["last_docstring_line"] + 1
-        elif state["last_shebang_encoding_line"] >= 0:
-            return state["last_shebang_encoding_line"] + 1
-        else:
-            return 0
-
-    def _process_import_line(self, i: int, line: str, state: ImportState) -> tuple:
-        stripped = line.strip()
-        # Shebang / encoding lines
-        if self._is_shebang_or_encoding(i, stripped, state):
-            return state, False
-        # Docstring handling
-        if self._handle_docstring(i, stripped, state):
-            return state, False
-        # Import statements
-        if stripped.startswith(("import ", "from ")):
-            state["last_import_line"] = i
-            return state, False
-        # Actual code (non‑comment, non‑empty)
-        if stripped and not stripped.startswith("#"):
-            return state, True
-        return state, False
-
-    def _is_shebang_or_encoding(
-        self, i: int, stripped: str, state: ImportState
-    ) -> bool:
-        if (
-            i < 3
-            and stripped.startswith("#")
-            and ("coding" in stripped or "encoding" in stripped)
-        ):
-            state["last_shebang_encoding_line"] = i
-            return True
-        if i == 0 and stripped.startswith("#!"):
-            state["last_shebang_encoding_line"] = i
-            return True
-        return False
-
-    def _handle_docstring(self, i: int, stripped: str, state: ImportState) -> bool:
-        if not state.get("in_docstring"):
-            if stripped.startswith('"""') or stripped.startswith("'''"):
-                state["docstring_quote"] = stripped[:3]
-                state["in_docstring"] = True
-                if (
-                    state["docstring_quote"]
-                    and stripped.count(state["docstring_quote"]) >= 2
-                ):
-                    state["in_docstring"] = False
-                    state["last_docstring_line"] = i
-                return True
-        else:
-            doc_quote = state.get("docstring_quote")
-
-            if doc_quote and doc_quote in stripped:
-                state["in_docstring"] = False
-                state["last_docstring_line"] = i
-                return True
-
-            # still inside multi‑line docstring
-            return True
-        return False
-
-    def _find_global_top_insertion_point(self, lines: List[str]) -> int:
-        """
-        Find the position for non-import global code (classes, functions, constants).
-        This should go after imports but before other code.
-        """
-        import_end = self._find_import_insertion_point(lines)
-
-        # Look for the first non-import, non-comment, non-empty line after imports
-        for i in range(import_end, len(lines)):
-            stripped = lines[i].strip()
-            if stripped and not stripped.startswith("#"):
-                return i
-
-        # If no code found, append at the end
-        return len(lines)
-
     def _apply_fixes_to_file(
         self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool
     ) -> bool:
-        """
-        Apply fixes by REMOVING the block between line_number and last_line_number,
-        and inserting the fixed_code block with correct indentation.
-        """
         if dry_run:
             logger.info(f"[DRY RUN] Would apply {len(fixes)} fixes to {file_path}")
-            return True
+            return True, []
 
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                lines = f.readlines()
+            lines = read_file_lines(file_path)
+            sorted_fixes = sorted(fixes, key=lambda f: f.line_number or 0, reverse=True)
 
-            applied_fixes = []
-            skipped_fixes = []
+            results = []
+            for fix in sorted_fixes:
+                result = apply_single_fix(lines, fix)
+                results.append(result)
 
-            # Apply in reverse order to avoid line index shifting
-            fixes_sorted = sorted(fixes, key=lambda f: f.line_number or 0, reverse=True)
+                if not result.success:
+                    logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
 
-            for fix in fixes_sorted:
-                if fix.line_number is None or fix.last_line_number is None:
-                    logger.warning(
-                        f"Fix {fix.issue_key} missing line numbers, skipping"
-                    )
-                    skipped_fixes.append(fix)
-                    continue
+            write_file_lines(file_path, lines)
 
-                line_num: int = fix.line_number
-                last_line_num: int = fix.last_line_number
+            successful = sum(1 for r in results if r.success)
+            logger.info(f"Applied {successful}/{len(fixes)} fixes to {file_path}")
 
-                start = line_num - 1
-                end = last_line_num - 1
+            return all(r.success for r in results), results
 
-                if fix.helper_code:
-                    fix.helper_code = fix.helper_code.replace("\\n", "\n")
-
-                if fix.sonar_line_number is None or fix.sonar_line_number < 1:
-                    logger.warning(f"Invalid sonar_line_number for fix {fix.issue_key}")
-                    skipped_fixes.append(fix)
-                    continue
-
-                base_indent = self.calculate_base_indentation(lines, start)
-
-                logger.debug(
-                    f"Line {fix.line_number}: Base indentation = '{base_indent}' (length: {len(base_indent)})"
-                )
-
-                # Apply indentation to the fixed code
-
-                if start < 0 or end >= len(lines) or start > end:
-                    logger.warning(
-                        f"Fix {fix.issue_key} has invalid line range, skipping"
-                    )
-                    skipped_fixes.append(fix)
-                    continue
-                line_count = fix.fixed_code.count("\n")
-                if (
-                    line_count == 0
-                    and fix.sonar_line_number != 0
-                    and not fix.helper_code
-                ):
-                    base_indent_number = calculate_base_indentation(
-                        lines[fix.sonar_line_number - 1]
-                    )
-                    indent_spaces = " " * base_indent_number
-                    indented_fixed_code = self.apply_indentation_to_fix(
-                        fix.fixed_code, indent_spaces
-                    )
-                    lines[fix.sonar_line_number - 1] = indented_fixed_code + "\n"
-
-                else:
-                    if fix.fixed_code:
-                        indented_fixed_code = self.apply_indentation_to_fix(
-                            fix.fixed_code, base_indent
-                        )
-
-                        if fix.helper_code and fix.placement_helper == "SIBLING":
-                            indented_helper_code = self.apply_indentation_to_fix(
-                                fix.helper_code, base_indent
-                            )
-                            lines = (
-                                lines[: line_num - 1]  # ✅ Use line_num (int)
-                                + [indented_fixed_code, "\n"]
-                                + [indented_helper_code, "\n"]
-                                + lines[last_line_num:]  # ✅ Use last_line_num (int)
-                            )
-
-                            # ✅ Handle GLOBAL_BOTTOM placement
-                        elif (
-                            fix.helper_code and fix.placement_helper == "GLOBAL_BOTTOM"
-                        ):
-                            lines = (
-                                lines[:start]
-                                + [indented_fixed_code, "\n"]
-                                + lines[end + 1 :]
-                                + ["\n"]
-                                + [fix.helper_code, "\n"]
-                            )
-
-                            # ✅ Handle GLOBAL_TOP placement
-                        elif fix.helper_code and fix.placement_helper == "GLOBAL_TOP":
-                            lines = (
-                                lines[:start]
-                                + [indented_fixed_code, "\n"]
-                                + lines[last_line_num:]  # ✅ Use last_line_num (int)
-                            )
-
-                            # ✅ Guard against None before split
-                            helper_lines = fix.helper_code.split("\n")
-                            is_import_block = any(
-                                line.strip().startswith(("import ", "from "))
-                                for line in helper_lines
-                                if line.strip()
-                            )
-
-                            if is_import_block:
-                                insert_position = self._find_import_insertion_point(
-                                    lines
-                                )
-                                logger.debug(
-                                    f"Inserting import block at line {insert_position + 1}"
-                                )
-                            else:
-                                insert_position = self._find_global_top_insertion_point(
-                                    lines
-                                )
-                                logger.debug(
-                                    f"Inserting global code at line {insert_position + 1}"
-                                )
-
-                            # ✅ Guard against None before endswith
-                            helper_code_with_newlines = fix.helper_code
-                            if not helper_code_with_newlines.endswith("\n"):
-                                helper_code_with_newlines += "\n"
-
-                            lines.insert(
-                                insert_position, helper_code_with_newlines + "\n"
-                            )
-                    else:
-                        lines = (
-                            lines[:start]
-                            + [indented_fixed_code, "\n", "\n"]
-                            + lines[end + 1 :]
-                        )
-
-                applied_fixes.append(fix)
-
-            # Validate final code
-            modified_content = "".join(lines)
-
-            # Write file
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.write(modified_content)
-
-            if skipped_fixes:
-                logger.warning(f"⚠ Skipped {len(skipped_fixes)} fixes")
-
-            return True
+        except Exception as e:
+            logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
+            return False, []
 
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)

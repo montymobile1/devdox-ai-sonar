@@ -1,5 +1,3 @@
-"""Data models for SonarCloud analysis and fixes."""
-
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional, Dict, Any, TypedDict
@@ -100,37 +98,6 @@ class SonarSecurityIssue(BaseModel):
         return None
 
 
-class FixSuggestion(BaseModel):
-    """Represents an LLM-generated fix suggestion."""
-
-    issue_key: str = Field(..., description="Related issue key")
-    original_code: str = Field(..., description="Original problematic code")
-    fixed_code: str = Field(..., description="Suggested fix")
-    helper_code: Optional[str] = Field("", description="Additional helper code")
-    placement_helper: Optional[str] = Field(
-        "", description="Additional helper code for placing the fix"
-    )
-    explanation: str = Field(..., description="Explanation of the fix")
-    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0-1)")
-    llm_model: str = Field(..., description="LLM model used for fixing")
-    rule_description: Optional[str] = Field(
-        None, description="SonarCloud rule description"
-    )
-    file_path: Optional[str] = Field(None, description="Path to the file being fixed")
-    sonar_line_number: Optional[int] = Field(
-        None, description="SonarCloud line number of the issue"
-    )
-    line_number: Optional[int] = Field(None, description="Line number of the issue")
-    last_line_number: Optional[int] = Field(
-        None, description="Last line number of the issue"
-    )
-
-    @property
-    def is_high_confidence(self) -> bool:
-        """Check if this is a high-confidence fix."""
-        return self.confidence >= 0.8
-
-
 class ProjectMetrics(BaseModel):
     """SonarCloud project metrics."""
 
@@ -195,6 +162,42 @@ class AnalysisResult(BaseModel):
         return result
 
 
+class ProcessedRules(TypedDict):
+    rules: Dict[str, Dict[str, Any]]
+    metadata: Dict[str, Any]
+
+
+class FixSuggestion(BaseModel):
+    """Represents an LLM-generated fix suggestion."""
+
+    issue_key: str = Field(..., description="Related issue key")
+    original_code: str = Field(..., description="Original problematic code")
+    fixed_code: str = Field(..., description="Suggested fix")
+    helper_code: Optional[str] = Field("", description="Additional helper code")
+    placement_helper: Optional[str] = Field(
+        "", description="Additional helper code for placing the fix"
+    )
+    explanation: str = Field(..., description="Explanation of the fix")
+    confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score (0-1)")
+    llm_model: str = Field(..., description="LLM model used for fixing")
+    rule_description: Optional[str] = Field(
+        None, description="SonarCloud rule description"
+    )
+    file_path: Optional[str] = Field(None, description="Path to the file being fixed")
+    sonar_line_number: Optional[int] = Field(
+        None, description="SonarCloud line number of the issue"
+    )
+    line_number: Optional[int] = Field(None, description="Line number of the issue")
+    last_line_number: Optional[int] = Field(
+        None, description="Last line number of the issue"
+    )
+
+    @property
+    def is_high_confidence(self) -> bool:
+        """Check if this is a high-confidence fix."""
+        return self.confidence >= 0.8
+
+
 class FixResult(BaseModel):
     """Results from applying fixes to a project."""
 
@@ -220,18 +223,3 @@ class FixResult(BaseModel):
         if self.total_fixes_attempted == 0:
             return 0.0
         return len(self.successful_fixes) / self.total_fixes_attempted
-
-
-class ProcessedRules(TypedDict):
-    rules: Dict[str, Dict[str, Any]]
-    metadata: Dict[str, Any]
-
-
-class ImportState(TypedDict):
-    """State for tracking import insertion point."""
-
-    last_import_line: int
-    last_docstring_line: int
-    last_shebang_encoding_line: int
-    in_docstring: bool
-    docstring_quote: Optional[str]
