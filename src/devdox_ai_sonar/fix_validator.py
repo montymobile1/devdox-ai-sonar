@@ -198,7 +198,7 @@ class FixValidator:
                 )
 
             # Parse validation response
-            result = self._parse_validation_response(validation_response, fix, issue)
+            result = self._parse_validation_response(validation_response, fix)
 
             return result
 
@@ -389,10 +389,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
             return None
 
     def _parse_validation_response(
-        self,
-        response_text: str,
-        original_fix: FixSuggestion,
-        issue: Union[SonarIssue, SonarSecurityIssue],
+        self, response_text: str, original_fix: FixSuggestion
     ) -> ValidationResult:
         """Parse the validation response from LLM."""
 

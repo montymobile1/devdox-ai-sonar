@@ -44,6 +44,9 @@ except ImportError as e:
     logger.warning(f"Failed to import Gemini library: {e}")
     HAS_GEMINI = False
 
+java_extension = ".java"
+scala_extension = ".scala"
+
 
 def calculate_base_indentation(code: str) -> int:
     """
@@ -683,12 +686,11 @@ class LLMFixer:
     def _has_reached_function_end(
         self, current_indent: int, function_indent: int, line: str, prev_line: str
     ) -> bool:
-        if current_indent <= function_indent:
-            if not (
-                prev_line.rstrip().endswith(("\\", ",", "("))
-                or line.strip().startswith((")", "def ", "async def"))
-            ):
-                return True
+        if (current_indent <= function_indent) and not (
+            prev_line.rstrip().endswith(("\\", ",", "("))
+            or line.strip().startswith((")", "def ", "async def"))
+        ):
+            return True
         if current_indent == function_indent and self._is_function_definition(line):
             return True
         return False
@@ -1238,9 +1240,9 @@ class LLMFixer:
             ".jsx": "javascript",
             ".ts": "typescript",
             ".tsx": "typescript",
-            ".java": "java",
+            java_extension: "java",
             ".kt": "kotlin",
-            ".scala": "scala",
+            scala_extension: "scala",
             ".go": "go",
             ".rs": "rust",
             ".cpp": "cpp",
@@ -1260,6 +1262,34 @@ class LLMFixer:
         logger.info(f"Created project backup: {backup_path}")
         return backup_path
 
+    def _try_stored_file_path(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
+        """Try to get file from stored path in fix."""
+        if not fix.file_path:
+            return None
+
+        file_path = project_path / fix.file_path
+        return str(file_path) if file_path.exists() else None
+
+    def _try_extract_from_issue_key(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
+        """Extract file path from SonarCloud issue key pattern."""
+        if ":" not in fix.issue_key:
+            return None
+
+        parts = fix.issue_key.split(":")
+        for part in parts:
+            if not self._looks_like_file_path(part):
+                continue
+
+            file_path = project_path / part
+            if file_path.exists():
+                return str(file_path)
+
+        return None
+
     def _get_file_from_fix(
         self, fix: FixSuggestion, project_path: Path
     ) -> Optional[str]:
@@ -1274,37 +1304,19 @@ class LLMFixer:
             Absolute file path as string, or None if not found
         """
         # First, try to use the stored file path from the fix
-        if fix.file_path:
-            file_path = project_path / fix.file_path
-            if file_path.exists():
-                return str(file_path)
+        file_path = self._try_stored_file_path(fix, project_path)
+        if file_path:
+            return file_path
 
         # Fallback: Try to extract file path from issue key if it follows SonarCloud pattern
-        if ":" in fix.issue_key:
-            parts = fix.issue_key.split(":")
-            # Look for parts that might be file paths
-            for part in parts:
-                if "/" in part and (
-                    part.endswith(".py")
-                    or part.endswith(".js")
-                    or part.endswith(".java")
-                    or part.endswith(".ts")
-                    or part.endswith(".jsx")
-                    or part.endswith(".tsx")
-                    or part.endswith(".kt")
-                    or part.endswith(".scala")
-                ):
-                    file_path = project_path / part
-                    if file_path.exists():
-                        return str(file_path)
+        file_path = self._try_extract_from_issue_key(fix, project_path)
+        if file_path:
+            return file_path
 
-        if fix.original_code and len(fix.original_code.strip()) > 10:
-            # Search for files containing this code snippet
-            matching_files = self._find_files_with_content(
-                project_path, fix.original_code.strip()
-            )
-            if matching_files:
-                return str(matching_files[0])  # Return first match
+        # Strategy 3: Search by content
+        file_path = self._try_find_by_content(fix, project_path)
+        if file_path:
+            return file_path
 
         logger.warning(f"Could not determine file path for fix {fix.issue_key}")
         return None
@@ -1329,9 +1341,9 @@ class LLMFixer:
             ".jsx",
             ".ts",
             ".tsx",
-            ".java",
+            java_extension,
             ".kt",
-            ".scala",
+            scala_extension,
             ".go",
             ".rs",
             ".cpp",
@@ -1496,14 +1508,6 @@ class LLMFixer:
             return state["last_shebang_encoding_line"] + 1
         else:
             return 0
-        # if state["last_import_line"] >= 0:
-        #     return state["last_import_line"] + 1
-        # elif state["last_docstring_line"] >= 0:
-        #     return state["last_docstring_line"] + 1
-        # elif state["last_shebang_encoding_line"] >= 0:
-        #     return state["last_shebang_encoding_line"] + 1
-        # else:
-        #     return 0
 
     def _process_import_line(self, i: int, line: str, state: ImportState) -> tuple:
         stripped = line.strip()
@@ -2037,3 +2041,35 @@ class LLMFixer:
                 )
 
         return result
+
+
+def _looks_like_file_path(self, path_candidate: str) -> bool:
+    """Check if string looks like a file path with supported extension."""
+    if "/" not in path_candidate:
+        return False
+
+    # Define supported extensions
+    supported_extensions = {
+        ".py",
+        ".js",
+        java_extension,
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".kt",
+        scala_extension,
+    }
+
+    return any(path_candidate.endswith(ext) for ext in supported_extensions)
+
+
+def _try_find_by_content(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
+    """Search for file containing the original code snippet."""
+    if not fix.original_code or len(fix.original_code.strip()) <= 10:
+        return None
+
+    matching_files = self._find_files_with_content(
+        project_path, fix.original_code.strip()
+    )
+
+    return str(matching_files[0]) if matching_files else None

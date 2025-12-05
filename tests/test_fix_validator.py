@@ -332,7 +332,7 @@ class TestParseValidationResponse:
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_parse_response_with_all_fields(
-        self, mock_openai, sample_fix, sample_issue
+        self, mock_openai, sample_fix
     ):
         """Test parsing response with all fields present."""
 
@@ -352,7 +352,7 @@ CONCERNS:
 """
 
         result = validator._parse_validation_response(
-            response_text, sample_fix, sample_issue
+            response_text, sample_fix
         )
 
         assert result.status == ValidationStatus.APPROVED
@@ -360,7 +360,7 @@ CONCERNS:
         assert len(result.concerns) > 0
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_parse_response_missing_fields(self, mock_openai, sample_fix, sample_issue):
+    def test_parse_response_missing_fields(self, mock_openai, sample_fix):
         """Test parsing response with missing fields."""
 
         mock_openai.OpenAI.return_value = MagicMock()
@@ -369,7 +369,7 @@ CONCERNS:
         response_text = "Invalid response"
 
         result = validator._parse_validation_response(
-            response_text, sample_fix, sample_issue
+            response_text, sample_fix
         )
 
         # Should default to NEEDS_REVIEW
@@ -1649,7 +1649,7 @@ class TestAdditionalEdgeCases:
         assert "Validation failed" in result.validation_notes
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_parse_response_exception(self, mock_openai, sample_fix, sample_issue):
+    def test_parse_response_exception(self, mock_openai, sample_fix):
         """Test _parse_validation_response with exception."""
         mock_openai.OpenAI.return_value = MagicMock()
         validator = FixValidator(provider="openai", api_key="test-key")
@@ -1658,7 +1658,7 @@ class TestAdditionalEdgeCases:
         response_text = None  # This should cause an error
 
         result = validator._parse_validation_response(
-            response_text, sample_fix, sample_issue
+            response_text, sample_fix
         )
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
