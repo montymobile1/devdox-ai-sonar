@@ -3,6 +3,8 @@ from pathlib import Path
 from typing import List, Optional, Dict, Any, TypedDict
 from pydantic import BaseModel, Field, ConfigDict
 
+project_key = "Project key"
+
 
 class Severity(str, Enum):
     """SonarCloud issue severity levels."""
@@ -40,7 +42,7 @@ class SonarIssue(BaseModel):
     rule: str = Field(..., description="Rule identifier")
     severity: Severity = Field(..., description="Issue severity")
     component: str = Field(..., description="Component path")
-    project: str = Field(..., description="Project key")
+    project: str = Field(..., description=project_key)
     first_line: Optional[int] = Field(None, description="First Line number")
     last_line: Optional[int] = Field(None, description="Last Line number")
     message: str = Field(..., description="Issue description")
@@ -79,7 +81,7 @@ class SonarSecurityIssue(BaseModel):
     key: str = Field(..., description="Unique issue key")
     component: str = Field(..., description="Component path")
     rule: str = Field(..., description="Rule identifier")
-    project: str = Field(..., description="Project key")
+    project: str = Field(..., description=project_key)
     security_category: str = Field(..., description="Security category")
     vulnerability_probability: str = Field(..., description="Vulnerability probability")
     status: str = Field(default="OPEN", description="Issue status")
@@ -101,7 +103,7 @@ class SonarSecurityIssue(BaseModel):
 class ProjectMetrics(BaseModel):
     """SonarCloud project metrics."""
 
-    project_key: str = Field(..., description="Project key")
+    project_key: str = Field(..., description=project_key)
     lines_of_code: Optional[int] = None
     coverage: Optional[float] = None
     duplicated_lines_density: Optional[float] = None
@@ -115,7 +117,7 @@ class ProjectMetrics(BaseModel):
 
 
 class SecurityAnalysisResult(BaseModel):
-    project_key: str = Field(..., description="Project key")
+    project_key: str = Field(..., description=project_key)
     organization: str = Field(..., description="Organization key")
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")
@@ -126,7 +128,7 @@ class SecurityAnalysisResult(BaseModel):
 class AnalysisResult(BaseModel):
     """Results from SonarCloud analysis."""
 
-    project_key: str = Field(..., description="Project key")
+    project_key: str = Field(..., description=project_key)
     organization: str = Field(..., description="Organization key")
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")

@@ -10,6 +10,7 @@ from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 
 from .fix_validator import FixValidator, ValidationStatus
+from devdox_ai_sonar.models.file_structures import FixApplication
 
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -1410,7 +1411,7 @@ class LLMFixer:
 
     def _apply_fixes_to_file(
         self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool
-    ) -> bool:
+    ) -> Tuple[bool, List[FixApplication]]:
         if dry_run:
             logger.info(f"[DRY RUN] Would apply {len(fixes)} fixes to {file_path}")
             return True, []
@@ -1437,10 +1438,6 @@ class LLMFixer:
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False, []
-
-        except Exception as e:
-            logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
-            return False
 
     def _check_bracket_balance(self, content: str) -> bool:
         """

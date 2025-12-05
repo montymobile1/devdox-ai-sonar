@@ -25,7 +25,7 @@ def write_file_lines(file_path: Path, lines: List[str]) -> None:
         f.write(content)
 
 
-def is_simple_replacement(fix: FixSuggestion, line_range: LineRange) -> bool:
+def is_simple_replacement(fix: FixSuggestion) -> bool:
     """Check if this is a simple single-line replacement."""
     has_no_newlines = "\n" not in fix.fixed_code
     has_sonar_line = fix.sonar_line_number != 0
@@ -186,7 +186,9 @@ def process_import_line(i: int, line: str, state: ImportState) -> tuple:
     return state, False
 
 
-def handle_docstring(i: int, stripped: str, state: ImportState) -> bool:
+def handle_docstring(
+    i: int, stripped: str, state: ImportState
+) -> Tuple[bool, ImportState]:
     if not state.get("in_docstring"):
         if stripped.startswith('"""') or stripped.startswith("'''"):
             state["docstring_quote"] = stripped[:3]
@@ -367,7 +369,7 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
         return FixApplication(fix, False, "Invalid line range")
 
     # Handle special single-line replacement case
-    if is_simple_replacement(fix, line_range):
+    if is_simple_replacement(fix):
         _apply_simple_replacement(lines, fix)
         return FixApplication(fix, True)
 

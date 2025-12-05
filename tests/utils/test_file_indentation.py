@@ -174,9 +174,8 @@ class TestIsSimpleReplacement:
         mock_fix.fixed_code = "x = 2"
         mock_fix.sonar_line_number = 10
         mock_fix.helper_code = ""
-        line_range = LineRange(start=9, end=9)
 
-        result = is_simple_replacement(mock_fix, line_range)
+        result = is_simple_replacement(mock_fix)
         assert result is True
 
     def test_is_simple_replacement_has_newlines(self, mock_fix):
@@ -186,7 +185,7 @@ class TestIsSimpleReplacement:
         mock_fix.helper_code = ""
         line_range = LineRange(start=9, end=9)
 
-        result = is_simple_replacement(mock_fix, line_range)
+        result = is_simple_replacement(mock_fix)
         assert result is False
 
     def test_is_simple_replacement_no_sonar_line(self, mock_fix):
@@ -196,7 +195,7 @@ class TestIsSimpleReplacement:
         mock_fix.helper_code = ""
         line_range = LineRange(start=9, end=9)
 
-        result = is_simple_replacement(mock_fix, line_range)
+        result = is_simple_replacement(mock_fix)
         assert result is False
 
     def test_is_simple_replacement_has_helper(self, mock_fix):
@@ -206,7 +205,7 @@ class TestIsSimpleReplacement:
         mock_fix.helper_code = "import math"
         line_range = LineRange(start=9, end=9)
 
-        result = is_simple_replacement(mock_fix, line_range)
+        result = is_simple_replacement(mock_fix)
         assert result is False
 
     def test_is_simple_replacement_all_false(self, mock_fix):
@@ -216,7 +215,7 @@ class TestIsSimpleReplacement:
         mock_fix.helper_code = "helper"
         line_range = LineRange(start=9, end=9)
 
-        result = is_simple_replacement(mock_fix, line_range)
+        result = is_simple_replacement(mock_fix)
         assert result is False
 
 
