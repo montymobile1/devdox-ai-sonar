@@ -415,7 +415,7 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
             # Extract validation notes
             notes_match = re.search(
-                r"VALIDATION_NOTES:\s*(.*?)(?=CONCERNS:|IMPROVED_FIX:)",
+                r"VALIDATION_NOTES:\s*((?:(?!CONCERNS:|IMPROVED_FIX:).)*)",
                 response_text,
                 re.DOTALL,
             )
@@ -423,8 +423,10 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
             # Extract concerns
             concerns_match = re.search(
-                r"CONCERNS:\s*(.*?)(?=IMPROVED_FIX:|IMPROVED_EXPLANATION)",
-                response_text,
+
+                r"CONCERNS:\s*((?:(?!IMPROVED_FIX:|IMPROVED_EXPLANATION:).)*)",
+
+            response_text,
                 re.DOTALL,
             )
             concerns_text = concerns_match.group(1).strip() if concerns_match else ""
