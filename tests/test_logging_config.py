@@ -2,16 +2,8 @@
 
 import pytest
 import logging
-import os
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-from devdox_ai_sonar.logging_config import (
-    setup_logging,
-    get_logger,
-    quick_setup
-)
+from devdox_ai_sonar.logging_config import setup_logging, get_logger, quick_setup
 
 
 class TestSetupLogging:
@@ -26,7 +18,7 @@ class TestSetupLogging:
 
     def test_setup_logging_custom_level(self):
         """Test setup_logging with custom log level."""
-        setup_logging(level='DEBUG')
+        setup_logging(level="DEBUG")
 
         logger = logging.getLogger()
         assert logger.level == logging.DEBUG
@@ -57,7 +49,7 @@ class TestSetupLogging:
     def test_setup_logging_custom_format(self, tmp_path):
         """Test setup_logging with custom format string."""
         log_file = tmp_path / "test.log"
-        custom_format = '%(levelname)s - %(message)s'
+        custom_format = "%(levelname)s - %(message)s"
 
         setup_logging(log_file=str(log_file), format_string=custom_format)
 
@@ -96,7 +88,7 @@ class TestSetupLogging:
 
     def test_setup_logging_env_var_level(self, monkeypatch):
         """Test setup_logging reads level from LOG_LEVEL environment variable."""
-        monkeypatch.setenv('LOG_LEVEL', 'WARNING')
+        monkeypatch.setenv("LOG_LEVEL", "WARNING")
 
         setup_logging()
 
@@ -106,7 +98,7 @@ class TestSetupLogging:
     def test_setup_logging_env_var_file(self, monkeypatch, tmp_path):
         """Test setup_logging reads log file from LOG_FILE environment variable."""
         log_file = tmp_path / "env_test.log"
-        monkeypatch.setenv('LOG_FILE', str(log_file))
+        monkeypatch.setenv("LOG_FILE", str(log_file))
 
         setup_logging()
 
@@ -119,7 +111,7 @@ class TestSetupLogging:
 
     def test_setup_logging_invalid_level_defaults_to_info(self):
         """Test that invalid log level defaults to INFO."""
-        setup_logging(level='INVALID_LEVEL')
+        setup_logging(level="INVALID_LEVEL")
 
         logger = logging.getLogger()
         # Should default to INFO (20)
@@ -127,7 +119,7 @@ class TestSetupLogging:
 
     def test_setup_logging_case_insensitive_level(self):
         """Test that log level is case-insensitive."""
-        setup_logging(level='debug')
+        setup_logging(level="debug")
         logger = logging.getLogger()
         assert logger.level == logging.DEBUG
 
@@ -135,10 +127,10 @@ class TestSetupLogging:
         """Test that setup_logging sets levels for noisy third-party libraries."""
         setup_logging()
 
-        assert logging.getLogger('urllib3').level == logging.WARNING
-        assert logging.getLogger('openai').level == logging.WARNING
-        assert logging.getLogger('anthropic').level == logging.WARNING
-        assert logging.getLogger('google').level == logging.WARNING
+        assert logging.getLogger("urllib3").level == logging.WARNING
+        assert logging.getLogger("openai").level == logging.WARNING
+        assert logging.getLogger("anthropic").level == logging.WARNING
+        assert logging.getLogger("google").level == logging.WARNING
 
     def test_setup_logging_logs_configuration(self, caplog, monkeypatch):
         """Test that setup_logging logs its configuration."""
@@ -161,13 +153,15 @@ class TestSetupLogging:
 
         assert any("Logging to file" in record.message for record in caplog.records)
 
-    def test_setup_logging_console_only_message(self, caplog,monkeypatch):
+    def test_setup_logging_console_only_message(self, caplog, monkeypatch):
         """Test that setup_logging logs console-only message."""
         monkeypatch.setattr(logging, "basicConfig", lambda **kwargs: None)
         with caplog.at_level(logging.INFO):
             setup_logging()
 
-        assert any("console only" in record.message.lower() for record in caplog.records)
+        assert any(
+            "console only" in record.message.lower() for record in caplog.records
+        )
 
 
 class TestGetLogger:
@@ -181,14 +175,14 @@ class TestGetLogger:
 
     def test_get_logger_with_name(self):
         """Test that get_logger uses the provided name."""
-        logger = get_logger('test.module')
+        logger = get_logger("test.module")
 
-        assert logger.name == 'test.module'
+        assert logger.name == "test.module"
 
     def test_get_logger_different_names(self):
         """Test that get_logger returns different loggers for different names."""
-        logger1 = get_logger('module1')
-        logger2 = get_logger('module2')
+        logger1 = get_logger("module1")
+        logger2 = get_logger("module2")
 
         assert logger1 is not logger2
         assert logger1.name != logger2.name
@@ -247,7 +241,7 @@ class TestQuickSetup:
         """Test that quick_setup returns the root logger."""
         logger = quick_setup()
 
-        assert logger.name == 'root'
+        assert logger.name == "root"
 
 
 class TestLoggingIntegration:
@@ -259,12 +253,12 @@ class TestLoggingIntegration:
         log_file2 = tmp_path / "test2.log"
 
         # First setup
-        setup_logging(log_file=str(log_file1), level='DEBUG')
+        setup_logging(log_file=str(log_file1), level="DEBUG")
         logger = logging.getLogger(__name__)
         logger.debug("Message 1")
 
         # Second setup (should override)
-        setup_logging(log_file=str(log_file2), level='INFO')
+        setup_logging(log_file=str(log_file2), level="INFO")
         logger.info("Message 2")
 
         # Both files should exist
@@ -274,7 +268,7 @@ class TestLoggingIntegration:
     def test_logging_all_levels(self, tmp_path):
         """Test logging at all levels."""
         log_file = tmp_path / "all_levels.log"
-        setup_logging(log_file=str(log_file), level='DEBUG')
+        setup_logging(log_file=str(log_file), level="DEBUG")
 
         logger = get_logger(__name__)
         logger.debug("Debug message")
@@ -295,8 +289,8 @@ class TestLoggingIntegration:
         log_file = tmp_path / "parent.log"
         setup_logging(log_file=str(log_file))
 
-        parent_logger = get_logger('parent')
-        child_logger = get_logger('parent.child')
+        parent_logger = get_logger("parent")
+        child_logger = get_logger("parent.child")
 
         child_logger.info("Child message")
 
@@ -326,7 +320,7 @@ class TestLoggingEdgeCases:
 
     def test_setup_logging_empty_string_level(self):
         """Test setup_logging with empty string level."""
-        setup_logging(level='')
+        setup_logging(level="")
         # Should use default (INFO)
         logger = logging.getLogger()
         assert logger.level == logging.INFO
@@ -340,14 +334,14 @@ class TestLoggingEdgeCases:
 
     def test_setup_logging_empty_format(self):
         """Test setup_logging with empty format string."""
-        setup_logging(format_string='')
+        setup_logging(format_string="")
         logger = logging.getLogger(__name__)
         logger.info("Test")
         # Should not crash
 
     def test_get_logger_empty_name(self):
         """Test get_logger with empty name."""
-        logger = get_logger('')
+        logger = get_logger("")
         assert isinstance(logger, logging.Logger)
 
     def test_concurrent_logging(self, tmp_path):
@@ -358,7 +352,7 @@ class TestLoggingEdgeCases:
         setup_logging(log_file=str(log_file))
 
         def log_messages(thread_id):
-            logger = get_logger(f'thread_{thread_id}')
+            logger = get_logger(f"thread_{thread_id}")
             for i in range(10):
                 logger.info(f"Thread {thread_id} message {i}")
 

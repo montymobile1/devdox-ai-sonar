@@ -3,13 +3,13 @@
 import pytest
 import json
 from pathlib import Path
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import patch, MagicMock
 import click
 from click import BadParameter
 from click.testing import CliRunner
 
 from devdox_ai_sonar.cli import (
-    main ,
+    main,
     _display_fix_results,
     _apply_fixes_if_requested,
     analyze,
@@ -23,8 +23,9 @@ from devdox_ai_sonar.cli import (
     _fetch_fixable_security_issues,
     _generate_fixes,
     _parse_filters,
-    _save_results)
-from devdox_ai_sonar.models import (
+    _save_results,
+)
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     AnalysisResult,
@@ -41,6 +42,7 @@ def runner():
     """Create CLI test runner."""
     return CliRunner()
 
+
 @pytest.fixture
 def sample_issue():
     """Sample SonarIssue for testing."""
@@ -54,8 +56,9 @@ def sample_issue():
         type=IssueType.CODE_SMELL,
         first_line=10,
         last_line=10,
-        file="src/test.py"
+        file="src/test.py",
     )
+
 
 @pytest.fixture
 def sample_fix():
@@ -70,14 +73,16 @@ def sample_fix():
         file_path="src/test.py",
         sonar_line_number=10,
         line_number=10,
-        last_line_number=10
+        last_line_number=10,
     )
+
 
 @pytest.fixture
 def mock_analyzer():
     """Mock SonarCloudAnalyzer."""
     analyzer = MagicMock()
     return analyzer
+
 
 @pytest.fixture
 def mock_llm_fixer():
@@ -104,7 +109,7 @@ def sample_analysis_result():
         type=IssueType.CODE_SMELL,
         file="src/test.py",
     )
-    
+
     return AnalysisResult(
         project_key="test-project",
         organization="test-org",
@@ -135,8 +140,9 @@ def sample_security_issue():
         message="Security issue",
         first_line=50,
         last_line=55,
-        file="src/security.py"
+        file="src/security.py",
     )
+
 
 @pytest.fixture
 def sample_fix_suggestion():
@@ -160,7 +166,6 @@ class TestCLIBasics:
 
     def test_main_help(self, runner):
         """Test main command help."""
-        
 
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
@@ -168,14 +173,12 @@ class TestCLIBasics:
 
     def test_main_version(self, runner):
         """Test version option."""
-        
 
         result = runner.invoke(main, ["--version"])
         assert result.exit_code == 0
 
     def test_main_verbose_flag(self, runner):
         """Test verbose flag is accepted."""
-        
 
         result = runner.invoke(main, ["--verbose", "--help"])
         assert result.exit_code == 0
@@ -187,7 +190,6 @@ class TestAnalyzeCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_analyze_basic(self, mock_analyzer_class, runner, sample_analysis_result):
         """Test basic analyze command."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -196,9 +198,12 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
             ],
         )
 
@@ -206,9 +211,10 @@ class TestAnalyzeCommand:
         mock_analyzer.get_project_issues.assert_called_once()
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_branch(self, mock_analyzer_class, runner, sample_analysis_result):
+    def test_analyze_with_branch(
+        self, mock_analyzer_class, runner, sample_analysis_result
+    ):
         """Test analyze with branch parameter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -217,10 +223,14 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--branch", "develop",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--branch",
+                "develop",
             ],
         )
 
@@ -229,9 +239,10 @@ class TestAnalyzeCommand:
         assert call_args[1]["branch"] == "develop"
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_pull_request(self, mock_analyzer_class, runner, sample_analysis_result):
+    def test_analyze_with_pull_request(
+        self, mock_analyzer_class, runner, sample_analysis_result
+    ):
         """Test analyze with pull request parameter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -240,19 +251,24 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--pull-request", "123",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--pull-request",
+                "123",
             ],
         )
 
         assert result.exit_code == 0
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_severity_filter(self, mock_analyzer_class, runner, sample_analysis_result):
+    def test_analyze_with_severity_filter(
+        self, mock_analyzer_class, runner, sample_analysis_result
+    ):
         """Test analyze with severity filter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -261,20 +277,26 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--severity", "BLOCKER",
-                "--severity", "CRITICAL",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--severity",
+                "BLOCKER",
+                "--severity",
+                "CRITICAL",
             ],
         )
 
         assert result.exit_code == 0
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_type_filter(self, mock_analyzer_class, runner, sample_analysis_result):
+    def test_analyze_with_type_filter(
+        self, mock_analyzer_class, runner, sample_analysis_result
+    ):
         """Test analyze with type filter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -283,20 +305,26 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--type", "BUG",
-                "--type", "VULNERABILITY",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--type",
+                "BUG",
+                "--type",
+                "VULNERABILITY",
             ],
         )
 
         assert result.exit_code == 0
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_limit(self, mock_analyzer_class, runner, sample_analysis_result):
+    def test_analyze_with_limit(
+        self, mock_analyzer_class, runner, sample_analysis_result
+    ):
         """Test analyze with issue limit."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -305,19 +333,24 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--limit", "10",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--limit",
+                "10",
             ],
         )
 
         assert result.exit_code == 0
 
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_analyze_with_output_file(self, mock_analyzer_class, runner, sample_analysis_result, tmp_path):
+    def test_analyze_with_output_file(
+        self, mock_analyzer_class, runner, sample_analysis_result, tmp_path
+    ):
         """Test analyze with output file."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = sample_analysis_result
@@ -328,16 +361,20 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--output", str(output_file),
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--output",
+                str(output_file),
             ],
         )
 
         assert result.exit_code == 0
         assert output_file.exists()
-        
+
         # Verify JSON content
         with open(output_file) as f:
             data = json.load(f)
@@ -346,7 +383,6 @@ class TestAnalyzeCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_analyze_no_issues_found(self, mock_analyzer_class, runner):
         """Test analyze when no issues are returned."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = None
@@ -355,9 +391,12 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
             ],
         )
 
@@ -367,7 +406,6 @@ class TestAnalyzeCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_analyze_exception_handling(self, mock_analyzer_class, runner):
         """Test analyze error handling."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.side_effect = Exception("API Error")
@@ -376,9 +414,12 @@ class TestAnalyzeCommand:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
             ],
         )
 
@@ -391,9 +432,15 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_basic(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path, sample_fix_suggestion):
+    def test_fix_basic(
+        self,
+        mock_analyzer_class,
+        mock_fixer_class,
+        runner,
+        tmp_path,
+        sample_fix_suggestion,
+    ):
         """Test basic fix command."""
-        
 
         # Setup mocks
         mock_analyzer = MagicMock()
@@ -409,12 +456,18 @@ class TestFixCommand:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--provider", "openai",
-                "--api-key", "test-api-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-api-key",
             ],
         )
 
@@ -422,12 +475,13 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_provider_options(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_provider_options(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix command with different providers."""
-        
 
         providers = ["openai", "gemini", "togetherai"]
-        
+
         for provider in providers:
             mock_analyzer = MagicMock()
             mock_analyzer.get_fixable_issues.return_value = []
@@ -442,12 +496,18 @@ class TestFixCommand:
             result = runner.invoke(
                 fix,
                 [
-                    "--token", "test-token",
-                    "--organization", "test-org",
-                    "--project", "test-project",
-                    "--project-path", str(tmp_path),
-                    "--provider", provider,
-                    "--api-key", "test-key",
+                    "--token",
+                    "test-token",
+                    "--organization",
+                    "test-org",
+                    "--project",
+                    "test-project",
+                    "--project-path",
+                    str(tmp_path),
+                    "--provider",
+                    provider,
+                    "--api-key",
+                    "test-key",
                 ],
             )
 
@@ -455,9 +515,10 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_severity_filter(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_severity_filter(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with severity filter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -472,13 +533,20 @@ class TestFixCommand:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--severity", "BLOCKER,CRITICAL",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--severity",
+                "BLOCKER,CRITICAL",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -486,9 +554,10 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_types_filter(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_types_filter(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with types filter."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -503,13 +572,20 @@ class TestFixCommand:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--types", "BUG,CODE_SMELL",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--types",
+                "BUG,CODE_SMELL",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -517,20 +593,28 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_invalid_severity(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_invalid_severity(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with invalid severity."""
-        
 
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--severity", "INVALID",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--severity",
+                "INVALID",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -539,20 +623,28 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_invalid_type(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_invalid_type(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with invalid type."""
-        
 
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--types", "INVALID_TYPE",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--types",
+                "INVALID_TYPE",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -563,7 +655,6 @@ class TestFixCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_fix_dry_run(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
         """Test fix in dry-run mode."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -578,13 +669,19 @@ class TestFixCommand:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
                 "--dry-run",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -592,9 +689,10 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_no_backup(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_no_backup(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix without backup."""
-        
 
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -609,19 +707,25 @@ class TestFixCommand:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
                 "--no-backup",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
         assert result.exit_code == 0
 
-    def test_main_invocation(self,runner):
+    def test_main_invocation(self, runner):
         """Test that the main CLI can be invoked with no commands."""
         result = runner.invoke(main, ["--help"])
         assert result.exit_code == 0
@@ -635,7 +739,7 @@ class TestFixCommand:
 
     def test_get_severity_color_default(self):
         """Test unknown severity returns white."""
-        from devdox_ai_sonar.models import Severity
+
         class FakeSeverity:
             pass
 
@@ -648,7 +752,9 @@ class TestFixCommand:
         mock_analyzer.get_project_issues.side_effect = Exception("Invalid token")
         mock_analyzer_class.return_value = mock_analyzer
 
-        result = runner.invoke(analyze, ["--token", "bad", "--organization", "org", "--project", "proj"])
+        result = runner.invoke(
+            analyze, ["--token", "bad", "--organization", "org", "--project", "proj"]
+        )
         assert result.exit_code == 1
         assert "Error" in result.output
 
@@ -659,7 +765,7 @@ class TestFixCommand:
         assert result.exit_code != 0
 
     @patch("devdox_ai_sonar.cli.click.prompt")
-    def test_select_fixes_invalid_input(self,mock_prompt, sample_fix_suggestion):
+    def test_select_fixes_invalid_input(self, mock_prompt, sample_fix_suggestion):
         """Test interactive fix selection with invalid input."""
         mock_prompt.return_value = "invalid"
         selected = select_fixes_interactively([sample_fix_suggestion])
@@ -667,9 +773,11 @@ class TestFixCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_dry_run_behavior(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_dry_run_behavior(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix dry-run executes without applying changes."""
-        
+
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
         mock_analyzer_class.return_value = mock_analyzer
@@ -677,13 +785,24 @@ class TestFixCommand:
         mock_fixer = MagicMock()
         mock_fixer_class.return_value = mock_fixer
 
-        result = runner.invoke(fix, [
-            "--token", "t", "--organization", "o", "--project", "p",
-            "--project-path", str(tmp_path),
-            "--dry-run",
-            "--provider", "openai",
-            "--api-key", "key"
-        ])
+        result = runner.invoke(
+            fix,
+            [
+                "--token",
+                "t",
+                "--organization",
+                "o",
+                "--project",
+                "p",
+                "--project-path",
+                str(tmp_path),
+                "--dry-run",
+                "--provider",
+                "openai",
+                "--api-key",
+                "key",
+            ],
+        )
         assert result.exit_code == 0
 
     def test_parse_filters_invalid_severity_type(self):
@@ -701,7 +820,6 @@ class TestInspectCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_inspect_basic(self, mock_analyzer_class, runner, tmp_path):
         """Test basic inspect command."""
-        
 
         # Create test project structure
         (tmp_path / "src").mkdir()
@@ -731,7 +849,6 @@ class TestInspectCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_inspect_nonexistent_path(self, mock_analyzer_class, runner):
         """Test inspect with nonexistent path."""
-        
 
         result = runner.invoke(inspect, ["/nonexistent/path"])
 
@@ -740,10 +857,11 @@ class TestInspectCommand:
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
     def test_inspect_exception_handling(self, mock_analyzer_class, runner, tmp_path):
         """Test inspect error handling."""
-        
 
         mock_analyzer = MagicMock()
-        mock_analyzer.analyze_project_directory.side_effect = Exception("Analysis error")
+        mock_analyzer.analyze_project_directory.side_effect = Exception(
+            "Analysis error"
+        )
         mock_analyzer_class.return_value = mock_analyzer
 
         result = runner.invoke(inspect, [str(tmp_path)])
@@ -757,16 +875,12 @@ class TestHelperFunctions:
 
     def test_parse_filters_valid_severity(self):
         """Test parsing valid severity filters."""
-        
 
         valid_types = {"BUG", "CODE_SMELL"}
         valid_severities = {"BLOCKER", "CRITICAL", "MAJOR"}
 
         severity_list, types_list = _parse_filters(
-            "BLOCKER,CRITICAL",
-            None,
-            valid_types,
-            valid_severities
+            "BLOCKER,CRITICAL", None, valid_types, valid_severities
         )
 
         assert severity_list == ["BLOCKER", "CRITICAL"]
@@ -774,16 +888,12 @@ class TestHelperFunctions:
 
     def test_parse_filters_valid_types(self):
         """Test parsing valid type filters."""
-        
 
         valid_types = {"BUG", "CODE_SMELL"}
         valid_severities = {"BLOCKER", "CRITICAL"}
 
         severity_list, types_list = _parse_filters(
-            None,
-            "BUG,CODE_SMELL",
-            valid_types,
-            valid_severities
+            None, "BUG,CODE_SMELL", valid_types, valid_severities
         )
 
         assert severity_list is None
@@ -791,8 +901,6 @@ class TestHelperFunctions:
 
     def test_parse_filters_invalid_severity(self):
         """Test parsing invalid severity."""
-        
-        
 
         valid_types = {"BUG"}
         valid_severities = {"BLOCKER"}
@@ -802,8 +910,6 @@ class TestHelperFunctions:
 
     def test_parse_filters_invalid_type(self):
         """Test parsing invalid type."""
-        
-        
 
         valid_types = {"BUG"}
         valid_severities = {"BLOCKER"}
@@ -826,20 +932,17 @@ class TestDisplayFunctions:
 
     def test_display_analysis_results(self, sample_analysis_result):
         """Test displaying analysis results."""
-        
 
         # Should not raise any exceptions
         _display_analysis_results(sample_analysis_result, limit=None)
 
     def test_display_analysis_results_with_limit(self, sample_analysis_result):
         """Test displaying analysis results with limit."""
-        
 
         _display_analysis_results(sample_analysis_result, limit=5)
 
     def test_display_fix_results(self):
         """Test displaying fix results."""
-        
 
         result = FixResult(
             project_path=Path("/test"),
@@ -854,7 +957,6 @@ class TestDisplayFunctions:
 
     def test_save_results(self, sample_analysis_result, tmp_path):
         """Test saving analysis results."""
-        
 
         output_file = tmp_path / "test_results.json"
         _save_results(sample_analysis_result, str(output_file))
@@ -871,7 +973,6 @@ class TestSelectFixesInteractively:
     @patch("devdox_ai_sonar.cli.click.prompt")
     def test_select_all_fixes(self, mock_prompt, sample_fix_suggestion):
         """Test selecting all fixes."""
-        
 
         mock_prompt.return_value = "all"
         fixes = [sample_fix_suggestion]
@@ -884,7 +985,6 @@ class TestSelectFixesInteractively:
     @patch("devdox_ai_sonar.cli.click.prompt")
     def test_select_no_fixes(self, mock_prompt, sample_fix_suggestion):
         """Test selecting no fixes."""
-        
 
         mock_prompt.return_value = "none"
         fixes = [sample_fix_suggestion]
@@ -896,7 +996,6 @@ class TestSelectFixesInteractively:
     @patch("devdox_ai_sonar.cli.click.prompt")
     def test_select_specific_fixes(self, mock_prompt, sample_fix_suggestion):
         """Test selecting specific fixes by number."""
-        
 
         mock_prompt.return_value = "1"
         fixes = [sample_fix_suggestion]
@@ -908,7 +1007,6 @@ class TestSelectFixesInteractively:
     @patch("devdox_ai_sonar.cli.click.prompt")
     def test_select_invalid_input(self, mock_prompt, sample_fix_suggestion):
         """Test handling invalid input."""
-        
 
         mock_prompt.return_value = "invalid"
         fixes = [sample_fix_suggestion]
@@ -917,12 +1015,15 @@ class TestSelectFixesInteractively:
 
         assert len(selected) == 0
 
+
 class TestFixSecurityIssuesCommand:
     """Tests for fix_security_issues command - COMPLETELY MISSING."""
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_basic(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_basic(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test basic fix_security_issues command."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = []
@@ -937,12 +1038,18 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -951,7 +1058,9 @@ class TestFixSecurityIssuesCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_with_branch(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_with_branch(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix_security_issues with specific branch."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = []
@@ -963,13 +1072,20 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--branch", "develop",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--branch",
+                "develop",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -977,7 +1093,9 @@ class TestFixSecurityIssuesCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_with_pr(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_with_pr(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix_security_issues with pull request."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = []
@@ -989,13 +1107,20 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--pull-request", "123",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--pull-request",
+                "123",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1003,7 +1128,9 @@ class TestFixSecurityIssuesCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_with_max_fixes(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_with_max_fixes(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix_security_issues with max-fixes limit."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = []
@@ -1015,13 +1142,20 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--max-fixes", "5",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--max-fixes",
+                "5",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1029,7 +1163,9 @@ class TestFixSecurityIssuesCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_dry_run(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_dry_run(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix_security_issues in dry-run mode."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = []
@@ -1041,13 +1177,19 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
                 "--dry-run",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1055,7 +1197,9 @@ class TestFixSecurityIssuesCommand:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_security_issues_exception_handling(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_security_issues_exception_handling(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix_security_issues error handling."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.side_effect = Exception("API Error")
@@ -1064,12 +1208,18 @@ class TestFixSecurityIssuesCommand:
         result = runner.invoke(
             fix_security_issues,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1080,6 +1230,7 @@ class TestFixSecurityIssuesCommand:
 # ============================================================================
 # MISSING: select_fixes_interactively EDGE CASES
 # ============================================================================
+
 
 class TestSelectFixesInteractivelyMissing:
     """Missing test cases for select_fixes_interactively."""
@@ -1149,7 +1300,7 @@ class TestSelectFixesInteractivelyMissing:
             file_path="src/very/long/path/to/file.py",
             sonar_line_number=42,
             line_number=42,
-            last_line_number=42
+            last_line_number=42,
         )
 
         mock_prompt.return_value = "none"
@@ -1164,6 +1315,7 @@ class TestSelectFixesInteractivelyMissing:
 # MISSING: HELPER FUNCTION TESTS
 # ============================================================================
 
+
 class TestFetchFixableIssues:
     """Tests for _fetch_fixable_issues helper - MISSING."""
 
@@ -1174,13 +1326,7 @@ class TestFetchFixableIssues:
         mock_analyzer.get_fixable_issues.return_value = [sample_issue]
 
         result = _fetch_fixable_issues(
-            mock_analyzer,
-            "test-project",
-            "main",
-            0,
-            10,
-            None,
-            None
+            mock_analyzer, "test-project", "main", 0, 10, None, None
         )
 
         assert len(result) == 1
@@ -1200,7 +1346,7 @@ class TestFetchFixableIssues:
             0,
             10,
             ["BLOCKER", "CRITICAL"],
-            ["BUG", "VULNERABILITY"]
+            ["BUG", "VULNERABILITY"],
         )
 
         call_args = mock_analyzer.get_fixable_issues.call_args
@@ -1214,13 +1360,7 @@ class TestFetchFixableIssues:
         mock_analyzer.get_fixable_issues.return_value = [sample_issue]
 
         result = _fetch_fixable_issues(
-            mock_analyzer,
-            "test-project",
-            "develop",
-            0,
-            10,
-            None,
-            None
+            mock_analyzer, "test-project", "develop", 0, 10, None, None
         )
 
         call_args = mock_analyzer.get_fixable_issues.call_args
@@ -1231,17 +1371,15 @@ class TestFetchFixableSecurityIssues:
     """Tests for _fetch_fixable_security_issues helper - MISSING."""
 
     @patch("devdox_ai_sonar.cli.Progress")
-    def test_fetch_fixable_security_issues_basic(self, mock_progress, sample_security_issue):
+    def test_fetch_fixable_security_issues_basic(
+        self, mock_progress, sample_security_issue
+    ):
         """Test basic fetch_fixable_security_issues."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_security_issues.return_value = [sample_security_issue]
 
         result = _fetch_fixable_security_issues(
-            mock_analyzer,
-            "test-project",
-            "main",
-            0,
-            10
+            mock_analyzer, "test-project", "main", 0, 10
         )
 
         assert len(result) == 1
@@ -1254,11 +1392,7 @@ class TestFetchFixableSecurityIssues:
         mock_analyzer.get_fixable_security_issues.return_value = []
 
         result = _fetch_fixable_security_issues(
-            mock_analyzer,
-            "test-project",
-            "",
-            123,
-            10
+            mock_analyzer, "test-project", "", 123, 10
         )
 
         call_args = mock_analyzer.get_fixable_security_issues.call_args
@@ -1269,7 +1403,9 @@ class TestGenerateFixes:
     """Tests for _generate_fixes helper - MISSING."""
 
     @patch("devdox_ai_sonar.cli.Progress")
-    def test_generate_fixes_basic(self, mock_progress, sample_issue, sample_fix, tmp_path):
+    def test_generate_fixes_basic(
+        self, mock_progress, sample_issue, sample_fix, tmp_path
+    ):
         """Test basic fix generation."""
         mock_fixer = MagicMock()
         mock_fixer.generate_fix.return_value = sample_fix
@@ -1277,18 +1413,15 @@ class TestGenerateFixes:
         mock_analyzer = MagicMock()
         mock_analyzer.get_rule_by_key.return_value = {"name": "Test Rule"}
 
-        result = _generate_fixes(
-            mock_fixer,
-            mock_analyzer,
-            [sample_issue],
-            tmp_path
-        )
+        result = _generate_fixes(mock_fixer, mock_analyzer, [sample_issue], tmp_path)
 
         assert len(result) == 1
         assert result[0] == sample_fix
 
     @patch("devdox_ai_sonar.cli.Progress")
-    def test_generate_fixes_with_none_result(self, mock_progress, sample_issue, tmp_path):
+    def test_generate_fixes_with_none_result(
+        self, mock_progress, sample_issue, tmp_path
+    ):
         """Test fix generation when fixer returns None."""
         mock_fixer = MagicMock()
         mock_fixer.generate_fix.return_value = None
@@ -1296,18 +1429,15 @@ class TestGenerateFixes:
         mock_analyzer = MagicMock()
         mock_analyzer.get_rule_by_key.return_value = None
 
-        result = _generate_fixes(
-            mock_fixer,
-            mock_analyzer,
-            [sample_issue],
-            tmp_path
-        )
+        result = _generate_fixes(mock_fixer, mock_analyzer, [sample_issue], tmp_path)
 
         # Should handle None results gracefully
         assert len(result) == 0
 
     @patch("devdox_ai_sonar.cli.Progress")
-    def test_generate_fixes_multiple_issues(self, mock_progress, sample_issue, sample_fix, tmp_path):
+    def test_generate_fixes_multiple_issues(
+        self, mock_progress, sample_issue, sample_fix, tmp_path
+    ):
         """Test generating fixes for multiple issues."""
         mock_fixer = MagicMock()
         mock_fixer.generate_fix.return_value = sample_fix
@@ -1317,12 +1447,7 @@ class TestGenerateFixes:
 
         issues = [sample_issue] * 5
 
-        result = _generate_fixes(
-            mock_fixer,
-            mock_analyzer,
-            issues,
-            tmp_path
-        )
+        result = _generate_fixes(mock_fixer, mock_analyzer, issues, tmp_path)
 
         assert len(result) == 5
 
@@ -1342,7 +1467,7 @@ class TestApplyFixesIfRequested:
             issues=[sample_issue],
             fixer=mock_fixer,
             project_path=tmp_path,
-            backup=True
+            backup=True,
         )
 
         # Should not call apply_fixes_with_validation
@@ -1350,7 +1475,9 @@ class TestApplyFixesIfRequested:
 
     @patch("devdox_ai_sonar.cli.select_fixes_interactively")
     @patch("devdox_ai_sonar.cli.click.confirm")
-    def test_apply_fixes_with_user_confirmation(self, mock_confirm, mock_select, sample_fix, sample_issue, tmp_path):
+    def test_apply_fixes_with_user_confirmation(
+        self, mock_confirm, mock_select, sample_fix, sample_issue, tmp_path
+    ):
         """Test applying fixes with user confirmation."""
         mock_select.return_value = [sample_fix]
         mock_confirm.return_value = True
@@ -1362,7 +1489,7 @@ class TestApplyFixesIfRequested:
             successful_fixes=[sample_fix],
             failed_fixes=[],
             backup_created=True,
-            backup_path=tmp_path / "backup"
+            backup_path=tmp_path / "backup",
         )
 
         _apply_fixes_if_requested(
@@ -1372,14 +1499,16 @@ class TestApplyFixesIfRequested:
             issues=[sample_issue],
             fixer=mock_fixer,
             project_path=tmp_path,
-            backup=True
+            backup=True,
         )
 
         mock_fixer.apply_fixes_with_validation.assert_called_once()
 
     @patch("devdox_ai_sonar.cli.select_fixes_interactively")
     @patch("devdox_ai_sonar.cli.click.confirm")
-    def test_apply_fixes_user_declines(self, mock_confirm, mock_select, sample_fix, sample_issue, tmp_path):
+    def test_apply_fixes_user_declines(
+        self, mock_confirm, mock_select, sample_fix, sample_issue, tmp_path
+    ):
         """Test when user declines to apply fixes."""
         mock_select.return_value = [sample_fix]
         mock_confirm.return_value = False
@@ -1393,14 +1522,16 @@ class TestApplyFixesIfRequested:
             issues=[sample_issue],
             fixer=mock_fixer,
             project_path=tmp_path,
-            backup=True
+            backup=True,
         )
 
         # Should not apply fixes
         mock_fixer.apply_fixes_with_validation.assert_not_called()
 
     @patch("devdox_ai_sonar.cli.select_fixes_interactively")
-    def test_apply_fixes_no_selection(self, mock_select, sample_fix, sample_issue, tmp_path):
+    def test_apply_fixes_no_selection(
+        self, mock_select, sample_fix, sample_issue, tmp_path
+    ):
         """Test when no fixes are selected."""
         mock_select.return_value = []
 
@@ -1413,7 +1544,7 @@ class TestApplyFixesIfRequested:
             issues=[sample_issue],
             fixer=mock_fixer,
             project_path=tmp_path,
-            backup=True
+            backup=True,
         )
 
         # Should not apply fixes
@@ -1428,7 +1559,7 @@ class TestApplyFixesIfRequested:
             successful_fixes=[],
             failed_fixes=[],
             backup_created=False,
-            backup_path=None
+            backup_path=None,
         )
 
         _apply_fixes_if_requested(
@@ -1438,7 +1569,7 @@ class TestApplyFixesIfRequested:
             issues=[sample_issue],
             fixer=mock_fixer,
             project_path=tmp_path,
-            backup=True
+            backup=True,
         )
 
         # Should call with dry_run=True
@@ -1450,6 +1581,7 @@ class TestApplyFixesIfRequested:
 # MISSING: DISPLAY FUNCTION EDGE CASES
 # ============================================================================
 
+
 class TestDisplayFunctionsEdgeCases:
     """Missing edge case tests for display functions."""
 
@@ -1460,7 +1592,7 @@ class TestDisplayFunctionsEdgeCases:
             organization="org",
             branch="main",
             total_issues=0,
-            issues=[]
+            issues=[],
         )
 
         # Should not crash
@@ -1479,7 +1611,7 @@ class TestDisplayFunctionsEdgeCases:
                 message=f"Issue {severity.value}",
                 type=IssueType.CODE_SMELL,
                 first_line=10,
-                last_line=10
+                last_line=10,
             )
             issues.append(issue)
 
@@ -1488,7 +1620,7 @@ class TestDisplayFunctionsEdgeCases:
             organization="org",
             branch="main",
             total_issues=len(issues),
-            issues=issues
+            issues=issues,
         )
 
         _display_analysis_results(result, limit=None)
@@ -1504,7 +1636,7 @@ class TestDisplayFunctionsEdgeCases:
             message="x" * 1000,  # Very long message
             type=IssueType.CODE_SMELL,
             first_line=10,
-            last_line=10
+            last_line=10,
         )
 
         result = AnalysisResult(
@@ -1512,7 +1644,7 @@ class TestDisplayFunctionsEdgeCases:
             organization="org",
             branch="main",
             total_issues=1,
-            issues=[issue]
+            issues=[issue],
         )
 
         # Should truncate message properly
@@ -1530,7 +1662,7 @@ class TestDisplayFunctionsEdgeCases:
             type=IssueType.CODE_SMELL,
             file=None,
             first_line=None,
-            last_line=None
+            last_line=None,
         )
 
         result = AnalysisResult(
@@ -1538,7 +1670,7 @@ class TestDisplayFunctionsEdgeCases:
             organization="org",
             branch="main",
             total_issues=1,
-            issues=[issue]
+            issues=[issue],
         )
 
         # Should handle missing info gracefully
@@ -1552,7 +1684,7 @@ class TestDisplayFunctionsEdgeCases:
             successful_fixes=[sample_fix] * 5,
             failed_fixes=[],
             backup_created=True,
-            backup_path=tmp_path / "backup"
+            backup_path=tmp_path / "backup",
         )
 
         _display_fix_results(result)
@@ -1564,11 +1696,10 @@ class TestDisplayFunctionsEdgeCases:
             total_fixes_attempted=5,
             successful_fixes=[],
             failed_fixes=[
-                {"issue_key": f"key-{i}", "error": f"Error {i}"}
-                for i in range(5)
+                {"issue_key": f"key-{i}", "error": f"Error {i}"} for i in range(5)
             ],
             backup_created=False,
-            backup_path=None
+            backup_path=None,
         )
 
         _display_fix_results(result)
@@ -1584,7 +1715,7 @@ class TestDisplayFunctionsEdgeCases:
                 {"issue_key": "test"},  # Missing error message
             ],
             backup_created=False,
-            backup_path=None
+            backup_path=None,
         )
 
         # Should handle gracefully
@@ -1595,6 +1726,7 @@ class TestDisplayFunctionsEdgeCases:
 # MISSING: PARSE FILTERS EDGE CASES
 # ============================================================================
 
+
 class TestParseFiltersEdgeCases:
     """Missing edge case tests for _parse_filters."""
 
@@ -1604,7 +1736,7 @@ class TestParseFiltersEdgeCases:
             "  BLOCKER  ,  CRITICAL  ",
             "  BUG  ,  CODE_SMELL  ",
             {"BUG", "CODE_SMELL"},
-            {"BLOCKER", "CRITICAL"}
+            {"BLOCKER", "CRITICAL"},
         )
 
         assert "BLOCKER" in severity_list
@@ -1616,23 +1748,14 @@ class TestParseFiltersEdgeCases:
         """Test that filters are case-sensitive."""
         # The implementation doesn't do case conversion,
         # so lowercase should fail
-        
 
         with pytest.raises(BadParameter):
-            _parse_filters(
-                "blocker",  # lowercase
-                None,
-                {"BUG"},
-                {"BLOCKER"}
-            )
+            _parse_filters("blocker", None, {"BUG"}, {"BLOCKER"})  # lowercase
 
     def test_parse_filters_single_value(self):
         """Test parsing single filter value."""
         severity_list, types_list = _parse_filters(
-            "BLOCKER",
-            "BUG",
-            {"BUG"},
-            {"BLOCKER"}
+            "BLOCKER", "BUG", {"BUG"}, {"BLOCKER"}
         )
 
         assert severity_list == ["BLOCKER"]
@@ -1648,20 +1771,17 @@ class TestParseFiltersEdgeCases:
 
     def test_parse_filters_partial_invalid(self):
         """Test with mix of valid and invalid values."""
-        
 
         with pytest.raises(BadParameter):
             _parse_filters(
-                "BLOCKER,INVALID,CRITICAL",
-                None,
-                {"BUG"},
-                {"BLOCKER", "CRITICAL"}
+                "BLOCKER,INVALID,CRITICAL", None, {"BUG"}, {"BLOCKER", "CRITICAL"}
             )
 
 
 # ============================================================================
 # MISSING: ANALYZE COMMAND EDGE CASES
 # ============================================================================
+
 
 class TestAnalyzeCommandEdgeCases:
     """Missing edge case tests for analyze command."""
@@ -1671,10 +1791,7 @@ class TestAnalyzeCommandEdgeCases:
         """Test analyze with empty severity list."""
         mock_analyzer = MagicMock()
         result_obj = AnalysisResult(
-            project_key="test",
-            organization="org",
-            total_issues=0,
-            issues=[]
+            project_key="test", organization="org", total_issues=0, issues=[]
         )
         mock_analyzer.get_project_issues.return_value = result_obj
         mock_analyzer_class.return_value = mock_analyzer
@@ -1682,9 +1799,12 @@ class TestAnalyzeCommandEdgeCases:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
                 "--severity",  # Empty value
             ],
         )
@@ -1705,13 +1825,10 @@ class TestAnalyzeCommandEdgeCases:
             message="Test",
             type=IssueType.CODE_SMELL,
             first_line=10,
-            last_line=10
+            last_line=10,
         )
         result_obj = AnalysisResult(
-            project_key="test",
-            organization="org",
-            total_issues=1,
-            issues=[issue]
+            project_key="test", organization="org", total_issues=1, issues=[issue]
         )
         mock_analyzer.get_project_issues.return_value = result_obj
         mock_analyzer_class.return_value = mock_analyzer
@@ -1719,10 +1836,14 @@ class TestAnalyzeCommandEdgeCases:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--limit", "0",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--limit",
+                "0",
             ],
         )
 
@@ -1734,10 +1855,14 @@ class TestAnalyzeCommandEdgeCases:
         result = runner.invoke(
             analyze,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--limit", "-1",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--limit",
+                "-1",
             ],
         )
 
@@ -1749,12 +1874,15 @@ class TestAnalyzeCommandEdgeCases:
 # MISSING: FIX COMMAND EDGE CASES
 # ============================================================================
 
+
 class TestFixCommandEdgeCases:
     """Missing edge case tests for fix command."""
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_interactive_flag_no_issues(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_interactive_flag_no_issues(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test interactive mode when no issues found."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -1766,12 +1894,18 @@ class TestFixCommandEdgeCases:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1780,7 +1914,9 @@ class TestFixCommandEdgeCases:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_empty_severity_filter(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_empty_severity_filter(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with empty severity filter."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -1792,13 +1928,20 @@ class TestFixCommandEdgeCases:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--severity", "",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--severity",
+                "",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1806,7 +1949,9 @@ class TestFixCommandEdgeCases:
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_fix_with_zero_max_fixes(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_fix_with_zero_max_fixes(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test fix with max-fixes=0."""
         mock_analyzer = MagicMock()
         mock_analyzer.get_fixable_issues.return_value = []
@@ -1818,13 +1963,20 @@ class TestFixCommandEdgeCases:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
-                "--max-fixes", "0",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
+                "--max-fixes",
+                "0",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1835,6 +1987,7 @@ class TestFixCommandEdgeCases:
 # ============================================================================
 # MISSING: SAVE RESULTS EDGE CASES
 # ============================================================================
+
 
 class TestSaveResultsEdgeCases:
     """Missing edge case tests for _save_results."""
@@ -1853,14 +2006,11 @@ class TestSaveResultsEdgeCases:
             message="Test",
             type=IssueType.CODE_SMELL,
             first_line=10,
-            last_line=10
+            last_line=10,
         )
 
         result = AnalysisResult(
-            project_key="test",
-            organization="org",
-            total_issues=1,
-            issues=[issue]
+            project_key="test", organization="org", total_issues=1, issues=[issue]
         )
 
         _save_results(result, str(output_file))
@@ -1883,14 +2033,11 @@ class TestSaveResultsEdgeCases:
             message="Test with émojis 🎉",
             type=IssueType.CODE_SMELL,
             first_line=10,
-            last_line=10
+            last_line=10,
         )
 
         result = AnalysisResult(
-            project_key="test",
-            organization="org",
-            total_issues=1,
-            issues=[issue]
+            project_key="test", organization="org", total_issues=1, issues=[issue]
         )
 
         output_file = tmp_path / "unicode.json"
@@ -1898,7 +2045,7 @@ class TestSaveResultsEdgeCases:
 
         # Should handle unicode properly
         assert output_file.exists()
-        with open(output_file, encoding='utf-8') as f:
+        with open(output_file, encoding="utf-8") as f:
             data = json.load(f)
             assert "日本語" in data["issues"][0]["key"]
 
@@ -1907,12 +2054,15 @@ class TestSaveResultsEdgeCases:
 # MISSING: INTEGRATION TESTS
 # ============================================================================
 
+
 class TestCLIIntegration:
     """Integration tests for complete CLI workflows."""
 
     @patch("devdox_ai_sonar.cli.LLMFixer")
     @patch("devdox_ai_sonar.cli.SonarCloudAnalyzer")
-    def test_complete_fix_workflow(self, mock_analyzer_class, mock_fixer_class, runner, tmp_path):
+    def test_complete_fix_workflow(
+        self, mock_analyzer_class, mock_fixer_class, runner, tmp_path
+    ):
         """Test complete fix workflow from analysis to application."""
         # Setup
         issue = SonarIssue(
@@ -1925,7 +2075,7 @@ class TestCLIIntegration:
             type=IssueType.CODE_SMELL,
             first_line=10,
             last_line=10,
-            file="src/test.py"
+            file="src/test.py",
         )
 
         fix_suggestion = FixSuggestion(
@@ -1938,7 +2088,7 @@ class TestCLIIntegration:
             file_path="src/test.py",
             sonar_line_number=10,
             line_number=10,
-            last_line_number=10
+            last_line_number=10,
         )
 
         mock_analyzer = MagicMock()
@@ -1957,7 +2107,7 @@ class TestCLIIntegration:
             successful_fixes=[fix_suggestion],
             failed_fixes=[],
             backup_created=True,
-            backup_path=tmp_path / "backup"
+            backup_path=tmp_path / "backup",
         )
         mock_fixer_class.return_value = mock_fixer
 
@@ -1965,13 +2115,19 @@ class TestCLIIntegration:
         result = runner.invoke(
             fix,
             [
-                "--token", "test-token",
-                "--organization", "test-org",
-                "--project", "test-project",
-                "--project-path", str(tmp_path),
+                "--token",
+                "test-token",
+                "--organization",
+                "test-org",
+                "--project",
+                "test-project",
+                "--project-path",
+                str(tmp_path),
                 "--dry-run",
-                "--provider", "openai",
-                "--api-key", "test-key",
+                "--provider",
+                "openai",
+                "--api-key",
+                "test-key",
             ],
         )
 
@@ -1979,6 +2135,7 @@ class TestCLIIntegration:
         assert result.exit_code == 0
         mock_analyzer.get_fixable_issues.assert_called_once()
         mock_fixer.generate_fix.assert_called_once()
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

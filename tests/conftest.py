@@ -2,8 +2,8 @@
 
 import pytest
 from pathlib import Path
-from unittest.mock import Mock, MagicMock
-from devdox_ai_sonar.models import (
+from unittest.mock import Mock
+from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
     AnalysisResult,
@@ -174,8 +174,8 @@ def sample_fix_suggestion():
     """Create a sample fix suggestion."""
     return FixSuggestion(
         issue_key="test-project:src/example.py:S1481",
-        original_code='    unused_var = 42\n    return unused_var',
-        fixed_code='    return 42',
+        original_code="    unused_var = 42\n    return unused_var",
+        fixed_code="    return 42",
         explanation="Removed unused variable assignment and directly returned the value",
         confidence=0.95,
         llm_model="gpt-4",
@@ -397,9 +397,7 @@ def create_test_file(directory: Path, filename: str, content: str) -> Path:
 
 def pytest_configure(config):
     """Configure pytest with custom markers."""
-    config.addinivalue_line(
-        "markers", "integration: mark test as an integration test"
-    )
+    config.addinivalue_line("markers", "integration: mark test as an integration test")
     config.addinivalue_line("markers", "slow: mark test as slow running")
     config.addinivalue_line(
         "markers", "requires_api_key: mark test as requiring API key"

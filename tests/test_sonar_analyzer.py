@@ -4,8 +4,9 @@ import pytest
 import requests
 from unittest.mock import Mock, patch
 from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
-from devdox_ai_sonar.models import (
-SecurityAnalysisResult,SonarSecurityIssue,
+from devdox_ai_sonar.models.sonar import (
+    SecurityAnalysisResult,
+    SonarSecurityIssue,
     Severity,
     IssueType,
     Impact,
@@ -24,11 +25,13 @@ def mock_session():
 @pytest.fixture
 def analyzer(mock_session):
     """Create a SonarCloudAnalyzer with mocked session."""
-    with patch("devdox_ai_sonar.sonar_analyzer.requests.Session", return_value=mock_session):
-      
+    with patch(
+        "devdox_ai_sonar.sonar_analyzer.requests.Session", return_value=mock_session
+    ):
 
         analyzer = SonarCloudAnalyzer(
-            token="test-token", organization="test-org",
+            token="test-token",
+            organization="test-org",
         )
         analyzer.session = mock_session
         return analyzer
@@ -74,11 +77,8 @@ class TestSonarCloudAnalyzerInitialization:
     def test_initialization_with_defaults(self):
         """Test analyzer initialization with default values."""
         with patch("devdox_ai_sonar.sonar_analyzer.requests.Session"):
-          
 
-            analyzer = SonarCloudAnalyzer(
-                token="test-token", organization="test-org"
-            )
+            analyzer = SonarCloudAnalyzer(token="test-token", organization="test-org")
 
             assert analyzer.token == "test-token"
             assert analyzer.organization == "test-org"
@@ -88,7 +88,6 @@ class TestSonarCloudAnalyzerInitialization:
     def test_initialization_with_custom_params(self):
         """Test analyzer initialization with custom parameters."""
         with patch("devdox_ai_sonar.sonar_analyzer.requests.Session"):
-          
 
             analyzer = SonarCloudAnalyzer(
                 token="test-token",
@@ -122,16 +121,13 @@ class TestGetProjectIssues:
 
         analyzer.session.get.return_value = mock_response
 
-        result = analyzer.get_project_issues(
-            project_key="test-project", branch="main"
-        )
+        result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
         assert result is not None
         assert result.project_key == "test-project"
         assert result.total_issues == 1
         assert len(result.issues) == 1
         assert result.issues[0].rule == "python:S1481"
-
 
     def test_get_project_issues_with_filters(self, analyzer):
         """Test issue retrieval with filters."""
@@ -174,21 +170,15 @@ class TestGetProjectIssues:
         result = analyzer.get_project_issues(
             project_key="nonexistent-project",
             branch="main",
-
         )
 
         assert result is None
-
-
 
     def test_get_project_issues_timeout(self, analyzer):
         """Test handling of request timeout."""
         analyzer.session.get.side_effect = requests.Timeout()
 
-
-        result = analyzer.get_project_issues(
-            project_key="test-project", branch="main"
-        )
+        result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
         assert result is None
 
@@ -235,7 +225,7 @@ class TestGetProjectMetrics:
         analyzer.session.get.return_value = mock_response
 
         metrics = analyzer.get_project_metrics("test-project")
-
+        print("metrics ", metrics)
         assert metrics is not None
         assert metrics.lines_of_code is None
         assert metrics.coverage is None
@@ -245,7 +235,9 @@ class TestGetProjectMetrics:
         mock_response = Mock()
         mock_response.status_code = 403
         mock_response.text = "Forbidden"
-        mock_response.raise_for_status.side_effect = requests.HTTPError(response=mock_response)
+        mock_response.raise_for_status.side_effect = requests.HTTPError(
+            response=mock_response
+        )
 
         analyzer.session.get.return_value = mock_response
 
@@ -287,11 +279,51 @@ class TestParseIssues:
     def test_parse_issues_severity_mapping(self, analyzer):
         """Test severity enum mapping."""
         test_data = [
-            {"severity": "BLOCKER", "type": "BUG", "key": "1", "rule": "rule1", "component": "c", "project": "p", "message": "m"},
-            {"severity": "CRITICAL", "type": "BUG", "key": "2", "rule": "rule2", "component": "c", "project": "p", "message": "m"},
-            {"severity": "MAJOR", "type": "BUG", "key": "3", "rule": "rule3", "component": "c", "project": "p", "message": "m"},
-            {"severity": "MINOR", "type": "BUG", "key": "4", "rule": "rule4", "component": "c", "project": "p", "message": "m"},
-            {"severity": "INFO", "type": "BUG", "key": "5", "rule": "rule5", "component": "c", "project": "p", "message": "m"},
+            {
+                "severity": "BLOCKER",
+                "type": "BUG",
+                "key": "1",
+                "rule": "rule1",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+            },
+            {
+                "severity": "CRITICAL",
+                "type": "BUG",
+                "key": "2",
+                "rule": "rule2",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+            },
+            {
+                "severity": "MAJOR",
+                "type": "BUG",
+                "key": "3",
+                "rule": "rule3",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+            },
+            {
+                "severity": "MINOR",
+                "type": "BUG",
+                "key": "4",
+                "rule": "rule4",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+            },
+            {
+                "severity": "INFO",
+                "type": "BUG",
+                "key": "5",
+                "rule": "rule5",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+            },
         ]
 
         issues = analyzer._parse_issues(test_data)
@@ -342,9 +374,7 @@ class TestGetFixableIssues:
 
         analyzer.session.get.return_value = mock_response
 
-        fixable = analyzer.get_fixable_issues(
-            project_key="test-project", branch="main"
-        )
+        fixable = analyzer.get_fixable_issues(project_key="test-project", branch="main")
 
         assert isinstance(fixable, list)
         # Should only include issues that are fixable
@@ -374,7 +404,6 @@ class TestGetFixableIssues:
 
 class TestRuleFetching:
     """Test SonarCloud rule fetching."""
-
 
     def test_fetch_all_rules(self, analyzer):
         """Test fetching all rules."""
@@ -423,16 +452,21 @@ class TestRuleFetching:
         assert rule["name"] == "Unused local variables"
 
     def test_infer_root_cause_unused_code(self, analyzer):
-        rule = {"name": "Unused variable", "htmlDesc": "", "tags": ["unused"], "type": "CODE_SMELL"}
+        rule = {
+            "name": "Unused variable",
+            "htmlDesc": "",
+            "tags": ["unused"],
+            "type": "CODE_SMELL",
+        }
         root_cause = analyzer._infer_root_cause(rule)
         assert "Unused code" in root_cause
 
-    def test_infer_root_cause_empty_dic(self,analyzer):
+    def test_infer_root_cause_empty_dic(self, analyzer):
         rule = {}
         result = analyzer._infer_root_cause(rule)
         assert result == "Unknown rule type or insufficient data for analysis"
 
-    def test_infer_root_cause_missing_param(self,analyzer):
+    def test_infer_root_cause_missing_param(self, analyzer):
         rule = {"key": "test-rule"}
         result = analyzer._infer_root_cause(rule)
         assert result == "Unknown rule type or insufficient data for analysis"
@@ -442,22 +476,30 @@ class TestRuleFetching:
             "name": "some strange rule",
             "htmlDesc": "does something unusual",
             "tags": ["custom"],
-            "type": "unknown_type"
+            "type": "unknown_type",
         }
         result = analyzer._infer_root_cause(rule)
         assert result == "Unknown rule type or insufficient data for analysis"
 
-    def test_infer_root_cause_empty_string(self,analyzer):
+    def test_infer_root_cause_empty_string(self, analyzer):
         rule = {"name": "", "htmlDesc": "", "tags": [], "type": ""}
         result = analyzer._infer_root_cause(rule)
         assert result == "Unknown rule type or insufficient data for analysis"
 
-    def test_infer_root_cause_unexcpected_tags(self,analyzer):
-        rule = {"name": "Check for foo", "htmlDesc": "desc", "tags": ["nonexistenttag"], "type": "code_smell"}
+    def test_infer_root_cause_unexcpected_tags(self, analyzer):
+        rule = {
+            "name": "Check for foo",
+            "htmlDesc": "desc",
+            "tags": ["nonexistenttag"],
+            "type": "code_smell",
+        }
         result = analyzer._infer_root_cause(rule)
-        assert result == "Code quality issue that affects readability, maintainability, or follows poor practices"
+        assert (
+            result
+            == "Code quality issue that affects readability, maintainability, or follows poor practices"
+        )
 
-    def test_generate_fix_guidance_null(self,analyzer):
+    def test_generate_fix_guidance_null(self, analyzer):
         rule = {"name": "NullPointerException", "type": "BUG"}
         guidance = analyzer._generate_fix_guidance(rule)
         assert guidance["priority"] == "High"
@@ -468,22 +510,22 @@ class TestRuleFetching:
         result = analyzer._generate_fix_guidance(rule)
         assert result["description"] == "Improve code quality following best practices"
 
-    def test_generate_fix_guidance_missing_name(self,analyzer):
+    def test_generate_fix_guidance_missing_name(self, analyzer):
         rule = {"type": "BUG"}
         result = analyzer._generate_fix_guidance(rule)
         assert result["description"] == "Fix logical error or potential runtime issue"
 
-    def test_generate_fix_guidance_unkown_type(self,analyzer):
+    def test_generate_fix_guidance_unkown_type(self, analyzer):
         rule = {"name": "strange rule", "type": "weird_type"}
         result = analyzer._generate_fix_guidance(rule)
         assert result["description"] == "Improve code quality following best practices"
 
-    def test_generate_fix_guidance_malformd_name(self,analyzer):
+    def test_generate_fix_guidance_malformd_name(self, analyzer):
         rule = {"name": "1234!@#$", "type": ""}
         result = analyzer._generate_fix_guidance(rule)
         assert result["description"] == "Improve code quality following best practices"
 
-    def test_generate_fix_guidance_none_values(self,analyzer):
+    def test_generate_fix_guidance_none_values(self, analyzer):
         rule = {"name": None, "type": None}
         result = analyzer._generate_fix_guidance(rule)
         assert result["description"] == "Improve code quality following best practices"
@@ -494,11 +536,11 @@ class TestContextManager:
 
     def test_context_manager_enter_exit(self):
         """Test using analyzer as context manager."""
-        with patch("devdox_ai_sonar.sonar_analyzer.requests.Session") as mock_session_class:
+        with patch(
+            "devdox_ai_sonar.sonar_analyzer.requests.Session"
+        ) as mock_session_class:
             mock_session = Mock()
             mock_session_class.return_value = mock_session
-
-          
 
             with SonarCloudAnalyzer(
                 token="test-token", organization="test-org"
@@ -507,7 +549,6 @@ class TestContextManager:
 
             # Session should be closed after exiting context
             mock_session.close.assert_called_once()
-
 
 
 class TestProjectAnalysis:
@@ -529,7 +570,6 @@ class TestProjectAnalysis:
         assert analysis["python_files"] >= 3
         assert analysis["has_git"] is True
 
-
     def test_analyze_project_invalid_path(self, analyzer):
         """Test analyzing non-existent project directory."""
         with pytest.raises(ValueError):
@@ -550,9 +590,7 @@ class TestPullRequestAndBranchHandling:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_issues(
-            project_key="test-project",
-            branch="",
-            pull_request_number=123
+            project_key="test-project", branch="", pull_request_number=123
         )
 
         # Verify pull request parameter was used
@@ -574,9 +612,7 @@ class TestPullRequestAndBranchHandling:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_issues(
-            project_key="test-project",
-            branch="develop",
-            pull_request_number=0
+            project_key="test-project", branch="develop", pull_request_number=0
         )
 
         # Verify branch parameter was used
@@ -597,9 +633,7 @@ class TestPullRequestAndBranchHandling:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_issues(
-            project_key="test-project",
-            branch="",
-            pull_request_number=0
+            project_key="test-project", branch="", pull_request_number=0
         )
 
         # Should default to main branch
@@ -612,6 +646,7 @@ class TestPullRequestAndBranchHandling:
 # CRITICAL: Pagination Handling
 # ==============================================================================
 
+
 class TestPaginationHandling:
     """Test pagination for large result sets."""
 
@@ -622,8 +657,16 @@ class TestPaginationHandling:
         response_page1.status_code = 200
         response_page1.json.return_value = {
             "issues": [
-                {"key": f"issue-{i}", "rule": "rule", "component": "c", "project": "p", "message": "m", "type": "BUG"}
-                for i in range(1, 501)],
+                {
+                    "key": f"issue-{i}",
+                    "rule": "rule",
+                    "component": "c",
+                    "project": "p",
+                    "message": "m",
+                    "type": "BUG",
+                }
+                for i in range(1, 501)
+            ],
             "paging": {"total": 1200, "pageIndex": 1, "pageSize": 500},
         }
 
@@ -631,8 +674,16 @@ class TestPaginationHandling:
         response_page2.status_code = 200
         response_page2.json.return_value = {
             "issues": [
-                {"key": f"issue-{i}", "rule": "rule", "component": "c", "project": "p", "message": "m", "type": "BUG"}
-                for i in range(501, 1001)],
+                {
+                    "key": f"issue-{i}",
+                    "rule": "rule",
+                    "component": "c",
+                    "project": "p",
+                    "message": "m",
+                    "type": "BUG",
+                }
+                for i in range(501, 1001)
+            ],
             "paging": {"total": 1200, "pageIndex": 2, "pageSize": 500},
         }
 
@@ -640,12 +691,24 @@ class TestPaginationHandling:
         response_page3.status_code = 200
         response_page3.json.return_value = {
             "issues": [
-                {"key": f"issue-{i}", "rule": "rule", "component": "c", "project": "p", "message": "m", "type": "BUG"}
-                for i in range(1001, 1201)],
+                {
+                    "key": f"issue-{i}",
+                    "rule": "rule",
+                    "component": "c",
+                    "project": "p",
+                    "message": "m",
+                    "type": "BUG",
+                }
+                for i in range(1001, 1201)
+            ],
             "paging": {"total": 1200, "pageIndex": 3, "pageSize": 500},
         }
 
-        analyzer.session.get.side_effect = [response_page1, response_page2, response_page3]
+        analyzer.session.get.side_effect = [
+            response_page1,
+            response_page2,
+            response_page3,
+        ]
 
         result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
@@ -659,14 +722,20 @@ class TestPaginationHandling:
         response_page1 = Mock()
         response_page1.status_code = 200
         response_page1.json.return_value = {
-            "rules": [{"key": f"rule-{i}", "name": f"Rule {i}", "lang": "python"} for i in range(500)],
+            "rules": [
+                {"key": f"rule-{i}", "name": f"Rule {i}", "lang": "python"}
+                for i in range(500)
+            ],
             "total": 1000,
         }
 
         response_page2 = Mock()
         response_page2.status_code = 200
         response_page2.json.return_value = {
-            "rules": [{"key": f"rule-{i}", "name": f"Rule {i}", "lang": "python"} for i in range(500, 1000)],
+            "rules": [
+                {"key": f"rule-{i}", "name": f"Rule {i}", "lang": "python"}
+                for i in range(500, 1000)
+            ],
             "total": 1000,
         }
 
@@ -683,7 +752,15 @@ class TestPaginationHandling:
         response.status_code = 200
         response.json.return_value = {
             "issues": [
-                {"key": "issue-1", "rule": "rule", "component": "c", "project": "p", "message": "m", "type": "BUG"}],
+                {
+                    "key": "issue-1",
+                    "rule": "rule",
+                    "component": "c",
+                    "project": "p",
+                    "message": "m",
+                    "type": "BUG",
+                }
+            ],
             "paging": {"total": 1, "pageIndex": 1, "pageSize": 500},
         }
         analyzer.session.get.return_value = response
@@ -697,6 +774,7 @@ class TestPaginationHandling:
 # ==============================================================================
 # CRITICAL: Error Handling Edge Cases
 # ==============================================================================
+
 
 class TestErrorHandlingEdgeCases:
     """Test error handling for various failure scenarios."""
@@ -735,7 +813,9 @@ class TestErrorHandlingEdgeCases:
 
     def test_get_project_issues_network_error(self, analyzer):
         """Test handling of network connection errors."""
-        analyzer.session.get.side_effect = requests.ConnectionError("Network unavailable")
+        analyzer.session.get.side_effect = requests.ConnectionError(
+            "Network unavailable"
+        )
 
         result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
@@ -769,6 +849,7 @@ class TestErrorHandlingEdgeCases:
 # ==============================================================================
 # CRITICAL: Issue Parsing Edge Cases
 # ==============================================================================
+
 
 class TestIssueParsingEdgeCases:
     """Test parsing of various issue data formats."""
@@ -883,9 +964,7 @@ class TestIssueParsingEdgeCases:
             "message": "Issue",
             "type": "BUG",
             "severity": "MAJOR",
-            "impacts": [
-                {"softwareQuality": "SECURITY", "severity": "HIGH"}
-            ],
+            "impacts": [{"softwareQuality": "SECURITY", "severity": "HIGH"}],
         }
 
         issues = analyzer._parse_issues([issue_data])
@@ -902,9 +981,7 @@ class TestIssueParsingEdgeCases:
             "project": "project",
             "message": "Issue",
             "type": "BUG",
-            "impacts": [
-                {"softwareQuality": "SECURITY", "severity": "INVALID"}
-            ],
+            "impacts": [{"softwareQuality": "SECURITY", "severity": "INVALID"}],
         }
 
         issues = analyzer._parse_issues([issue_data])
@@ -948,6 +1025,7 @@ class TestIssueParsingEdgeCases:
 # CRITICAL: Metrics Parsing Edge Cases
 # ==============================================================================
 
+
 class TestMetricsParsingEdgeCases:
     """Test project metrics parsing edge cases."""
 
@@ -970,8 +1048,8 @@ class TestMetricsParsingEdgeCases:
 
         # Should handle invalid values gracefully
         assert metrics is not None
-        assert metrics.lines_of_code is None
-        assert metrics.coverage is None
+        assert metrics.lines_of_code is 0
+        assert metrics.coverage == float(0.0)
         assert metrics.bugs == 5
 
     def test_get_project_metrics_missing_values(self, analyzer):
@@ -1032,6 +1110,7 @@ class TestMetricsParsingEdgeCases:
 # CRITICAL: Rule Processing and Inference
 # ==============================================================================
 
+
 class TestRuleProcessingEdgeCases:
     """Test rule processing and root cause inference."""
 
@@ -1041,7 +1120,7 @@ class TestRuleProcessingEdgeCases:
             "name": "SQL Injection vulnerability",
             "htmlDesc": "Prevent SQL injection attacks",
             "tags": ["security", "sql"],
-            "type": "VULNERABILITY"
+            "type": "VULNERABILITY",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1054,7 +1133,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Hard-coded password",
             "htmlDesc": "Credentials should not be hardcoded",
             "tags": ["security"],
-            "type": "VULNERABILITY"
+            "type": "VULNERABILITY",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1067,7 +1146,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Cognitive Complexity too high",
             "htmlDesc": "Reduce complexity",
             "tags": ["brain-overload"],
-            "type": "CODE_SMELL"
+            "type": "CODE_SMELL",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1080,7 +1159,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Duplicate code block",
             "htmlDesc": "Remove duplicated code",
             "tags": ["clumsy"],
-            "type": "CODE_SMELL"
+            "type": "CODE_SMELL",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1093,7 +1172,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Empty method",
             "htmlDesc": "Method should not be empty",
             "tags": [],
-            "type": "CODE_SMELL"
+            "type": "CODE_SMELL",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1106,7 +1185,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Resources should be closed",
             "htmlDesc": "File handles must be closed",
             "tags": ["bug"],
-            "type": "BUG"
+            "type": "BUG",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1119,7 +1198,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Thread safety issue",
             "htmlDesc": "Synchronization required",
             "tags": ["multi-threading"],
-            "type": "BUG"
+            "type": "BUG",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1132,7 +1211,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Exception should not be caught",
             "htmlDesc": "Improve error handling",
             "tags": [],
-            "type": "CODE_SMELL"
+            "type": "CODE_SMELL",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1145,7 +1224,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Some security issue",
             "htmlDesc": "Security concern",
             "tags": ["security"],
-            "type": "CODE_SMELL"
+            "type": "CODE_SMELL",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1158,7 +1237,7 @@ class TestRuleProcessingEdgeCases:
             "name": "Logic error",
             "htmlDesc": "Incorrect logic",
             "tags": [],
-            "type": "BUG"
+            "type": "BUG",
         }
 
         root_cause = analyzer._infer_root_cause(rule)
@@ -1169,6 +1248,7 @@ class TestRuleProcessingEdgeCases:
 # ==============================================================================
 # CRITICAL: Fix Guidance Generation
 # ==============================================================================
+
 
 class TestFixGuidanceGeneration:
     """Test generation of fix guidance for different rule types."""
@@ -1252,6 +1332,7 @@ class TestFixGuidanceGeneration:
 # HIGH PRIORITY: HTML Description Cleaning
 # ==============================================================================
 
+
 class TestHTMLDescriptionCleaning:
     """Test HTML description cleaning."""
 
@@ -1303,6 +1384,7 @@ class TestHTMLDescriptionCleaning:
 # ==============================================================================
 # HIGH PRIORITY: Rule Statistics
 # ==============================================================================
+
 
 class TestRuleStatistics:
     """Test rule statistics generation."""
@@ -1357,6 +1439,7 @@ class TestRuleStatistics:
 # HIGH PRIORITY: Rule Filtering and Export
 # ==============================================================================
 
+
 class TestRuleFilteringAndExport:
     """Test rule filtering by language and severity."""
 
@@ -1386,9 +1469,24 @@ class TestRuleFilteringAndExport:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "rules": [
-                {"key": "rule1", "name": "Rule 1", "lang": "python", "severity": "BLOCKER"},
-                {"key": "rule2", "name": "Rule 2", "lang": "java", "severity": "CRITICAL"},
-                {"key": "rule3", "name": "Rule 3", "lang": "python", "severity": "BLOCKER"},
+                {
+                    "key": "rule1",
+                    "name": "Rule 1",
+                    "lang": "python",
+                    "severity": "BLOCKER",
+                },
+                {
+                    "key": "rule2",
+                    "name": "Rule 2",
+                    "lang": "java",
+                    "severity": "CRITICAL",
+                },
+                {
+                    "key": "rule3",
+                    "name": "Rule 3",
+                    "lang": "python",
+                    "severity": "BLOCKER",
+                },
             ],
             "total": 3,
         }
@@ -1449,18 +1547,40 @@ class TestRuleFilteringAndExport:
 # HIGH PRIORITY: Fixable Issues Filtering
 # ==============================================================================
 
+
 class TestFixableIssuesFiltering:
     """Test filtering and sorting of fixable issues."""
 
     def test_get_fixable_issues_severity_sorting(self, analyzer):
         """Test that fixable issues are sorted by severity."""
         issues_data = [
-            {"key": "i1", "rule": "r", "component": "c", "project": "p", "message": "m", "type": "BUG",
-             "severity": "MINOR"},
-            {"key": "i2", "rule": "r", "component": "c", "project": "p", "message": "m", "type": "BUG",
-             "severity": "BLOCKER"},
-            {"key": "i3", "rule": "r", "component": "c", "project": "p", "message": "m", "type": "BUG",
-             "severity": "MAJOR"},
+            {
+                "key": "i1",
+                "rule": "r",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+                "type": "BUG",
+                "severity": "MINOR",
+            },
+            {
+                "key": "i2",
+                "rule": "r",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+                "type": "BUG",
+                "severity": "BLOCKER",
+            },
+            {
+                "key": "i3",
+                "rule": "r",
+                "component": "c",
+                "project": "p",
+                "message": "m",
+                "type": "BUG",
+                "severity": "MAJOR",
+            },
         ]
 
         mock_response = Mock()
@@ -1478,8 +1598,12 @@ class TestFixableIssuesFiltering:
             assert fixable[0].severity == Severity.BLOCKER
             # MINOR should come after MAJOR
             severities = [issue.severity for issue in fixable]
-            minor_index = severities.index(Severity.MINOR) if Severity.MINOR in severities else -1
-            major_index = severities.index(Severity.MAJOR) if Severity.MAJOR in severities else -1
+            minor_index = (
+                severities.index(Severity.MINOR) if Severity.MINOR in severities else -1
+            )
+            major_index = (
+                severities.index(Severity.MAJOR) if Severity.MAJOR in severities else -1
+            )
             if minor_index != -1 and major_index != -1:
                 assert major_index < minor_index
 
@@ -1496,7 +1620,7 @@ class TestFixableIssuesFiltering:
         fixable = analyzer.get_fixable_issues(
             project_key="test-project",
             branch="main",
-            types_list=["BUG", "VULNERABILITY"]
+            types_list=["BUG", "VULNERABILITY"],
         )
 
         # Verify types filter was passed
@@ -1508,6 +1632,7 @@ class TestFixableIssuesFiltering:
 # ==============================================================================
 # MEDIUM PRIORITY: Project Analysis
 # ==============================================================================
+
 
 class TestProjectAnalysisDetails:
     """Test project directory analysis details."""
@@ -1565,6 +1690,7 @@ class TestProjectAnalysisDetails:
 # MEDIUM PRIORITY: Contains Keywords Helper
 # ==============================================================================
 
+
 class TestContainsKeywordsHelper:
     """Test the _contains_keywords helper method."""
 
@@ -1574,15 +1700,22 @@ class TestContainsKeywordsHelper:
 
     def test_contains_keywords_in_desc(self, analyzer):
         """Test keyword found in description."""
-        assert analyzer._contains_keywords("", "this is unused code", ["unused"]) is True
+        assert (
+            analyzer._contains_keywords("", "this is unused code", ["unused"]) is True
+        )
 
     def test_contains_keywords_multiple_matches(self, analyzer):
         """Test multiple keywords, any match."""
-        assert analyzer._contains_keywords("null pointer", "", ["null", "unused"]) is True
+        assert (
+            analyzer._contains_keywords("null pointer", "", ["null", "unused"]) is True
+        )
 
     def test_contains_keywords_no_match(self, analyzer):
         """Test no keywords match."""
-        assert analyzer._contains_keywords("some rule", "description", ["unused", "null"]) is False
+        assert (
+            analyzer._contains_keywords("some rule", "description", ["unused", "null"])
+            is False
+        )
 
     def test_contains_keywords_partial_match(self, analyzer):
         """Test partial keyword match."""
@@ -1597,6 +1730,7 @@ class TestContainsKeywordsHelper:
 # ==============================================================================
 # MEDIUM PRIORITY: File Path Extraction Edge Cases
 # ==============================================================================
+
 
 class TestFilePathExtractionDetails:
     """Test file path extraction edge cases."""
@@ -1629,6 +1763,7 @@ class TestFilePathExtractionDetails:
 # MEDIUM PRIORITY: Process Rules Edge Cases
 # ==============================================================================
 
+
 class TestProcessRulesEdgeCases:
     """Test _process_rules with various inputs."""
 
@@ -1660,7 +1795,7 @@ class TestProcessRulesEdgeCases:
                 "params": [
                     {"key": "threshold", "defaultValue": "10"},
                     {"key": "pattern", "defaultValue": ".*"},
-                ]
+                ],
             }
         ]
 
@@ -1672,8 +1807,20 @@ class TestProcessRulesEdgeCases:
     def test_process_rules_metadata_completeness(self, analyzer):
         """Test that metadata is complete."""
         raw_rules = [
-            {"key": "python:S1", "name": "Rule 1", "lang": "python", "severity": "MAJOR", "type": "BUG"},
-            {"key": "java:S2", "name": "Rule 2", "lang": "java", "severity": "CRITICAL", "type": "VULNERABILITY"},
+            {
+                "key": "python:S1",
+                "name": "Rule 1",
+                "lang": "python",
+                "severity": "MAJOR",
+                "type": "BUG",
+            },
+            {
+                "key": "java:S2",
+                "name": "Rule 2",
+                "lang": "java",
+                "severity": "CRITICAL",
+                "type": "VULNERABILITY",
+            },
         ]
 
         result = analyzer._process_rules(raw_rules)
@@ -1691,6 +1838,7 @@ class TestProcessRulesEdgeCases:
 # LOW PRIORITY: Session Management
 # ==============================================================================
 
+
 class TestSessionManagement:
     """Test session creation and management."""
 
@@ -1705,7 +1853,9 @@ class TestSessionManagement:
 
     def test_context_manager_cleanup_on_exception(self):
         """Test context manager cleanup even on exception."""
-        with patch("devdox_ai_sonar.sonar_analyzer.requests.Session") as mock_session_class:
+        with patch(
+            "devdox_ai_sonar.sonar_analyzer.requests.Session"
+        ) as mock_session_class:
             mock_session = Mock()
             mock_session_class.return_value = mock_session
 
@@ -1717,6 +1867,8 @@ class TestSessionManagement:
 
             # Session should still be closed
             mock_session.close.assert_called_once()
+
+
 class TestGetProjectSecurityIssues:
     """Test get_project_security_issues - COMPLETELY MISSING from tests."""
 
@@ -1746,8 +1898,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert result is not None
@@ -1767,8 +1918,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="develop"
+            project_key="test-project", branch="develop"
         )
 
         # Verify branch parameter was used
@@ -1787,9 +1937,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="",
-            pull_request_number=456
+            project_key="test-project", branch="", pull_request_number=456
         )
 
         # Verify PR parameter was used
@@ -1810,8 +1958,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert result is None
@@ -1821,8 +1968,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.side_effect = requests.Timeout("Request timeout")
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert result is None
@@ -1870,8 +2016,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.side_effect = [response_page1, response_page2]
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert result.total_issues == 750
@@ -1882,8 +2027,7 @@ class TestGetProjectSecurityIssues:
         analyzer.session.get.side_effect = Exception("Unexpected error")
 
         result = analyzer.get_project_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert result is None
@@ -2051,8 +2195,7 @@ class TestGetFixableSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         issues = analyzer.get_fixable_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert len(issues) == 1
@@ -2079,9 +2222,7 @@ class TestGetFixableSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         issues = analyzer.get_fixable_security_issues(
-            project_key="test-project",
-            branch="main",
-            max_issues=5
+            project_key="test-project", branch="main", max_issues=5
         )
 
         assert len(issues) == 5
@@ -2097,9 +2238,7 @@ class TestGetFixableSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         issues = analyzer.get_fixable_security_issues(
-            project_key="test-project",
-            branch="",
-            pull_request=789
+            project_key="test-project", branch="", pull_request=789
         )
 
         assert isinstance(issues, list)
@@ -2109,8 +2248,7 @@ class TestGetFixableSecurityIssues:
         analyzer.get_project_security_issues = Mock(return_value=None)
 
         issues = analyzer.get_fixable_security_issues(
-            project_key="test-project",
-            branch="main"
+            project_key="test-project", branch="main"
         )
 
         assert issues == []
@@ -2137,9 +2275,7 @@ class TestGetFixableSecurityIssues:
         analyzer.session.get.return_value = mock_response
 
         issues = analyzer.get_fixable_security_issues(
-            project_key="test-project",
-            branch="main",
-            max_issues=None  # No limit
+            project_key="test-project", branch="main", max_issues=None  # No limit
         )
 
         assert len(issues) == 15
@@ -2149,15 +2285,14 @@ class TestGetFixableSecurityIssues:
 # CRITICAL MISSING: _build_query_params Tests
 # ==============================================================================
 
+
 class TestBuildQueryParams:
     """Test _build_query_params - COMPLETELY MISSING from tests."""
 
     def test_build_query_params_basic(self, analyzer):
         """Test basic query params building."""
         params = analyzer._build_query_params(
-            project_key="test-project",
-            branch="main",
-            pull_request_number=0
+            project_key="test-project", branch="main", pull_request_number=0
         )
 
         assert params["componentKeys"] == "test-project"
@@ -2171,7 +2306,7 @@ class TestBuildQueryParams:
             project_key="test-project",
             branch="main",
             pull_request_number=0,
-            statuses=["OPEN", "CONFIRMED"]
+            statuses=["OPEN", "CONFIRMED"],
         )
 
         assert "OPEN" in params["issueStatuses"]
@@ -2183,7 +2318,7 @@ class TestBuildQueryParams:
             project_key="test-project",
             branch="main",
             pull_request_number=0,
-            severities=["BLOCKER", "CRITICAL"]
+            severities=["BLOCKER", "CRITICAL"],
         )
 
         assert "BLOCKER" in params["severities"]
@@ -2195,7 +2330,7 @@ class TestBuildQueryParams:
             project_key="test-project",
             branch="main",
             pull_request_number=0,
-            types=["BUG", "VULNERABILITY"]
+            types=["BUG", "VULNERABILITY"],
         )
 
         assert "BUG" in params["types"]
@@ -2204,9 +2339,7 @@ class TestBuildQueryParams:
     def test_build_query_params_with_pr(self, analyzer):
         """Test query params with pull request."""
         params = analyzer._build_query_params(
-            project_key="test-project",
-            branch="",
-            pull_request_number=123
+            project_key="test-project", branch="", pull_request_number=123
         )
 
         assert params.get("pullRequest") == "123"
@@ -2215,9 +2348,7 @@ class TestBuildQueryParams:
     def test_build_query_params_defaults_to_main(self, analyzer):
         """Test query params defaults to main branch."""
         params = analyzer._build_query_params(
-            project_key="test-project",
-            branch="",
-            pull_request_number=0
+            project_key="test-project", branch="", pull_request_number=0
         )
 
         assert params.get("branch") == "main"
@@ -2228,7 +2359,7 @@ class TestBuildQueryParams:
             project_key="test-project",
             branch="main",
             pull_request_number=0,
-            field_key="projectKey"  # For security hotspots
+            field_key="projectKey",  # For security hotspots
         )
 
         assert params["projectKey"] == "test-project"
@@ -2242,7 +2373,7 @@ class TestBuildQueryParams:
             pull_request_number=0,
             statuses=["OPEN"],
             severities=["BLOCKER"],
-            types=["BUG"]
+            types=["BUG"],
         )
 
         assert params["branch"] == "develop"
@@ -2254,6 +2385,7 @@ class TestBuildQueryParams:
 # ==============================================================================
 # CRITICAL MISSING: _fetch_issues Tests
 # ==============================================================================
+
 
 class TestFetchIssues:
     """Test _fetch_issues - COMPLETELY MISSING from tests."""
@@ -2339,6 +2471,7 @@ class TestFetchIssues:
 # CRITICAL MISSING: _handle_exceptions Tests
 # ==============================================================================
 
+
 class TestHandleExceptions:
     """Test _handle_exceptions - COMPLETELY MISSING from tests."""
 
@@ -2410,6 +2543,7 @@ class TestHandleExceptions:
 # ==============================================================================
 # HIGH PRIORITY MISSING: Fetch All Rules Edge Cases
 # ==============================================================================
+
 
 class TestFetchAllRulesEdgeCases:
     """Additional edge cases for fetch_all_rules."""
@@ -2501,6 +2635,7 @@ class TestFetchAllRulesEdgeCases:
 # HIGH PRIORITY MISSING: Clean HTML Description Edge Cases
 # ==============================================================================
 
+
 class TestCleanHtmlDescriptionAdditional:
     """Additional edge cases for _clean_html_description."""
 
@@ -2551,6 +2686,7 @@ class TestCleanHtmlDescriptionAdditional:
 # MEDIUM PRIORITY MISSING: Additional Analysis Result Tests
 # ==============================================================================
 
+
 class TestAnalysisResultCreation:
     """Test AnalysisResult object creation."""
 
@@ -2576,10 +2712,7 @@ class TestAnalysisResultCreation:
 
         analyzer.session.get.side_effect = [mock_response_issues, mock_response_metrics]
 
-        result = analyzer.get_project_issues(
-            project_key="test-project",
-            branch="main"
-        )
+        result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
         assert result.metrics is not None
         assert result.metrics.lines_of_code == 1000
@@ -2595,10 +2728,7 @@ class TestAnalysisResultCreation:
         }
         analyzer.session.get.return_value = mock_response
 
-        result = analyzer.get_project_issues(
-            project_key="test-project",
-            branch="main"
-        )
+        result = analyzer.get_project_issues(project_key="test-project", branch="main")
 
         assert result.analysis_timestamp is not None
         assert isinstance(result.analysis_timestamp, str)
@@ -2607,6 +2737,7 @@ class TestAnalysisResultCreation:
 # ==============================================================================
 # MEDIUM PRIORITY MISSING: Project Analysis Additional Tests
 # ==============================================================================
+
 
 class TestAnalyzeProjectDirectoryAdditional:
     """Additional tests for project analysis."""
@@ -2621,7 +2752,6 @@ class TestAnalyzeProjectDirectoryAdditional:
 
         # TypeScript files counted as JavaScript
         assert analysis["javascript_files"] >= 2
-
 
     def test_analyze_project_with_scala_files(self, analyzer, tmp_path):
         """Test analyzing project with Scala files."""
@@ -2643,7 +2773,9 @@ class TestAnalyzeProjectDirectoryAdditional:
     def test_analyze_project_recursive_structure(self, analyzer, tmp_path):
         """Test analyzing deeply nested directory structure."""
         (tmp_path / "src" / "main" / "java" / "com" / "example").mkdir(parents=True)
-        (tmp_path / "src" / "main" / "java" / "com" / "example" / "App.java").write_text("code")
+        (
+            tmp_path / "src" / "main" / "java" / "com" / "example" / "App.java"
+        ).write_text("code")
 
         analysis = analyzer.analyze_project_directory(tmp_path)
 

@@ -48,20 +48,22 @@ dependencies = [
     "pathlib2==2.3.0",
     "langchain-together==0.3.0",
     "together==1.5.17",
-    "Jinja2==3.1.6"
+    "Jinja2==3.1.6",
+    "types-requests==2.32.4.20250913"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==7.0.0",
-    "pytest-cov==4.0.0",
     "black==25.11.0",
     "isort==5.12.0",
-    "flake8==6.0.0",
+    "flake8==7.3.0",
+    "pytest-cov==7.0.0",
     "mypy==1.0.0",
     "pre-commit==3.0.0",
     "twine==4.0.0",
     "build==0.10.0",
+    "ruff==0.14.7"
 ]
 
 [project.scripts]
@@ -81,7 +83,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","*.j2"]
+devdox_ai_sonar = ["prompts/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88
@@ -107,7 +109,9 @@ multi_line_output = 3
 line_length = 88
 
 [tool.mypy]
-python_version = "3.9"
+packages = ["devdox_ai_sonar"]
+mypy_path = "src"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -126,7 +130,7 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [tool.coverage.run]
-source = ["src/devdox_ai_sonar"]
+source = ["src"]
 omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]

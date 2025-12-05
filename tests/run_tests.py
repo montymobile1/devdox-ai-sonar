@@ -27,17 +27,19 @@ def main():
         # Handle special flags
         if "--coverage" in custom_args:
             custom_args.remove("--coverage")
-            pytest_args.extend([
-                f"--cov={project_root}/src/devdox_ai_sonar",
-                "--cov-report=html",
-                "--cov-report=term-missing",
-                "--cov-fail-under=70",
-            ])
+            pytest_args.extend(
+                [
+                    f"--cov={project_root}/src/devdox_ai_sonar",
+                    "--cov-report=html",
+                    "--cov-report=term-missing",
+                    "--cov-fail-under=70",
+                ]
+            )
 
         if "--suite" in custom_args:
             suite_idx = custom_args.index("--suite")
             suite_name = custom_args[suite_idx + 1]
-            custom_args = custom_args[:suite_idx] + custom_args[suite_idx + 2:]
+            custom_args = custom_args[:suite_idx] + custom_args[suite_idx + 2 :]
 
             # Map suite names to test files
             suite_map = {

@@ -22,16 +22,16 @@ import logging
 import os
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 from logging.handlers import RotatingFileHandler
 
 
 def setup_logging(
-        level: Optional[str] = None,
-        log_file: Optional[str] = None,
-        max_bytes: int = 10_485_760,  # 10MB
-        backup_count: int = 5,
-        format_string: Optional[str] = None
+    level: Optional[str] = None,
+    log_file: Optional[str] = None,
+    max_bytes: int = 10_485_760,  # 10MB
+    backup_count: int = 5,
+    format_string: Optional[str] = None,
 ) -> None:
     """
     Configure logging for the application.
@@ -62,7 +62,7 @@ def setup_logging(
     """
     # Get level from parameter or environment variable
     if level is None:
-        level = os.getenv('LOG_LEVEL', 'INFO').upper()
+        level = os.getenv("LOG_LEVEL", "INFO").upper()
     else:
         level = level.upper()
 
@@ -71,17 +71,17 @@ def setup_logging(
 
     # Get log file from parameter or environment variable
     if log_file is None:
-        log_file = os.getenv('LOG_FILE')
+        log_file = os.getenv("LOG_FILE")
 
     # Default format string
     if format_string is None:
-        format_string = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format_string = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     # Create formatter
     formatter = logging.Formatter(format_string)
 
     # Create handlers list
-    handlers = []
+    handlers: List[logging.Handler] = []
 
     # Console handler (always included)
     console_handler = logging.StreamHandler(sys.stdout)
@@ -97,10 +97,7 @@ def setup_logging(
 
         # Use RotatingFileHandler to prevent huge log files
         file_handler = RotatingFileHandler(
-            log_file,
-            maxBytes=max_bytes,
-            backupCount=backup_count,
-            encoding='utf-8'
+            log_file, maxBytes=max_bytes, backupCount=backup_count, encoding="utf-8"
         )
         file_handler.setFormatter(formatter)
         file_handler.setLevel(numeric_level)
@@ -111,20 +108,22 @@ def setup_logging(
         level=numeric_level,
         format=format_string,
         handlers=handlers,
-        force=True  # Override any existing configuration
+        force=True,  # Override any existing configuration
     )
 
     # Set levels for noisy third-party libraries
-    logging.getLogger('urllib3').setLevel(logging.WARNING)
-    logging.getLogger('openai').setLevel(logging.WARNING)
-    logging.getLogger('anthropic').setLevel(logging.WARNING)
-    logging.getLogger('google').setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("openai").setLevel(logging.WARNING)
+    logging.getLogger("anthropic").setLevel(logging.WARNING)
+    logging.getLogger("google").setLevel(logging.WARNING)
 
     # Log the configuration
     logger = logging.getLogger(__name__)
     logger.info(f"Logging configured with level: {level}")
     if log_file:
-        logger.info(f"Logging to file: {log_file} (max size: {max_bytes / 1024 / 1024:.1f}MB, {backup_count} backups)")
+        logger.info(
+            f"Logging to file: {log_file} (max size: {max_bytes / 1024 / 1024:.1f}MB, {backup_count} backups)"
+        )
     else:
         logger.info("Logging to console only")
 
@@ -162,18 +161,18 @@ def quick_setup(debug: bool = False, log_file: Optional[str] = None) -> logging.
         logger = quick_setup(debug=True, log_file='test.log')
         logger.debug("Debug message")
     """
-    level = 'DEBUG' if debug else 'INFO'
+    level = "DEBUG" if debug else "INFO"
     setup_logging(level=level, log_file=log_file)
     return logging.getLogger()
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     # Demo usage
     print("Demo: Logging Configuration\n")
 
     # Example 1: Console only
     print("Example 1: Console only")
-    setup_logging(level='DEBUG')
+    setup_logging(level="DEBUG")
     logger = get_logger(__name__)
     logger.debug("This is a debug message")
     logger.info("This is an info message")
@@ -184,7 +183,7 @@ if __name__ == '__main__':
 
     # Example 2: Console + File
     print("Example 2: Console + File (demo.log)")
-    setup_logging(level='INFO', log_file='demo.log')
+    setup_logging(level="INFO", log_file="demo.log")
     logger = get_logger(__name__)
     logger.info("This message goes to both console and file")
     logger.warning("Check demo.log to see this message")

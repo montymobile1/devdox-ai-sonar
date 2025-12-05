@@ -5,6 +5,7 @@ Configuration settings for the DevDox AI Sonar
 from pydantic_settings import BaseSettings
 from pathlib import Path
 
+
 class Settings(BaseSettings):
     """Application settings."""
 
@@ -16,9 +17,9 @@ class Settings(BaseSettings):
     LLM_PROVIDER: str = "LLM_PROVIDER"
     LLM_MODEL: str = "gemini-2.5-flash"
 
-    SONAR_TOKEN:str=""
-    SONAR_ORGANIZATION:str=""
-    SONAR_PROJECT_KEY:str=""
+    SONAR_TOKEN: str = ""
+    SONAR_ORGANIZATION: str = ""
+    SONAR_PROJECT_KEY: str = ""
     PROJECT_PATH: Path = Path("/your/project/path")
 
     class Config:
