@@ -1167,6 +1167,17 @@ class SonarCloudAnalyzer:
             )
             return None
 
+    def check_file_extension(self, analysis:Dict[str, Any], suffix:str):
+
+        if suffix == ".py":
+            analysis["python_files"] = analysis["python_files"] + 1
+        elif suffix in [".js", ".jsx", ".ts", ".tsx"]:
+            analysis["javascript_files"] = analysis["javascript_files"] + 1
+        elif suffix in [".java", ".kotlin", ".scala"]:
+            analysis["java_files"] = analysis["java_files"] + 1
+        else:
+            analysis["other_files"] = analysis["other_files"] + 1
+        return analysis
     def analyze_project_directory(self, project_path: str) -> Dict[str, Any]:
         """
         Analyze a local project directory to understand structure.
@@ -1206,15 +1217,9 @@ class SonarCloudAnalyzer:
             if file_path.is_file():
                 analysis["total_files"] = analysis["total_files"] + 1
                 suffix = file_path.suffix.lower()
+                analysis = self.check_file_extension(analysis, suffix)
 
-                if suffix == ".py":
-                    analysis["python_files"] = analysis["python_files"] + 1
-                elif suffix in [".js", ".jsx", ".ts", ".tsx"]:
-                    analysis["javascript_files"] = analysis["javascript_files"] + 1
-                elif suffix in [".java", ".kotlin", ".scala"]:
-                    analysis["java_files"] = analysis["java_files"] + 1
-                else:
-                    analysis["other_files"] = analysis["other_files"] + 1
+
 
             elif file_path.is_dir() and not file_path.name.startswith("."):
                 relative_path = file_path.relative_to(project_path_obj)
