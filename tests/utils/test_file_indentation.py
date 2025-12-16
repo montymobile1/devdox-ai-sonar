@@ -599,7 +599,7 @@ class TestFindImportInsertionPoint:
 class TestProcessImportLine:
     """Test import line processing."""
 
-    def test_process_import_line_shebang(self):
+    def test_process_import_line_shebang(self, sample_lines):
         """Test processing shebang line."""
         state: ImportState = {
             "last_import_line": -1,
@@ -609,12 +609,12 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = "#!/usr/bin/env python3"
-        new_state, stop = process_import_line(0, line, state)
+        new_state, stop = process_import_line(0, line, sample_lines, state)
 
         assert new_state["last_shebang_encoding_line"] == 0
         assert stop is False
 
-    def test_process_import_line_encoding(self):
+    def test_process_import_line_encoding(self, sample_lines):
         """Test processing encoding line."""
         state: ImportState = {
             "last_import_line": -1,
@@ -623,13 +623,15 @@ class TestProcessImportLine:
             "in_docstring": False,
             "docstring_quote": None,
         }
+
         line = "# -*- coding: utf-8 -*-"
-        new_state, stop = process_import_line(1, line, state)
+        sample_lines[1] = line
+        new_state, stop = process_import_line(1,  line, sample_lines,state)
 
         assert new_state["last_shebang_encoding_line"] == 1
         assert stop is False
 
-    def test_process_import_line_import_statement(self):
+    def test_process_import_line_import_statement(self, sample_lines):
         """Test processing import statement."""
         state: ImportState = {
             "last_import_line": -1,
@@ -639,12 +641,12 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = "import os"
-        new_state, stop = process_import_line(5, line, state)
+        new_state, stop = process_import_line(5, line, sample_lines, state)
 
         assert new_state["last_import_line"] == 5
         assert stop is False
 
-    def test_process_import_line_from_import(self):
+    def test_process_import_line_from_import(self, sample_lines):
         """Test processing from...import statement."""
         state: ImportState = {
             "last_import_line": -1,
@@ -654,12 +656,12 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = "from typing import List"
-        new_state, stop = process_import_line(6, line, state)
+        new_state, stop = process_import_line(6, line, sample_lines,state)
 
         assert new_state["last_import_line"] == 6
         assert stop is False
 
-    def test_process_import_line_actual_code(self):
+    def test_process_import_line_actual_code(self, sample_lines):
         """Test processing actual code line (should stop)."""
         state: ImportState = {
             "last_import_line": -1,
@@ -669,11 +671,11 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = "def main():"
-        new_state, stop = process_import_line(10, line, state)
+        new_state, stop = process_import_line(10, line, sample_lines, state)
 
         assert stop is True
 
-    def test_process_import_line_comment(self):
+    def test_process_import_line_comment(self, sample_lines):
         """Test processing comment line."""
         state: ImportState = {
             "last_import_line": -1,
@@ -683,11 +685,11 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = "# This is a comment"
-        new_state, stop = process_import_line(3, line, state)
+        new_state, stop = process_import_line(3, line,sample_lines ,state)
 
         assert stop is False
 
-    def test_process_import_line_empty(self):
+    def test_process_import_line_empty(self, sample_lines):
         """Test processing empty line."""
         state: ImportState = {
             "last_import_line": -1,
@@ -697,7 +699,7 @@ class TestProcessImportLine:
             "docstring_quote": None,
         }
         line = ""
-        new_state, stop = process_import_line(4, line, state)
+        new_state, stop = process_import_line(4, line,sample_lines, state)
 
         assert stop is False
 

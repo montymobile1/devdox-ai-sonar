@@ -874,7 +874,7 @@ class LLMFixer:
 
             # 3. Construct Prompt
             # We join strategies with newlines for a clean list
-            strategy_text = "\n".join(strategies)
+        strategy_text = "\n".join(strategies)
 
         template = self.jinja_env.get_template("fix_issues_multiples.j2")
 
@@ -1413,7 +1413,8 @@ class LLMFixer:
                         original_content = f.read()
 
                 # Attempt direct application
-                success = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success , fix_app = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                print("success ", success, fix_app)
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
