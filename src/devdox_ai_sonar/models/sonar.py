@@ -1,9 +1,14 @@
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Dict, Any, TypedDict
+from typing import List, Optional, Dict, Any, TypedDict, Tuple
 from pydantic import BaseModel, Field, ConfigDict
 
 project_key = "Project key"
+
+
+class SonarType(str, Enum):
+    BRANCH = "branch"
+    PR = "pr"
 
 
 class Severity(str, Enum):
@@ -33,10 +38,31 @@ class Impact(str, Enum):
     LOW = "LOW"
 
 
+class SonarCloudConfig(BaseModel):
+    token: str = Field(..., description="SonarCloud authentication token")
+    organization: str = Field(..., description="SonarCloud organization key")
+    project: str = Field(..., description="SonarCloud project key")
+    project_path: str = Field(..., description="Path to local project directory")
+
+    def validate(self) -> Tuple[bool, Optional[str]]:
+        """Validate SonarCloud configuration."""
+        if not self.token or not self.token.strip():
+            return False, "Token cannot be empty"
+
+        if not self.organization or not self.organization.strip():
+            return False, "Organization key cannot be empty"
+
+        if not self.project or not self.project.strip():
+            return False, "Project key cannot be empty"
+
+        if not self.project_path or not self.project_path:
+            return False, "Project path cannot be empty"
+
+        return True, None
+
+
 class SonarIssue(BaseModel):
     """Represents a SonarCloud issue."""
-
-    model_config = ConfigDict(use_enum_values=True)
 
     key: str = Field(..., description="Unique issue key")
     rule: str = Field(..., description="Rule identifier")
@@ -56,6 +82,7 @@ class SonarIssue(BaseModel):
     tags: List[str] = Field(default_factory=list, description="Issue tags")
     effort: Optional[str] = Field(None, description="Effort to fix")
     debt: Optional[str] = Field(None, description="Technical debt")
+    model_config = ConfigDict(populate_by_name=True)
 
     @property
     def file_path(self) -> Optional[Path]:
@@ -76,8 +103,6 @@ class SonarIssue(BaseModel):
 
 
 class SonarSecurityIssue(BaseModel):
-    model_config = ConfigDict(use_enum_values=True)
-
     key: str = Field(..., description="Unique issue key")
     component: str = Field(..., description="Component path")
     rule: str = Field(..., description="Rule identifier")
@@ -91,6 +116,7 @@ class SonarSecurityIssue(BaseModel):
     file: Optional[str] = Field(None, description="File path")
     creation_date: Optional[str] = Field(None, description="Creation date")
     update_date: Optional[str] = Field(None, description="Last update date")
+    model_config = ConfigDict(populate_by_name=True)
 
     @property
     def file_path(self) -> Optional[Path]:
@@ -122,7 +148,19 @@ class SecurityAnalysisResult(BaseModel):
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")
     issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
+    fixable_issues_by_file: Dict[str, List[SonarIssue]] = Field(
+        default_factory=dict,
+        description="Issues that can be fixed by LLM",
+    )
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
+
+    def model_post_init(self, __context: Any) -> None:
+        """Post-initialization to set fixable issues."""
+        for issue in self.issues:
+            if issue.file:
+                file_key = str(issue.file_path)
+                self.fixable_issues_by_file.setdefault(file_key, []).append(issue)
+
 
 
 class AnalysisResult(BaseModel):
@@ -137,11 +175,20 @@ class AnalysisResult(BaseModel):
     fixable_issues: List[SonarIssue] = Field(
         default_factory=list, description="Issues that can be fixed by LLM"
     )
+    fixable_issues_by_file: Dict[str, List[SonarIssue]] = Field(
+        default_factory=dict,
+        description="Issues that can be fixed by LLM",
+    )
+
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
 
     def model_post_init(self, __context: Any) -> None:
         """Post-initialization to set fixable issues."""
         self.fixable_issues = [issue for issue in self.issues if issue.is_fixable]
+        for issue in self.issues:
+            if issue.file:
+                file_key = str(issue.file_path)
+                self.fixable_issues_by_file.setdefault(file_key, []).append(issue)
 
     @property
     def issues_by_severity(self) -> Dict[Severity, List[SonarIssue]]:

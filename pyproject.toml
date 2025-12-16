@@ -33,7 +33,8 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "click===8.1.7",
-    "rich==13.8.1",
+    #"rich==13.8.1",
+    "rich-click==1.9.4",
     "requests==2.32",
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
@@ -47,9 +48,16 @@ dependencies = [
     "gitpython==3.1.0",
     "pathlib2==2.3.0",
     "langchain-together==0.3.0",
-    "together==1.5.17",
+    #"together==1.5.32",
+     "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
     "Jinja2==3.1.6",
-    "types-requests==2.32.4.20250913"
+    "types-requests==2.32.4.20250913",
+    "tomli==2.3.0",
+    "tomli-w==1.2.0",
+    "simple-term-menu==1.6.6",
+    "tomlkit==0.13.3",
+    "inquirer==3.4.1",
+    "inquirer3==0.6.1"
 ]
 
 [project.optional-dependencies]
@@ -67,8 +75,11 @@ dev = [
 ]
 
 [project.scripts]
-devdox_ai_sonar = "devdox_ai_sonar.cli:main"
+devdox_sonar = "devdox_ai_sonar.cli:main"
+devdox_sonar_config = "devdox_ai_sonar.main:main"
 dal = "devdox_ai_sonar.cli:main"
+
+
 
 
 [project.urls]

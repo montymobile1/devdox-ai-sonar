@@ -3,20 +3,28 @@
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List, Any, Set, Tuple, Union, cast, Sequence
-
-
-import click
+from typing import Optional, List, Any, Set, Tuple, Union, cast, Sequence, Dict
+import json
+from simple_term_menu import TerminalMenu
+from rich.prompt import Confirm, Prompt
+import rich_click as click
 from rich.console import Console
 from rich.text import Text
 from rich.table import Table
 from rich.panel import Panel
 from rich.progress import Progress
 
-from . import __version__
-from .sonar_analyzer import SonarCloudAnalyzer
-from .llm_fixer import LLMFixer
-from .models.sonar import (
+
+from devdox_ai_sonar import __version__
+from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
+from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
+from devdox_ai_sonar.llm_fixer import LLMFixer
+from devdox_ai_sonar.models.llm_config import ConfigManager
+from devdox_ai_sonar.utils.validator import InputValidator
+from devdox_ai_sonar.utils.exceptions import (ValidationError)
+from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig
+
+from devdox_ai_sonar.models.sonar import (
     Severity,
     AnalysisResult,
     SonarSecurityIssue,
@@ -24,11 +32,25 @@ from .models.sonar import (
     SonarIssue,
     FixResult,
 )
+from devdox_ai_sonar.utils.provider_config import (
+    ProviderConfigUI,
+    ProviderValidator,
+    ProviderConfigManager,
+)
+
+from devdox_ai_sonar.config import settings
 
 
 console = Console()
 
+
 BOLD_MAGENTA = "bold magenta"  # Define constant for repeated literal
+
+
+
+
+VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
+VALID_SEVERITIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
 
 
 @click.group()
@@ -50,19 +72,6 @@ def main(ctx: click.Context, verbose: bool) -> None:
 
 
 @main.command()
-@click.option("--token", "-t", required=True, help="SonarCloud authentication token")
-@click.option(
-    "--organization", "--org", required=True, help="SonarCloud organization key"
-)
-@click.option("--project", "-p", required=True, help="SonarCloud project key")
-@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
-@click.option(
-    "--pull-request",
-    "-pr",
-    type=int,
-    default=0,
-    help="Pull request number to analyze (optional)",
-)
 @click.option(
     "--severity",
     multiple=True,
@@ -76,34 +85,69 @@ def main(ctx: click.Context, verbose: bool) -> None:
     type=click.Choice(["BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"]),
     help="Filter by issue type",
 )
-@click.option(
-    "--output", "-o", type=click.Path(), help="Output file for results (JSON format)"
-)
-@click.option("--limit", type=int, help="Limit number of issues to display")
 @click.pass_context
 def analyze(
     ctx: click.Context,
-    token: str,
-    organization: str,
-    project: str,
-    branch: str,
-    pull_request: Optional[str],
     severity: List[str],
     issue_types: List[str],
-    output: Optional[str],
-    limit: Optional[int],
 ) -> None:
     """Analyze a SonarCloud project and display issues."""
 
     try:
-        analyzer = SonarCloudAnalyzer(token, organization)
+        ui = ProviderConfigUI()
+        config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
+        auth_config = config_service.load_auth_config()
+
+        if not auth_config:
+            console.print("[red]❌ No authentication configuration found[/red]")
+            console.print(
+                "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+            )
+            sys.exit(1)
+        auth_config = AuthConfig(**auth_config)
+        # Validate auth config
+        is_valid, error_msg = auth_config.validate()
+        if not is_valid:
+            console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
+            sys.exit(1)
+
+        console.print(f"[green]✓[/green] Authentication config loaded")
+        console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
+        console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
+
+        manager = ConfigManager(config_path=settings.config_file_path)
+        manager.load_config()
+        validator = ProviderValidator()
+
+        provider_manager = ProviderConfigManager(manager, ui, validator)
+        branch, pull_request = provider_manager.branch_or_pr_prompt()
+        if not branch and not pull_request:
+            console.print("[red]❌ No branch or pull request specified[/red]")
+            sys.exit(1)
+
+        limit = Prompt.ask(
+            f"Max issues to fetch where max issues is {settings.MAX_FIXES_LIMIT}", default=settings.MAX_FIXES_LIMIT
+        )
+        try:
+            limit = int(limit)
+            if limit <= 0:
+                raise ValueError
+            if limit > settings.MAX_FIXES_LIMIT:
+                limit = settings.MAX_FIXES_LIMIT
+
+        except ValueError:
+            console.print("\n[red]❌ You must enter an integer! [/red]")
+            raise click.Abort()
+
+        analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
 
         with Progress() as progress:
             task = progress.add_task("Fetching issues from SonarCloud...", total=None)
 
             result = analyzer.get_project_issues(
-                project_key=project,
+                project_key=auth_config.project,
                 branch=branch,
+                max_issues=limit,
                 pull_request_number=int(pull_request) if pull_request else 0,
                 severities=list(severity) if severity else None,
                 types=list(issue_types) if issue_types else None,
@@ -118,109 +162,21 @@ def analyze(
         # Display results
         _display_analysis_results(result, limit)
 
-        # Save to file if requested
-        if output:
-            _save_results(result, output)
-            console.print(f"\n[green]Results saved to {output}[/green]")
+        # Save results in a file
+        if Confirm.ask("Do you want to save the results to a file?", default=False):
+            output_file = click.prompt(
+                "Enter output file path", default="analysis.json"
+            )
+            _save_results(result, output_file)
+            console.print(f"\n[green]Results saved to {output_file}[/green]")
 
     except Exception as e:
         console.print(f"[red]Error: {e}[/red]")
         sys.exit(1)
 
 
-def select_fixes_interactively(fixes: List[FixSuggestion]) -> List[FixSuggestion]:
-    click.echo("\nAvailable fixes:\n")
 
-    table = Table(show_header=True, header_style=BOLD_MAGENTA)
-    table.add_column("Number", width=10)
-    table.add_column("Issue", width=20)
-    table.add_column("File and line", width=50)
-    table.add_column(
-        "Fixed",
-        width=100,
-        no_wrap=False,
-        overflow="fold",
-        max_width=None,
-        min_width=None,
-    )
-    table.add_column("Confidence", width=15)
-
-    for idx, fix in enumerate(fixes, start=1):
-        confidence_str = f"{fix.confidence:.2f}"
-        file_path = os.path.basename(fix.file_path) if fix.file_path else "N/A"
-        line_info = (
-            f"{file_path}:{fix.sonar_line_number}"
-            if fix.sonar_line_number
-            else file_path
-        )
-
-        table.add_row(
-            str(idx),
-            fix.issue_key[-15:],  # Show last 20 chars of issue key
-            line_info,
-            fix.fixed_code[:500],
-            confidence_str,
-        )
-
-    console.print("\n")
-    console.print(table)
-
-    choice = (
-        click.prompt(
-            "\nEnter fix numbers to apply (e.g., 1,3,5) or 'all' or 'none'",
-            default="all",
-        )
-        .strip()
-        .lower()
-    )
-
-    if choice == "all":
-        return fixes
-
-    if choice == "none" or choice == "":
-        return []
-
-    try:
-        # Convert "1,3,5" → [1,3,5]
-        selected_indices = [int(x.strip()) for x in choice.split(",")]
-    except ValueError:
-        click.echo("❌ Invalid input. Expected numbers separated by commas.")
-        return []
-
-    # Filter fixes based on user input
-    selected = [
-        fix for idx, fix in enumerate(fixes, start=1) if idx in selected_indices
-    ]
-
-    return selected
-
-
-@main.command()
-@click.option("--token", "-t", required=True, help="SonarCloud authentication token")
-@click.option(
-    "--organization", "--org", required=True, help="SonarCloud organization key"
-)
-@click.option("--project", "-p", required=True, help="SonarCloud project key")
-@click.option(
-    "--project-path",
-    required=True,
-    type=click.Path(exists=True, path_type=Path),
-    help="Path to local project directory",
-)
-@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
-@click.option(
-    "--pull-request",
-    "-pr",
-    type=int,
-    default=0,
-    help="Pull request number to analyze (optional)",
-)
-@click.option(
-    "--provider",
-    type=click.Choice(["openai", "gemini", "togetherai"]),
-    default="togetherai",
-    help="LLM provider",
-)
+@main.command(name="fix_issues")
 @click.option(
     "--types",
     type=str,
@@ -231,187 +187,231 @@ def select_fixes_interactively(fixes: List[FixSuggestion]) -> List[FixSuggestion
     type=str,
     help="Comma-separated severities (BLOCKER, CRITICAL, MAJOR, MINOR)",
 )
-@click.option("--model", help="LLM model name")
-@click.option("--api-key", help="LLM API key (or set environment variable)")
 @click.option(
     "--max-fixes",
-    type=int,
-    default=10,
-    help="Maximum number of fixes to generate (default: 10)",
+    type=click.IntRange(1, settings.MAX_FIXES_LIMIT),
+    default=settings.DEFAULT_MAX_FIXES,
+    help=f"Maximum number of fixes to generate (1-{settings.MAX_FIXES_LIMIT}, default: {settings.DEFAULT_MAX_FIXES})",
+    show_default=True,
 )
 @click.option("--apply", is_flag=True, help="Apply fixes to the codebase")
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
 )
-@click.option(
-    "--backup/--no-backup",
-    default=True,
-    help="Create backup before applying fixes (default: true)",
-)
 @click.pass_context
-def fix(ctx: click.Context, **options: Any) -> None:
-    """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
-    token = options.get("token")
-    organization = options.get("organization")
-    project = str(options.get("project", ""))
-    project_path = options.get("project_path")
-    branch = str(options.get("branch", ""))
-    pull_request = int(options.get("pull_request", 0))
-    provider = options.get("provider")
-    types = options.get("types")
-    severity = options.get("severity")
-    model = options.get("model")
-    api_key = options.get("api_key")
-    max_fixes = int(options.get("max_fixes", 10))
-    apply = options.get("apply")
-    dry_run = options.get("dry_run")
-    backup = options.get("backup")
+def fix_issues(ctx: click.Context, **options: Any) -> None:
+    """
+    Generate and optionally apply LLM-powered fixes for SonarCloud issues.
 
-    VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
-    VALID_SEVERETIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
+    This command:
+    1. Loads authentication and LLM configuration
+    2. Validates user inputs
+    3. Fetches issues from SonarCloud
+    4. Generates fixes using LLM
+    5. Optionally applies fixes to your codebase
+
+    """
+
+    # ============================================================================
+    # STEP 1: Load Configuration
+    # ============================================================================
+
+    console.print("\n[bold cyan]Step 1: Loading Configuration[/bold cyan]")
+    ui = ProviderConfigUI()
+    validator = ProviderValidator()
+    # Load authentication config
+    config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
+    auth_config = config_service.load_auth_config()
+
+    if not auth_config:
+        console.print("[red]❌ No authentication configuration found[/red]")
+        console.print(
+            "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+        )
+        sys.exit(1)
+
+    # Validate auth config
+    auth_config = AuthConfig(**auth_config)
+    # Validate auth config
+    is_valid, error_msg = auth_config.validate()
+
+    if not is_valid:
+        console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
+        sys.exit(1)
+
+    console.print(f"[green]✓[/green] Authentication config loaded")
+    console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
+    console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
+
+    manager = ConfigManager(config_path=settings.config_file_path)
+    manager.load_config()
+
+    # Load LLM config
+    llm_config = config_service.load_llm_config(manager)
+    if not llm_config:
+        console.print("[red]❌ No LLM providers configured[/red]")
+        console.print("[yellow]💡 Run 'devdox_sonar init_config' to configure LLM[/yellow]")
+        sys.exit(1)
+
+    provider_manager = ProviderConfigManager(manager, ui, validator)
+    branch, pull_request = provider_manager.branch_or_pr_prompt()
+    if not branch and not pull_request:
+        console.print("[red]❌ No branch or pull request specified[/red]")
+        sys.exit(1)
+
+    console.print(f"[green]✓[/green] LLM config loaded")
+    # Interactive model selection if enabled
+    if not Confirm.ask(f"Do you want to use the default model '{llm_config.model}'?", default=True):
+        default_model = ui.select_provider_from_list(llm_config.models, llm_config.provider)
+        if not default_model:
+            console.print("[yellow]⚠ Model selection cancelled[/yellow]")
+            return None
+
+    api_key = llm_config.api_key
+
+    if not api_key:
+        console.print("[red]❌ No API key found for LLM provider[/red]")
+        sys.exit(1)
+    # ============================================================================
+    # STEP 2: Get and Validate User Inputs
+    # ============================================================================
+
+    console.print("\n[bold cyan]Step 2: Configuring Fix Parameters[/bold cyan]")
+
+    dry_run = options.get("dry_run", False)
+    # Get max fixes
+    max_fixes = options.get("max_fixes", settings.DEFAULT_MAX_FIXES)
+    if not options.get("max_fixes"):
+        # Ask user
+        max_fixes_input = Prompt.ask(
+            f"Maximum fixes to generate (1-{settings.MAX_FIXES_LIMIT})",
+            default=str(settings.DEFAULT_MAX_FIXES)
+        )
+        try:
+            max_fixes = InputValidator.validate_max_issues(
+                max_fixes_input,
+                settings.MAX_FIXES_LIMIT,
+                field_name="max_fixes"
+            )
+        except ValidationError as e:
+            console.print(f"\n[red]❌ {e.message}[/red]")
+            raise click.Abort()
+
+    console.print(f"[green]✓[/green] Max fixes: [cyan]{max_fixes}[/cyan]")
+
+    # Parse and validate types
+    types_list: Optional[List[str]] = None
+    if options.get("types"):
+        try:
+            types_list = InputValidator.validate_issue_types(options["types"])
+            console.print(f"[green]✓[/green] Issue types: [cyan]{', '.join(types_list)}[/cyan]")
+        except ValidationError as e:
+            console.print(f"\n[red]❌ {e.message}[/red]")
+            raise click.Abort()
+
+    # Parse and validate severities
+    severities_list: Optional[List[str]] = None
+    if options.get("severity"):
+        try:
+            severities_list = InputValidator.validate_severities(options["severity"])
+            console.print(f"[green]✓[/green] Severities: [cyan]{', '.join(severities_list)}[/cyan]")
+        except ValidationError as e:
+            console.print(f"\n[red]❌ {e.message}[/red]")
+            raise click.Abort()
+
+    # ============================================================================
+    # STEP 3: Create Services and Config
+    # ============================================================================
+
+    console.print("\n[bold cyan]Step 3: Initializing Services[/bold cyan]")
+
+    # Create analyzer
+    analyzer = SonarCloudAnalyzer(
+        token=auth_config.token,
+        organization=auth_config.organization
+    )
+    ruler = RuleAnalyzer( token=auth_config.token,
+        organization=auth_config.organization)
+    console.print(f"[green]✓[/green] SonarCloud analyzer initialized")
     try:
-        severity_list, types_list = _parse_filters(
-            severity, types, VALID_TYPES, VALID_SEVERETIES
+        # Create fixer
+        fixer = LLMFixer(
+            provider=llm_config.provider,
+            model=llm_config.model,
+            api_key=llm_config.api_key
         )
 
-        analyzer = SonarCloudAnalyzer(token, organization)
 
-        fixer = LLMFixer(provider=provider, model=model, api_key=api_key)
-
-        console.print(f"[blue]Analyzing project: {project}[/blue]")
-        console.print(f"[blue]Local path: {project_path}[/blue]")
-
+        console.print(f"[blue]Analyzing project: {auth_config.project}[/blue]")
+        console.print(f"[blue]Local path: {auth_config.project_path}[/blue]")
         fixable_issues = _fetch_fixable_issues(
-            analyzer,
-            project,
-            branch,
-            pull_request,
-            max_fixes,
-            severity_list,
-            types_list,
-        )
+                    analyzer,
+                    auth_config.project,
+                    branch,
+                    pull_request,
+                    max_fixes,
+                    severities_list,
+                    types_list,
+                )
 
         if not fixable_issues:
             console.print("[yellow]No fixable issues found[/yellow]")
             return
 
         console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
+        for file_path, issues in fixable_issues.items():
+                    fixes = _generate_fixes(fixer, ruler, issues, Path(str(auth_config.project_path)))
 
-        fixes = _generate_fixes(
-            fixer, analyzer, fixable_issues, Path(str(project_path))
-        )
-
-        if not fixes:
-            console.print("[yellow]No fixes could be generated[/yellow]")
-            return
-
-        _apply_fixes_if_requested(
-            bool(apply),
-            bool(dry_run),
-            fixes,
-            cast(List[SonarIssue], fixable_issues),
-            fixer,
-            Path(str(project_path)),
-            bool(backup),
-        )
+                    if not fixes:
+                        console.print("[yellow]No fixes could be generated[/yellow]")
+                        return
+                    backup = Confirm.ask("Do you want to save a backup before applying fixes?", default=False)
+                    _apply_fixes_if_requested(
+                        True,
+                        bool(dry_run),
+                        fixes,
+                        cast(List[SonarIssue], issues),
+                        fixer,
+                        Path(str(auth_config.project_path)),
+                        backup,
+                    )
 
     except Exception as e:
-        console.print(f"Error: {str(e)}", style="red", markup=False)
-        if ctx.obj.get("verbose"):
-            console.print_exception()
-        sys.exit(1)
+            console.print(f"Error: {str(e)}", style="red", markup=False)
+            if ctx.obj.get("verbose"):
+                console.print_exception()
+            sys.exit(1)
 
-
-def _parse_filters(
-    severity: Optional[str],
-    types: Optional[str],
-    valid_types: Set[str],
-    valid_severities: Set[str],
-) -> Tuple[Optional[List[str]], Optional[List[str]]]:
-    severity_list = None
-    types_list = None
-    if severity and severity != "":
-        severity_list = [t.strip() for t in severity.split(",")]
-        unknown = set(severity_list) - valid_severities
-        if unknown:
-            raise click.BadParameter(f"Invalid severities: {', '.join(unknown)}")
-    if types and types != "":
-        types_list = [t.strip() for t in types.split(",")]
-        unknown = set(types_list) - valid_types
-        if unknown:
-            raise click.BadParameter(f"Invalid issue types: {', '.join(unknown)}")
-    return severity_list, types_list
-
-
-def _fetch_fixable_issues(
-    analyzer: SonarCloudAnalyzer,
-    project_key: str,
-    branch: str = "",
-    pull_request: int = 0,
-    max_issues: int = 10,
-    severity_list: Optional[List[str]] = None,
-    types_list: Optional[List[str]] = None,
-) -> Sequence[Union[SonarIssue, SonarSecurityIssue]]:
-    with Progress() as progress:
-        task = progress.add_task("Fetching fixable issues...", total=None)
-        issues = analyzer.get_fixable_issues(
-            project_key=project_key,
-            branch=branch,
-            pull_request=pull_request,
-            max_issues=max_issues,
-            severities=severity_list if severity_list else None,
-            types_list=types_list if types_list else None,
-        )
-        progress.remove_task(task)
-    return issues
-
-
-def _fetch_fixable_security_issues(
-    analyzer: SonarCloudAnalyzer,
-    project_key: str,
-    branch: str = "",
-    pull_request: int = 0,
-    max_issues: int = 10,
-) -> List[SonarSecurityIssue]:
-    with Progress() as progress:
-        task = progress.add_task("Fetching fixable Security issues...", total=None)
-        issues = analyzer.get_fixable_security_issues(
-            project_key=project_key,
-            branch=branch,
-            pull_request=pull_request,
-            max_issues=max_issues,
-        )
-
-        progress.remove_task(task)
-    return issues
-
-
-def _generate_fixes(
-    fixer: LLMFixer,
-    analyzer: SonarCloudAnalyzer,
-    issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
-    project_path: Path,
-) -> List[FixSuggestion]:
-    fixes = []
-    with Progress() as progress:
-        task = progress.add_task("Generating fixes...", total=len(issues))
-        for issue in issues:
-            rule_info = analyzer.get_rule_by_key(issue.rule)
-            fix = fixer.generate_fix(issue, project_path, rule_info)
-            if fix:
-                fixes.append(fix)
-            progress.advance(task)
-    return fixes
 
 
 @main.command()
-@click.argument("project_path", type=click.Path(exists=True, path_type=Path))
-def inspect(project_path: Path) -> None:
+def inspect() -> None:
     """Inspect a local project directory structure."""
 
     try:
+        config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
+        auth_config = config_service.load_auth_config()
+
+        if not auth_config:
+            console.print("[red]❌ No authentication configuration found[/red]")
+            console.print(
+                "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+            )
+            sys.exit(1)
+
+        # Validate auth config
+        auth_config = AuthConfig(**auth_config)
+        # Validate auth config
+        is_valid, error_msg = auth_config.validate()
+
+        if not is_valid:
+            console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
+            sys.exit(1)
+        token = auth_config.token
+        organization = auth_config.organization
+        project_path = auth_config.project_path
         analyzer = SonarCloudAnalyzer(
-            "dummy", "dummy"
+            token, organization
         )  # Token not needed for local analysis
         analysis = analyzer.analyze_project_directory(str(project_path))
 
@@ -442,6 +442,173 @@ def inspect(project_path: Path) -> None:
     except Exception as e:
         console.print(f"[red]Error inspecting project: {e}[/red]")
         sys.exit(1)
+
+
+
+@main.command(name="fix_security_issues")
+@click.option(
+    "--max-fixes",
+    type=int,
+    default=settings.DEFAULT_MAX_FIXES,
+    help=f"Maximum number of fixes to generate (default: {settings.DEFAULT_MAX_FIXES})",
+)
+@click.option("--apply", is_flag=True, help="Apply fixes to the codebase")
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
+)
+@click.option(
+    "--backup/--no-backup",
+    default=True,
+    help="Create backup before applying fixes (default: true)",
+)
+@click.pass_context
+def fix_security_issues(ctx: click.Context, **options: Any) -> None:
+    """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
+    # display_banner()
+    ui = ProviderConfigUI()
+    config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
+    auth_config = config_service.load_auth_config()
+
+    if not auth_config:
+        console.print("[red]❌ No authentication configuration found[/red]")
+        console.print(
+            "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+        )
+        sys.exit(1)
+
+    # Validate auth config
+    auth_config = AuthConfig(**auth_config)
+    # Validate auth config
+    is_valid, error_msg = auth_config.validate()
+
+    if not is_valid:
+        console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
+        sys.exit(1)
+
+    console.print(f"[green]✓[/green] Authentication config loaded")
+    console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
+    console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
+
+    manager = ConfigManager(config_path=settings.config_file_path)
+    manager.load_config()
+    # Load LLM config
+    validator = ProviderValidator()
+    llm_config = config_service.load_llm_config(manager)
+    provider_manager = ProviderConfigManager(manager, ui, validator)
+    if not llm_config:
+        console.print("[red]❌ No LLM providers configured[/red]")
+        console.print("[yellow]💡 Run 'devdox_sonar init_config' to configure LLM[/yellow]")
+        sys.exit(1)
+
+    branch, pull_request = provider_manager.branch_or_pr_prompt()
+    if not branch and not pull_request:
+        console.print("[red]❌ No branch or pull request specified[/red]")
+        sys.exit(1)
+
+    console.print(f"[green]✓[/green] LLM config loaded")
+    # Interactive model selection if enabled
+    if not Confirm.ask(f"Do you want to use the default model '{llm_config.model}'?", default=True):
+        default_model = ui.select_provider_from_list(llm_config.models, llm_config.provider)
+        if not default_model:
+            console.print("[yellow]⚠ Model selection cancelled[/yellow]")
+            return None
+
+    api_key = llm_config.api_key
+
+    if not api_key:
+        console.print("[red]❌ No API key found for LLM provider[/red]")
+        sys.exit(1)
+
+
+
+    max_fixes = int(options.get("max_fixes", 5))
+    if max_fixes > 5:
+        max_fixes = 5
+
+    apply = True
+    dry_run = False
+    backup = True
+
+    try:
+        analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
+        ruler = RuleAnalyzer( token=auth_config.token,
+        organization=auth_config.organization)
+        fixer = LLMFixer(provider=llm_config.provider,  model=llm_config.model,
+            api_key=llm_config.api_key)
+        console.print(f"[blue]Analyzing project: {auth_config.project}[/blue]")
+        console.print(f"[blue]Local path: {auth_config.project_path}[/blue]")
+
+        fixable_issues = _fetch_fixable_security_issues(
+            analyzer,
+            auth_config.project,
+            branch,
+            pull_request,
+            max_fixes,
+        )
+
+        if not fixable_issues:
+            console.print("[yellow]No fixable issues found[/yellow]")
+            return
+        console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
+
+
+        console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
+        for file_path, issues in fixable_issues.items():
+            fixes = _generate_fixes(fixer, ruler, issues, Path(str(auth_config.project_path)))
+
+            if not fixes:
+                console.print("[yellow]No fixes could be generated[/yellow]")
+                return
+
+            _apply_fixes_if_requested(
+                bool(apply),
+                bool(dry_run),
+                fixes,
+                cast(List[SonarIssue], issues),
+                fixer,
+                Path(str(auth_config.project_path)),
+                bool(backup),
+            )
+    except Exception as e:
+        console.print(f"Error: {str(e)}", style="red", markup=False)
+        if ctx.obj.get("verbose"):
+            console.print_exception()
+        sys.exit(1)
+
+
+def _apply_fixes_if_requested(
+    apply: bool,
+    dry_run: bool,
+    fixes: List[FixSuggestion],
+    issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
+    fixer: LLMFixer,
+    project_path: Path,
+    backup: bool,
+) -> None:
+    if not (apply or dry_run):
+        return
+    if not dry_run:
+        selected_fixes = fixes if dry_run else select_fixes_interactively(fixes,issues)
+        if not selected_fixes:
+            click.echo("No fixes selected. Exiting.")
+            return
+        if not click.confirm(f"Apply {len(selected_fixes)} fixes to the codebase?"):
+            return
+    else:
+        selected_fixes = fixes
+    result = fixer.apply_fixes_with_validation(
+        fixes=selected_fixes,
+        issues=issues,
+        project_path=project_path,
+        create_backup=backup and not dry_run,
+        dry_run=dry_run,
+        use_validator=True,
+        validator_provider=fixer.provider,
+        validator_model=fixer.model,
+        validator_api_key=fixer.api_key,
+    )
+    _display_fix_results(result)
+
 
 
 def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> None:
@@ -552,142 +719,140 @@ def _get_severity_color(severity: Severity) -> str:
     return color_map.get(severity, "white")
 
 
-@main.command(name="fix_security_issues")
-@click.option("--token", "-t", required=True, help="SonarCloud authentication token")
-@click.option(
-    "--organization", "--org", required=True, help="SonarCloud organization key"
-)
-@click.option("--project", "-p", required=True, help="SonarCloud project key")
-@click.option(
-    "--project-path",
-    required=True,
-    type=click.Path(exists=True, path_type=Path),
-    help="Path to local project directory",
-)
-@click.option("--branch", "-b", default="", help="Branch to analyze (default: main)")
-@click.option(
-    "--pull-request",
-    "-pr",
-    type=int,
-    default=0,
-    help="Pull request number to analyze (optional)",
-)
-@click.option(
-    "--provider",
-    type=click.Choice(["openai", "gemini", "togetherai"]),
-    default="togetherai",
-    help="LLM provider",
-)
-@click.option("--model", help="LLM model name")
-@click.option("--api-key", help="LLM API key (or set environment variable)")
-@click.option(
-    "--max-fixes",
-    type=int,
-    default=10,
-    help="Maximum number of fixes to generate (default: 10)",
-)
-@click.option("--apply", is_flag=True, help="Apply fixes to the codebase")
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
-)
-@click.option(
-    "--backup/--no-backup",
-    default=True,
-    help="Create backup before applying fixes (default: true)",
-)
-@click.pass_context
-def fix_security_issues(ctx: click.Context, **options: Any) -> None:
-    """Generate and optionally apply LLM-powered fixes for SonarCloud issues."""
-    token = options.get("token")
-    organization = options.get("organization")
-    project = str(options.get("project", ""))
-    project_path = Path(options.get("project_path", ""))
-    branch = str(options.get("branch", ""))
-    pull_request = int(options.get("pull_request", 0))
-    provider = options.get("provider")
-    model = options.get("model")
-    api_key = options.get("api_key")
-    max_fixes = int(options.get("max_fixes", 5))
-    apply = options.get("apply")
-    dry_run = options.get("dry_run")
-    backup = options.get("backup")
+
+def _fetch_fixable_issues(
+    analyzer: SonarCloudAnalyzer,
+    project_key: str,
+    branch: str = "",
+    pull_request: int = 0,
+    max_issues: int = 10,
+    severity_list: Optional[List[str]] = None,
+    types_list: Optional[List[str]] = None,
+) -> Dict[str, Union[SonarIssue, SonarSecurityIssue]]:
+    with Progress() as progress:
+        task = progress.add_task("Fetching fixable issues...", total=None)
+        issues_per_files = analyzer.get_fixable_issues_by_files(
+            project_key=project_key,
+            branch=branch,
+            pull_request=pull_request,
+            max_issues=max_issues,
+            severities=severity_list if severity_list else None,
+            types_list=types_list if types_list else None,
+        )
+
+        progress.remove_task(task)
+    return issues_per_files
+
+
+def _fetch_fixable_security_issues(
+    analyzer: SonarCloudAnalyzer,
+    project_key: str,
+    branch: str = "",
+    pull_request: int = 0,
+    max_issues: int = 10,
+) -> List[SonarSecurityIssue]:
+    with Progress() as progress:
+        task = progress.add_task("Fetching fixable Security issues...", total=None)
+        issues = analyzer.get_fixable_security_issues(
+            project_key=project_key,
+            branch=branch,
+            pull_request=pull_request,
+            max_issues=max_issues,
+        )
+        progress.remove_task(task)
+    return issues
+
+
+def _generate_fixes(
+    fixer: LLMFixer,
+    ruler: RuleAnalyzer,
+    issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
+    project_path: Path,
+) -> List[FixSuggestion]:
+    fixes = []
+    with Progress() as progress:
+        rule_info_list: Dict[str, Dict[str, str]] = {}
+        for issue in issues:
+            rule_info = ruler.get_rule_by_key(issue.rule)
+            rule_info_list[issue.rule] = rule_info
+        fix = fixer.generate_fix_by_file(issues, project_path, rule_info_list)
+        if fix:
+            fixes.append(fix)
+        task = progress.add_task("Generating fixes...", total=len(fixes))
+        progress.advance(task)
+    return fixes
+
+
+def select_fixes_interactively(fixes: List[FixSuggestion],issues:Sequence[Union[SonarIssue, SonarSecurityIssue]]) -> List[FixSuggestion]:
+    click.echo("\nAvailable fixes:\n")
+
+    table = Table(show_header=True, header_style=BOLD_MAGENTA)
+    table.add_column("Number", width=10)
+    table.add_column("File and line", width=50)
+    table.add_column(
+        "Fixed",
+        width=100,
+        no_wrap=False,
+        overflow="fold",
+        max_width=None,
+        min_width=None,
+    )
+    table.add_column("Confidence", width=15)
+
+    for idx, fix in enumerate(fixes, start=1):
+        confidence_str = f"{fix.confidence:.2f}"
+        file_path = os.path.basename(fix.file_path) if fix.file_path else "N/A"
+        line_info = (
+            f"{file_path}:{fix.sonar_line_number}"
+            if fix.sonar_line_number
+            else file_path
+        )
+
+        messages = "\n -> ".join(
+            f"{issue.message} (line {issue.first_line} - {issue.last_line})" if issue.first_line else issue.message
+            for issue in issues
+        )
+        line_info = f"{line_info} \n → {messages}"
+        table.add_row(
+            str(idx),
+            line_info,
+            fix.fixed_code[:500],
+            confidence_str,
+        )
+
+    console.print("\n")
+    console.print(table)
+
+    choice = (
+        click.prompt(
+            "\nEnter fix numbers to apply (e.g., 1,3,5) or 'all' or 'none'",
+            default="all",
+        )
+        .strip()
+        .lower()
+    )
+
+    if choice == "all":
+        return fixes
+
+    if choice == "none" or choice == "":
+        return []
 
     try:
-        analyzer = SonarCloudAnalyzer(token, organization)
+        # Convert "1,3,5" → [1,3,5]
+        selected_indices = [int(x.strip()) for x in choice.split(",")]
+    except ValueError:
+        click.echo("❌ Invalid input. Expected numbers separated by commas.")
+        return []
 
-        fixer = LLMFixer(provider=provider, model=model, api_key=api_key)
+    # Filter fixes based on user input
+    selected = [
+        fix for idx, fix in enumerate(fixes, start=1) if idx in selected_indices
+    ]
 
-        console.print(f"[blue]Analyzing project: {project}[/blue]")
-        console.print(f"[blue]Local path: {project_path}[/blue]")
-
-        fixable_issues = _fetch_fixable_security_issues(
-            analyzer,
-            project,
-            branch,
-            pull_request,
-            max_fixes,
-        )
-
-        if not fixable_issues:
-            console.print("[yellow]No fixable issues found[/yellow]")
-            return
-        console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
-
-        fixes = _generate_fixes(fixer, analyzer, fixable_issues, project_path)
-
-        if not fixes:
-            console.print("[yellow]No fixes could be generated[/yellow]")
-            return
-
-        _apply_fixes_if_requested(
-            bool(apply),
-            bool(dry_run),
-            fixes,
-            fixable_issues,
-            fixer,
-            Path(str(project_path)),
-            bool(backup),
-        )
-
-    except Exception as e:
-        console.print(f"Error: {str(e)}", style="red", markup=False)
-        if ctx.obj.get("verbose"):
-            console.print_exception()
-        sys.exit(1)
+    return selected
 
 
-def _apply_fixes_if_requested(
-    apply: bool,
-    dry_run: bool,
-    fixes: List[FixSuggestion],
-    issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
-    fixer: LLMFixer,
-    project_path: Path,
-    backup: bool,
-) -> None:
-    if not (apply or dry_run):
-        return
-    if not dry_run:
-        selected_fixes = fixes if dry_run else select_fixes_interactively(fixes)
-        if not selected_fixes:
-            click.echo("No fixes selected. Exiting.")
-            return
-        if not click.confirm(f"Apply {len(selected_fixes)} fixes to the codebase?"):
-            return
-    else:
-        selected_fixes = fixes
-    result = fixer.apply_fixes_with_validation(
-        fixes=selected_fixes,
-        issues=issues,
-        project_path=project_path,
-        create_backup=backup and not dry_run,
-        dry_run=dry_run,
-        use_validator=True,
-        validator_provider=fixer.provider,
-        validator_model=fixer.model,
-        validator_api_key=fixer.api_key,
-    )
-    _display_fix_results(result)
 
 
 if __name__ == "__main__":

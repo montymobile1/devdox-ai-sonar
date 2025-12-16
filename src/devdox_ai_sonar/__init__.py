@@ -6,9 +6,9 @@ __version__ = "0.0.1"
 __author__ = "Hayat Bourgi"
 __email__ = "hayat.bourgi@montyholding.com"
 
-from .sonar_analyzer import SonarCloudAnalyzer
-from .fix_validator import FixValidator, ValidationStatus
-from .llm_fixer import LLMFixer
+from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
+from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
+from devdox_ai_sonar.llm_fixer import LLMFixer
 
 __all__ = [
     "SonarCloudAnalyzer",

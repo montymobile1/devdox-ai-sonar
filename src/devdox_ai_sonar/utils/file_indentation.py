@@ -1,15 +1,15 @@
 from pathlib import Path
 from typing import List, Tuple, Dict
+import logging
 from devdox_ai_sonar.models.file_structures import (
     LineRange,
     FixApplication,
     ImportState,
 )
 from devdox_ai_sonar.models.sonar import FixSuggestion
-from devdox_ai_sonar.logging_config import setup_logging, get_logger
 
-setup_logging(level="DEBUG")
-logger = get_logger(__name__)
+
+logger = logging.getLogger(__name__)
 
 
 def read_file_lines(file_path: Path) -> List[str]:
@@ -150,7 +150,7 @@ def find_import_insertion_point(lines: List[str]) -> int:
         "docstring_quote": None,
     }
     for i, line in enumerate(lines):
-        state, stop = process_import_line(i, line, state)
+        state, stop = process_import_line(i, line,lines, state)
 
         if stop:
             break
@@ -164,26 +164,41 @@ def find_import_insertion_point(lines: List[str]) -> int:
     else:
         return 0
 
-
-def process_import_line(i: int, line: str, state: ImportState) -> tuple:
+def process_import_line(i: int, line: str, lines: List[str], state: ImportState, indent_level: int = 0):
     stripped = line.strip()
-    # Shebang / encoding lines
+    indent = len(line) - len(line.lstrip())
+    # Ignore indented lines (inside function/class)
+    if indent > 0:
+        return state, False
+
+    # Shebang / encoding
     validate_shebang_or_encoding, state = is_shebang_or_encoding(i, stripped, state)
     if validate_shebang_or_encoding:
         return state, False
-    # Docstring handling
-    validate_handle_docstring, state = handle_docstring(i, stripped, state)
 
+    # Docstring
+    validate_handle_docstring, state = handle_docstring(i, stripped, state)
     if validate_handle_docstring:
         return state, False
-    # Import statements
+
+    # Top-level import
     if stripped.startswith(("import ", "from ")):
         state["last_import_line"] = i
         return state, False
-    # Actual code (non‑comment, non‑empty)
+
+    # Line continuation for import (top-level only)
+    if state["last_import_line"] >= 0:
+        prev_line = lines[state["last_import_line"]]
+        if prev_line.rstrip().endswith("\\"):
+            state["last_import_line"] = i
+            return state, False
+
+    # Any other code (non-empty, non-comment)
     if stripped and not stripped.startswith("#"):
-        return state, True
+        return state, True  # stop scanning
+
     return state, False
+
 
 
 def handle_docstring(
@@ -325,6 +340,7 @@ def find_global_top_insertion_point(lines: List[str]) -> int:
     """
     import_end = find_import_insertion_point(lines)
 
+
     # Look for the first non-import, non-comment, non-empty line after imports
     for i in range(import_end, len(lines)):
         stripped = lines[i].strip()
@@ -341,7 +357,6 @@ def apply_global_top_helper(
     """Apply fix with global top helper code."""
     # First replace the target lines
     lines[line_range.start : line_range.end + 1] = [indented_code, "\n"]
-
     # Determine where to insert helper
     if is_import_block(helper_code):
         insert_pos = find_import_insertion_point(lines)

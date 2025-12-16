@@ -8,6 +8,7 @@ from pathlib import Path
 import json
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
+import logging
 
 from .fix_validator import FixValidator, ValidationStatus
 from devdox_ai_sonar.models.file_structures import FixApplication
@@ -26,10 +27,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     normalize_indentation,
 )
 
-from .logging_config import setup_logging, get_logger
-
-setup_logging(level="DEBUG", log_file="demo.log")
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
 
 try:
     from together import Together  # type: ignore[import]
@@ -155,34 +153,12 @@ class LLMFixer:
 
         self.client = genai.Client(api_key=self.api_key)
 
-    def _is_decorator(self, line: str) -> bool:
-        """
-        Check if a line is a Python decorator.
 
-        Returns:
-            bool: True if the line is a decorator, False otherwise
-        """
-        stripped_line = line.strip()
-
-        # Python decorator patterns
-        decorator_patterns = [
-            r"^@\w+$",  # @decorator
-            r"^@\w+\.[^(]*$",  # @module.decorator
-            r"^@\w+\(",  # @decorator(args)
-            r"^@\w+\.[^(]*\(",  # @module.decorator(args)
-        ]
-
-        for pattern in decorator_patterns:
-            if re.match(pattern, stripped_line):
-                return True
-
-        return False
-
-    def generate_fix(
+    def generate_fix_by_file(
         self,
-        issue: Union[SonarIssue, SonarSecurityIssue],
+        issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         project_path: Path,
-        rule_info: Optional[Dict[str, Any]] = None,
+        rule_info_list: Dict[str, Dict[str, str]],
         modified_content: str = "",
         error_message: str = "",
     ) -> Optional[FixSuggestion]:
@@ -192,56 +168,69 @@ class LLMFixer:
         Args:
             issue: SonarCloud issue to fix
             project_path: Path to the project root
-            rule_info: Dictionary containing rule information
+            rule_info_list: Dictionary containing rule information
             modified_content: Optional[str] = None,
             error_message: Optional[str] = None
         Returns:
             FixSuggestion object or None if fix cannot be generated
         """
 
-        if not issue.file or not issue.first_line or not issue.last_line:
-            logger.warning(
-                f"Issue {issue.key} has no file or line number, skipping fix generation"
-            )
-            return None
+        issue_file = issues[0].file
+        first_line = issues[0].first_line
+
+        last_line = issues[0].last_line
+        problem_line_index = []
+        problem_line_list = []
+        for issue in issues:
+
+            if issue.file != issue_file:
+                logger.warning(
+                    f"Issue {issue.key} has different file than the first issue {issues[0].key}, skipping fix generation"
+                )
+
+                return None
+            if issue.first_line <= first_line:
+                first_line = issue.first_line
+            if last_line >= issue.last_line:
+                last_line = issue.last_line
+            problem_line_index.append(issue.first_line)
 
         # Read the file and extract context
-        file_path = project_path / issue.file
+        file_path = project_path / issue_file
         if not file_path.exists():
-            logger.warning(f"File not found for issue {issue.key}: {file_path}")
+            logger.warning(f"File not found for issue {issues[0].key}: {file_path}")
             return None
-
         try:
             with open(file_path, "r", encoding="utf-8") as f:
                 content_file = f.read()
                 lines = content_file.splitlines(keepends=True)
-
+            for problem_line in problem_line_index:
+                problem_line_list.append(lines[problem_line])
             # Get context around the issue
             if modified_content != "":
                 context_dict = {
                     "context": modified_content,
-                    "start_line": issue.first_line,
-                    "end_line": issue.last_line,
+                    "start_line": first_line,
+                    "end_line": last_line,
+                    "problem_lines": problem_line_list,
                 }
             else:
                 context_dict = self._extract_context(
-                    lines, issue.first_line, issue.last_line, self.context_lines
+                    lines, first_line, last_line, self.context_lines
                 )
+                context_dict["problem_lines"] = problem_line_list
                 if "end_line" in context_dict:
                     end_line_value = context_dict.get("end_line")
                     if isinstance(end_line_value, int):
-                        issue.last_line = end_line_value
+                        last_line = end_line_value
 
             # Generate fix using LLM
-            fix_response = self._call_llm(
-                issue, context_dict, file_path.suffix, rule_info, error_message
+            fix_response = self._call_llm_list(
+                issues, context_dict, file_path.suffix, rule_info_list, error_message
             )
             if fix_response:
-                logger.info(
-                    f"Successfully generated fix for issue {issue.key} with confidence {fix_response['confidence']}"
-                )
                 return FixSuggestion(
-                    issue_key=issue.key,
+                    issue_key="a",
                     original_code=context_dict["context"],
                     fixed_code=fix_response["fixed_code"],
                     helper_code=fix_response.get("helper_code"),
@@ -254,7 +243,7 @@ class LLMFixer:
                         file_path.relative_to(project_path)
                     ),  # Store relative path
                     line_number=context_dict.get("start_line"),
-                    sonar_line_number=issue.first_line,
+                    sonar_line_number=first_line,
                     last_line_number=context_dict.get("end_line"),
                 )
 
@@ -291,7 +280,6 @@ class LLMFixer:
             backup_path = self._create_backup(project_path)
             result.backup_created = True
             result.backup_path = backup_path
-            logger.info(f"Created backup at: {backup_path}")
 
         # Group fixes by file for efficient processing
         fixes_by_file: Dict[str, List[FixSuggestion]] = {}
@@ -312,9 +300,7 @@ class LLMFixer:
 
                 if self._apply_fixes_to_file(file_path, file_fixes, dry_run):
                     result.successful_fixes.extend(file_fixes)
-                    logger.info(
-                        f"Successfully applied {len(file_fixes)} fixes to {file_path}"
-                    )
+
                 else:
                     result.failed_fixes.extend(
                         [
@@ -336,60 +322,6 @@ class LLMFixer:
 
         return result
 
-    def _find_containing_function(
-        self, lines: List[str], target_line_idx: int
-    ) -> Optional[int]:
-        """Find the function that contains the given line index."""
-        # Search backwards from the target line to find a function definition
-        for i in range(target_line_idx, -1, -1):
-            line = lines[i].strip()
-
-            # Skip empty lines and comments
-            if not line or line.startswith("#") or line.startswith("//"):
-                continue
-
-            # Check if this line is a function definition
-            if self._is_function_definition(lines[i]):
-                # Verify that the target line is actually within this function
-                if self._is_line_inside_function(lines, target_line_idx, i):
-                    return i
-
-        return None
-
-    def _is_line_inside_function(
-        self, lines: List[str], line_idx: int, function_start_idx: int
-    ) -> bool:
-        """Check if a line is inside the function starting at function_start_idx."""
-        if line_idx < function_start_idx:
-            return False
-
-        function_end_idx = self._find_function_end(lines, function_start_idx)
-        if function_end_idx is None:
-            # If we can't find the end, use heuristic based on indentation
-            return self._check_indentation_containment(
-                lines, line_idx, function_start_idx
-            )
-
-        return line_idx <= function_end_idx
-
-    def _check_indentation_containment(
-        self, lines: List[str], line_idx: int, function_start_idx: int
-    ) -> bool:
-        """Fallback method to check if a line is inside a function using indentation."""
-        if function_start_idx >= len(lines) or line_idx >= len(lines):
-            return False
-
-        func_line = lines[function_start_idx]
-        func_indent = len(func_line) - len(func_line.lstrip())
-
-        target_line = lines[line_idx]
-        if not target_line.strip():  # Empty line
-            return True
-
-        target_indent = len(target_line) - len(target_line.lstrip())
-
-        # If target line has greater indentation, it's likely inside the function
-        return target_indent > func_indent
 
     def _extract_context(
         self,
@@ -420,90 +352,61 @@ class LLMFixer:
             - is_complete_function: Boolean indicating if complete function was extracted
             - function_name: Name of function if applicable
         """
-
+        extractor = ContextExtractor(lines)
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
         last_line_idx = last_line_number - 1
 
         if first_line_idx >= len(lines):
-            return self._get_empty_context(first_line_number)
+            return extractor._get_empty_context(first_line_number)
 
         problem_line = lines[first_line_idx].rstrip()
         # Check if first line contains function/method definition
-        if self._is_function_definition(problem_line):
-            function_context = self._extract_complete_function(
-                lines, first_line_idx, first_line_idx
+        if extractor._is_function_definition(problem_line):
+            function_context = extractor._extract_complete_function(
+                 first_line_idx, first_line_idx
             )
             if function_context:
                 return function_context
 
-        function_start_idx = self._find_containing_function(lines, first_line_idx)
+        function_start_idx = extractor._find_containing_function( first_line_idx)
         if function_start_idx is not None:
-            function_context = self._extract_complete_function(
-                lines, function_start_idx, first_line_idx
+            function_context = extractor._extract_complete_function(
+                function_start_idx, first_line_idx
             )
             if function_context:
                 return function_context
 
         # Check if issue spans multiple lines and any line is a function definition
         for line_idx in range(first_line_idx, min(last_line_idx + 1, len(lines))):
-            if self._is_function_definition(lines[line_idx]):
-                function_context = self._extract_complete_function(
-                    lines, line_idx, first_line_idx
+            #problem_line = lines[problem_line_idx].rstrip()
+
+            if first_line_idx == line_idx and first_line_idx != last_line_idx:
+                # try to find if context has a function definition
+                function_start_idx = extractor._find_containing_function( last_line_idx)
+                if function_start_idx is not None:
+
+                    function_end_idx = extractor._find_function_end(function_start_idx)
+                    if function_end_idx is not None and function_end_idx >= last_line_idx:
+                        last_line_idx = function_end_idx
+
+
+
+                break
+
+            if extractor._is_function_definition(lines[line_idx]):
+                function_context = extractor._extract_complete_function(
+                   line_idx, first_line_idx
                 )
                 if function_context:
                     return function_context
 
+
         # Fall back to normal context extraction
-        return self._extract_normal_context(
-            lines, first_line_idx, last_line_idx, context_lines
+        return extractor._extract_normal_context(
+            first_line_idx, last_line_idx, context_lines
         )
 
-    def _is_function_definition(self, line: str) -> bool:
-        """
-        Check if a line contains a function or method definition.
-
-        Supports Python, JavaScript/TypeScript, Java, and C# function patterns.
-        """
-
-        stripped_line = line.strip()
-
-        # Python function/method patterns
-        python_patterns = [
-            r"^def\s+\w+\s*\(",  # def function_name(
-            r"^async\s+def\s+\w+\s*\(",  # async def function_name(
-            r"^\s*def\s+\w+\s*\(",  # indented def (method in class)
-            r"^\s*async\s+def\s+\w+\s*\(",  # indented async def
-            r"^\s*async\s+def\s+\w+\s*\(",  # indented async def
-        ]
-
-        # JavaScript/TypeScript function patterns
-        js_patterns = [
-            r"^function\s+\w+\s*\(",  # function functionName(
-            r"^async\s+function\s+\w+\s*\(",  # async function functionName(
-            r"^\w+\s*:\s*function\s*\(",  # methodName: function(
-            r"^\w+\s*:\s*async\s+function\s*\(",  # methodName: async function(
-            r"^\w+\s*=\s*function\s*\(",  # functionName = function(
-            r"^\w+\s*=\s*async\s+function\s*\(",  # functionName = async function(
-            r"^\w+\s*=\s*\([^)]*\)\s*=>\s*\{",  # functionName = (params) => {
-            r"^\w+\s*=\s*async\s*\([^)]*\)\s*=>\s*\{",  # functionName = async (params) => {
-            r"^\s*\w+\s*\([^)]*\)\s*\{",  # methodName() { (in class/object)
-            r"^\s*async\s+\w+\s*\([^)]*\)\s*\{",  # async methodName() {
-        ]
-
-        # Java/C# method patterns
-        java_csharp_patterns = [
-            r"^(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{",
-            r"^\s*(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{",
-        ]
-
-        all_patterns = python_patterns + js_patterns + java_csharp_patterns
-
-        for pattern in all_patterns:
-            if re.match(pattern, stripped_line, re.IGNORECASE):
-                return True
-
-        return False
 
     def _is_actual_function_def(self, line: str) -> bool:
         """
@@ -526,167 +429,7 @@ class LLMFixer:
 
         return False
 
-    def _find_function_start_with_decorators(
-        self, lines: List[str], target_line_idx: int
-    ) -> int:
-        """
-        Find the actual start of a function, including any decorators.
 
-        Args:
-            lines: All lines in the file
-            target_line_idx: Line index where the issue was detected (0-indexed)
-
-        Returns:
-            int: The line index where the function actually starts (including decorators)
-        """
-        # Start from the target line and work backwards to find decorators
-        start_idx = target_line_idx
-
-        # Look backwards for decorators
-        for i in range(target_line_idx - 1, -1, -1):
-            line = lines[i].strip()
-
-            # Stop if we hit an empty line or non-decorator line
-            if not line:
-                break
-
-            if self._is_decorator(line):
-                start_idx = i
-            else:
-                # If it's not a decorator and not empty, we've found the boundary
-                break
-
-        return start_idx
-
-    def _extract_complete_function(
-        self, lines: List[str], start_idx: int, problem_line_idx: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Extract complete function/method from start to end, including decorators.
-
-        Args:
-            lines: All lines in the file
-            start_idx: Starting index (0-indexed) of function definition or where issue was detected
-
-        Returns:
-            Context dictionary with complete function or None if not found
-        """
-        if start_idx >= len(lines):
-            return None
-
-        # Find the actual function definition line (in case start_idx is on a decorator)
-        function_def_line_idx = start_idx
-
-        # If we're starting on a decorator, find the actual function definition
-        if self._is_decorator(lines[start_idx].strip()):
-            for i in range(
-                start_idx, min(len(lines), start_idx + 10)
-            ):  # Look ahead max 10 lines
-                if self._is_actual_function_def(lines[i]):
-                    function_def_line_idx = i
-                    break
-
-        # Find the start including decorators
-        function_start = self._find_function_start_with_decorators(
-            lines, function_def_line_idx
-        )
-
-        # Find the end of the function
-        function_end = self._find_function_end(lines, function_def_line_idx)
-
-        if function_end is None:
-            # If we can't find the end, include reasonable context
-            function_end = min(
-                len(lines) - 1, function_def_line_idx + 50
-            )  # Max 50 lines
-
-        # Extract function lines (including decorators)
-        function_lines = lines[function_start : function_end + 1]
-        context_text = "".join(function_lines)
-
-        # Get the actual function definition line
-        function_def_line = lines[function_def_line_idx].rstrip()
-
-        # Extract decorators
-        decorators = []
-        for i in range(function_start, function_def_line_idx):
-            decorator_line = lines[i].strip()
-            if decorator_line:  # Skip empty lines
-                decorators.append(decorator_line)
-        problem_line = lines[problem_line_idx].rstrip()
-        return {
-            "context": context_text,
-            "function_definition_line": function_def_line,
-            "decorators": decorators,
-            "line_number": start_idx
-            + 1,  # Convert back to 1-indexed (original issue line)
-            "function_start_line": function_start + 1,  # Convert back to 1-indexed
-            "end_line": function_end + 1,  # Convert back to 1-indexed
-            "is_complete_function": True,
-            "function_name": self._extract_function_name(function_def_line),
-            "has_decorators": len(decorators) > 0,
-            "decorator_count": len(decorators),
-            "start_line": function_start + 1,
-            "problem_line": problem_line,
-        }
-
-    def _find_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
-        """
-        Find the end line of a function/method based on language-specific rules.
-        """
-
-        if start_idx >= len(lines):
-            return None
-
-        start_line = lines[start_idx]
-
-        # Determine language and strategy based on the function definition
-        if re.search(r"\bdef\b", start_line):
-            # Python function - use indentation
-            return self._find_python_function_end(lines, start_idx)
-        elif "{" in start_line or re.search(
-            r"\bfunction\b|\w+\s*\(.*\)\s*\{", start_line
-        ):
-            # JavaScript/Java/C# - use brace matching
-            return self._find_brace_function_end(lines, start_idx)
-        elif re.search(r"\b@click.\b", start_line):
-            return self._find_python_function_end(lines, start_idx)
-        else:
-            # Try both strategies
-            python_end = self._find_python_function_end(lines, start_idx)
-            if python_end is not None:
-                return python_end
-            return self._find_brace_function_end(lines, start_idx)
-
-    def _find_python_function_end(
-        self, lines: List[str], start_idx: int
-    ) -> Optional[int]:
-        if start_idx >= len(lines):
-            return None
-        function_line = lines[start_idx]
-        function_indent = len(function_line) - len(function_line.lstrip())
-        for i in range(start_idx + 1, len(lines)):
-            line = lines[i]
-            if not line.strip() or line.strip().startswith("#"):
-                continue
-            current_indent = len(line) - len(line.lstrip())
-            if self._has_reached_function_end(
-                current_indent, function_indent, line, lines[i - 1]
-            ):
-                return i - 1
-        return len(lines) - 1
-
-    def _has_reached_function_end(
-        self, current_indent: int, function_indent: int, line: str, prev_line: str
-    ) -> bool:
-        if (current_indent <= function_indent) and not (
-            prev_line.rstrip().endswith(("\\", ",", "("))
-            or line.strip().startswith((")", "def ", "async def"))
-        ):
-            return True
-        if current_indent == function_indent and self._is_function_definition(line):
-            return True
-        return False
 
     def _find_brace_function_end(
         self, lines: List[str], start_idx: int
@@ -736,88 +479,79 @@ class LLMFixer:
 
         return line
 
-    def _extract_function_name(self, function_line: str) -> str:
-        """
-        Extract function name from function definition line.
-        """
 
-        # Python function name extraction
-        python_match = re.search(r"def\s+(\w+)", function_line)
-        if python_match:
-            return python_match.group(1)
 
-        # JavaScript function name extraction
-        js_match = re.search(r"function\s+(\w+)", function_line)
-        if js_match:
-            return js_match.group(1)
 
-        # Method assignment patterns
-        assignment_match = re.search(r"(\w+)\s*[:=]", function_line)
-        if assignment_match:
-            return assignment_match.group(1)
 
-        # Java/C# method name extraction
-        method_match = re.search(r"\b(\w+)\s*\([^)]*\)\s*\{?", function_line)
-        if method_match:
-            name = method_match.group(1)
-            # Filter out keywords
-            keywords = {
-                "public",
-                "private",
-                "protected",
-                "static",
-                "async",
-                "void",
-                "int",
-                "string",
-                "bool",
-                "return",
-            }
-            if name.lower() not in keywords:
-                return name
-
-        return ""
-
-    def _extract_normal_context(
+    def _call_llm_list(
         self,
-        lines: List[str],
-        first_line_idx: int,
-        last_line_idx: int,
-        context_lines: int,
-    ) -> Dict[str, Any]:
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: Dict[str, Any],
+        file_extension: str,
+        rule_info_list: Optional[List[Dict[str, Any]]] = None,
+        error_message: str = "",
+    ) -> Optional[Dict[str, Any]]:
         """
-        Extract normal context around the issue (original behavior).
-        """
-        # Calculate context boundaries
-        start_idx = max(0, first_line_idx - context_lines)
-        end_idx = min(len(lines), last_line_idx + context_lines + 1)
+        Call the LLM to generate a fix.
 
-        context_lines_list = lines[start_idx:end_idx]
-        problem_line = (
-            lines[first_line_idx].rstrip() if first_line_idx < len(lines) else ""
+        Args:
+            issue: SonarCloud issue
+            context: Code context around the issue
+            rule_info: Rule info from sonar cloud
+            file_extension: File extension to determine language
+
+        Returns:
+            Dictionary with fix information or None
+        """
+        # Determine programming language
+        language = self._get_language_from_extension(file_extension)
+
+        # Prepare prompt
+        prompt = self._create_fix_prompt_list(
+            issues, context, rule_info_list, language, error_message
         )
 
-        return {
-            "context": "".join(context_lines_list),
-            "problem_line": problem_line,
-            "line_number": first_line_idx + 1,  # Convert back to 1-indexed
-            "start_line": start_idx + 1,  # Convert back to 1-indexed
-            "end_line": end_idx,
-            "is_complete_function": False,
-        }
+        try:
+            if self.provider == "openai":
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    temperature=0.1,
+                    max_tokens=4000,
+                )
+                return self._parse_openai_response(response)
 
-    def _get_empty_context(self, line_number: int) -> Dict[str, Any]:
-        """
-        Return empty context when line number is out of range.
-        """
-        return {
-            "context": "",
-            "problem_line": "",
-            "line_number": line_number,
-            "start_line": line_number,
-            "end_line": line_number,
-            "is_complete_function": False,
-        }
+            elif self.provider == "gemini":
+                response = self.client.models.generate_content(
+                    model=self.model, contents=prompt
+                )
+                return self._parse_gemini_response(response)
+            elif self.provider == "togetherai":
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                        },
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=4000,
+                    top_p=0.9,
+                    top_k=40,
+                    repetition_penalty=1.1,
+                )
+
+            return self._parse_togetherai_response(response)
+        except Exception as e:
+            logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
+            return None
 
     def _call_llm(
         self,
@@ -1055,6 +789,110 @@ class LLMFixer:
         prompt = template.render(**context)
         return prompt.strip()
 
+    def _create_fix_prompt_list(
+        self,
+        issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
+        context: Dict[str, Any],
+        rule_info_list: Optional[List[Dict[str, Any]]] = None,
+        language: str = "python",
+        error_message: str = "",
+    ) -> str:
+        """Create a concise, focused prompt for the LLM to generate a fix."""
+
+        # 1. Context Setup
+        code_chunk = context.get("context", "")
+        base_indent = calculate_base_indentation(code_chunk)
+
+        # 2. Strategy Detection
+        strategies = [
+            f"• PRESERVE indentation ({base_indent} spaces) and existing logic flow.",
+            "• Make MINIMAL changes necessary to satisfy the rule.",
+        ]
+        for issue, rule_info in zip(issues, rule_info_list):
+            msg_lower = issue.message.lower()
+
+            # Cognitive Complexity
+            if "cognitive complexity" in msg_lower:
+                # Extract numbers if available
+                comp_info = self._extract_complexity_info(issue.message)
+                target = comp_info.get("target", "15")
+
+                strategies.extend(
+                    [
+                        f"• REDUCE complexity to < {target}.",
+                        "• EXTRACT logic to new helper methods/functions.",
+                        "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
+                        "• If the original code snippet calls functions or methods (e.g., validate(), "
+                        "normalize(), process_data()), DO NOT create new helper definitions for them."
+                        "Assume they already exist in the project and should not be recreated."
+                        "• Only extract logic into a helper function if that logic does not already"
+                        "correspond to any existing function call present in the snippet."
+                        "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
+                        "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
+                        "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
+                        "• NEVER put the same function definition in both sections.",
+                        "• If the original function is a class method (uses `self` or `cls`), "
+                        "then any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
+                        "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
+                        "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
+                    ]
+                )
+                if self._is_init_method(code_chunk):
+                    strategies.append(
+                        "• Keep __init__ signature intact; extract validation logic to helpers."
+                    )
+
+            # Unused Code
+            elif "unused" in issue.rule.lower() or "unused" in msg_lower:
+                strategies.append("• Remove ONLY the specific unused variable/import.")
+                strategies.append("• Do not break code that references adjacent lines.")
+
+            # Literal Duplication
+            elif "duplicating this literal" in msg_lower:
+                match = re.search(r'duplicating this literal "([^"]+)"', issue.message)
+                literal = match.group(1) if match else "the repeated value"
+                strategies.append(
+                    f'• Extract the literal "{literal}" to a constant/variable.'
+                )
+                strategies.append(
+                    "• Place the constant at the class or module level (not inside the function)."
+                )
+                strategies.append(
+                    "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
+                )
+                strategies.append(
+                    "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
+                )
+                strategies.append(
+                    "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
+                )
+                strategies.append("• Use the constant in [FIXED_SELECTION].")
+
+            # Null Checks
+            elif "null" in issue.rule.lower() or "nullable" in msg_lower:
+                strategies.append("• Add defensive null/None checks before usage.")
+
+            # 3. Construct Prompt
+            # We join strategies with newlines for a clean list
+            strategy_text = "\n".join(strategies)
+
+        template = self.jinja_env.get_template("fix_issues_multiples.j2")
+
+        # Prepare context for template
+        context = {
+            "language": language,
+            "issues": issues,
+            "rule_info": rule_info_list,
+            "context": context,
+            "code_chunk": code_chunk,
+            "error_message": error_message,
+            "strategy_text": strategy_text,
+        }
+        # Render enhanced content
+        prompt = template.render(**context)
+
+        return prompt.strip()
+
     def _parse_openai_response(self, response: Any) -> Optional[Dict[str, Any]]:
         """Parse OpenAI API response."""
         try:
@@ -1085,7 +923,6 @@ class LLMFixer:
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
         """Fallback extraction using regex for malformed JSON."""
-        logger.info(" Using regex fallback extraction...")
 
         try:
             results = self._apply_regex_patterns(content)
@@ -1138,8 +975,6 @@ class LLMFixer:
             logger.error(" No FIXED_SELECTION found")
             return None
 
-        logger.info(" Regex fallback extraction successful")
-
         return {
             "fixed_code": results["FIXED_SELECTION"],
             "helper_code": results["NEW_HELPER_CODE"],
@@ -1180,8 +1015,6 @@ class LLMFixer:
             logger.error("❌ FIXED_SELECTION is empty")
             return None
 
-        logger.debug(f"✅ Fields extracted successfully: {len(fixed_code)} chars code")
-
         return {
             "fixed_code": fixed_code,
             "helper_code": helper_code,
@@ -1195,8 +1028,6 @@ class LLMFixer:
         Robust extraction that handles various JSON response formats.
         """
         try:
-            logger.debug(f"Processing response: {len(content)} chars")
-
             # Step 1: Try direct JSON parsing first (for well-formed responses)
             cleaned_content = content.strip()
             cleaned_content = cleaned_content.split("{", 1)[1]
@@ -1211,13 +1042,13 @@ class LLMFixer:
             if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
                 try:
                     fix_data = json.loads(cleaned_content)
-                    logger.debug("✅ Direct JSON parsing successful")
+
                     return self._extract_fields_from_parsed_json(fix_data)
                 except json.JSONDecodeError:
                     pass  # Continue to cleaning steps
 
             # Step 2: Last resort - regex extraction
-            logger.info("Using regex fallback extraction")
+
             return self._extract_using_regex_fallback(content)
 
         except Exception as e:
@@ -1252,7 +1083,7 @@ class LLMFixer:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = project_path.parent / f"{project_path.name}_backup_{timestamp}"
         shutil.copytree(project_path, backup_path)
-        logger.info(f"Created project backup: {backup_path}")
+
         return backup_path
 
     def _try_stored_file_path(
@@ -1413,7 +1244,6 @@ class LLMFixer:
         self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool
     ) -> Tuple[bool, List[FixApplication]]:
         if dry_run:
-            logger.info(f"[DRY RUN] Would apply {len(fixes)} fixes to {file_path}")
             return True, []
 
         try:
@@ -1429,9 +1259,6 @@ class LLMFixer:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
 
             write_file_lines(file_path, lines)
-
-            successful = sum(1 for r in results if r.success)
-            logger.info(f"Applied {successful}/{len(fixes)} fixes to {file_path}")
 
             return all(r.success for r in results), results
 
@@ -1549,7 +1376,6 @@ class LLMFixer:
             backup_path = self._create_backup(project_path)
             result.backup_created = True
             result.backup_path = backup_path
-            logger.info(f"Created backup at: {backup_path}")
 
         # Initialize validator if needed (but don't use it upfront)
         validator = None
@@ -1579,7 +1405,6 @@ class LLMFixer:
                 file_fixes = [fix for fix, _ in file_fix_pairs]
 
                 # STEP 1: Try to apply fixes directly
-                logger.info(f"Applying {len(file_fixes)} fixes to {file_path}")
 
                 # Store original content for validator fallback
                 original_content = ""
@@ -1592,9 +1417,6 @@ class LLMFixer:
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
-                    logger.info(
-                        f"✓ Successfully applied {len(file_fixes)} fixes to {file_path}"
-                    )
 
                 else:
                     # STEP 2: Direct application failed, try AI validator fallback
@@ -1612,10 +1434,6 @@ class LLMFixer:
                         validator_success_count = 0
                         for fix, issue in file_fix_pairs:
                             try:
-                                logger.info(
-                                    f"Using AI validator for fix {fix.issue_key}"
-                                )
-
                                 # Get current file content (may have been modified by previous validator fixes)
                                 current_content = original_content
                                 if file_path.exists():
@@ -1631,9 +1449,6 @@ class LLMFixer:
                                     validation_result.status
                                     == ValidationStatus.APPROVED
                                 ):
-                                    logger.info(
-                                        f"✓ Fix {fix.issue_key} APPROVED by validator (confidence: {validation_result.confidence:.2f})"
-                                    )
                                     result.successful_fixes.append(fix)
                                     validator_success_count += 1
 
@@ -1641,10 +1456,6 @@ class LLMFixer:
                                     validation_result.status
                                     == ValidationStatus.MODIFIED
                                 ):
-                                    logger.info(
-                                        f"✓ Fix {fix.issue_key} MODIFIED by validator (confidence: {validation_result.confidence:.2f})"
-                                    )
-
                                     # Apply the improved fix
                                     if validation_result.final_fix:
                                         improved_success = self._apply_fixes_to_file(
@@ -1706,10 +1517,6 @@ class LLMFixer:
                                     {"fix": fix, "error": f"Validator error: {str(e)}"}
                                 )
 
-                        logger.info(
-                            f"Validator fallback: {validator_success_count}/{len(file_fixes)} fixes successful"
-                        )
-
                     else:
                         # No validator available, mark all as failed
                         result.failed_fixes.extend(
@@ -1735,6 +1542,392 @@ class LLMFixer:
 
         return result
 
+
+class ContextExtractor:
+    """Handles context extraction logic"""
+
+    def __init__(self, lines: List[str]):
+        self.lines = lines
+
+
+    def _is_line_inside_function(
+        self, lines: List[str], line_idx: int, function_start_idx: int
+    ) -> bool:
+        """Check if a line is inside the function starting at function_start_idx."""
+        if line_idx < function_start_idx:
+            return False
+
+        function_end_idx = self._find_function_end(lines, function_start_idx)
+        if function_end_idx is None:
+            # If we can't find the end, use heuristic based on indentation
+            return self._check_indentation_containment(
+                lines, line_idx, function_start_idx
+            )
+
+        return line_idx <= function_end_idx
+
+
+    def _check_indentation_containment(
+        self, lines: List[str], line_idx: int, function_start_idx: int
+    ) -> bool:
+        """Fallback method to check if a line is inside a function using indentation."""
+        if function_start_idx >= len(lines) or line_idx >= len(lines):
+            return False
+
+        func_line = lines[function_start_idx]
+        func_indent = len(func_line) - len(func_line.lstrip())
+
+        target_line = lines[line_idx]
+        if not target_line.strip():  # Empty line
+            return True
+
+        target_indent = len(target_line) - len(target_line.lstrip())
+
+        # If target line has greater indentation, it's likely inside the function
+        return target_indent > func_indent
+
+
+
+    def _find_python_function_end(
+            self, lines: List[str], start_idx: int
+    ) -> Optional[int]:
+        if start_idx >= len(lines):
+            return None
+        function_line = lines[start_idx]
+        function_indent = len(function_line) - len(function_line.lstrip())
+        for i in range(start_idx + 1, len(lines)):
+            line = lines[i]
+            if not line.strip() or line.strip().startswith("#"):
+                continue
+            current_indent = len(line) - len(line.lstrip())
+            if self._has_reached_function_end(
+                    current_indent, function_indent, line, lines[i - 1]
+            ):
+                return i - 1
+        return len(lines) - 1
+
+
+    def _has_reached_function_end(
+        self, current_indent: int, function_indent: int, line: str, prev_line: str
+    ) -> bool:
+        if (current_indent <= function_indent) and not (
+            prev_line.rstrip().endswith(("\\", ",", "("))
+            or line.strip().startswith((")", "def ", "async def"))
+        ):
+            return True
+        if current_indent == function_indent and self._is_function_definition(line):
+            return True
+        return False
+
+
+    def _is_function_definition(self, line: str) -> bool:
+        """
+        Check if a line contains a function or method definition.
+
+        Supports Python, JavaScript/TypeScript, Java, and C# function patterns.
+        """
+
+        stripped_line = line.strip()
+
+        # Python function/method patterns
+        python_patterns = [
+            r"^def\s+\w+\s*\(",  # def function_name(
+            r"^async\s+def\s+\w+\s*\(",  # async def function_name(
+            r"^\s*def\s+\w+\s*\(",  # indented def (method in class)
+            r"^\s*async\s+def\s+\w+\s*\(",  # indented async def
+            r"^\s*async\s+def\s+\w+\s*\(",  # indented async def
+        ]
+
+        # JavaScript/TypeScript function patterns
+        js_patterns = [
+            r"^function\s+\w+\s*\(",  # function functionName(
+            r"^async\s+function\s+\w+\s*\(",  # async function functionName(
+            r"^\w+\s*:\s*function\s*\(",  # methodName: function(
+            r"^\w+\s*:\s*async\s+function\s*\(",  # methodName: async function(
+            r"^\w+\s*=\s*function\s*\(",  # functionName = function(
+            r"^\w+\s*=\s*async\s+function\s*\(",  # functionName = async function(
+            r"^\w+\s*=\s*\([^)]*\)\s*=>\s*\{",  # functionName = (params) => {
+            r"^\w+\s*=\s*async\s*\([^)]*\)\s*=>\s*\{",  # functionName = async (params) => {
+            r"^\s*\w+\s*\([^)]*\)\s*\{",  # methodName() { (in class/object)
+            r"^\s*async\s+\w+\s*\([^)]*\)\s*\{",  # async methodName() {
+        ]
+
+        # Java/C# method patterns
+        java_csharp_patterns = [
+            r"^(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{",
+            r"^\s*(public|private|protected|static|internal|\s)+(.*\s+)?\w+\s*\([^)]*\)\s*\{",
+        ]
+
+        all_patterns = python_patterns + js_patterns + java_csharp_patterns
+
+        for pattern in all_patterns:
+            if re.match(pattern, stripped_line, re.IGNORECASE):
+                return True
+
+        return False
+
+
+    def _is_function_line(self, line_idx: int) -> bool:
+        """Check if line is a function definition"""
+        if line_idx >= len(self.lines):
+            return False
+        return self._is_function_definition(self.lines[line_idx])
+
+    def _find_containing_function(
+            self,  target_line_idx: int
+    ) -> Optional[int]:
+        """Find the function that contains the given line index."""
+        # Search backwards from the target line to find a function definition
+        lines = self.lines
+        for i in range(target_line_idx, -1, -1):
+            line = lines[i].strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+            # Check if this line is a function definition
+            if self._is_function_definition(lines[i]):
+                # Verify that the target line is actually within this function
+                if self._is_line_inside_function(lines, target_line_idx, i):
+                    return i
+
+        return None
+
+    def _find_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+        """
+        Find the end line of a function/method based on language-specific rules.
+        """
+
+        if start_idx >= len(lines):
+            return None
+
+        start_line = lines[start_idx]
+
+        # Determine language and strategy based on the function definition
+        if re.search(r"\bdef\b", start_line):
+            # Python function - use indentation
+            return self._find_python_function_end(lines, start_idx)
+        elif "{" in start_line or re.search(
+            r"\bfunction\b|\w+\s*\(.*\)\s*\{", start_line
+        ):
+            # JavaScript/Java/C# - use brace matching
+            return self._find_brace_function_end(lines, start_idx)
+        elif re.search(r"\b@click.\b", start_line):
+            return self._find_python_function_end(lines, start_idx)
+        else:
+            # Try both strategies
+            python_end = self._find_python_function_end(lines, start_idx)
+            if python_end is not None:
+                return python_end
+            return self._find_brace_function_end(lines, start_idx)
+
+
+    def _extract_function_name(self, function_line: str) -> str:
+        """
+        Extract function name from function definition line.
+        """
+
+        # Python function name extraction
+        python_match = re.search(r"def\s+(\w+)", function_line)
+        if python_match:
+            return python_match.group(1)
+
+        # JavaScript function name extraction
+        js_match = re.search(r"function\s+(\w+)", function_line)
+        if js_match:
+            return js_match.group(1)
+
+        # Method assignment patterns
+        assignment_match = re.search(r"(\w+)\s*[:=]", function_line)
+        if assignment_match:
+            return assignment_match.group(1)
+
+        # Java/C# method name extraction
+        method_match = re.search(r"\b(\w+)\s*\([^)]*\)\s*\{?", function_line)
+        if method_match:
+            name = method_match.group(1)
+            # Filter out keywords
+            keywords = {
+                "public",
+                "private",
+                "protected",
+                "static",
+                "async",
+                "void",
+                "int",
+                "string",
+                "bool",
+                "return",
+            }
+            if name.lower() not in keywords:
+                return name
+
+        return ""
+
+
+    def _extract_complete_function(
+            self,  start_idx: int, problem_line_idx: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extract complete function/method from start to end, including decorators.
+
+        Args:
+            lines: All lines in the file
+            start_idx: Starting index (0-indexed) of function definition or where issue was detected
+
+        Returns:
+            Context dictionary with complete function or None if not found
+        """
+        lines = self.lines
+        if start_idx >= len(lines):
+            return None
+
+        # Find the actual function definition line (in case start_idx is on a decorator)
+        function_def_line_idx = start_idx
+
+        # If we're starting on a decorator, find the actual function definition
+        if self._is_decorator(lines[start_idx].strip()):
+            for i in range(
+                    start_idx, min(len(lines), start_idx + 10)
+            ):  # Look ahead max 10 lines
+                if self._is_actual_function_def(lines[i]):
+                    function_def_line_idx = i
+                    break
+
+        # Find the start including decorators
+        function_start = self._find_function_start_with_decorators(
+            lines, function_def_line_idx
+        )
+
+        # Find the end of the function
+        function_end = self._find_function_end(lines, function_def_line_idx)
+
+        if function_end is None:
+            # If we can't find the end, include reasonable context
+            function_end = min(
+                len(lines) - 1, function_def_line_idx + 50
+            )  # Max 50 lines
+
+        # Extract function lines (including decorators)
+        function_lines = lines[function_start: function_end + 1]
+        context_text = "".join(function_lines)
+
+        # Get the actual function definition line
+        function_def_line = lines[function_def_line_idx].rstrip()
+
+        # Extract decorators
+        decorators = []
+        for i in range(function_start, function_def_line_idx):
+            decorator_line = lines[i].strip()
+            if decorator_line:  # Skip empty lines
+                decorators.append(decorator_line)
+        problem_line = lines[problem_line_idx].rstrip()
+        return {
+            "context": context_text,
+            "function_definition_line": function_def_line,
+            "decorators": decorators,
+            "line_number": start_idx
+                           + 1,  # Convert back to 1-indexed (original issue line)
+            "function_start_line": function_start + 1,  # Convert back to 1-indexed
+            "end_line": function_end + 1,  # Convert back to 1-indexed
+            "is_complete_function": True,
+            "function_name": self._extract_function_name(function_def_line),
+            "has_decorators": len(decorators) > 0,
+            "decorator_count": len(decorators),
+            "start_line": function_start + 1,
+            "problem_line": problem_line,
+        }
+
+    def _find_function_start_with_decorators(
+            self, lines: List[str], target_line_idx: int
+    ) -> int:
+        """
+        Find the actual start of a function, including any decorators.
+
+        Args:
+            lines: All lines in the file
+            target_line_idx: Line index where the issue was detected (0-indexed)
+
+        Returns:
+            int: The line index where the function actually starts (including decorators)
+        """
+        # Start from the target line and work backwards to find decorators
+        start_idx = target_line_idx
+
+        # Look backwards for decorators
+        for i in range(target_line_idx - 1, -1, -1):
+            line = lines[i].strip()
+
+            # Stop if we hit an empty line or non-decorator line
+            if not line:
+                break
+
+            if self._is_decorator(line):
+                start_idx = i
+            else:
+                # If it's not a decorator and not empty, we've found the boundary
+                break
+
+        return start_idx
+
+
+    def _is_decorator(self, line: str) -> bool:
+        """
+        Check if a line is a Python decorator.
+
+        Returns:
+            bool: True if the line is a decorator, False otherwise
+        """
+        stripped_line = line.strip()
+
+        # Python decorator patterns
+        decorator_patterns = [
+            r"^@\w+$",  # @decorator
+            r"^@\w+\.[^(]*$",  # @module.decorator
+            r"^@\w+\(",  # @decorator(args)
+            r"^@\w+\.[^(]*\(",  # @module.decorator(args)
+        ]
+
+        for pattern in decorator_patterns:
+            if re.match(pattern, stripped_line):
+                return True
+
+        return False
+
+
+
+
+    def _extract_normal_context(
+            self,
+            first_idx: int,
+            last_idx: int,
+            context_lines: int
+    ) -> Dict[str, Any]:
+        """Extract normal context window"""
+        start_idx = max(0, first_idx - context_lines)
+        end_idx = min(len(self.lines), last_idx + context_lines + 1)
+
+        return {
+            "context": "".join(self.lines[start_idx:end_idx]),
+            "problem_line": self.lines[first_idx].rstrip(),
+            "line_number": first_idx + 1,
+            "start_line": start_idx + 1,
+            "end_line": end_idx,
+            "is_complete_function": False,
+        }
+
+    def _get_empty_context(self, line_number: int) -> Dict[str, Any]:
+        """
+        Return empty context when line number is out of range.
+        """
+        return {
+            "context": "",
+            "problem_line": "",
+            "line_number": line_number,
+            "start_line": line_number,
+            "end_line": line_number,
+            "is_complete_function": False,
+        }
 
 def _looks_like_file_path(self, path_candidate: str) -> bool:
     """Check if string looks like a file path with supported extension."""

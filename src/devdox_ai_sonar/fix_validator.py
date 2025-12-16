@@ -6,11 +6,11 @@ from typing import List, Optional, Dict, Any, Tuple, Union
 from enum import Enum
 import re
 
-from .logging_config import setup_logging, get_logger
+import logging
 from devdox_ai_sonar.models.sonar import SonarIssue, SonarSecurityIssue, FixSuggestion
 
-setup_logging(level="DEBUG", log_file="demo.log")
-logger = get_logger(__name__)
+logger = logging.getLogger(__name__)
+
 
 try:
     from together import Together  # type: ignore[import]
@@ -423,10 +423,8 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
             # Extract concerns
             concerns_match = re.search(
-
                 r"CONCERNS:\s*((?:(?!IMPROVED_FIX:|IMPROVED_EXPLANATION:).)*)",
-
-            response_text,
+                response_text,
                 re.DOTALL,
             )
             concerns_text = concerns_match.group(1).strip() if concerns_match else ""
