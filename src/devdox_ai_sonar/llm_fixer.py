@@ -1849,8 +1849,7 @@ class ContextExtractor:
 
     def _try_extract_from_definition_line(
             self,
-            first_idx: int,
-            last_idx: int,
+            first_idx: int
 
     ) -> Optional[Dict[str, Any]]:
         """
@@ -1895,7 +1894,7 @@ class ContextExtractor:
             Context dict if successful, None if no function context found
         """
         # Strategy 1: Issue starts on function definition
-        context = self._try_extract_from_definition_line( first_idx, last_idx)
+        context = self._try_extract_from_definition_line( first_idx)
         if context:
             return context
 

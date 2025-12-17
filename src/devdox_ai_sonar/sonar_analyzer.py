@@ -575,7 +575,7 @@ class SonarCloudAnalyzer:
         branch: str = "",
         pull_request: Optional[int] = 0,
         max_issues: Optional[int] = None,
-    ) -> List[SonarSecurityIssue]:
+    ) -> Dict[str, List[SonarIssue]]:
         """
         Get issues that are potentially fixable by LLM.
 

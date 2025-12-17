@@ -164,7 +164,7 @@ def find_import_insertion_point(lines: List[str]) -> int:
     else:
         return 0
 
-def process_import_line(i: int, line: str, lines: List[str], state: ImportState, indent_level: int = 0):
+def process_import_line(i: int, line: str, lines: List[str], state: ImportState):
     stripped = line.strip()
     indent = len(line) - len(line.lstrip())
     # Ignore indented lines (inside function/class)

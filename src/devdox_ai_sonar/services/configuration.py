@@ -110,8 +110,7 @@ class ConfigService:
     def save_config(self, token: str, organization: str, project: str, project_path: str):
         """Save authentication configuration"""
 
-        if not validate_token_format(token):
-            if (
+        if not validate_token_format(token) and  (
                     not console.input(
                         "[yellow]Token format seems unusual. Continue? (y/N): [/yellow]"
                     )
