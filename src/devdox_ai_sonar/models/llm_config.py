@@ -287,13 +287,13 @@ class ConfigManager:
         doc = tomlkit.document()
 
         for section_key, section_value in self.config.items():
-            doc[section_key] = self._build_section_value(section_key, section_value)
+            doc[section_key] = self._build_section_value( section_value)
 
 
         with open(self.config_path, "w") as f:
             f.write(tomlkit.dumps(doc))
 
-    def _build_section_value(self, section_key: str, section_value: Any) -> Any:
+    def _build_section_value(self, section_value: Any) -> Any:
         """Build TOML value for a config section"""
         if not isinstance(section_value, dict):
             return section_value
