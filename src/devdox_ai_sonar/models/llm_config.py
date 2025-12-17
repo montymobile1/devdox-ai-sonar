@@ -287,39 +287,75 @@ class ConfigManager:
         doc = tomlkit.document()
 
         for section_key, section_value in self.config.items():
-            if not isinstance(section_value, dict):
-                doc[section_key] = section_value
-                continue
+            doc[section_key] = self._build_section_value(section_key, section_value)
 
-            section_table = tomlkit.table()
-
-            for key, value in section_value.items():
-                if key == "providers" and isinstance(value, list) and len(value) > 0:
-                    # Create array of tables for providers
-                    aot = tomlkit.aot()
-                    for provider in value:
-                        provider_table = tomlkit.table()
-                        for pk, pv in provider.items():
-                            if isinstance(pv, list):
-                                arr = tomlkit.array()
-                                arr.multiline(False)
-                                for item in pv:
-                                    arr.append(item)
-                                provider_table[pk] = arr
-                            else:
-                                provider_table[pk] = pv
-                        aot.append(provider_table)
-                    section_table[key] = aot
-                elif isinstance(value, dict):
-                    nested_table = tomlkit.table()
-                    for nk, nv in value.items():
-                        nested_table[nk] = nv
-                    section_table[key] = nested_table
-                else:
-                    section_table[key] = value
-
-            doc[section_key] = section_table
 
         with open(self.config_path, "w") as f:
             f.write(tomlkit.dumps(doc))
 
+    def _build_section_value(self, section_key: str, section_value: Any) -> Any:
+        """Build TOML value for a config section"""
+        if not isinstance(section_value, dict):
+            return section_value
+
+        section_table = tomlkit.table()
+
+        for key, value in section_value.items():
+            section_table[key] = self._build_table_value(key, value)
+
+        return section_table
+
+    def _build_table_value(self, key: str, value: Any) -> Any:
+        """Build TOML value for a table entry"""
+        if key == "providers" and self._is_provider_array(value):
+            return self._build_providers_array(value)
+
+        if isinstance(value, dict):
+            return self._build_nested_table(value)
+
+        return value
+
+    def _is_provider_array(self, value: Any) -> bool:
+        """Check if value is a non-empty provider array"""
+        return isinstance(value, list) and len(value) > 0
+
+    def _build_providers_array(self, providers: List[Dict[str, Any]]) -> tomlkit.items.AoT:
+        """Build array of tables for providers"""
+        aot = tomlkit.aot()
+
+        for provider in providers:
+            provider_table = self._build_provider_table(provider)
+            aot.append(provider_table)
+
+        return aot
+
+    def _build_provider_table(self, provider: Dict[str, Any]) -> tomlkit.items.Table:
+        """Build a single provider table"""
+        provider_table = tomlkit.table()
+
+        for key, value in provider.items():
+            if isinstance(value, list):
+                provider_table[key] = self._build_inline_array(value)
+            else:
+                provider_table[key] = value
+
+        return provider_table
+
+    def _build_inline_array(self, items: List[Any]) -> tomlkit.items.Array:
+        """Build an inline TOML array"""
+        arr = tomlkit.array()
+        arr.multiline(False)
+
+        for item in items:
+            arr.append(item)
+
+        return arr
+
+    def _build_nested_table(self, nested_dict: Dict[str, Any]) -> tomlkit.items.Table:
+        """Build a nested TOML table"""
+        nested_table = tomlkit.table()
+
+        for key, value in nested_dict.items():
+            nested_table[key] = value
+
+        return nested_table
