@@ -1,4 +1,4 @@
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 from rich.prompt import Confirm, Prompt
 from rich.console import Console
 from simple_term_menu import TerminalMenu
