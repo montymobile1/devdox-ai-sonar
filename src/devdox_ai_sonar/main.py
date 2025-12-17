@@ -269,7 +269,7 @@ def init_config(ctx: click.Context):
     """CLI for config management - Complexity: 8 (under limit of 15)"""
     try:
         # Initialize all managers
-        manager, ui, validator, provider_manager, sonar_ui, config_service = _initialize_managers()
+        manager, ui, _ , provider_manager, sonar_ui, config_service = _initialize_managers()
         manager.create_default_config()
         manager.load_config()
 
@@ -307,7 +307,7 @@ def update_provider(ctx: click.Context):
     """CLI command for managing provider configuration - Complexity: 7 (under limit of 15)"""
     try:
         # Initialize components
-        manager, ui, validator, provider_manager, _, _ = _initialize_managers()
+        manager, ui, _, provider_manager, _, _ = _initialize_managers()
         manager.load_config()
 
         existing_providers = provider_manager.get_existing_providers()
