@@ -208,7 +208,6 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
 
         # Step 3: Process issues and apply fixes
         _process_and_fix_issues(
-            ctx,
             auth_config,
             llm_config,
             branch,
@@ -225,189 +224,6 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
             console.print_exception()
         sys.exit(1)
 
-
-# def fix_issues(ctx: click.Context, **options: Any) -> None:
-#     """
-#     Generate and optionally apply LLM-powered fixes for SonarCloud issues.
-#
-#     This command:
-#     1. Loads authentication and LLM configuration
-#     2. Validates user inputs
-#     3. Fetches issues from SonarCloud
-#     4. Generates fixes using LLM
-#     5. Optionally applies fixes to your codebase
-#
-#     """
-#
-#     # ============================================================================
-#     # STEP 1: Load Configuration
-#     # ============================================================================
-#
-#     console.print("\n[bold cyan]Step 1: Loading Configuration[/bold cyan]")
-#     ui = ProviderConfigUI()
-#     validator = ProviderValidator()
-#     # Load authentication config
-#     config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
-#     auth_config = config_service.load_auth_config()
-#
-#     if not auth_config:
-#         console.print(AUTHENTICATION_NOT_FOUND)
-#         console.print(
-#             DEVDOX_SONAR_CONFIG
-#         )
-#         sys.exit(1)
-#
-#     # Validate auth config
-#     auth_config = AuthConfig(**auth_config)
-#     # Validate auth config
-#     is_valid, error_msg = auth_config.validate()
-#
-#     if not is_valid:
-#         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
-#         sys.exit(1)
-#
-#     console.print(AUTH_CONFIG_LOADED)
-#     console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
-#     console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
-#
-#     manager = ConfigManager(config_path=settings.config_file_path)
-#     manager.load_config()
-#
-#     # Load LLM config
-#     llm_config = config_service.load_llm_config(manager)
-#     if not llm_config:
-#         console.print("[red]❌ No LLM providers configured[/red]")
-#         console.print("[yellow]💡 Run 'devdox_sonar init_config' to configure LLM[/yellow]")
-#         sys.exit(1)
-#
-#     provider_manager = ProviderConfigManager(manager, ui, validator)
-#     branch, pull_request = provider_manager.branch_or_pr_prompt()
-#     if not branch and not pull_request:
-#         console.print(NO_BRANCH_OR_PR_SPECIFIED)
-#         sys.exit(1)
-#
-#     console.print(AUTH_CONFIG_LOADED)
-#     # Interactive model selection if enabled
-#     if not Confirm.ask(f"Do you want to use the default model '{llm_config.model}'?", default=True):
-#         default_model = ui.select_provider_from_list(llm_config.models, llm_config.provider)
-#         if not default_model:
-#             console.print("[yellow]⚠ Model selection cancelled[/yellow]")
-#             return None
-#
-#     api_key = llm_config.api_key
-#
-#     if not api_key:
-#         console.print("[red]❌ No API key found for LLM provider[/red]")
-#         sys.exit(1)
-#     # ============================================================================
-#     # STEP 2: Get and Validate User Inputs
-#     # ============================================================================
-#
-#     console.print("\n[bold cyan]Step 2: Configuring Fix Parameters[/bold cyan]")
-#
-#     dry_run = options.get("dry_run", False)
-#     # Get max fixes
-#     max_fixes = options.get("max_fixes", settings.DEFAULT_MAX_FIXES)
-#     if not options.get("max_fixes"):
-#         # Ask user
-#         max_fixes_input = Prompt.ask(
-#             f"Maximum fixes to generate (1-{settings.MAX_FIXES_LIMIT})",
-#             default=str(settings.DEFAULT_MAX_FIXES)
-#         )
-#         try:
-#             max_fixes = InputValidator.validate_max_issues(
-#                 max_fixes_input,
-#                 settings.MAX_FIXES_LIMIT,
-#                 field_name="max_fixes"
-#             )
-#         except ValidationError as e:
-#             console.print(f"\n[red]❌ {e.message}[/red]")
-#             raise click.Abort()
-#
-#     console.print(f"[green]✓[/green] Max fixes: [cyan]{max_fixes}[/cyan]")
-#
-#     # Parse and validate types
-#     types_list: Optional[List[str]] = None
-#     if options.get("types"):
-#         try:
-#             types_list = InputValidator.validate_issue_types(options["types"])
-#             console.print(f"[green]✓[/green] Issue types: [cyan]{', '.join(types_list)}[/cyan]")
-#         except ValidationError as e:
-#             console.print(f"\n[red]❌ {e.message}[/red]")
-#             raise click.Abort()
-#
-#     # Parse and validate severities
-#     severities_list: Optional[List[str]] = None
-#     if options.get("severity"):
-#         try:
-#             severities_list = InputValidator.validate_severities(options["severity"])
-#             console.print(f"[green]✓[/green] Severities: [cyan]{', '.join(severities_list)}[/cyan]")
-#         except ValidationError as e:
-#             console.print(f"\n[red]❌ {e.message}[/red]")
-#             raise click.Abort()
-#
-#     # ============================================================================
-#     # STEP 3: Create Services and Config
-#     # ============================================================================
-#
-#     console.print("\n[bold cyan]Step 3: Initializing Services[/bold cyan]")
-#
-#     # Create analyzer
-#     analyzer = SonarCloudAnalyzer(
-#         token=auth_config.token,
-#         organization=auth_config.organization
-#     )
-#     ruler = RuleAnalyzer( token=auth_config.token,
-#         organization=auth_config.organization)
-#     console.print("[green]✓[/green] SonarCloud analyzer initialized")
-#     try:
-#         # Create fixer
-#         fixer = LLMFixer(
-#             provider=llm_config.provider,
-#             model=llm_config.model,
-#             api_key=llm_config.api_key
-#         )
-#
-#
-#         console.print(f"[blue]Analyzing project: {auth_config.project}[/blue]")
-#         console.print(f"[blue]Local path: {auth_config.project_path}[/blue]")
-#         fixable_issues = _fetch_fixable_issues(
-#                     analyzer,
-#                     auth_config.project,
-#                     branch,
-#                     pull_request,
-#                     max_fixes,
-#                     severities_list,
-#                     types_list,
-#                 )
-#
-#         if not fixable_issues:
-#             console.print("[yellow]No fixable issues found[/yellow]")
-#             return
-#
-#         console.print(f"\n[green]Found {len(fixable_issues)} fixable issues[/green]")
-#         for file_path, issues in fixable_issues.items():
-#                     fixes = _generate_fixes(fixer, ruler, issues, Path(str(auth_config.project_path)))
-#
-#                     if not fixes:
-#                         console.print("[yellow]No fixes could be generated[/yellow]")
-#                         return
-#                     backup = Confirm.ask("Do you want to save a backup before applying fixes?", default=False)
-#                     _apply_fixes_if_requested(
-#                         True,
-#                         bool(dry_run),
-#                         fixes,
-#                         cast(List[SonarIssue], issues),
-#                         fixer,
-#                         Path(str(auth_config.project_path)),
-#                         backup,
-#                     )
-#
-#     except Exception as e:
-#             console.print(f"Error: {str(e)}", style="red", markup=False)
-#             if ctx.obj.get("verbose"):
-#                 console.print_exception()
-#             sys.exit(1)
 
 
 
@@ -507,7 +323,6 @@ def fix_security_issues(ctx: click.Context, **options: Any) -> None:
 
         # Process security issues specifically
         _process_security_issues(
-            ctx,
             auth_config,
             llm_config,
             branch,
@@ -619,7 +434,6 @@ def _configure_security_fix_parameters(options: Dict[str, Any]) -> Dict[str, Any
 
 
 def _process_security_issues(
-        ctx: click.Context,
         auth_config: AuthConfig,
         llm_config: LLMConfig,
         branch: Optional[str],
@@ -798,7 +612,6 @@ def _generate_and_apply_security_fixes(
         )
 
 def _process_and_fix_issues(
-        ctx: click.Context,
         auth_config: AuthConfig,
         llm_config: LLMConfig,
         branch: Optional[str],
