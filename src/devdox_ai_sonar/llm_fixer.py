@@ -1414,7 +1414,7 @@ class LLMFixer:
                         original_content = f.read()
 
                 # Attempt direct application
-                success , fix_app = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success , _ = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
@@ -1432,7 +1432,6 @@ class LLMFixer:
                                 f.write(original_content)
 
                         # Use validator to fix each problematic fix
-                        validator_success_count = 0
                         for fix, issue in file_fix_pairs:
                             try:
                                 # Get current file content (may have been modified by previous validator fixes)

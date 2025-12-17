@@ -8,6 +8,7 @@ from devdox_ai_sonar.utils.validator import InputValidator
 from devdox_ai_sonar.utils.exceptions import ValidationError
 
 console = Console()
+CONFIG_PROVIDERS="llm.providers"
 
 
 class ProviderConfigUI:
@@ -67,7 +68,7 @@ class ProviderConfigManager:
 
     def get_available_providers(self) -> List[str]:
         """Get list of providers not yet configured."""
-        existing_providers = self.config_manager.get_value("llm.providers") or []
+        existing_providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
         existing_names = {p["name"] for p in existing_providers}
         return [p for p in ProviderType.choices() if p not in existing_names]
 
@@ -77,7 +78,7 @@ class ProviderConfigManager:
 
     def get_existing_providers(self) -> List[str]:
         """Get list of already configured providers."""
-        existing_providers = self.config_manager.get_value("llm.providers") or []
+        existing_providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
         return [p["name"] for p in existing_providers]
 
     def configure_new_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
@@ -123,7 +124,7 @@ class ProviderConfigManager:
 
     def update_existing_provider(self, provider_name: str) -> bool:
         """Update an existing provider's configuration."""
-        providers = self.config_manager.get_value("llm.providers") or []
+        providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
         provider = next((p for p in providers if p["name"] == provider_name), None)
         if not provider:
             console.print(f"[red]❌ Provider {provider_name} not found[/red]")
@@ -194,7 +195,7 @@ class ProviderConfigManager:
         return False
 
 
-    def branch_or_pr_prompt(self) -> str:
+    def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
         default_branch = self.config_manager.get_value("sonar.default_branch") or "main"
         default_pull = self.config_manager.get_value("sonar.default_pull")

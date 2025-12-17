@@ -258,7 +258,7 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
         console.print(NO_BRANCH_OR_PR_SPECIFIED)
         sys.exit(1)
 
-    console.print(f"[green]✓[/green] LLM config loaded")
+    console.print(AUTH_CONFIG_LOADED)
     # Interactive model selection if enabled
     if not Confirm.ask(f"Do you want to use the default model '{llm_config.model}'?", default=True):
         default_model = ui.select_provider_from_list(llm_config.models, llm_config.provider)
@@ -331,7 +331,7 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
     )
     ruler = RuleAnalyzer( token=auth_config.token,
         organization=auth_config.organization)
-    console.print(f"[green]✓[/green] SonarCloud analyzer initialized")
+    console.print("[green]✓[/green] SonarCloud analyzer initialized")
     try:
         # Create fixer
         fixer = LLMFixer(
@@ -504,7 +504,7 @@ def fix_security_issues(ctx: click.Context, **options: Any) -> None:
         console.print(NO_BRANCH_OR_PR_SPECIFIED)
         sys.exit(1)
 
-    console.print(f"[green]✓[/green] LLM config loaded")
+    console.print(AUTH_CONFIG_LOADED)
     # Interactive model selection if enabled
     if not Confirm.ask(f"Do you want to use the default model '{llm_config.model}'?", default=True):
         default_model = ui.select_provider_from_list(llm_config.models, llm_config.provider)

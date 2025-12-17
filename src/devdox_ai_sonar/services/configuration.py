@@ -203,7 +203,7 @@ class ConfigService:
             console.print(f"[green]✓ Token saved to {self.sonar_path}[/green]")
             return True
 
-        except (IOError, OSError, PermissionError) as e:
+        except (IOError, PermissionError) as e:
             console.print(f"[red]Error saving token: {e}[/red]")
             return False
 
