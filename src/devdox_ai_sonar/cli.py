@@ -3,9 +3,7 @@
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List, Any, Set, Tuple, Union, cast, Sequence, Dict
-import json
-from simple_term_menu import TerminalMenu
+from typing import Optional, List, Any, Union, cast, Sequence, Dict
 from rich.prompt import Confirm, Prompt
 import rich_click as click
 from rich.console import Console
@@ -45,9 +43,10 @@ console = Console()
 
 
 BOLD_MAGENTA = "bold magenta"  # Define constant for repeated literal
-
-
-
+AUTHENTICATION_NOT_FOUND = "[red]❌ No authentication configuration found[/red]"
+DEVDOX_SONAR_CONFIG="[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+NO_BRANCH_OR_PR_SPECIFIED = "[red]❌ No branch or pull request specified[/red]"
+AUTH_CONFIG_LOADED = "[green]✓[/green] Authentication config loaded"
 
 VALID_TYPES = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
 VALID_SEVERITIES = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR"}
@@ -99,9 +98,9 @@ def analyze(
         auth_config = config_service.load_auth_config()
 
         if not auth_config:
-            console.print("[red]❌ No authentication configuration found[/red]")
+            console.print(AUTHENTICATION_NOT_FOUND)
             console.print(
-                "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+                DEVDOX_SONAR_CONFIG
             )
             sys.exit(1)
         auth_config = AuthConfig(**auth_config)
@@ -111,7 +110,7 @@ def analyze(
             console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
             sys.exit(1)
 
-        console.print(f"[green]✓[/green] Authentication config loaded")
+        console.print(AUTH_CONFIG_LOADED)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
 
@@ -122,7 +121,7 @@ def analyze(
         provider_manager = ProviderConfigManager(manager, ui, validator)
         branch, pull_request = provider_manager.branch_or_pr_prompt()
         if not branch and not pull_request:
-            console.print("[red]❌ No branch or pull request specified[/red]")
+            console.print(NO_BRANCH_OR_PR_SPECIFIED)
             sys.exit(1)
 
         limit = Prompt.ask(
@@ -224,9 +223,9 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
     auth_config = config_service.load_auth_config()
 
     if not auth_config:
-        console.print("[red]❌ No authentication configuration found[/red]")
+        console.print(AUTHENTICATION_NOT_FOUND)
         console.print(
-            "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+            DEVDOX_SONAR_CONFIG
         )
         sys.exit(1)
 
@@ -239,7 +238,7 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
         sys.exit(1)
 
-    console.print(f"[green]✓[/green] Authentication config loaded")
+    console.print(AUTH_CONFIG_LOADED)
     console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
     console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
 
@@ -256,7 +255,7 @@ def fix_issues(ctx: click.Context, **options: Any) -> None:
     provider_manager = ProviderConfigManager(manager, ui, validator)
     branch, pull_request = provider_manager.branch_or_pr_prompt()
     if not branch and not pull_request:
-        console.print("[red]❌ No branch or pull request specified[/red]")
+        console.print(NO_BRANCH_OR_PR_SPECIFIED)
         sys.exit(1)
 
     console.print(f"[green]✓[/green] LLM config loaded")
@@ -393,9 +392,9 @@ def inspect() -> None:
         auth_config = config_service.load_auth_config()
 
         if not auth_config:
-            console.print("[red]❌ No authentication configuration found[/red]")
+            console.print(AUTHENTICATION_NOT_FOUND)
             console.print(
-                "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+                DEVDOX_SONAR_CONFIG
             )
             sys.exit(1)
 
@@ -470,9 +469,9 @@ def fix_security_issues(ctx: click.Context, **options: Any) -> None:
     auth_config = config_service.load_auth_config()
 
     if not auth_config:
-        console.print("[red]❌ No authentication configuration found[/red]")
+        console.print(AUTHENTICATION_NOT_FOUND)
         console.print(
-            "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
+            DEVDOX_SONAR_CONFIG
         )
         sys.exit(1)
 
@@ -485,7 +484,7 @@ def fix_security_issues(ctx: click.Context, **options: Any) -> None:
         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
         sys.exit(1)
 
-    console.print(f"[green]✓[/green] Authentication config loaded")
+    console.print(AUTH_CONFIG_LOADED)
     console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
     console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]")
 
@@ -502,7 +501,7 @@ def fix_security_issues(ctx: click.Context, **options: Any) -> None:
 
     branch, pull_request = provider_manager.branch_or_pr_prompt()
     if not branch and not pull_request:
-        console.print("[red]❌ No branch or pull request specified[/red]")
+        console.print(NO_BRANCH_OR_PR_SPECIFIED)
         sys.exit(1)
 
     console.print(f"[green]✓[/green] LLM config loaded")

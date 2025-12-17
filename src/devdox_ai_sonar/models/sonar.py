@@ -55,7 +55,7 @@ class SonarCloudConfig(BaseModel):
         if not self.project or not self.project.strip():
             return False, "Project key cannot be empty"
 
-        if not self.project_path or not self.project_path:
+        if not self.project_path :
             return False, "Project path cannot be empty"
 
         return True, None
@@ -150,7 +150,7 @@ class SecurityAnalysisResult(BaseModel):
     issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
     fixable_issues_by_file: Dict[str, List[SonarIssue]] = Field(
         default_factory=dict,
-        description="Issues that can be fixed by LLM",
+        description="Security issues that can be fixed by LLM",
     )
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
 
@@ -177,7 +177,7 @@ class AnalysisResult(BaseModel):
     )
     fixable_issues_by_file: Dict[str, List[SonarIssue]] = Field(
         default_factory=dict,
-        description="Issues that can be fixed by LLM",
+        description="Issues grouped by file that can be fixed by LLM",
     )
 
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")

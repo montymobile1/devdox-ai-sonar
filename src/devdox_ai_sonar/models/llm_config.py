@@ -200,7 +200,7 @@ class ConfigManager:
 
         # Set as default if requested
         if set_as_default:
-            old_default = self.config["llm"]["default_provider"]
+
             self.config["llm"]["default_provider"] = provider_name
             self.config["llm"]["default_model"] = provider["default_model"]
 

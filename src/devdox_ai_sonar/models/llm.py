@@ -7,6 +7,8 @@ import openai
 from openai import OpenAI
 from together import Together
 
+API_KEY_EMPTY="API key cannot be empty"
+NO_MODELS_FOUND="No models found for this API key"
 
 class ProviderType(str, Enum):
     """Supported LLM providers."""
@@ -47,7 +49,7 @@ class ProviderValidator:
     def validate_openai(api_key: str) -> ProviderValidationResult:
         """Validate OpenAI API key and fetch available models."""
         if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result("API key cannot be empty")
+            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
 
@@ -59,7 +61,7 @@ class ProviderValidator:
 
             if not model_list:
                 return ProviderValidationResult.failure_result(
-                    "No models found for this API key"
+                    NO_MODELS_FOUND
                 )
 
             return ProviderValidationResult.success_result(model_list)
@@ -83,7 +85,7 @@ class ProviderValidator:
     def validate_gemini(api_key: str) -> ProviderValidationResult:
         """Validate Gemini API key and fetch available models."""
         if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result("API key cannot be empty")
+            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
 
@@ -94,7 +96,7 @@ class ProviderValidator:
 
             if not model_list:
                 return ProviderValidationResult.failure_result(
-                    "No models found for this API key"
+                    NO_MODELS_FOUND
                 )
 
             return ProviderValidationResult.success_result(model_list)
@@ -112,7 +114,7 @@ class ProviderValidator:
     def validate_togetherai(api_key: str) -> ProviderValidationResult:
         """Validate TogetherAI API key and fetch available models."""
         if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result("API key cannot be empty")
+            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
 
@@ -123,7 +125,7 @@ class ProviderValidator:
 
             if not model_list:
                 return ProviderValidationResult.failure_result(
-                    "No models found for this API key"
+                    NO_MODELS_FOUND
                 )
 
             return ProviderValidationResult.success_result(model_list)

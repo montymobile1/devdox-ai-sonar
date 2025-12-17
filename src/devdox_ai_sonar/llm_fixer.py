@@ -29,6 +29,7 @@ from devdox_ai_sonar.utils.file_indentation import (
 
 logger = logging.getLogger(__name__)
 
+
 try:
     from together import Together  # type: ignore[import]
 
@@ -53,6 +54,7 @@ except ImportError as e:
 
 java_extension = ".java"
 scala_extension = ".scala"
+prompt_system_message="You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
 
 
 class LLMFixer:
@@ -379,7 +381,6 @@ class LLMFixer:
 
         # Check if issue spans multiple lines and any line is a function definition
         for line_idx in range(first_line_idx, min(last_line_idx + 1, len(lines))):
-            #problem_line = lines[problem_line_idx].rstrip()
 
             if first_line_idx == line_idx and first_line_idx != last_line_idx:
                 # try to find if context has a function definition
@@ -518,7 +519,7 @@ class LLMFixer:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                            "content": prompt_system_message
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -538,7 +539,7 @@ class LLMFixer:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                            "content": prompt_system_message
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -588,7 +589,7 @@ class LLMFixer:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                            "content": prompt_system_message
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -608,7 +609,7 @@ class LLMFixer:
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes.",
+                            "content": prompt_system_message
                         },
                         {"role": "user", "content": prompt},
                     ],
@@ -1414,7 +1415,6 @@ class LLMFixer:
 
                 # Attempt direct application
                 success , fix_app = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
-                print("success ", success, fix_app)
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
@@ -1558,7 +1558,7 @@ class ContextExtractor:
         if line_idx < function_start_idx:
             return False
 
-        function_end_idx = self._find_function_end(lines, function_start_idx)
+        function_end_idx = self._find_function_end( function_start_idx)
         if function_end_idx is None:
             # If we can't find the end, use heuristic based on indentation
             return self._check_indentation_containment(
@@ -1694,11 +1694,11 @@ class ContextExtractor:
 
         return None
 
-    def _find_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+    def _find_function_end(self,  start_idx: int) -> Optional[int]:
         """
         Find the end line of a function/method based on language-specific rules.
         """
-
+        lines = self.lines
         if start_idx >= len(lines):
             return None
 
@@ -1801,7 +1801,7 @@ class ContextExtractor:
         )
 
         # Find the end of the function
-        function_end = self._find_function_end(lines, function_def_line_idx)
+        function_end = self._find_function_end( function_def_line_idx)
 
         if function_end is None:
             # If we can't find the end, include reasonable context

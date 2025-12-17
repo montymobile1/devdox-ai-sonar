@@ -516,7 +516,7 @@ class SonarCloudAnalyzer:
 
         fixable = analysis.fixable_issues
 
-        fixable_by_file = analysis.fixable_issues_by_file
+
 
         # Sort by severity (most critical first)
         severity_order = {
