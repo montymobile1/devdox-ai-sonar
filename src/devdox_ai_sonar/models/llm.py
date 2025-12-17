@@ -2,6 +2,10 @@ from enum import Enum
 from typing import Optional, List
 from dataclasses import dataclass
 from pydantic import BaseModel
+from google import genai
+import openai
+from openai import OpenAI
+from together import Together
 
 
 class ProviderType(str, Enum):
@@ -46,10 +50,9 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result("API key cannot be empty")
 
         try:
-            import openai
-            from openai import OpenAI
 
-            # models = openai.models.list()
+
+
             client = OpenAI(api_key=api_key)
             models = client.models.list().data
             model_list = [model.id for model in models]
@@ -83,7 +86,7 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result("API key cannot be empty")
 
         try:
-            from google import genai
+
 
             client = genai.Client(api_key=api_key)
             models = client.models.list()
@@ -112,7 +115,7 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result("API key cannot be empty")
 
         try:
-            from together import Together
+
 
             client = Together(api_key=api_key)
             models = client.models.list()
