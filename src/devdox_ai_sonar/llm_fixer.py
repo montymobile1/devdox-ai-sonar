@@ -155,106 +155,85 @@ class LLMFixer:
 
         self.client = genai.Client(api_key=self.api_key)
 
-
     def generate_fix_by_file(
-        self,
-        issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
-        project_path: Path,
-        rule_info_list: Dict[str, Dict[str, str]],
-        modified_content: str = "",
-        error_message: str = "",
+            self,
+            issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
+            project_path: Path,
+            rule_info_list: Dict[str, Dict[str, str]],
+            modified_content: str = "",
+            error_message: str = "",
     ) -> Optional[FixSuggestion]:
         """
-        Generate a fix suggestion for a SonarCloud issue.
+        Generate a fix suggestion for one or more SonarCloud issues in the same file.
+
+        This function orchestrates the fix generation process:
+        1. Validates all issues are from the same file
+        2. Reads file content and extracts context
+        3. Calls LLM to generate fix
+        4. Returns structured fix suggestion
 
         Args:
-            issue: SonarCloud issue to fix
+            issues: List of SonarCloud issues to fix (must be from same file)
             project_path: Path to the project root
             rule_info_list: Dictionary containing rule information
-            modified_content: Optional[str] = None,
-            error_message: Optional[str] = None
+            modified_content: Optional pre-extracted content to use instead of reading file
+            error_message: Optional error message to include in LLM context
+
         Returns:
             FixSuggestion object or None if fix cannot be generated
         """
-
-        issue_file = issues[0].file
-        first_line = issues[0].first_line
-
-        last_line = issues[0].last_line
-        problem_line_index = []
-        problem_line_list = []
-        for issue in issues:
-
-            if issue.file != issue_file:
-                logger.warning(
-                    f"Issue {issue.key} has different file than the first issue {issues[0].key}, skipping fix generation"
-                )
-
-                return None
-            if issue.first_line <= first_line:
-                first_line = issue.first_line
-            if last_line >= issue.last_line:
-                last_line = issue.last_line
-            problem_line_index.append(issue.first_line)
-
-        # Read the file and extract context
-        file_path = project_path / issue_file
-        if not file_path.exists():
-            logger.warning(f"File not found for issue {issues[0].key}: {file_path}")
+        if not issues:
+            logger.warning("No issues provided for fix generation")
             return None
+
         try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                content_file = f.read()
-                lines = content_file.splitlines(keepends=True)
-            for problem_line in problem_line_index:
-                problem_line_list.append(lines[problem_line])
-            # Get context around the issue
-            if modified_content != "":
-                context_dict = {
-                    "context": modified_content,
-                    "start_line": first_line,
-                    "end_line": last_line,
-                    "problem_lines": problem_line_list,
-                }
-            else:
-                context_dict = self._extract_context(
-                    lines, first_line, last_line, self.context_lines
-                )
-                context_dict["problem_lines"] = problem_line_list
-                if "end_line" in context_dict:
-                    end_line_value = context_dict.get("end_line")
-                    if isinstance(end_line_value, int):
-                        last_line = end_line_value
-
-            # Generate fix using LLM
-            fix_response = self._call_llm_list(
-                issues, context_dict, file_path.suffix, rule_info_list, error_message
+            # Step 1: Validate issues and calculate ranges
+            file_path, line_range = _validate_and_extract_issue_info(
+                issues, project_path
             )
-            if fix_response:
-                return FixSuggestion(
-                    issue_key="a",
-                    original_code=context_dict["context"],
-                    fixed_code=fix_response["fixed_code"],
-                    helper_code=fix_response.get("helper_code"),
-                    placement_helper=fix_response.get("placement_helper"),
-                    explanation=fix_response["explanation"],
-                    confidence=fix_response["confidence"],
-                    llm_model=self.model,
-                    rule_description=fix_response.get("rule_description"),
-                    file_path=str(
-                        file_path.relative_to(project_path)
-                    ),  # Store relative path
-                    line_number=context_dict.get("start_line"),
-                    sonar_line_number=first_line,
-                    last_line_number=context_dict.get("end_line"),
-                )
 
+            # Step 2: Read file and extract context
+            context_info = _prepare_context(
+                file_path,
+                line_range,
+                modified_content,
+                self.context_lines
+            )
+
+            if not context_info:
+                return None
+
+            # Step 3: Generate fix using LLM
+            fix_response = self._call_llm_list(
+                issues,
+                context_info["context_dict"],
+                file_path.suffix,
+                rule_info_list,
+                error_message
+            )
+
+            if not fix_response:
+                return None
+
+            # Step 4: Build fix suggestion
+            return _build_fix_suggestion(
+                fix_response,
+                context_info,
+                file_path,
+                project_path,
+                line_range,
+                self.model
+            )
+
+        except FileNotFoundError as e:
+            logger.warning(f"File not found for issue {issues[0].key}: {e}")
+            return None
         except Exception as e:
             logger.error(
-                f"Error generating fix for issue {issue.key}: {e}", exc_info=True
+                f"Error generating fix for issue {issues[0].key}: {e}",
+                exc_info=True
             )
-
-        return None
+            return None
 
     def apply_fixes(
         self,
@@ -371,42 +350,16 @@ class LLMFixer:
             if function_context:
                 return function_context
 
-        function_start_idx = extractor._find_containing_function( first_line_idx)
-        if function_start_idx is not None:
-            function_context = extractor._extract_complete_function(
-                function_start_idx, first_line_idx
-            )
-            if function_context:
-                return function_context
+        context = extractor._try_function_extraction_strategies(
+         first_line_idx, last_line_idx,
+        )
 
-        # Check if issue spans multiple lines and any line is a function definition
-        for line_idx in range(first_line_idx, min(last_line_idx + 1, len(lines))):
-
-            if first_line_idx == line_idx and first_line_idx != last_line_idx:
-                # try to find if context has a function definition
-                function_start_idx = extractor._find_containing_function( last_line_idx)
-                if function_start_idx is not None:
-
-                    function_end_idx = extractor._find_function_end(function_start_idx)
-                    if function_end_idx is not None and function_end_idx >= last_line_idx:
-                        last_line_idx = function_end_idx
-
-
-
-                break
-
-            if extractor._is_function_definition(lines[line_idx]):
-                function_context = extractor._extract_complete_function(
-                   line_idx, first_line_idx
-                )
-                if function_context:
-                    return function_context
-
-
-        # Fall back to normal context extraction
+        if context:
+            return context
         return extractor._extract_normal_context(
             first_line_idx, last_line_idx, context_lines
         )
+
 
 
     def _is_actual_function_def(self, line: str) -> bool:
@@ -1450,7 +1403,7 @@ class LLMFixer:
                                     == ValidationStatus.APPROVED
                                 ):
                                     result.successful_fixes.append(fix)
-                                    validator_success_count += 1
+
 
                                 elif (
                                     validation_result.status
@@ -1467,7 +1420,7 @@ class LLMFixer:
                                             result.successful_fixes.append(
                                                 validation_result.final_fix
                                             )
-                                            validator_success_count += 1
+
                                         else:
                                             result.failed_fixes.append(
                                                 {
@@ -1894,8 +1847,135 @@ class ContextExtractor:
 
         return False
 
+    def _try_extract_from_definition_line(
+            self,
+            first_idx: int,
+            last_idx: int,
+
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Try to extract complete function if first line is a function definition.
+
+        Args:
+            extractor: Context extractor instance
+            lines: All file lines
+            line_range: Range of problematic lines
+
+        Returns:
+            Function context if first line is a definition, None otherwise
+        """
+        if first_idx >= len(self.lines):
+            return None
+
+        first_line = self.lines[first_idx].rstrip()
+
+        if not self._is_function_definition(first_line):
+            return None
+
+        return self._extract_complete_function(
+            first_idx,
+            first_idx
+        )
 
 
+    def  _try_function_extraction_strategies(
+            self,
+            first_idx: int,
+            last_idx: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Try various strategies to extract complete function context.
+
+        Strategies (in order of priority):
+        1. Issue is ON a function definition line
+        2. Issue is INSIDE a function
+        3. Multi-line issue that SPANS a function
+
+        Returns:
+            Context dict if successful, None if no function context found
+        """
+        # Strategy 1: Issue starts on function definition
+        context = self._try_extract_from_definition_line( first_idx, last_idx)
+        if context:
+            return context
+
+        # Strategy 2: Issue is inside a function
+        context = self._try_extract_containing_function( first_idx)
+        if context:
+            return context
+
+        # Strategy 3: Multi-line issue - try to expand to complete function
+        if  first_idx != last_idx:
+            context = self._try_expand_multiline_to_function( first_idx, last_idx)
+            if context:
+                return context
+
+        return None
+
+    def _try_expand_multiline_to_function(
+            self,
+            first_idx: int,
+            last_idx: int,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        For multi-line issues, try to expand the range to include complete function.
+
+        Strategy:
+        1. Find function containing the LAST line of the issue
+        2. If found and it extends beyond issue range, use the complete function
+
+        Args:
+            extractor: Context extractor instance
+            line_range: Range of problematic lines (multi-line)
+
+        Returns:
+            Expanded function context if applicable, None otherwise
+        """
+        # Find function containing the end of the issue
+        function_start_idx = self._find_containing_function(last_idx)
+
+        if function_start_idx is None:
+            return None
+
+        # Find where this function ends
+        function_end_idx = self._find_function_end(function_start_idx)
+
+        if function_end_idx is None:
+            return None
+
+        # Only use this if function extends beyond our current range
+        if function_end_idx <= last_idx:
+            return None
+
+        # Extract the complete function
+        return self._extract_complete_function(
+            function_start_idx,
+            first_idx
+        )
+
+    def _try_extract_containing_function(
+            self,
+            first_idx:int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Try to extract the complete function that contains the issue.
+
+        Args:
+            extractor: Context extractor instance
+            line_range: Range of problematic lines
+
+        Returns:
+            Function context if issue is inside a function, None otherwise
+        """
+        function_start_idx = self._find_containing_function(first_idx)
+
+        if function_start_idx is None:
+            return None
+
+        return self._extract_complete_function(
+            function_start_idx,
+            first_idx
+        )
 
     def _extract_normal_context(
             self,
@@ -1959,3 +2039,270 @@ def _try_find_by_content(self, fix: FixSuggestion, project_path: Path) -> Option
     )
 
     return str(matching_files[0]) if matching_files else None
+
+
+def _build_fix_suggestion(
+        fix_response: Dict[str, any],
+        context_info: Dict[str, any],
+        file_path: Path,
+        project_path: Path,
+        line_range: Dict[str, int],
+        model_name: str
+) -> FixSuggestion:
+    """
+    Build a FixSuggestion object from LLM response and context.
+
+    Args:
+        fix_response: Response from LLM containing fix details
+        context_info: Context information including context_dict
+        file_path: Absolute path to the file
+        project_path: Project root path
+        line_range: Line range information
+        model_name: Name of the LLM model used
+
+    Returns:
+        FixSuggestion object
+    """
+    context_dict = context_info["context_dict"]
+
+    # Use actual end line from context if available, otherwise from line_range
+    end_line = context_dict.get("end_line", line_range["last_line"])
+
+    return FixSuggestion(
+        issue_key=_generate_fix_key(line_range["problem_lines"]),
+        original_code=context_dict["context"],
+        fixed_code=fix_response["fixed_code"],
+        helper_code=fix_response.get("helper_code"),
+        placement_helper=fix_response.get("placement_helper"),
+        explanation=fix_response["explanation"],
+        confidence=fix_response["confidence"],
+        llm_model=model_name,
+        rule_description=fix_response.get("rule_description"),
+        file_path=str(file_path.relative_to(project_path)),
+        line_number=context_dict.get("start_line"),
+        sonar_line_number=line_range["first_line"],
+        last_line_number=end_line,
+    )
+
+
+def _generate_fix_key(problem_lines: List[int]) -> str:
+    """
+    Generate a meaningful key for the fix based on problem lines.
+
+    Args:
+        problem_lines: List of problem line numbers
+
+    Returns:
+        String key like "fix_L10" or "fix_L10-L15"
+    """
+    if not problem_lines:
+        return "fix_unknown"
+
+    if len(problem_lines) == 1:
+        return f"fix_L{problem_lines[0]}"
+
+    min_line = min(problem_lines)
+    max_line = max(problem_lines)
+    return f"fix_L{min_line}-L{max_line}"
+
+
+def _prepare_context(
+        file_path: Path,
+        line_range: Dict[str, int],
+        modified_content: str,
+        context_lines: int
+) -> Optional[Dict[str, any]]:
+    """
+    Read file and prepare context for LLM.
+
+    Args:
+        file_path: Path to the file
+        line_range: Dictionary with first_line, last_line, problem_lines
+        modified_content: Optional pre-extracted content
+        context_lines: Number of context lines to include around issues
+
+    Returns:
+        Dictionary containing:
+        - context_dict: Context information for LLM
+        - file_lines: Full file content as list of lines
+        - problem_line_content: List of actual problem line strings
+
+        Returns None if file cannot be read
+    """
+    try:
+        # Read file content
+        with open(file_path, "r", encoding="utf-8") as f:
+            file_content = f.read()
+            file_lines = file_content.splitlines(keepends=True)
+
+        # Extract problem line content
+        # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
+        problem_line_content = _extract_problem_lines(
+            file_lines,
+            line_range["problem_lines"]
+        )
+
+        # Build context dictionary
+        if modified_content:
+            # Use provided modified content
+            context_dict = {
+                "context": modified_content,
+                "start_line": line_range["first_line"],
+                "end_line": line_range["last_line"],
+                "problem_lines": problem_line_content,
+            }
+        else:
+            # Extract context from file
+            context_dict = _extract_context_with_lines(
+                file_lines,
+                line_range["first_line"],
+                line_range["last_line"],
+                context_lines,
+                problem_line_content
+            )
+
+        return {
+            "context_dict": context_dict,
+            "file_lines": file_lines,
+            "problem_line_content": problem_line_content
+        }
+
+    except UnicodeDecodeError as e:
+        logger.error(f"File encoding error for {file_path}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Error reading file {file_path}: {e}")
+        return None
+
+
+def _validate_and_extract_issue_info(
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        project_path: Path
+) -> Tuple[Path, Dict[str, int]]:
+    """
+    Validate that all issues are from the same file and extract line range.
+
+    Args:
+        issues: List of issues to validate
+        project_path: Project root path
+
+    Returns:
+        Tuple of (file_path, line_range_dict)
+        where line_range_dict contains:
+        - first_line: Earliest line number
+        - last_line: Latest line number
+        - problem_lines: List of specific problem line numbers
+
+    Raises:
+        ValueError: If issues are from different files
+        FileNotFoundError: If file doesn't exist
+    """
+    first_issue = issues[0]
+    file_path = project_path / first_issue.file
+
+    # Validate file exists
+    if not file_path.exists():
+        raise FileNotFoundError(f"File not found: {file_path}")
+
+    # Initialize range with first issue
+    first_line = first_issue.first_line
+    last_line = first_issue.last_line
+    problem_line_numbers = []
+
+    # Validate all issues are from same file and calculate range
+    for issue in issues:
+        if issue.file != first_issue.file:
+            logger.warning(
+                f"Issue {issue.key} has different file than first issue "
+                f"{first_issue.key}, skipping fix generation"
+            )
+            raise ValueError("Issues from different files cannot be fixed together")
+
+        # Expand range to encompass all issues
+        first_line = min(first_line, issue.first_line)
+        last_line = max(last_line, issue.last_line)
+        problem_line_numbers.append(issue.first_line)
+
+    return file_path, {
+        "first_line": first_line,
+        "last_line": last_line,
+        "problem_lines": problem_line_numbers
+    }
+
+
+def _extract_problem_lines(
+        file_lines: List[str],
+        problem_line_numbers: List[int]
+) -> List[str]:
+    """
+    Extract actual line content for problem lines.
+
+    Args:
+        file_lines: All lines in the file
+        problem_line_numbers: List of 1-based line numbers to extract
+
+    Returns:
+        List of line content strings
+
+    Note:
+        Handles off-by-one conversion from SonarCloud's 1-based line numbers
+        to Python's 0-based list indexing.
+    """
+    problem_lines = []
+
+    for line_number in problem_line_numbers:
+        # Convert 1-based line number to 0-based index
+        line_index = line_number - 1
+
+        # Bounds check
+        if 0 <= line_index < len(file_lines):
+            problem_lines.append(file_lines[line_index])
+        else:
+            logger.warning(
+                f"Line number {line_number} out of bounds "
+                f"(file has {len(file_lines)} lines)"
+            )
+            # Include placeholder to maintain alignment
+            problem_lines.append(f"<line {line_number} not found>")
+
+    return problem_lines
+
+
+def _extract_context_with_lines(
+        file_lines: List[str],
+        first_line: int,
+        last_line: int,
+        context_lines: int,
+        problem_line_content: List[str]
+) -> Dict[str, any]:
+    """
+    Extract context around the issue with specified number of surrounding lines.
+
+    Args:
+        file_lines: All lines in the file
+        first_line: First line of issue range (1-based)
+        last_line: Last line of issue range (1-based)
+        context_lines: Number of lines to include before/after
+        problem_line_content: Content of problem lines
+
+    Returns:
+        Dictionary with context, start_line, end_line, problem_lines
+    """
+    # Calculate context range with bounds checking
+    total_lines = len(file_lines)
+    context_start = max(1, first_line - context_lines)
+    context_end = min(total_lines, last_line + context_lines)
+
+    # Extract context (convert to 0-based indexing)
+    start_index = context_start - 1
+    end_index = context_end  # end_index is exclusive in slicing
+
+    context_lines_list = file_lines[start_index:end_index]
+    context_text = "".join(context_lines_list)
+
+    return {
+        "context": context_text,
+        "start_line": context_start,
+        "end_line": context_end,
+        "problem_lines": problem_line_content,
+    }
