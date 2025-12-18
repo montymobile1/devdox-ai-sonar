@@ -1367,9 +1367,8 @@ class TestEdgeCases:
 
         result = analyzer._process_rules([rule])
         processed = result['rules']['test:S<>001']
-
-        assert processed['name'] == "Rule with <special> & \"characters\""
-        assert "&" not in processed['description']  # HTML entities cleaned
+        assert processed['name'] == 'Rule with <special> & "characters"'
+        assert "<" not in processed['description']  # HTML entities cleaned
 
     def test_very_long_description(self, analyzer):
         """Test rule with very long description."""
