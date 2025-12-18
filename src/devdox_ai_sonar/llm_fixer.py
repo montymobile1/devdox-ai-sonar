@@ -1692,7 +1692,8 @@ class ContextExtractor:
             return js_match.group(1)
 
         # Method assignment patterns
-        assignment_match = re.search(r"(\w+)\s*[:=]", function_line)
+        assignment_pattern = r"(\w+?)\s*?[:=]"
+        assignment_match = re.search(assignment_pattern, function_line)
         if assignment_match:
             return assignment_match.group(1)
 
