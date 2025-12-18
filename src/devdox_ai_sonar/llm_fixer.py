@@ -1692,7 +1692,7 @@ class ContextExtractor:
             return js_match.group(1)
 
         # Method assignment patterns
-        assignment_pattern = r"(\w+?)\s*?[:=]"
+        assignment_pattern = r"([a-zA-Z_][a-zA-Z0-9_]{0,99})\s{0,20}[:=]"
         assignment_match = re.search(assignment_pattern, function_line)
         if assignment_match:
             return assignment_match.group(1)
