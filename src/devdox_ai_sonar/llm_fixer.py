@@ -631,7 +631,7 @@ class LLMFixer:
             return {"current": match.group(1), "target": match.group(2)}
 
         # Alternative pattern: "complexity is X, maximum allowed is Y"
-        alt_pattern = r"complexity is (\d+).*maximum.*?(\d+)"
+        alt_pattern = r"complexity is (\d+)[^0-9]*maximum[^0-9]*(\d+)"
         alt_match = re.search(alt_pattern, message, re.IGNORECASE)
 
         if alt_match:
@@ -1660,9 +1660,9 @@ class ContextExtractor:
         if re.search(r"\bdef\b", start_line):
             # Python function - use indentation
             return self._find_python_function_end(lines, start_idx)
-        elif "{" in start_line or re.search(
-            r"\bfunction\b|\w+\s*\(.*\)\s*\{", start_line
-        ):
+        elif "{" in start_line or ( re.search(r"\bfunction\b", start_line) and re.search(
+            r"[a-zA-Z_]\w*\s*\([\w,\s]*\)\s*\{", start_line
+        )) :
             # JavaScript/Java/C# - use brace matching
             return self._find_brace_function_end(lines, start_idx)
         elif re.search(r"\b@click.\b", start_line):
