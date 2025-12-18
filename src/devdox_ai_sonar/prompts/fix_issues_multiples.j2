@@ -1,15 +1,23 @@
 🚨 **CRITICAL: RETURN ONLY JSON - NO OTHER TEXT** 🚨
 
-As senior software engenieer specialized in  {{ language }} fix  code for SonarQube rule: "{{ issue.message }}"
+As senior software engineer specialized in  {{ language }} fix code for SonarQube rules:
+{% for issue in issues %}
+**Rule:** {{ issue.rule }} :{{ issue.message }}
+**Severity:** {{ issue.severity }}
+**Type:** {{ issue.type }}
+**Root Cause:** {{ rule_info[issue.rule].root_cause if rule_info.get(issue.rule) else 'Code quality issue detected' }}
 
-**Rule:** {{ issue.rule }} | **Severity:** {{ issue.severity }} | **Type:** {{ issue.type }}
-**Root Cause:** {{ rule_info.get('root_cause', 'Code quality issue detected') }}
+---
+{% endfor %}
 
 ## CODE CONTEXT (Lines {{ context['start_line'] }}-{{ context['end_line'] }})
 ```{{ language }}
 {{ code_chunk }}
 ```
-**Problem line :** {{ context["problem_line"] }}
+**Problem lines:**
+{% for line in context["problem_lines"] %}
+• {{ line }}
+{% endfor %}
 {% if error_message %}## ERROR CONTEXT: {{ error_message }}{% endif %}
 
 ## CRITICAL INSTRUCTIONS
@@ -18,6 +26,17 @@ As senior software engenieer specialized in  {{ language }} fix  code for SonarQ
 
 
 1. **FIXED_SELECTION** = The modified version of the original lines
+    - **CRITICAL: Keep ALL existing code from the original chunk**
+
+     • If imports exist in lines {{ context['start_line'] }}–{{ context['end_line'] }}, they MUST remain in FIXED_SELECTION
+
+     • If constants/variables are already defined in lines {{ context['start_line'] }}–{{ context['end_line'] }}, they MUST remain in FIXED_SELECTION
+
+     • DO NOT move existing imports/constants from FIXED_SELECTION to NEW_HELPER_CODE
+
+     • ONLY move them if they are NEWLY INTRODUCED by your fix
+
+
     - Function Preservation Requirement (CRITICAL)
 
         •  If the selected code range begins with, contains, or ends with a function definition (def ...:):
@@ -35,16 +54,209 @@ As senior software engenieer specialized in  {{ language }} fix  code for SonarQ
         •  FIXED_SELECTION may include calls to helper functions but may NOT define new ones.
    - Preserve all decorators, leading comments, imports, type hints, and unrelated code outside this range.
    - If those lines include decorators, annotations, or leading comments immediately above a function (e.g. @click.option lines, @main.command(), type hints, docstring start), they MUST be preserved in the FIXED_SELECTION. Do not drop or truncate them.
-   - Contains CALLS to new functions/constants
+   - Contains CALLS to new functions/constants (if introducing helpers)
    - Contains the actual logic changes
-   - Should NOT contain new function/constant DEFINITIONS
+   - Should NOT contain NEW function/constant DEFINITIONS (those go in NEW_HELPER_CODE)
    - Maintain original indentation and formatting.
 
-2. **NEW_HELPER_CODE** = New code that needs to be added elsewhere
+2. **NEW_HELPER_CODE** =  **ONLY** new code that needs to be added elsewhere
+
+   - **CRITICAL: Only for NEWLY INTRODUCED code**
+
+     • Use this ONLY for helper functions/constants that DON'T exist in the original chunk
+
+     • If an import/constant already exists in lines {{ context['start_line'] }}–{{ context['end_line'] }}, leave it in FIXED_SELECTION
+
+     • Example: If `from typing import Dict` already exists in the chunk, DON'T add it to NEW_HELPER_CODE
    - Must not repeat any code from FIXED_SELECTION.
-   - Contains DEFINITIONS of new functions/constants with annotations, type hints, docstrings, and logic
+
+   - Contains DEFINITIONS of NEW functions/constants with annotations, type hints, docstrings, and logic
+
    - Should NOT repeat any code from FIXED_SELECTION or part of it
+
    - Should NOT contain the original problematic code
+
+   - Should be empty ("") if no new helpers are needed
+
+## EXAMPLES OF CORRECT HANDLING:
+
+
+
+### ✅ CORRECT (Existing Import in Chunk):
+
+**Original Chunk (lines 10-15):**
+
+```
+
+from typing import Optional
+
+import logging
+
+
+
+def process_data(data: Optional[str]) -> bool:
+
+    if data is None or len(data) == 0:
+
+        return False
+
+```
+
+
+
+**FIXED_SELECTION:**
+
+```
+
+from typing import Optional
+
+import logging
+
+
+
+def process_data(data: Optional[str]) -> bool:
+
+    return is_valid_data(data)
+
+```
+
+
+
+**NEW_HELPER_CODE:**
+
+```
+
+def is_valid_data(data: Optional[str]) -> bool:
+
+    return data is not None and len(data) > 0
+
+```
+
+
+
+**Reason:** Import already existed in original chunk, so it stays in FIXED_SELECTION
+
+
+
+### ✅ CORRECT (New Import Needed):
+
+**Original Chunk (lines 20-25):**
+
+```
+
+def calculate_total(items):
+
+    total = 0
+
+    for item in items:
+
+        total += item.price
+
+    return total
+
+```
+
+
+
+**FIXED_SELECTION:**
+
+```
+
+def calculate_total(items: List[Item]) -> Decimal:
+
+    return sum(item.price for item in items)
+
+```
+
+
+
+**NEW_HELPER_CODE:**
+
+```
+
+from typing import List
+
+from decimal import Decimal
+
+```
+
+
+
+**PLACEMENT:** "GLOBAL_TOP"
+
+
+
+**Reason:** These imports are NEW (not in original chunk), so they go to NEW_HELPER_CODE
+
+
+
+### ✅ CORRECT (Existing Constant in Chunk):
+
+**Original Chunk (lines 30-35):**
+
+```
+
+MAX_RETRIES = 3
+
+
+
+def retry_operation(operation):
+
+    for i in range(MAX_RETRIES):
+
+        try:
+
+            return operation()
+
+        except Exception:
+
+            if i == MAX_RETRIES - 1:
+
+                raise
+
+```
+
+
+
+**FIXED_SELECTION:**
+
+```
+
+MAX_RETRIES = 3
+
+
+
+def retry_operation(operation):
+
+    return _attempt_with_retry(operation)
+
+```
+
+
+
+**NEW_HELPER_CODE:**
+
+```
+
+def _attempt_with_retry(operation):
+
+    for i in range(MAX_RETRIES):
+
+        try:
+
+            return operation()
+
+        except Exception:
+
+            if i == MAX_RETRIES - 1:
+
+                raise
+
+```
+
+
+
+**Reason:** MAX_RETRIES was already in the chunk, so it stays in FIXED_SELECTION
 
 ## EXAMPLES OF CORRECT SEPARATION:
 
@@ -103,7 +315,15 @@ PLACEMENT: "GLOBAL_TOP"
 ```
 
 ## INSTRUCTIONS
-{% set fix_steps = rule_info.get('how_to_fix', {}).get('steps', []) %}
+{% for issue in issues %}
+**Rule:** {{ issue.rule }}
+**Severity:** {{ issue.severity }}
+**Type:** {{ issue.type }}
+**Root Cause:** {{ rule_info.get(issue.rule, {}).get('root_cause', 'Code quality issue detected') }}
+
+**How to Fix:**
+{% set fix_steps = rule_info.get(issue.rule, {}).get('how_to_fix', {}).get('steps', []) %}
+
 {% if fix_steps %}
 {% for step in fix_steps %}
 • {{ step }}
@@ -112,6 +332,9 @@ PLACEMENT: "GLOBAL_TOP"
 • Apply the appropriate fix for this SonarQube rule
 • Follow code quality best practices
 {% endif %}
+
+---
+{% endfor %}
 
 {% if strategy_text %}
 ## ADDITIONAL STRATEGIES
@@ -153,8 +376,10 @@ def validate_input(data):
 
 **Follow this decision tree:**
 
-1. **Is the NEW_HELPER_CODE an import or constant?**
-   → YES: Use "GLOBAL_TOP"
+1. **Is the NEW_HELPER_CODE an import or constant that DOESN'T exist in the original chunk?
+    → YES: Use "GLOBAL_TOP"
+    → NO: Continue to step 2
+
 
 2. **Is the original code inside a class?**
   → YES: Continue to step 2a
@@ -174,8 +399,8 @@ def validate_input(data):
    → NO: Use "GLOBAL_BOTTOM"
 
 4. **When in doubt:**
-   - Constants/imports → "GLOBAL_TOP"
-    - True class methods (need self) → "SIBLING" + self
+   - NEW constants/imports → "GLOBAL_TOP"
+   - True class methods (need self) → "SIBLING" + self
    - Utility functions → "SIBLING" + NO self
    - Standalone utilities → "GLOBAL_BOTTOM"
 
@@ -267,6 +492,8 @@ Reason:   Helper doesn't need class state
 
 • Return EXACTLY lines {{ context['start_line'] }}-{{ context['end_line'] }} in FIXED_SELECTION
 
+• Keep ALL existing imports/constants from original chunk in FIXED_SELECTION
+
 
 
 ## CRITICAL PYTHON SYNTAX RULES
@@ -342,6 +569,10 @@ Here's the solution:
 
 
 🚨 **START YOUR RESPONSE WITH { AND END WITH } - NOTHING ELSE** 🚨
+
+🚨 **KEEP EXISTING IMPORTS/CONSTANTS IN FIXED_SELECTION** 🚨
+
+🚨 **ONLY NEW IMPORTS/CONSTANTS GO TO NEW_HELPER_CODE** 🚨
 
 🚨 **PARAMETER MATCHING: Helper parameters must match how they're called** 🚨
 

@@ -33,7 +33,8 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "click===8.1.7",
-    "rich==13.8.1",
+    #"rich==13.8.1",
+    "rich-click==1.9.4",
     "requests==2.32",
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
@@ -47,26 +48,38 @@ dependencies = [
     "gitpython==3.1.0",
     "pathlib2==2.3.0",
     "langchain-together==0.3.0",
-    "together==1.5.17",
-    "Jinja2==3.1.6"
+    #"together==1.5.32",
+     "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
+    "Jinja2==3.1.6",
+    "types-requests==2.32.4.20250913",
+    "tomli==2.3.0",
+    "tomli-w==1.2.0",
+    "simple-term-menu==1.6.6",
+    "tomlkit==0.13.3",
+    "inquirer==3.4.1",
+    "inquirer3==0.6.1"
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==7.0.0",
-    "pytest-cov==4.0.0",
     "black==25.11.0",
     "isort==5.12.0",
-    "flake8==6.0.0",
+    "flake8==7.3.0",
+    "pytest-cov==7.0.0",
     "mypy==1.0.0",
     "pre-commit==3.0.0",
     "twine==4.0.0",
     "build==0.10.0",
+    "ruff==0.14.7"
 ]
 
 [project.scripts]
-devdox_ai_sonar = "devdox_ai_sonar.cli:main"
+devdox_sonar = "devdox_ai_sonar.cli:main"
+devdox_sonar_config = "devdox_ai_sonar.main:main"
 dal = "devdox_ai_sonar.cli:main"
+
+
 
 
 [project.urls]
@@ -81,7 +94,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","*.j2"]
+devdox_ai_sonar = ["prompts/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88
@@ -107,7 +120,9 @@ multi_line_output = 3
 line_length = 88
 
 [tool.mypy]
-python_version = "3.9"
+packages = ["devdox_ai_sonar"]
+mypy_path = "src"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true
@@ -126,7 +141,7 @@ testpaths = ["tests"]
 addopts = "-v"
 
 [tool.coverage.run]
-source = ["src/devdox_ai_sonar"]
+source = ["src"]
 omit = ["*/tests/*", "*/test_*.py"]
 
 [tool.coverage.report]
