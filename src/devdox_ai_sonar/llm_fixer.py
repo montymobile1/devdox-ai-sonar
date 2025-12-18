@@ -630,8 +630,9 @@ class LLMFixer:
         if match:
             return {"current": match.group(1), "target": match.group(2)}
 
-        # Alternative pattern: "complexity is X, maximum allowed is Y"
-        alt_pattern = r"complexity is (\d+)[^0-9]*maximum[^0-9]*(\d+)"
+
+        # SECURE: Explicitly exclude digits and match expected separators
+        alt_pattern = r"complexity is (\d+)[^\d]*?maximum[^\d]*?(\d+)"
         alt_match = re.search(alt_pattern, message, re.IGNORECASE)
 
         if alt_match:
