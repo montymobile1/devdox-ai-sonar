@@ -1,6 +1,6 @@
 # Create src/devdox_ai_sonar/services/config_service.py
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from typing import Optional, Tuple,  Dict, Any
 from pathlib import Path
 import json
@@ -206,6 +206,15 @@ class ConfigService:
             console.print(f"[red]Error saving token: {e}[/red]")
             return False
 
+    def check_all_value_empty(self, auth_config: dict) -> bool:
+        """Check if any value in the auth_config is empty."""
+        required_keys = ["token", "organization", "project", "project_path"]
+
+        missing_or_empty = [k for k in required_keys if not auth_config.get(k)]
+
+        if missing_or_empty:
+            return True
+        return False
 
 def validate_token_format(token: str) -> bool:
     """

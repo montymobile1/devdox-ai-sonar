@@ -185,11 +185,11 @@ class SonarCloudAnalyzer:
     def _handle_exceptions(
         self, e: requests.RequestException, project_key: str
     ) -> None:
-        print("line 735")
+
         status_code = (
             e.response.status_code if hasattr(e, "response") and e.response else None
         )
-        print("status code")
+
         logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=settings.EXC_INFO)
         if isinstance(e, requests.Timeout):
             logger.warning(

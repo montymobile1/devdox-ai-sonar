@@ -246,6 +246,22 @@ class ProviderConfigManager:
 
         return result
 
+    def branch_or_pr(self) -> Tuple[str, int]:
+        """Prompt user for branch or PR number"""
+        clone_type = self.config_manager.get_value("sonar.sonar_options.clone_type")
+        default_pull = self.config_manager.get_value("sonar.default_pull")
+        default_branch = self.config_manager.get_value("sonar.default_branch")
+        if clone_type == "pr":
+            default_branch=""
+        else:
+            default_pull=0
+        return default_branch, default_pull
+
+    def get_params(self):
+        return self.config_manager.get_value("sonar.configuration")
+
+
+
 
     def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
@@ -274,6 +290,14 @@ class ProviderConfigManager:
                 display_name=f"branch '{branch}'",
             )
 
+            self._save_as_default_if_changed(
+                config_key="sonar.sonar_options.clone_type",
+                new_value="branch",
+                current_default="pr",
+                display_name="",
+                confirm=False
+            )
+
             return branch, 0
 
         except ValidationError as e:
@@ -294,7 +318,15 @@ class ProviderConfigManager:
                 config_key="sonar.default_pull",
                 new_value=pull_request,
                 current_default=default_pull,
-                display_name=f"PR #{pull_request}",
+                display_name=f"PR #{pull_request}"
+            )
+
+            self._save_as_default_if_changed(
+                config_key="sonar.sonar_options.clone_type",
+                new_value="pr",
+                current_default="branch",
+                display_name="",
+                confirm=False
             )
 
             return "", pull_request
@@ -309,16 +341,19 @@ class ProviderConfigManager:
             new_value: Any,
             current_default: Any,
             display_name: str,
+            confirm: bool = True
     ) -> None:
         """Save new value as default if it differs from current default."""
         if str(new_value) == str(current_default):
             return
-
-        if not Confirm.ask(
-                "Save this as default for future runs?", default=False
-        ):
-            return
+        if confirm:
+            if not Confirm.ask(
+                    "Save this as default for future runs?", default=False
+            ):
+                return
 
         self.config_manager.set_value(config_key, new_value)
         self.config_manager.save_config()
-        console.print(f"[green]✓[/green] Saved {display_name} as default")
+        if confirm:
+            console.print(f"[green]✓[/green] Saved {display_name} as default")
+

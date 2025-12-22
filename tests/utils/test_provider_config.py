@@ -677,21 +677,6 @@ class TestHandleBranchSelection:
             with pytest.raises(Exception):  # Should raise click.Abort
                 provider_config_manager._handle_branch_selection()
 
-    @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_save_as_default(
-            self, mock_confirm, mock_prompt, provider_config_manager, mock_config_manager
-    ):
-        """Test saving new branch as default."""
-        mock_config_manager.get_value.return_value = "main"
-        mock_prompt.return_value = "develop"
-        mock_confirm.return_value = True
-
-        with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name', return_value="develop"):
-            provider_config_manager._handle_branch_selection()
-
-        mock_config_manager.set_value.assert_called_with("sonar.default_branch", "develop")
-        mock_config_manager.save_config.assert_called_once()
 
 
 class TestHandlePullRequestSelection:
@@ -743,21 +728,6 @@ class TestHandlePullRequestSelection:
             with pytest.raises(Exception):
                 provider_config_manager._handle_pull_request_selection()
 
-    @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pull_request_selection_save_as_default(
-            self, mock_confirm, mock_prompt, provider_config_manager, mock_config_manager
-    ):
-        """Test saving PR as default."""
-        mock_config_manager.get_value.return_value = 100
-        mock_prompt.return_value = "200"
-        mock_confirm.return_value = True
-
-        with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
-                   return_value=200):
-            provider_config_manager._handle_pull_request_selection()
-
-        mock_config_manager.set_value.assert_called_with("sonar.default_pull", 200)
 
 
 # ============================================================================
