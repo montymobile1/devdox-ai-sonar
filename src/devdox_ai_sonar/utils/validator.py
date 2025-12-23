@@ -15,7 +15,7 @@ class InputValidator:
     """Validates user inputs with clear error messages."""
 
     # Constants for validation
-    VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
+    VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL"}
     VALID_SEVERITIES: Set[str] = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"}
     VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai"}
 

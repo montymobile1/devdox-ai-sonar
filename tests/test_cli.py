@@ -642,7 +642,7 @@ class TestFixIssuesCommand:
                         ctx = Mock()
                         ctx.obj = {"verbose": False}
 
-                        _run_fix_issues(ctx)
+                        _run_fix_issues()
 
     def test_run_fix_issues_cancelled(
             self, mock_config_service, mock_llm_config
@@ -653,19 +653,17 @@ class TestFixIssuesCommand:
 
             with patch('devdox_ai_sonar.cli.display_configuration', return_value={}):
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
-                    ctx = Mock()
-                    ctx.obj = {"verbose": False}
 
-                    _run_fix_issues(ctx)
+
+                    _run_fix_issues()
 
     def test_run_fix_issues_switch_command(self):
         """Test fix_issues with command switch"""
         with patch('devdox_ai_sonar.cli._load_and_validate_config', side_effect=SwitchCommandException):
-            ctx = Mock()
-            ctx.obj = {"verbose": False}
+
 
             with pytest.raises(SwitchCommandException):
-                _run_fix_issues(ctx)
+                _run_fix_issues()
 
     def test_display_configuration(self):
         """Test display_configuration function"""
@@ -726,10 +724,9 @@ class TestFixSecurityIssuesCommand:
 
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=True):
                     with patch('devdox_ai_sonar.cli._process_security_issues'):
-                        ctx = Mock()
-                        ctx.obj = {"verbose": False}
 
-                        _run_fix_security_issues(ctx)
+
+                        _run_fix_security_issues()
 
     def test_run_fix_security_issues_cancelled(self, mock_llm_config):
         """Test security fix when cancelled"""
@@ -738,10 +735,7 @@ class TestFixSecurityIssuesCommand:
 
             with patch('devdox_ai_sonar.cli.display_configuration', return_value={}):
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
-                    ctx = Mock()
-                    ctx.obj = {"verbose": False}
-
-                    _run_fix_security_issues(ctx)
+                    _run_fix_security_issues()
 
 
 # ============================================================================
@@ -793,12 +787,7 @@ class TestAnalyzeCommand:
                 with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with patch('devdox_ai_sonar.cli._display_analysis_results'):
-                            
-
-                            ctx = Mock()
-                            ctx.obj = {"verbose": False}
-
-                            _run_analyze(ctx)
+                            _run_analyze()
 
                             # Verify
                             mock_load.assert_called_once()
@@ -832,12 +821,8 @@ class TestAnalyzeCommand:
             with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
                 with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        
 
-                        ctx = Mock()
-                        ctx.obj = {"verbose": False}
-
-                        _run_analyze(ctx)
+                        _run_analyze()
 
                         # Should still call analyzer
                         mock_analyzer.get_project_issues.assert_called_once()
@@ -850,21 +835,14 @@ class TestAnalyzeCommand:
         with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
             mock_load.side_effect = click.Abort()
 
-            
-
-            ctx = Mock()
-            ctx.obj = {"verbose": False}
-
             with pytest.raises(click.Abort):
-                _run_analyze(ctx)
+                _run_analyze()
 
     def test_run_inspect_no_config(self):
         """Test inspect without config - _load_and_validate_config raises Abort"""
 
         with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
             mock_load.side_effect = click.Abort()
-
-
 
             with pytest.raises(click.Abort):
                 _run_inspect()
@@ -899,10 +877,7 @@ class TestAnalyzeCommand:
                         with patch('devdox_ai_sonar.cli._validate_severities') as mock_sev:
                             with patch('devdox_ai_sonar.cli._validate_issue_types') as mock_types:
 
-                                ctx = Mock()
-                                ctx.obj = {"verbose": False}
-
-                                _run_analyze(ctx)
+                                _run_analyze()
 
                                 # Should validate filters
                                 mock_sev.assert_called()
@@ -1296,12 +1271,8 @@ class TestWithFixtures:
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
 
                         with patch('devdox_ai_sonar.cli._display_analysis_results'):
-                            from devdox_ai_sonar.cli import _run_analyze
 
-                            ctx = Mock()
-                            ctx.obj = {"verbose": False}
-
-                            _run_analyze(ctx)
+                            _run_analyze()
 
     def test_run_inspect_with_fixtures(self, mock_loaded_config):
         """Test inspect using fixtures"""

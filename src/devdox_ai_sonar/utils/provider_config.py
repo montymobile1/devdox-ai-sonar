@@ -9,6 +9,9 @@ from devdox_ai_sonar.utils.exceptions import ValidationError
 
 console = Console()
 CONFIG_PROVIDERS="llm.providers"
+CONFIG_DEFAULT_BRANCH="sonar.default_branch"
+CONFIG_DEFAULT_PULL="sonar.default_pull"
+CONFIG_CLONE_TYPE="sonar.sonar_options.clone_type"
 
 
 class ProviderUpdateContext:
@@ -248,9 +251,9 @@ class ProviderConfigManager:
 
     def branch_or_pr(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
-        clone_type = self.config_manager.get_value("sonar.sonar_options.clone_type")
-        default_pull = self.config_manager.get_value("sonar.default_pull")
-        default_branch = self.config_manager.get_value("sonar.default_branch")
+        clone_type = self.config_manager.get_value(CONFIG_CLONE_TYPE)
+        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
         if clone_type == "pr":
             default_branch=""
         else:
@@ -276,7 +279,7 @@ class ProviderConfigManager:
 
     def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""
-        default_branch = self.config_manager.get_value("sonar.default_branch") or "main"
+        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
         branch_input = Prompt.ask("Branch name", default=default_branch)
 
         try:
@@ -284,14 +287,14 @@ class ProviderConfigManager:
             console.print(f"[green]✓[/green] Analyzing branch: [cyan]{branch}[/cyan]")
 
             self._save_as_default_if_changed(
-                config_key="sonar.default_branch",
+                config_key=CONFIG_DEFAULT_BRANCH,
                 new_value=branch,
                 current_default=default_branch,
                 display_name=f"branch '{branch}'",
             )
 
             self._save_as_default_if_changed(
-                config_key="sonar.sonar_options.clone_type",
+                config_key=CONFIG_CLONE_TYPE,
                 new_value="branch",
                 current_default="pr",
                 display_name="",
@@ -306,7 +309,7 @@ class ProviderConfigManager:
 
     def _handle_pull_request_selection(self) -> Tuple[str, int]:
         """Handle pull request selection workflow."""
-        default_pull = self.config_manager.get_value("sonar.default_pull")
+        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         pr_default = str(default_pull) if default_pull else "0"
         pr_input = Prompt.ask("Pull Request number", default=pr_default)
 
@@ -315,14 +318,14 @@ class ProviderConfigManager:
             console.print(f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]")
 
             self._save_as_default_if_changed(
-                config_key="sonar.default_pull",
+                config_key=CONFIG_DEFAULT_PULL,
                 new_value=pull_request,
                 current_default=default_pull,
                 display_name=f"PR #{pull_request}"
             )
 
             self._save_as_default_if_changed(
-                config_key="sonar.sonar_options.clone_type",
+                config_key=CONFIG_CLONE_TYPE,
                 new_value="pr",
                 current_default="branch",
                 display_name="",
@@ -346,8 +349,7 @@ class ProviderConfigManager:
         """Save new value as default if it differs from current default."""
         if str(new_value) == str(current_default):
             return
-        if confirm:
-            if not Confirm.ask(
+        if confirm and  not Confirm.ask(
                     "Save this as default for future runs?", default=False
             ):
                 return

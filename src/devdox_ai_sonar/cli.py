@@ -261,11 +261,11 @@ def show_command_selector() -> Optional[str]:
 
     # Define custom style similar to Claude Code
     custom_style = Style([
-        ('qmark', 'fg:#673ab7 bold'),
+        ('qmark', BOLD_PURPLE),
         ('question', 'bold'),
         ('answer', 'fg:#f44336 bold'),
-        ('pointer', 'fg:#673ab7 bold'),
-        ('highlighted', 'fg:#673ab7 bold'),
+        ('pointer', BOLD_PURPLE),
+        ('highlighted', BOLD_PURPLE),
         ('selected', 'fg:#cc5454'),
         ('separator', 'fg:#cc5454'),
         ('instruction', ''),
@@ -1005,11 +1005,6 @@ def _execute_command( ctx: click.Context,command: str) -> None:
 
 
 def _run_fix_issues(
-    types: Optional[str] = None,
-    severity: Optional[str] = None,
-    max_fixes: int = settings.DEFAULT_MAX_FIXES,
-    apply: bool = False,
-    dry_run: bool = False,
     **kwargs: Any
 ) -> None:
     """Run the fix_issues command with command switching support."""
@@ -1022,7 +1017,6 @@ def _run_fix_issues(
 
         # Load and validate configuration
         auth_config, llm_config,parameters = _load_and_validate_config()
-
 
         fix_params = display_configuration(parameters, dry_run_value,apply_value)
 
@@ -1062,8 +1056,8 @@ def   display_configuration(parameters, dry_run,apply):
         "branch":branch,
         'max_fixes':  parameters.get("max_fixes",0),
         'types_list': _validate_issue_types(parameters.get("types","")),
-        'severities_list': _validate_severities(parameters.get("severity","")),
-            "apply":apply,
+        'severities_list': _validate_severities(parameters.get("severities","")),
+        "apply":apply,
         'dry_run': dry_run,
         "create_backup":parameters.get("create_backup",0),
     }
@@ -1073,11 +1067,6 @@ def   display_configuration(parameters, dry_run,apply):
 
 
 def _run_fix_security_issues(
-    types: Optional[str] = None,
-    severity: Optional[str] = None,
-    max_fixes: int = settings.DEFAULT_MAX_FIXES,
-    apply: bool = False,
-    dry_run: bool = False,
     **kwargs: Any
 ) -> None:
     """Run the fix_security_issues command with command switching support."""
@@ -1109,8 +1098,6 @@ def _run_fix_security_issues(
 
 
 def _run_analyze(
-        severity: Optional[str] = None,
-        types: Optional[str] = None,
         **kwargs: Any
 ) -> None:
     """Run the analyze command with command switching support."""
@@ -1119,7 +1106,7 @@ def _run_analyze(
     try:
 
         # Load and validate configuration
-        auth_config, llm_config, parameters = _load_and_validate_config()
+        auth_config, _, parameters = _load_and_validate_config()
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1163,7 +1150,7 @@ def _run_inspect() -> None:
 
     try:
         # Use helper instead of inline code
-        auth_config, llm_config, parameters = _load_and_validate_config()
+        auth_config, _, parameters = _load_and_validate_config()
 
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
         analysis = analyzer.analyze_project_directory(str(auth_config.project_path))
