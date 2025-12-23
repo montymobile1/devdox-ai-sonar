@@ -56,6 +56,12 @@ def runner():
     """Create CLI test runner"""
     return CliRunner()
 
+@pytest.fixture
+def mock_ui():
+    """Mock ProviderConfigUI"""
+    ui = Mock()
+    ui.select_provider_from_list.return_value = 'openai'
+    return ui
 
 @contextmanager
 def mock_show_progress(message: str, total=None):
@@ -474,28 +480,54 @@ class TestConfigurationManagement:
                 init_config(ctx)
 
     def test_add_provider_success(
-            self, runner, mock_config_manager, mock_provider_manager
+        self,
+        runner,
+        mock_config_manager,
+        mock_provider_manager,
+        mock_ui
     ):
-        """Test adding new provider"""
+        """Test adding new provider successfully"""
         with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            # Setup all mocked managers
             mock_init.return_value = (
-                mock_config_manager,
-                Mock(),
-                Mock(),
-                mock_provider_manager,
-                Mock(),
-                Mock()
+                mock_config_manager,       # manager
+                mock_ui,                   # ui
+                Mock(),                    # validator
+                mock_provider_manager,     # provider_manager
+                Mock(),                    # sonar_ui
+                Mock()                     # config_service
             )
 
-            with patch('devdox_ai_sonar.cli._handle_add_new_provider'):
-                with patch('devdox_ai_sonar.cli._display_completion_message'):
-
+            with patch('devdox_ai_sonar.cli._display_completion_message') as mock_display:
+                with patch('devdox_ai_sonar.cli._configure_providers_loop') as mock_loop:
+                    # Call the function
                     add_provider()
 
-    def test_update_provider_success(
-            self, runner, mock_config_manager, mock_provider_manager
+                    # Verify initialization
+                    mock_init.assert_called_once()
+
+                    # Verify config was loaded
+                    mock_config_manager.load_config.assert_called_once()
+
+                    # Verify available providers were fetched
+                    mock_provider_manager.get_available_providers.assert_called_once()
+
+                    # Verify providers loop was called
+                    mock_loop.assert_called_once()
+
+                    # Verify config was saved
+                    mock_config_manager.save_config.assert_called_once_with(create_backup=False)
+
+                    # Verify completion message was displayed
+                    mock_display.assert_called_once()
+
+    def test_add_provider_with_error_handling(
+            self,
+            runner,
+            mock_config_manager,
+            mock_provider_manager
     ):
-        """Test updating existing provider"""
+        """Test add_provider error handling"""
         with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
             mock_init.return_value = (
                 mock_config_manager,
@@ -506,9 +538,297 @@ class TestConfigurationManagement:
                 Mock()
             )
 
-            with patch('devdox_ai_sonar.cli._handle_update_existing_provider'):
-                with patch('devdox_ai_sonar.cli._display_completion_message'):
+            # Simulate error during load_config
+            mock_config_manager.load_config.side_effect = Exception("Config load failed")
+
+            with patch('devdox_ai_sonar.cli._handle_cli_error') as mock_error:
+                mock_error.side_effect = SystemExit(1)
+
+                with pytest.raises(SystemExit):
+                    add_provider()
+
+                # Verify error handler was called
+                mock_error.assert_called_once()
+
+    def test_configure_providers_loop_integration(
+            self,
+            mock_config_manager,
+            mock_provider_manager,
+            mock_ui
+    ):
+        """Test the _configure_providers_loop function"""
+        from devdox_ai_sonar.cli import _configure_providers_loop
+
+        available_providers = ['openai', 'anthropic']
+
+        # Mock the UI to select 'openai', then return None (exit loop)
+        mock_ui.select_provider_from_list.side_effect = ['openai', None]
+
+        # Mock successful configuration
+        mock_provider_manager.configure_new_provider.return_value = {
+            'config': {'provider': 'openai', 'api_key': 'test-key'},
+            'set_as_default': True
+        }
+
+        with patch('devdox_ai_sonar.cli.console.print'):
+            with patch('devdox_ai_sonar.cli.Confirm.ask', return_value=False):
+                _configure_providers_loop(
+                    mock_provider_manager,
+                    mock_config_manager,
+                    mock_ui,
+                    available_providers
+                )
+
+                # Verify provider was configured
+                mock_provider_manager.configure_new_provider.assert_called_once_with('openai')
+
+                # Verify provider was added to manager
+                mock_config_manager.add_provider.assert_called_once()
+
+    def test_handle_provider_configuration_success(
+            self,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test _handle_provider_configuration helper"""
+        from devdox_ai_sonar.cli import _handle_provider_configuration
+
+        available_providers = ['openai', 'anthropic']
+
+        mock_provider_manager.configure_new_provider.return_value = {
+            'config': {'provider': 'openai', 'api_key': 'test-key'},
+            'set_as_default': True
+        }
+
+        with patch('devdox_ai_sonar.cli.console.print'):
+            result = _handle_provider_configuration(
+                mock_provider_manager,
+                mock_config_manager,
+                'openai',
+                available_providers
+            )
+
+            assert result is True
+            assert 'openai' not in available_providers  # Should be removed
+
+            # Verify add_provider was called on manager
+            mock_config_manager.add_provider.assert_called_once()
+
+    def test_handle_provider_configuration_failure(
+            self,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test _handle_provider_configuration when configuration fails"""
+        from devdox_ai_sonar.cli import _handle_provider_configuration
+
+        available_providers = ['openai']
+
+        # Return None to simulate cancelled/failed configuration
+        mock_provider_manager.configure_new_provider.return_value = None
+
+        result = _handle_provider_configuration(
+            mock_provider_manager,
+            mock_config_manager,
+            'openai',
+            available_providers
+        )
+
+        assert result is False
+        assert 'openai' in available_providers  # Should NOT be removed
+
+        # Verify add_provider was NOT called
+        mock_config_manager.add_provider.assert_not_called()
+
+    def test_update_provider_success(
+        self,
+        runner,
+        mock_config_manager,
+        mock_provider_manager,
+        mock_ui
+    ):
+        """Test updating existing provider successfully"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            # Setup all mocked managers
+            mock_init.return_value = (
+                mock_config_manager,       # manager
+                mock_ui,                   # ui
+                Mock(),                    # validator
+                mock_provider_manager,     # provider_manager
+                Mock(),                    # sonar_ui
+                Mock()                     # config_service
+            )
+
+
+            with patch('devdox_ai_sonar.cli._display_operation_header') as mock_header:
+                    with patch('devdox_ai_sonar.cli._select_existing_ui') as mock_select:
+                        # Mock user selection
+                        mock_select.return_value = 'openai'
+
+                        # Call the function
+                        update_provider()
+
+                        # Verify initialization
+                        mock_init.assert_called_once()
+
+                        # Verify config was loaded
+                        mock_config_manager.load_config.assert_called_once()
+
+                        # Verify existing providers were fetched
+                        mock_provider_manager.get_existing_providers.assert_called_once()
+
+                        # Verify operation header was displayed
+                        mock_header.assert_called_once_with("🔧 UPDATE EXISTING PROVIDER")
+
+                        # Verify provider selection was prompted
+                        mock_select.assert_called_once_with(
+                            "provider",
+                            "Select the provider to update",
+                            ['openai']
+                        )
+
+                        # Verify provider was updated
+                        mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
+
+                        # Verify config was saved
+                        mock_config_manager.save_config.assert_called_once_with(create_backup=False)
+
+    def test_update_provider_no_existing_providers(
+            self,
+            runner,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test update_provider when no providers are configured"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            # Setup managers
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            mock_provider_manager.get_existing_providers.return_value = []
+
+            with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+                # ✅ FIX: Use click.Abort, not SystemExit
+                with pytest.raises(click.Abort):
                     update_provider()
+
+                # Verify warning message was printed
+                mock_print.assert_called()
+                call_args = str(mock_print.call_args_list)
+                assert 'No providers configured' in call_args or \
+                       'add at least one provider' in call_args
+
+
+    def test_update_provider_no_existing_providers_alternative(
+            self,
+            runner,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test update_provider when no providers - alternative approach"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            # No existing providers
+            mock_provider_manager.get_existing_providers.return_value = []
+
+            with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+                # ✅ Catch the exception and verify it's the right type
+                try:
+                    update_provider()
+                    pytest.fail("Should have raised click.Abort")
+                except click.Abort:
+                    # Expected behavior
+                    pass
+
+                # Verify warning was shown
+                assert mock_print.called
+                call_args = str(mock_print.call_args_list)
+                assert any(msg in call_args for msg in [
+                    'No providers configured',
+                    'add at least one provider',
+                    'Please add'
+                ])
+
+    def test_update_provider_no_existing_providers_with_error_handler(
+            self,
+            runner,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test that _handle_cli_error properly handles click.Abort"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            mock_provider_manager.get_existing_providers.return_value = []
+
+            # Mock _handle_cli_error to verify it's called
+            with patch('devdox_ai_sonar.cli._handle_cli_error') as mock_error_handler:
+                # _handle_cli_error re-raises, so we still expect the exception
+                mock_error_handler.side_effect = click.Abort()
+
+                with patch('devdox_ai_sonar.cli.console.print'):
+                    with pytest.raises(click.Abort):
+                        update_provider()
+
+        # ========================================================================
+        # Additional tests for other abort scenarios
+        # ========================================================================
+
+
+
+    def test_update_provider_user_cancels_selection(
+            self,
+            runner,
+            mock_config_manager,
+            mock_provider_manager
+    ):
+        """Test update_provider when user cancels provider selection"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            # Providers exist
+            mock_provider_manager.get_existing_providers.return_value = ['openai']
+
+            with patch('devdox_ai_sonar.cli._display_operation_header'):
+                with patch('devdox_ai_sonar.cli._select_existing_ui') as mock_select:
+                    # User cancels (returns empty string)
+                    mock_select.return_value = ""
+
+                    with pytest.raises(Exception):  # Should abort
+                        ctx = Mock()
+                        update_provider(ctx)
+
+                    # Verify update was NOT called
+                    mock_provider_manager.update_existing_provider.assert_not_called()
+                    mock_config_manager.save_config.assert_not_called()
 
     def test_update_provider_no_providers(
             self, runner, mock_config_manager, mock_provider_manager
@@ -1641,3 +1961,216 @@ class TestCollectRuleInformation:
         assert 'rule1' in result
         assert 'rule2' in result
         assert mock_ruler.get_rule_by_key.call_count == 2
+
+
+
+class TestAddProviderHelpers:
+    """Test helper functions used by add_provider"""
+
+    def test_should_stop_configuring_no_providers(self):
+        """Test _should_stop_configuring when no providers left"""
+        from devdox_ai_sonar.cli import _should_stop_configuring
+
+        with patch('devdox_ai_sonar.cli.console.print'):
+            result = _should_stop_configuring([])
+            assert result is True
+
+    def test_should_stop_configuring_user_declines(self):
+        """Test _should_stop_configuring when user says no"""
+        from devdox_ai_sonar.cli import _should_stop_configuring
+
+        with patch('devdox_ai_sonar.cli.Confirm.ask', return_value=False):
+            result = _should_stop_configuring(['openai'])
+            assert result is True
+
+    def test_should_stop_configuring_user_continues(self):
+        """Test _should_stop_configuring when user wants to continue"""
+        from devdox_ai_sonar.cli import _should_stop_configuring
+
+        with patch('devdox_ai_sonar.cli.Confirm.ask', return_value=True):
+            result = _should_stop_configuring(['openai'])
+            assert result is False
+
+    def test_display_operation_header(self):
+        """Test _display_operation_header"""
+        from devdox_ai_sonar.cli import _display_operation_header
+
+        with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+            _display_operation_header("TEST OPERATION")
+
+            # Verify print was called multiple times (header, title, header)
+            assert mock_print.call_count >= 3
+
+    def test_display_completion_message(self):
+        """Test _display_completion_message"""
+        from devdox_ai_sonar.cli import _display_completion_message
+
+        with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+            _display_completion_message()
+
+            # Verify completion message components were printed
+            assert mock_print.call_count >= 3
+
+            # Check that success message is in one of the calls
+            call_args = str(mock_print.call_args_list)
+            assert 'COMPLETE' in call_args or 'saved' in call_args
+
+
+class TestClickAbortPatterns:
+    """Examples of different patterns for testing click.Abort"""
+
+    @pytest.fixture
+    def mock_setup(self):
+        """Common mock setup"""
+        mock_manager = Mock()
+        mock_manager.load_config.return_value = None
+
+        mock_provider_mgr = Mock()
+        mock_provider_mgr.get_existing_providers.return_value = []
+
+        return mock_manager, mock_provider_mgr
+
+    # Pattern 1: Direct exception catching
+    def test_pattern_1_direct_catch(self, mock_setup):
+        """Pattern 1: Catch click.Abort directly"""
+        mock_manager, mock_provider_mgr = mock_setup
+
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (mock_manager, Mock(), Mock(), mock_provider_mgr, Mock(), Mock())
+
+            with patch('devdox_ai_sonar.cli.console.print'):
+                # ✅ Correct way
+                with pytest.raises(click.Abort):
+                    update_provider()
+
+    # Pattern 2: Try-except verification
+    def test_pattern_2_try_except(self, mock_setup):
+        """Pattern 2: Use try-except for more control"""
+        mock_manager, mock_provider_mgr = mock_setup
+
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (mock_manager, Mock(), Mock(), mock_provider_mgr, Mock(), Mock())
+
+            with patch('devdox_ai_sonar.cli.console.print'):
+                abort_raised = False
+                try:
+                    update_provider()
+                except click.Abort:
+                    abort_raised = True
+
+                assert abort_raised, "Expected click.Abort to be raised"
+
+    # Pattern 4: Check exception message
+    def test_pattern_4_exception_info(self, mock_setup):
+        """Pattern 4: Verify exception details"""
+        mock_manager, mock_provider_mgr = mock_setup
+
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (mock_manager, Mock(), Mock(), mock_provider_mgr, Mock(), Mock())
+
+            with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+                with pytest.raises(click.Abort) as exc_info:
+                    update_provider()
+
+                # Verify it's the right exception type
+                assert isinstance(exc_info.value, click.Abort)
+
+                # Verify console.print was called before abort
+                assert mock_print.called
+
+
+class TestUpdateProviderComplete:
+    """Complete test suite with proper click.Abort handling"""
+
+    @pytest.fixture
+    def runner(self):
+        return CliRunner()
+
+    @pytest.fixture
+    def mock_config_manager(self):
+        manager = Mock()
+        manager.load_config.return_value = None
+        manager.save_config.return_value = None
+        return manager
+
+    @pytest.fixture
+    def mock_provider_manager(self):
+        manager = Mock()
+        manager.get_existing_providers.return_value = ['openai', 'anthropic']
+        manager.update_existing_provider.return_value = True
+        return manager
+
+    def test_update_provider_success(
+        self,
+        mock_config_manager,
+        mock_provider_manager
+    ):
+        """Test successful provider update"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            with patch('devdox_ai_sonar.cli._display_completion_message'):
+                with patch('devdox_ai_sonar.cli._display_operation_header'):
+                    with patch('devdox_ai_sonar.cli._select_existing_ui', return_value='openai'):
+                        with patch('devdox_ai_sonar.cli.console.print'):
+                            # ✅ This should NOT raise any exception
+                            update_provider()
+
+                            # Verify success flow
+                            mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
+                            mock_config_manager.save_config.assert_called_once_with(create_backup=False)
+
+    def test_update_provider_no_providers_abort(
+        self,
+        mock_config_manager,
+        mock_provider_manager
+    ):
+        """Test abort when no providers exist"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            mock_provider_manager.get_existing_providers.return_value = []
+
+            with patch('devdox_ai_sonar.cli.console.print'):
+                # ✅ Expect click.Abort
+                with pytest.raises(click.Abort):
+                    update_provider()
+
+    def test_update_provider_user_cancels_abort(
+        self,
+        mock_config_manager,
+        mock_provider_manager
+    ):
+        """Test abort when user cancels selection"""
+        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
+            mock_init.return_value = (
+                mock_config_manager,
+                Mock(),
+                Mock(),
+                mock_provider_manager,
+                Mock(),
+                Mock()
+            )
+
+            mock_provider_manager.get_existing_providers.return_value = ['openai']
+
+            with patch('devdox_ai_sonar.cli._display_operation_header'):
+                with patch('devdox_ai_sonar.cli._select_existing_ui', return_value=""):
+                    # ✅ Expect click.Abort when user cancels
+                    with pytest.raises(click.Abort):
+                        update_provider()
+

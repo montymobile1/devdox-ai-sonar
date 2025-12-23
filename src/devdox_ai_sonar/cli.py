@@ -87,19 +87,6 @@ def show_progress(message: str, total: Optional[int] = None):
 
 
 # ============================================================================
-# INTERACTIVE PROMPT WITH COMMAND SWITCHING
-# ============================================================================
-
-
-
-
-
-
-
-
-
-
-# ============================================================================
 # INTERACTIVE COMMAND SELECTOR (Claude Code Style)
 # ============================================================================
 
@@ -618,9 +605,16 @@ def add_provider():
         # Initialize components
         manager, ui, _, provider_manager, _, _ = _initialize_managers()
         manager.load_config()
+        available_providers = provider_manager.get_available_providers()
+        if not available_providers:
+            console.print("[yellow]⚠ All supported providers are already configured[/yellow]")
+            raise click.Abort()
 
-        _handle_add_new_provider(provider_manager, manager, ui)
+        _display_operation_header("🚀 ADD NEW PROVIDER")
+        _configure_providers_loop(provider_manager, manager, ui, available_providers)
+        manager.save_config(create_backup=False)
         _display_completion_message()
+
 
     except Exception as e:
         _handle_cli_error(e)
@@ -639,52 +633,22 @@ def update_provider():
                 "\n[red]❌ No providers configured. Please add at least one provider first.[/red]"
             )
             raise click.Abort()
+        _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
+        chosen_provider = _select_existing_ui("provider", "Select the provider to update", existing_providers)
+        if not chosen_provider:
+            raise click.Abort()
 
-        _handle_update_existing_provider(provider_manager, manager, existing_providers)
+        if provider_manager.update_existing_provider(chosen_provider):
+            manager.save_config(create_backup=False)
+            console.print(f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n")
+        else:
+            console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
 
+        _display_completion_message()
         _display_completion_message()
 
     except Exception as e:
         _handle_cli_error(e)
-
-def _handle_add_new_provider(
-        provider_manager: ProviderConfigManager,
-        manager: ConfigManager,
-        ui: ProviderConfigUI,
-) -> None:
-    """Handle adding new provider flow - Complexity: 5"""
-    available_providers = provider_manager.get_available_providers()
-
-    if not available_providers:
-        console.print(
-            "[yellow]⚠ All supported providers are already configured[/yellow]"
-        )
-        raise click.Abort()
-
-    _display_operation_header("🚀 ADD NEW PROVIDER")
-    _configure_providers_loop(provider_manager, manager, ui, available_providers)
-    manager.save_config(create_backup=False)
-
-
-def _handle_update_existing_provider(
-        provider_manager: ProviderConfigManager,
-        manager: ConfigManager,
-        existing_providers: list,
-) -> None:
-    """Handle updating existing provider flow - Complexity: 4"""
-    _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
-
-    chosen_provider = _select_existing_ui("provider","Select the provider to update",existing_providers)
-    if not chosen_provider:
-        raise click.Abort()
-
-    if provider_manager.update_existing_provider(chosen_provider):
-        manager.save_config(create_backup=False)
-        console.print(
-            f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n"
-        )
-    else:
-        console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
 
 
 def _run_interactive_mode(ctx: click.Context) -> None:
@@ -826,7 +790,6 @@ def change_parameters(  types: Optional[str] = None,
     """CLI for config management """
     try:
 
-
         # Initialize all managers
         manager, _, _ , provider_manager, _, _ = _initialize_managers()
         branch, pull_request = provider_manager.branch_or_pr_prompt()
@@ -894,37 +857,54 @@ def  change_max_fix(manager, message , max_fixes,default_max_fixes):
 
     manager.set_value("configuration.max_fixes", max_fixes)
 
-def _execute_command( ctx: click.Context,command: str) -> None:
+
+def _handle_interactive_error(error: Exception) -> bool:
+    """Handle errors in interactive mode."""
+    console.print(f"\n[red]❌ Error: {str(error)}[/red]")
+
+    try:
+        if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
+            sys.exit(1)
+        return False
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Exiting after error...[/yellow]")
+        sys.exit(1)
+
+    except Exception as confirm_error:
+        console.print(f"\n[red]Fatal: Cannot prompt user ({confirm_error})[/red]")
+        sys.exit(2)
+
+
+def _execute_command(ctx: click.Context, command: str) -> None:
     """Execute a specific command with command switching support."""
     options = ctx.obj.get('options', {})
 
     try:
-        if command == 'fix_issues':
-            _run_fix_issues( **options)
-        elif command == 'fix_security_issues':
-            _run_fix_security_issues( **options)
-        elif command == 'analyze':
-            _run_analyze( **options)
-        elif command == 'inspect':
-            _run_inspect()
-        elif command == 'config':
-            init_config( **options)
-        elif command == 'add_provider':
-            add_provider()
-        elif command == 'update_provider':
-            update_provider()
-        elif command == 'change_parameters':
-            change_parameters( **options)
+        command_map = {
+            'fix_issues': lambda: _run_fix_issues(**options),
+            'fix_security_issues': lambda: _run_fix_security_issues(**options),
+            'analyze': lambda: _run_analyze(**options),
+            'inspect': _run_inspect,
+            'config': lambda: init_config(**options),
+            'add_provider': add_provider,
+            'update_provider': update_provider,
+            'change_parameters': lambda: change_parameters(**options),
+        }
+
+        if command in command_map:
+            command_map[command]()
         else:
             console.print(f"[red]Unknown command: {command}[/red]")
 
     except SwitchCommandException:
-        console.print("\n[yellow]↩ Switching commands...[/yellow]")
-        raise  # Re-raise to be caught by interactive mode loop
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
+        raise
 
     except ValidationError as e:
         console.print(f"\n[red]❌ {e.message}[/red]")
         raise click.Abort()
+
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]", markup=False)
         if ctx.obj.get('verbose'):
@@ -969,7 +949,7 @@ def _run_fix_issues(
         )
 
     except SwitchCommandException:
-        console.print("\n[yellow]↩ Switching commands...[/yellow]")
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise  # Re-raise to be caught by interactive mode loop
 
 def display_configuration(parameters, dry_run,apply):
@@ -1030,7 +1010,7 @@ def _run_fix_security_issues(
         )
 
     except SwitchCommandException:
-        console.print("\n[yellow]↩ Switching commands...[/yellow]")
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
 
 
@@ -1079,7 +1059,7 @@ def _run_analyze(
             _display_analysis_results(result, limit)
 
     except SwitchCommandException:
-        console.print("\n[yellow]↩ Switching commands...[/yellow]")
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
 
 def _run_inspect() -> None:
@@ -1114,7 +1094,7 @@ def _run_inspect() -> None:
                 console.print(f"  • {src_dir}")
 
     except SwitchCommandException:
-        console.print("\n[yellow]↩ Switching commands...[/yellow]")
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
 # ============================================================================
 # HELPER FUNCTIONS (Reusing from original code)
@@ -1192,23 +1172,18 @@ def _process_and_fix_issues(
     """Process and fix issues - Refactored."""
     services = _initialize_fix_services(auth_config, llm_config)
     # Fetch issues based on type
-    if issue_type == IssueType.SECURITY:
-        issues_by_file = _fetch_security_issues(
-            services['analyzer'], auth_config, branch, pull_request, fix_params
-        )
-        no_issues_msg = "No fixable security issues found"
-    else:
-        issues_by_file = _fetch_fixable_issues(
-            services['analyzer'], auth_config, branch, pull_request, fix_params
-        )
-        no_issues_msg = "No fixable issues found"
-
+    issues_by_file = _fetch_issues_by_type(
+        services['analyzer'],
+        auth_config,
+        branch,
+        pull_request,
+        fix_params,
+        issue_type
+    )
     if not issues_by_file:
-        console.print(f"[yellow]{no_issues_msg}[/yellow]")
+        msg = "No fixable security issues found" if issue_type == IssueType.SECURITY else "No fixable issues found"
+        console.print(f"[yellow]{msg}[/yellow]")
         return
-
-
-
 
     console.print(f"\n[green]✓ Found {len(issues_by_file)} fixable issues[/green]\n")
     _process_files_with_issues(issues_by_file, services, auth_config,fix_params)
@@ -1321,7 +1296,6 @@ def _generate_fix_for_file(
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         rule_info_list = _collect_rule_information(issues, services['ruler'])
 
-        print("services['fixer'] ", services['fixer'])
         return services['fixer'].generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
@@ -1487,6 +1461,38 @@ def _display_fix_results(result: FixResult) -> None:
 
     if result.backup_created:
         console.print(f"\n[blue]Backup: {result.backup_path}[/blue]")
+
+
+def _fetch_issues_by_type(
+        analyzer: SonarCloudAnalyzer,
+        auth_config: AuthConfig,
+        branch: Optional[str],
+        pull_request: Optional[str],
+        fix_params: Dict[str, Any],
+        issue_type: IssueType
+) -> Dict[str, List[Any]]:
+    """Fetch issues from SonarCloud based on issue type."""
+    pr_number = _safe_convert_pr(pull_request) if pull_request else 0
+
+    if issue_type == IssueType.SECURITY:
+        with show_progress("Fetching security issues...") as (progress, task):
+            return analyzer.get_fixable_security_issues(
+                project_key=auth_config.project,
+                branch=branch or "",
+                pull_request=pr_number,
+                max_issues=fix_params['max_fixes'],
+            )
+    else:
+        with show_progress("Fetching issues...") as (progress, task):
+            return analyzer.get_fixable_issues_by_files(
+                project_key=auth_config.project,
+                branch=branch or "",
+                pull_request=pr_number,
+                max_issues=fix_params['max_fixes'],
+                severities=fix_params['severities_list'],
+                types_list=fix_params['types_list'],
+            )
+
 
 
 if __name__ == "__main__":
