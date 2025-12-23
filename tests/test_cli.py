@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import click
 from click.testing import CliRunner
 from devdox_ai_sonar.services.configuration import AuthConfig, LLMConfig
+from devdox_ai_sonar.utils.validator import IssueType
 from unittest.mock import Mock, patch, MagicMock
 from devdox_ai_sonar.cli import (
     main,
@@ -36,7 +37,8 @@ from devdox_ai_sonar.cli import (
 _collect_rule_information,
 _initialize_fix_services,
 _handle_keyboard_interrupt,
-_fetch_fixable_issues
+_fetch_fixable_issues,
+_process_and_fix_issues
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -756,7 +758,6 @@ class TestFixSecurityIssuesCommand:
                 }
 
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=True):
-                    with patch('devdox_ai_sonar.cli._process_security_issues'):
 
 
                         _run_fix_security_issues()
@@ -1124,14 +1125,14 @@ class TestProcessFunctions:
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        from devdox_ai_sonar.cli import _process_security_issues
 
-                        _process_security_issues(
+                        _process_and_fix_issues(
                             auth_config,
                             llm_config,
                             "main",
                             None,
-                            fix_params
+                            fix_params,
+                            issue_type=IssueType.SECURITY
                         )
 
                         mock_analyzer.get_fixable_security_issues.assert_called_once()
@@ -1186,14 +1187,15 @@ class TestProcessFunctions:
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with patch('devdox_ai_sonar.cli._display_fix_preview'):
                             with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
-                                from devdox_ai_sonar.cli import _process_security_issues
 
-                                _process_security_issues(
+
+                                _process_and_fix_issues(
                                     auth_config,
                                     llm_config,
                                     "main",
                                     None,
-                                    fix_params
+                                    fix_params,
+                                    issue_type=IssueType.SECURITY
                                 )
 
                                 mock_fixer.generate_fix_by_file.assert_called_once()

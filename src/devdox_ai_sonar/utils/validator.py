@@ -7,8 +7,14 @@ data integrity and provide clear error messages.
 
 from typing import Union, List, Set
 from pathlib import Path
+from enum import Enum
 
 from devdox_ai_sonar.utils.exceptions import ValidationError, ConfigurationError
+
+class IssueType(Enum):
+    """Type of issues to process."""
+    REGULAR = "regular"
+    SECURITY = "security"
 
 
 class InputValidator:

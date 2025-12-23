@@ -25,7 +25,7 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
-from devdox_ai_sonar.utils.validator import InputValidator
+from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.exceptions import ValidationError
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
 from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig, LLMConfig
@@ -70,6 +70,8 @@ def _safe_convert_pr(pull_request: Optional[str]) -> int:
     except (ValueError, AttributeError):
         console.print(f"[yellow]⚠ Invalid PR number '{pull_request}', using 0[/yellow]")
         return 0
+
+
 
 
 @contextmanager
@@ -962,7 +964,8 @@ def _run_fix_issues(
             llm_config,
             fix_params.get("branch",""),
             pull_request=parameters.get("pull_request",0),
-            fix_params=fix_params
+            fix_params=fix_params,
+            issue_type= IssueType.REGULAR
         )
 
     except SwitchCommandException:
@@ -1017,12 +1020,13 @@ def _run_fix_security_issues(
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-        _process_security_issues(
+        _process_and_fix_issues(
             auth_config,
             llm_config,
             fix_params.get("branch",""),
             fix_params.get("pull_request",0),
-            fix_params
+            fix_params,
+            issue_type= IssueType.SECURITY
         )
 
     except SwitchCommandException:
@@ -1179,31 +1183,33 @@ def _process_and_fix_issues(
         llm_config: LLMConfig,
         branch: Optional[str],
         pull_request: Optional[str],
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+        issue_type: IssueType = IssueType.REGULAR
 ) -> None:
     """Process and fix issues - Refactored."""
     services = _initialize_fix_services(auth_config, llm_config)
+    # Fetch issues based on type
+    if issue_type == IssueType.SECURITY:
+        issues_by_file = _fetch_security_issues(
+            services['analyzer'], auth_config, branch, pull_request, fix_params
+        )
+        no_issues_msg = "No fixable security issues found"
+    else:
+        issues_by_file = _fetch_fixable_issues(
+            services['analyzer'], auth_config, branch, pull_request, fix_params
+        )
+        no_issues_msg = "No fixable issues found"
 
-    fixable_issues = _fetch_fixable_issues(
-        services['analyzer'],
-        auth_config,
-        branch,
-        pull_request,
-        fix_params
-    )
-
-    if not fixable_issues:
-        console.print("[yellow]No fixable issues found[/yellow]")
+    if not issues_by_file:
+        console.print(f"[yellow]{no_issues_msg}[/yellow]")
         return
 
-    console.print(f"\n[green]✓ Found {len(fixable_issues)} fixable issues[/green]\n")
 
-    _process_each_file(
-        fixable_issues,
-        services,
-        auth_config,
-        fix_params
-    )
+
+
+    console.print(f"\n[green]✓ Found {len(issues_by_file)} fixable issues[/green]\n")
+    _process_files_with_issues(issues_by_file, services, auth_config,fix_params)
+
 
 
 def _initialize_fix_services(
@@ -1243,31 +1249,64 @@ def _fetch_fixable_issues(
         )
 
 
-def _process_each_file(
-        fixable_issues: Dict[str, List[Any]],
+def _process_files_with_issues(
+        issues_by_file: Dict[str, List[Any]],
         services: Dict[str, Any],
         auth_config: AuthConfig,
         fix_params: Dict[str, Any]
 ) -> None:
-    """Process each file with issues."""
-    total_files = len(fixable_issues)
+    """
+    Process files with issues.
 
-    for idx, (file_path, issues) in enumerate(fixable_issues.items(), 1):
+
+    """
+    total_files = len(issues_by_file)
+
+    for idx, (file_path, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_path}[/blue]")
 
-        fix = _generate_fix_for_file(
-            issues,
-            services,
-            auth_config
-        )
-
+        fix = _generate_fix_for_file(issues, services, auth_config)
+        print("fix ", fix)
         if fix:
-            _handle_generated_fix(fix, issues, services['fixer'], auth_config, fix_params)
+            print("fixer ", services)
+            handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
         else:
             console.print("[yellow]No fix could be generated[/yellow]")
 
         if not _should_continue_to_next_file(idx, total_files):
             break
+
+
+def handle_fix(
+        fix: FixSuggestion,
+        issues: List[Any],
+        fixer: LLMFixer,
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """
+    Handle a generated fix (apply or skip).
+
+    ELIMINATES DUPLICATION between _handle_generated_fix and _handle_security_fix.
+    """
+    _display_fix_preview(fix, issues)
+
+    if fix_params['apply']:
+        result = fixer.apply_fixes_with_validation(
+            fixes=[fix],
+            issues=issues,
+            project_path=Path(str(auth_config.project_path)),
+            create_backup=fix_params.get('create_backup', True),
+            dry_run=fix_params['dry_run'],
+            use_validator=True,
+            validator_provider=fixer.provider,
+            validator_model=fixer.model,
+            validator_api_key=fixer.api_key,
+        )
+        _display_fix_results(result)
+    else:
+        console.print("[dim]Skipped[/dim]")
+
 
 
 def _generate_fix_for_file(
@@ -1279,6 +1318,7 @@ def _generate_fix_for_file(
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         rule_info_list = _collect_rule_information(issues, services['ruler'])
 
+        print("services['fixer'] ", services['fixer'])
         return services['fixer'].generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
@@ -1337,37 +1377,6 @@ def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
     return True
 
 
-def _process_security_issues(
-        auth_config: AuthConfig,
-        llm_config: LLMConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any]
-) -> None:
-    """Process security issues - Refactored."""
-    services = _initialize_fix_services(auth_config, llm_config)
-
-    issues_by_file = _fetch_security_issues(
-        services['analyzer'],
-        auth_config,
-        branch,
-        pull_request,
-        fix_params
-    )
-
-    if not issues_by_file:
-        console.print("[yellow]No fixable security issues found[/yellow]")
-        return
-
-    console.print(f"\n[green]✓ Found {len(issues_by_file)} security issues[/green]\n")
-
-    _process_security_files(
-        issues_by_file,
-        services,
-        auth_config,
-        fix_params
-    )
-
 def _fetch_security_issues(
     analyzer: SonarCloudAnalyzer,
     auth_config: AuthConfig,
@@ -1384,30 +1393,6 @@ def _fetch_security_issues(
             max_issues=fix_params['max_fixes'],
         )
 
-
-def _process_security_files(
-        issues_by_file: Dict[str, List[Any]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
-) -> None:
-    """Process each file with security issues."""
-    total_files = len(issues_by_file)
-
-    for idx, (file_path, file_issues) in enumerate(issues_by_file.items(), 1):
-        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_path}[/blue]")
-
-        fix = _generate_security_fix(
-            file_issues,
-            services,
-            auth_config
-        )
-
-        if fix:
-            _handle_security_fix(fix, file_issues, services['fixer'], auth_config, fix_params)
-
-        if not _should_continue_to_next_file(idx, total_files):
-            break
 
 
 def _handle_security_fix(
@@ -1436,20 +1421,6 @@ def _handle_security_fix(
     else:
         console.print("[dim]Skipped[/dim]")
 
-def _generate_security_fix(
-        file_issues: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig
-) -> Optional[FixSuggestion]:
-    """Generate security fix for a file."""
-    with show_progress("Generating fixes....", total=len(file_issues)) as (progress, task):
-        rule_info_list = _collect_rule_information(file_issues, services['ruler'])
-
-        return services['fixer'].generate_fix_by_file(
-            file_issues,
-            Path(str(auth_config.project_path)),
-            rule_info_list
-        )
 
 
 
