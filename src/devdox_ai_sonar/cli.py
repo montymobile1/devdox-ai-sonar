@@ -1030,6 +1030,7 @@ def _run_fix_security_issues(
         )
 
     except SwitchCommandException:
+        console.print("\n[yellow]↩ Switching commands...[/yellow]")
         raise
 
 
@@ -1078,6 +1079,7 @@ def _run_analyze(
             _display_analysis_results(result, limit)
 
     except SwitchCommandException:
+        console.print("\n[yellow]↩ Switching commands...[/yellow]")
         raise
 
 def _run_inspect() -> None:
@@ -1112,6 +1114,7 @@ def _run_inspect() -> None:
                 console.print(f"  • {src_dir}")
 
     except SwitchCommandException:
+        console.print("\n[yellow]↩ Switching commands...[/yellow]")
         raise
 # ============================================================================
 # HELPER FUNCTIONS (Reusing from original code)
@@ -1305,7 +1308,7 @@ def handle_fix(
         )
         _display_fix_results(result)
     else:
-        console.print("[dim]Skipped[/dim]")
+        console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
 
@@ -1362,7 +1365,7 @@ def _handle_generated_fix(
         )
         _display_fix_results(result)
     else:
-        console.print("[dim]Skipped[/dim]")
+        console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
 def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
@@ -1419,7 +1422,7 @@ def _handle_security_fix(
         )
         _display_fix_results(result)
     else:
-        console.print("[dim]Skipped[/dim]")
+        console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
 
