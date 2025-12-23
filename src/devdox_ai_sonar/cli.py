@@ -49,11 +49,13 @@ console = Console()
 
 # Constants
 BOLD_MAGENTA = "bold magenta"
+BOLD_PURPLE = "fg:#673ab7 bold"
 AUTHENTICATION_NOT_FOUND = "[red]❌ No authentication configuration found[/red]"
 DEVDOX_SONAR_CONFIG = "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
 NO_BRANCH_OR_PR_SPECIFIED = "[red]❌ No branch or pull request specified[/red]"
 AUTH_CONFIG_LOADED = "[green]✓[/green] Authentication config loaded"
-
+CONFIGURATION_APPLY="configuration.apply"
+CONFIGURATION_BACKUP="configuration.create_backup"
 # Command switch trigger
 SWITCH_COMMAND_TRIGGER = "/"
 
@@ -131,13 +133,6 @@ def smart_prompt(
     try:
 
 
-        class SwitchCommandValidator(Validator):
-            def validate(self, document):
-                if allow_switch and document.text.strip() == SWITCH_COMMAND_TRIGGER:
-                    raise QValidationError(
-                        message="Switching to command menu...",
-                        cursor_position=len(document.text)
-                    )
 
         # Build prompt message with switch hint
         full_message = message
@@ -451,7 +446,7 @@ def main(
     if command:
         _execute_command(ctx, command)
         return
-    init_config(ctx)
+    init_config()
     # Otherwise, enter interactive mode
     _run_interactive_mode(ctx)
 
@@ -711,7 +706,7 @@ def _handle_cli_error(error: Exception) -> None:
 
 
 
-def init_config(ctx: click.Context,   types: Optional[str] = None,
+def init_config(  types: Optional[str] = None,
     severity: Optional[str] = None,
     max_fixes: int = 0,
     apply: bool=False,
@@ -750,7 +745,7 @@ def init_config(ctx: click.Context,   types: Optional[str] = None,
         manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
-        change_parameters(ctx, types, severity,max_fixes=max_fixes, apply=apply_value, dry_run=dry_run_value)
+        change_parameters(types, severity,max_fixes=max_fixes, apply=apply_value, dry_run=dry_run_value)
 
 
 
@@ -759,7 +754,7 @@ def init_config(ctx: click.Context,   types: Optional[str] = None,
         _handle_cli_error(e)
 
 
-def add_provider(ctx: click.Context):
+def add_provider():
     """CLI command for managing provider configuration"""
     try:
         # Initialize components
@@ -773,11 +768,11 @@ def add_provider(ctx: click.Context):
         _handle_cli_error(e)
 
 
-def update_provider(ctx: click.Context):
+def update_provider():
     """CLI command for managing provider configuration - Complexity: 7 (under limit of 15)"""
     try:
         # Initialize components
-        manager, ui, _, provider_manager, _, _ = _initialize_managers()
+        manager, _, _, provider_manager, _, _ = _initialize_managers()
         manager.load_config()
 
         existing_providers = provider_manager.get_existing_providers()
@@ -821,7 +816,6 @@ def _handle_update_existing_provider(
     """Handle updating existing provider flow - Complexity: 4"""
     _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
 
-    # chosen_provider = _select_existing_ui(existing_providers)
     chosen_provider = _select_existing_ui("provider","Select the provider to update",existing_providers)
     if not chosen_provider:
         raise click.Abort()
@@ -847,7 +841,7 @@ def _run_interactive_mode(ctx: click.Context) -> None:
                 sys.exit(0)
 
             console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-            _execute_command(ctx, command)
+            _execute_command( ctx=ctx, command=command)
 
             # After command execution, ask to continue
             console.print("\n" + "─" * 50 + "\n")
@@ -870,8 +864,7 @@ def _run_interactive_mode(ctx: click.Context) -> None:
 
         except Exception as e:
             console.print(f"\n[red]❌ Error: {str(e)}[/red]")
-            if ctx.obj.get('verbose'):
-                console.print_exception()
+
 
             try:
                 if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
@@ -895,29 +888,20 @@ def  change_field(manager, field,message, default_value, choices:List[str] = Non
         manager.set_value(field, types)
     return types
 
-def change_parameters(ctx: click.Context,   types: Optional[str] = None,
+def change_parameters(  types: Optional[str] = None,
     severity: Optional[str] = None, **kwargs):
     """CLI for config management """
     try:
 
 
         # Initialize all managers
-        manager, ui, _ , provider_manager, sonar_ui, config_service = _initialize_managers()
+        manager, _, _ , provider_manager, _, _ = _initialize_managers()
         branch, pull_request = provider_manager.branch_or_pr_prompt()
 
         if not branch and not pull_request:
             console.print(NO_BRANCH_OR_PR_SPECIFIED)
             raise click.Abort()
 
-        if pull_request:
-            pr_int = _safe_convert_pr(pull_request)
-            if pr_int <= 0:
-                console.print(f"[yellow]⚠ Invalid PR number: {pull_request}[/yellow]")
-                pull_request = None
-
-        if not branch and not pull_request:
-            console.print(NO_BRANCH_OR_PR_SPECIFIED)
-            raise click.Abort()
         max_fixes = manager.get_value("configuration.max_fixes") or 0
 
         # Max fixes
@@ -943,16 +927,16 @@ def change_parameters(ctx: click.Context,   types: Optional[str] = None,
         formatted_choices = [Choice(title=choice['name'], value=choice['value']) for choice in choices ]
 
 
-        _ = change_field(manager=manager, field="configuration.apply",
+        _ = change_field(manager=manager, field=CONFIGURATION_APPLY,
                          message="Apply fixes of SonarQube (press Enter to skip)",
-                        default_value=manager.get_value("configuration.apply") if manager.get_value("configuration.apply") is not None else kwargs.get("apply", 0) , # optional
+                        default_value=manager.get_value(CONFIGURATION_APPLY) if manager.get_value(CONFIGURATION_APPLY) is not None else kwargs.get("apply", 0) , # optional
                         choices=formatted_choices,
                         multiple=False)
 
-        _ = change_field(manager=manager, field="configuration.create_backup",
+        _ = change_field(manager=manager, field=CONFIGURATION_BACKUP,
                          message="Create backup before apply fixes (press Enter to skip)",
-                         default_value=manager.get_value("configuration.create_backup") if manager.get_value(
-                             "configuration.create_backup") is not None else kwargs.get("create_backup", 0),  # optional
+                         default_value=manager.get_value(CONFIGURATION_BACKUP) if manager.get_value(
+                             CONFIGURATION_BACKUP) is not None else kwargs.get("create_backup", 0),  # optional
                          choices=formatted_choices,
                         multiple=False)
 
@@ -977,27 +961,27 @@ def  change_max_fix(manager, message , max_fixes,default_max_fixes):
 
     manager.set_value("configuration.max_fixes", max_fixes)
 
-def _execute_command(ctx: click.Context, command: str) -> None:
+def _execute_command( ctx: click.Context,command: str) -> None:
     """Execute a specific command with command switching support."""
     options = ctx.obj.get('options', {})
 
     try:
         if command == 'fix_issues':
-            _run_fix_issues(ctx, **options)
+            _run_fix_issues( **options)
         elif command == 'fix_security_issues':
-            _run_fix_security_issues(ctx, **options)
+            _run_fix_security_issues( **options)
         elif command == 'analyze':
-            _run_analyze(ctx, **options)
+            _run_analyze( **options)
         elif command == 'inspect':
-            _run_inspect(ctx)
+            _run_inspect()
         elif command == 'config':
-            init_config(ctx, **options)
+            init_config( **options)
         elif command == 'add_provider':
-            add_provider(ctx)
+            add_provider()
         elif command == 'update_provider':
-            update_provider(ctx)
+            update_provider()
         elif command == 'change_parameters':
-            change_parameters(ctx, **options)
+            change_parameters( **options)
         else:
             console.print(f"[red]Unknown command: {command}[/red]")
 
@@ -1021,7 +1005,6 @@ def _execute_command(ctx: click.Context, command: str) -> None:
 
 
 def _run_fix_issues(
-    ctx: click.Context,
     types: Optional[str] = None,
     severity: Optional[str] = None,
     max_fixes: int = settings.DEFAULT_MAX_FIXES,
@@ -1090,7 +1073,6 @@ def   display_configuration(parameters, dry_run,apply):
 
 
 def _run_fix_security_issues(
-    ctx: click.Context,
     types: Optional[str] = None,
     severity: Optional[str] = None,
     max_fixes: int = settings.DEFAULT_MAX_FIXES,
@@ -1127,7 +1109,6 @@ def _run_fix_security_issues(
 
 
 def _run_analyze(
-        ctx: click.Context,
         severity: Optional[str] = None,
         types: Optional[str] = None,
         **kwargs: Any
@@ -1176,7 +1157,7 @@ def _run_analyze(
     except SwitchCommandException:
         raise
 
-def _run_inspect(ctx: click.Context) -> None:
+def _run_inspect() -> None:
     """Run the inspect command."""
     console.print("\n[bold cyan]🔍 Inspect Local Project[/bold cyan]\n")
 

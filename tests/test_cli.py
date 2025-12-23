@@ -454,8 +454,8 @@ class TestConfigurationManagement:
 
             with patch('devdox_ai_sonar.cli._handle_add_new_provider'):
                 with patch('devdox_ai_sonar.cli._display_completion_message'):
-                    ctx = Mock()
-                    add_provider(ctx)
+
+                    add_provider()
 
     def test_update_provider_success(
             self, runner, mock_config_manager, mock_provider_manager
@@ -473,8 +473,7 @@ class TestConfigurationManagement:
 
             with patch('devdox_ai_sonar.cli._handle_update_existing_provider'):
                 with patch('devdox_ai_sonar.cli._display_completion_message'):
-                    ctx = Mock()
-                    update_provider(ctx)
+                    update_provider()
 
     def test_update_provider_no_providers(
             self, runner, mock_config_manager, mock_provider_manager
@@ -865,11 +864,10 @@ class TestAnalyzeCommand:
         with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
             mock_load.side_effect = click.Abort()
 
-            ctx = Mock()
-            ctx.obj = {"verbose": False}
+
 
             with pytest.raises(click.Abort):
-                _run_inspect(ctx)
+                _run_inspect()
 
 
     def test_run_analyze_with_severity_and_types(self):
@@ -932,7 +930,7 @@ class TestInspectCommand:
                 ctx.obj = {"verbose": False}
 
                 # ✅ Works in CI/CD!
-                _run_inspect(ctx)
+                _run_inspect()
 
                 # Verify
                 mock_load.assert_called_once()
@@ -948,12 +946,9 @@ class TestInspectCommand:
             mock_load.side_effect = click.Abort()
 
 
-            ctx = Mock()
-            ctx.obj = {"verbose": False}
-
             # Assert that click.Abort is raised (this is CORRECT behavior!)
             with pytest.raises(click.Abort):
-                _run_inspect(ctx)
+                _run_inspect()
 
             # Verify _load_and_validate_config was called
             mock_load.assert_called_once()
@@ -986,10 +981,8 @@ class TestInspectCommand:
 
             with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
 
-                ctx = Mock()
-                ctx.obj = {"verbose": False}
 
-                _run_inspect(ctx)
+                _run_inspect()
 
                 # Should still complete successfully
                 mock_analyzer.analyze_project_directory.assert_called_once()
@@ -1326,7 +1319,4 @@ class TestWithFixtures:
         with patch('devdox_ai_sonar.cli._load_and_validate_config', return_value=mock_loaded_config):
             with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
 
-                ctx = Mock()
-                ctx.obj = {"verbose": False}
-
-                _run_inspect(ctx)
+                _run_inspect()
