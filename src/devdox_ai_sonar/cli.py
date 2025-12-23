@@ -482,30 +482,6 @@ def _check_reconfiguration_consent(providers: list) -> bool:
     return False
 
 
-def _select_existing_provider(existing_providers: list) -> str:
-    """Prompt user to select an existing provider.
-
-    Args:
-        existing_providers: List of configured provider names
-
-    Returns:
-        str: Selected provider name, or empty string if cancelled
-    """
-    questions = [
-        inquirer.List(
-            "provider",
-            message="Select the provider to update",
-            choices=existing_providers,
-        )
-    ]
-
-    answers = inquirer.prompt(questions)
-    if not answers or not answers.get("provider"):
-        console.print("[yellow]⚠ Selection cancelled[/yellow]")
-        return ""
-
-    return answers["provider"]
-
 
 def _display_operation_header(operation: str) -> None:
     """Display formatted operation header.
@@ -717,7 +693,7 @@ def _execute_interactive_command(ctx: click.Context, command: str) -> None:
 
 def _should_continue_to_menu() -> bool:
     """Ask user if they want to return to main menu."""
-    return smart_confirm("Return to main menu?", default=True, allow_switch=False)
+    return smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False)
 
 
 def _handle_command_switch() -> None:
@@ -758,7 +734,7 @@ def _handle_interactive_error(error: Exception) -> bool:
     console.print(f"\n[red]❌ Error: {str(error)}[/red]")
 
     try:
-        if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
+        if not smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False):
             sys.exit(1)
         return False
 
@@ -863,7 +839,7 @@ def _handle_interactive_error(error: Exception) -> bool:
     console.print(f"\n[red]❌ Error: {str(error)}[/red]")
 
     try:
-        if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
+        if not smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False):
             sys.exit(1)
         return False
 
@@ -1045,7 +1021,7 @@ def _run_analyze(
         # Fetch and display results
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
 
-        with show_progress("Fetching issues...") as (progress, task):
+        with show_progress(constant.FETCHING_ISSUES) as (progress, task):
             result = analyzer.get_project_issues(
                 project_key=auth_config.project,
                 branch=parameters.get("branch",""),
@@ -1104,8 +1080,8 @@ def _run_inspect() -> None:
 def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
+    manager, ui, validator, provider_manager, sonar_ui, config_service= _initialize_managers()
 
-    config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
     auth_config_dict = config_service.load_auth_config()
 
     if not auth_config_dict:
@@ -1119,21 +1095,12 @@ def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     if not is_valid:
         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
         raise click.Abort()
-
     # Load LLM config
-    manager = ConfigManager(config_path=settings.config_file_path)
-    manager.load_config()
     llm_config = config_service.load_llm_config(manager)
-
     if not llm_config:
         console.print("[red]❌ No LLM providers configured[/red]")
         raise click.Abort()
-
-    # Get branch/PR with command switching support
-    ui = ProviderConfigUI()
-    validator = ProviderValidator()
-    provider_manager = ProviderConfigManager(manager, ui, validator)
-    branch, pull_request = provider_manager.branch_or_pr()
+    branch, pull_request = provider_manager.branch_or_pr_prompt()
 
     if not branch and not pull_request:
         console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
@@ -1208,25 +1175,6 @@ def _initialize_fix_services(
     }
 
 
-def _fetch_fixable_issues(
-        analyzer: SonarCloudAnalyzer,
-        auth_config: AuthConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any]
-) -> Dict[str, List[Any]]:
-    """Fetch fixable issues from SonarCloud."""
-    with show_progress("Fetching issues...") as (progress, task):
-        return analyzer.get_fixable_issues_by_files(
-            project_key=auth_config.project,
-            branch=branch or "",
-            pull_request=int(pull_request) if pull_request else 0,
-            max_issues=fix_params['max_fixes'],
-            severities=fix_params['severities_list'],
-            types_list=fix_params['types_list'],
-        )
-
-
 def _process_files_with_issues(
         issues_by_file: Dict[str, List[Any]],
         services: Dict[str, Any],
@@ -1265,7 +1213,6 @@ def handle_fix(
     """
     Handle a generated fix (apply or skip).
 
-    ELIMINATES DUPLICATION between _handle_generated_fix and _handle_security_fix.
     """
     _display_fix_preview(fix, issues)
 
@@ -1315,32 +1262,6 @@ def _collect_rule_information(
     return rule_info_list
 
 
-def _handle_generated_fix(
-        fix: FixSuggestion,
-        issues: List[Any],
-        fixer: LLMFixer,
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
-) -> None:
-    """Handle a generated fix."""
-    _display_fix_preview(fix, issues)
-
-    if fix_params['apply']:
-        result = fixer.apply_fixes_with_validation(
-            fixes=[fix],
-            issues=issues,
-            project_path=Path(str(auth_config.project_path)),
-            create_backup=True,
-            dry_run=fix_params['dry_run'],
-            use_validator=True,
-            validator_provider=fixer.provider,
-            validator_model=fixer.model,
-            validator_api_key=fixer.api_key,
-        )
-        _display_fix_results(result)
-    else:
-        console.print(f"[dim]{constant.SKIPPED}[/dim]")
-
 
 def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
     """Check if should continue to next file."""
@@ -1354,49 +1275,6 @@ def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
     return True
 
 
-def _fetch_security_issues(
-    analyzer: SonarCloudAnalyzer,
-    auth_config: AuthConfig,
-    branch: Optional[str],
-    pull_request: Optional[str],
-    fix_params: Dict[str, Any]
-) -> Dict[str, List[Any]]:
-    """Fetch security issues from SonarCloud."""
-    with show_progress("Fetching security issues....") as (progress, task):
-        return analyzer.get_fixable_security_issues(
-            project_key=auth_config.project,
-            branch=branch or "",
-            pull_request=int(pull_request) if pull_request else 0,
-            max_issues=fix_params['max_fixes'],
-        )
-
-
-
-def _handle_security_fix(
-        fix: FixSuggestion,
-        file_issues: List[Any],
-        fixer: LLMFixer,
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
-) -> None:
-    """Handle a generated security fix."""
-    _display_fix_preview(fix, file_issues)
-
-    if fix_params['apply']:
-        result = fixer.apply_fixes_with_validation(
-            fixes=[fix],
-            issues=file_issues,
-            project_path=Path(str(auth_config.project_path)),
-            create_backup=fix_params['create_backup'],
-            dry_run=fix_params['dry_run'],
-            use_validator=True,
-            validator_provider=fixer.provider,
-            validator_model=fixer.model,
-            validator_api_key=fixer.api_key,
-        )
-        _display_fix_results(result)
-    else:
-        console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
 
@@ -1483,7 +1361,7 @@ def _fetch_issues_by_type(
                 max_issues=fix_params['max_fixes'],
             )
     else:
-        with show_progress("Fetching issues...") as (progress, task):
+        with show_progress(constant.FETCHING_ISSUES) as (progress, task):
             return analyzer.get_fixable_issues_by_files(
                 project_key=auth_config.project,
                 branch=branch or "",

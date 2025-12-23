@@ -37,7 +37,6 @@ from devdox_ai_sonar.cli import (
 _collect_rule_information,
 _initialize_fix_services,
 _handle_keyboard_interrupt,
-_fetch_fixable_issues,
 _process_and_fix_issues
 )
 from devdox_ai_sonar.models.sonar import (
@@ -1899,44 +1898,6 @@ class TestInitializeFixServices:
             model="gpt-4",
             api_key="test_key"
         )
-
-
-class TestFetchFixableIssues:
-    """Test cases for _fetch_fixable_issues."""
-
-    @patch('devdox_ai_sonar.cli.show_progress')
-    def test_fetches_issues_from_analyzer(self, mock_progress):
-        """Test fetches issues from analyzer."""
-        mock_analyzer = Mock()
-        mock_analyzer.get_fixable_issues_by_files.return_value = {
-            'file1.py': ['issue1', 'issue2']
-        }
-
-        mock_progress.return_value.__enter__.return_value = (Mock(), Mock())
-
-        auth_config = AuthConfig(
-            token="test_token",
-            organization="test_org",
-            project="test_project",
-            project_path="/test/path"
-        )
-
-        fix_params = {
-            'max_fixes': 10,
-            'severities_list': ['CRITICAL'],
-            'types_list': ['BUG']
-        }
-
-        result = _fetch_fixable_issues(
-            mock_analyzer,
-            auth_config,
-            "main",
-            "123",
-            fix_params
-        )
-
-        assert result == {'file1.py': ['issue1', 'issue2']}
-        mock_analyzer.get_fixable_issues_by_files.assert_called_once()
 
 
 class TestCollectRuleInformation:
