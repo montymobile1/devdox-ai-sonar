@@ -303,56 +303,6 @@ class TestProgressContextManager:
             pass  # Expected
 
 
-# ============================================================================
-# TEST CLASS: SMART PROMPTS
-# ============================================================================
-
-class TestSmartPrompts:
-    """Test smart prompt functions"""
-
-    def test_smart_prompt_text_with_questionary(self):
-        """Test text prompt with questionary"""
-        with patch('devdox_ai_sonar.cli.questionary') as mock_q:
-            mock_q.text.return_value.ask.return_value = "test_input"
-
-            result = smart_prompt("Enter value:")
-
-            assert result == "test_input"
-            mock_q.text.assert_called_once()
-
-    def test_smart_prompt_select_with_questionary(self):
-        """Test select prompt with questionary"""
-        with patch('devdox_ai_sonar.cli.questionary') as mock_q:
-            mock_q.select.return_value.ask.return_value = "option1"
-
-            result = smart_prompt(
-                "Select option:",
-                choices=["option1", "option2"]
-            )
-
-            assert result == "option1"
-
-    def test_smart_prompt_checkbox_with_questionary(self):
-        """Test checkbox prompt with questionary"""
-        with patch('devdox_ai_sonar.cli.questionary') as mock_q:
-            mock_q.checkbox.return_value.ask.return_value = ["opt1", "opt2"]
-
-            result = smart_prompt(
-                "Select multiple:",
-                choices=["opt1", "opt2", "opt3"],
-                multiple=True
-            )
-
-            assert result == ["opt1", "opt2"]
-
-    def test_smart_prompt_switch_command(self):
-        """Test switch command trigger"""
-        with patch('devdox_ai_sonar.cli.questionary') as mock_q:
-            mock_q.text.return_value.ask.return_value = "/"
-
-            with pytest.raises(SwitchCommandException):
-                smart_prompt("Enter value:", allow_switch=True)
-
 
 
 

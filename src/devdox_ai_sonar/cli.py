@@ -3,7 +3,7 @@
 
 import sys
 from pathlib import Path
-from typing import Optional, List, Any,  Sequence, Dict, Tuple, Union
+from typing import Optional, List, Any,  Sequence, Dict, Tuple, Union, Set
 
 import questionary
 from questionary import ValidationError as QValidationError
@@ -41,38 +41,19 @@ from devdox_ai_sonar.utils.provider_config import (
     ProviderConfigManager,
 )
 
+from devdox_ai_sonar.utils.exceptions import SwitchCommandException, ReturnToMenuException
+from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
+from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
 
 console = Console()
 
 
-# Constants
-BOLD_MAGENTA = "bold magenta"
-BOLD_PURPLE = "fg:#673ab7 bold"
-AUTHENTICATION_NOT_FOUND = "[red]❌ No authentication configuration found[/red]"
-DEVDOX_SONAR_CONFIG = "[yellow]💡 Run 'devdox_sonar_config' to configure authentication[/yellow]"
-NO_BRANCH_OR_PR_SPECIFIED = "[red]❌ No branch or pull request specified[/red]"
-AUTH_CONFIG_LOADED = "[green]✓[/green] Authentication config loaded"
-CONFIGURATION_APPLY="configuration.apply"
-CONFIGURATION_BACKUP="configuration.create_backup"
-# Command switch trigger
-SWITCH_COMMAND_TRIGGER = "/"
-
-
 # ============================================================================
 # EXCEPTIONS FOR COMMAND SWITCHING
 # ============================================================================
 
-
-class SwitchCommandException(Exception):
-    """Exception raised when user wants to switch commands."""
-    pass
-
-
-class ReturnToMenuException(Exception):
-    """Exception raised when user wants to return to main menu."""
-    pass
 
 
 def _safe_convert_pr(pull_request: Optional[str]) -> int:
@@ -108,137 +89,12 @@ def show_progress(message: str, total: Optional[int] = None):
 # ============================================================================
 
 
-def smart_prompt(
-    message: str,
-    default: Optional[str] = None,
-    choices: Optional[List[str]] = None,
-    allow_switch: bool = True,
-    multiple:bool=False
-) -> Union[str, List[str]]:
-    """
-    Enhanced prompt that allows switching commands by typing '/'.
-
-    Args:
-        message: Prompt message to display
-        default: Default value
-        choices: List of valid choices (if applicable)
-        allow_switch: Whether to allow command switching
-
-    Returns:
-        User's input
-
-    Raises:
-        SwitchCommandException: If user types '/' to switch commands
-    """
-    try:
 
 
 
-        # Build prompt message with switch hint
-        full_message = message
-        if allow_switch:
-            full_message = f"{message}\n[dim](Type '/' to switch commands)[/dim]"
-        if choices:
-            if choices and multiple :
-                defaults=set()
-                if default is not None:
-                    defaults = set(default)
-
-                all_choices = [
-                    Choice(value=choice, title=choice, checked=choice in defaults)
-                    for choice in choices
-                ]
-
-                result = questionary.checkbox(full_message, choices=all_choices).ask()
-            else:
-                result = questionary.select(
-                    full_message,
-                    choices=choices,
-                    default=default
-                ).ask()
-        else:
-            result = questionary.text(
-                full_message,
-                default=default or ""
-            ).ask()
-
-            # Check for switch command
-            if allow_switch and result and result.strip() == SWITCH_COMMAND_TRIGGER:
-                raise SwitchCommandException()
-
-        return result
-
-    except ImportError:
-        # Fallback to rich prompt
-        from rich.prompt import Prompt
-
-        if allow_switch:
-            console.print(f"[dim](Type '{SWITCH_COMMAND_TRIGGER}' to switch commands)[/dim]")
-
-        if choices:
-            result = Prompt.ask(message, choices=choices, default=default)
-        else:
-            result = Prompt.ask(message, default=default)
-
-        if allow_switch and result and result.strip() == SWITCH_COMMAND_TRIGGER:
-            raise SwitchCommandException()
-
-        return result
 
 
-def smart_confirm(message: str, default: bool = True, allow_switch: bool = True) -> bool:
-    """
-    Enhanced confirmation that allows switching commands.
 
-    Args:
-        message: Confirmation message
-        default: Default value
-        allow_switch: Whether to allow command switching
-
-    Returns:
-        User's confirmation (True/False)
-
-    Raises:
-        SwitchCommandException: If user types '/' to switch commands
-    """
-    try:
-        import questionary
-
-        full_message = message
-        if allow_switch:
-            full_message = f"{message}\n[dim](Type '/' to switch commands)[/dim]"
-
-        # Create custom choices with switch option
-        choices = ["Yes", "No"]
-        if allow_switch:
-            choices.append(f"{SWITCH_COMMAND_TRIGGER} Switch Command")
-
-        result = questionary.select(
-            full_message,
-            choices=choices,
-            default="Yes" if default else "No"
-        ).ask()
-
-        if result == f"{SWITCH_COMMAND_TRIGGER} Switch Command":
-            raise SwitchCommandException()
-
-        return result == "Yes"
-
-    except ImportError:
-        from rich.prompt import Confirm
-
-        if allow_switch:
-            console.print(f"[dim](Type '{SWITCH_COMMAND_TRIGGER}' to switch commands)[/dim]")
-
-        # Simple yes/no prompt with switch detection
-        result = console.input(f"{message} [{'Y' if default else 'y'}/{'n' if default else 'N'}]: ").strip().lower()
-
-        if allow_switch and result == SWITCH_COMMAND_TRIGGER:
-            raise SwitchCommandException()
-
-        if result == "":
-            return default
-        return result in ["y", "yes"]
 
 
 # ============================================================================
@@ -261,11 +117,11 @@ def show_command_selector() -> Optional[str]:
 
     # Define custom style similar to Claude Code
     custom_style = Style([
-        ('qmark', BOLD_PURPLE),
+        ('qmark', constant.BOLD_PURPLE),
         ('question', 'bold'),
         ('answer', 'fg:#f44336 bold'),
-        ('pointer', BOLD_PURPLE),
-        ('highlighted', BOLD_PURPLE),
+        ('pointer', constant.BOLD_PURPLE),
+        ('highlighted', constant.BOLD_PURPLE),
         ('selected', 'fg:#cc5454'),
         ('separator', 'fg:#cc5454'),
         ('instruction', ''),
@@ -885,7 +741,6 @@ def _run_interactive_mode(ctx: click.Context) -> None:
 
 
 def  change_field(manager, field,message, default_value, choices:List[str] = None, multiple:bool = True)->Optional[Union[str, List[str]]]:
-
     types_input = smart_prompt(
         message,
         default=default_value,
@@ -910,7 +765,7 @@ def change_parameters(  types: Optional[str] = None,
         branch, pull_request = provider_manager.branch_or_pr_prompt()
 
         if not branch and not pull_request:
-            console.print(NO_BRANCH_OR_PR_SPECIFIED)
+            console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
             raise click.Abort()
 
         max_fixes = manager.get_value("configuration.max_fixes") or 0
@@ -938,16 +793,16 @@ def change_parameters(  types: Optional[str] = None,
         formatted_choices = [Choice(title=choice['name'], value=choice['value']) for choice in choices ]
 
 
-        _ = change_field(manager=manager, field=CONFIGURATION_APPLY,
+        _ = change_field(manager=manager, field=constant.CONFIGURATION_APPLY,
                          message="Apply fixes of SonarQube (press Enter to skip)",
-                        default_value=manager.get_value(CONFIGURATION_APPLY) if manager.get_value(CONFIGURATION_APPLY) is not None else kwargs.get("apply", 0) , # optional
+                        default_value=manager.get_value(constant.CONFIGURATION_APPLY) if manager.get_value(constant.CONFIGURATION_APPLY) is not None else kwargs.get("apply", 0) , # optional
                         choices=formatted_choices,
                         multiple=False)
 
-        _ = change_field(manager=manager, field=CONFIGURATION_BACKUP,
+        _ = change_field(manager=manager, field=constant.CONFIGURATION_BACKUP,
                          message="Create backup before apply fixes (press Enter to skip)",
-                         default_value=manager.get_value(CONFIGURATION_BACKUP) if manager.get_value(
-                             CONFIGURATION_BACKUP) is not None else kwargs.get("create_backup", 0),  # optional
+                         default_value=manager.get_value(constant.CONFIGURATION_BACKUP) if manager.get_value(
+                             constant.CONFIGURATION_BACKUP) is not None else kwargs.get("create_backup", 0),  # optional
                          choices=formatted_choices,
                         multiple=False)
 
@@ -1169,7 +1024,7 @@ def _run_inspect() -> None:
 
         console.print(Panel.fit(f"[bold]Project: {auth_config.project_path}[/bold]"))
 
-        table = Table(show_header=True, header_style=BOLD_MAGENTA)
+        table = Table(show_header=True, header_style=constant.BOLD_MAGENTA)
         table.add_column("Property")
         table.add_column("Value")
 
@@ -1202,8 +1057,8 @@ def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     auth_config_dict = config_service.load_auth_config()
 
     if not auth_config_dict:
-        console.print(AUTHENTICATION_NOT_FOUND)
-        console.print(DEVDOX_SONAR_CONFIG)
+        console.print(constant.AUTHENTICATION_NOT_FOUND)
+        console.print(constant.DEVDOX_SONAR_CONFIG)
         raise click.Abort()
 
     auth_config = AuthConfig(**auth_config_dict)
@@ -1229,7 +1084,7 @@ def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     branch, pull_request = provider_manager.branch_or_pr()
 
     if not branch and not pull_request:
-        console.print(NO_BRANCH_OR_PR_SPECIFIED)
+        console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
         raise click.Abort()
     params = manager.get_value("configuration") or {}
 
@@ -1433,7 +1288,7 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
     if result.issues:
         issues_to_show = result.issues[:limit] if limit else result.issues
 
-        table = Table(show_header=True, header_style=BOLD_MAGENTA)
+        table = Table(show_header=True, header_style=constant.BOLD_MAGENTA)
         table.add_column("Severity", width=10)
         table.add_column("Type", width=15)
         table.add_column("File", width=30)
