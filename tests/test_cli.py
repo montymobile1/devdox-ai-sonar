@@ -2,9 +2,9 @@
 
 import pytest
 from contextlib import contextmanager
+import click
 from click.testing import CliRunner
 from unittest.mock import Mock, patch, MagicMock
-
 from devdox_ai_sonar.cli import (
     main,
     _safe_convert_pr,
@@ -78,6 +78,31 @@ def mock_config_service():
         mock_instance.check_all_value_empty.return_value = False
         mock.return_value = mock_instance
         yield mock_instance
+
+
+@pytest.fixture
+def mock_loaded_config():
+    """Fixture for _load_and_validate_config return value"""
+    mock_auth = Mock()
+    mock_auth.project = "test-project"
+    mock_auth.organization = "test-org"
+    mock_auth.token = "test-token"
+    mock_auth.project_path = "/tmp/project"
+
+    mock_llm = Mock()
+    mock_llm.provider = "openai"
+    mock_llm.model = "gpt-4"
+    mock_llm.api_key = "test-key"
+
+    parameters = {
+        "branch": "main",
+        "pull_request": 0,
+        "max_fixes": 10,
+        "severity": "",
+        "types": ""
+    }
+
+    return mock_auth, mock_llm, parameters
 
 
 @pytest.fixture
@@ -727,19 +752,31 @@ class TestFixSecurityIssuesCommand:
 class TestAnalyzeCommand:
     """Test analyze command"""
 
+
     def test_run_analyze_success(self):
-        """Test successful analysis - FIXED"""
-        # Setup mocks
-        mock_config_service = Mock()
-        mock_config_service.load_auth_config.return_value = {
-            "token": "test-token",
-            "organization": "test-org",
-            "project": "test-project",
-            "project_path": "/tmp/project"
+        """Test successful analysis - Updated for refactored version"""
+
+
+        # Mock the return from _load_and_validate_config
+        mock_auth_config = Mock()
+        mock_auth_config.project = "test-project"
+        mock_auth_config.organization = "test-org"
+        mock_auth_config.token = "test-token"
+
+        mock_llm_config = Mock()
+        mock_llm_config.provider = "openai"
+        mock_llm_config.model = "gpt-4"
+
+        parameters = {
+            "branch": "main",
+            "pull_request": 0,
+            "max_fixes": 10,
+            "severity": "",
+            "types": ""
         }
 
+        # Mock analyzer
         mock_analyzer = MagicMock()
-        from devdox_ai_sonar.models.sonar import AnalysisResult
         mock_analyzer.get_project_issues.return_value = AnalysisResult(
             project_key="test",
             organization="org",
@@ -749,107 +786,130 @@ class TestAnalyzeCommand:
             issues_by_severity={}
         )
 
-        mock_config_manager = Mock()
-        mock_config_manager.load_config.return_value = None
+        # Patch dependencies
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
 
-        mock_provider_manager = Mock()
-        mock_provider_manager.branch_or_pr.return_value = ("main", None)
+            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
+                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with patch('devdox_ai_sonar.cli._display_analysis_results'):
+                            
 
-        # Patch everything
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_cs.return_value = mock_config_service
+                            ctx = Mock()
+                            ctx.obj = {"verbose": False}
 
-            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
-                mock_cm.return_value = mock_config_manager
+                            _run_analyze(ctx)
 
-                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
-                    mock_pm.return_value = mock_provider_manager
-
-                    with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer') as mock_sa:
-                        mock_sa.return_value = mock_analyzer
-
-                        with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                            mock_auth_instance = Mock()
-                            mock_auth_instance.validate.return_value = (True, None)
-                            mock_auth_instance.project = "test"
-                            mock_auth_instance.organization = "org"
-                            mock_auth_instance.token = "token"
-                            mock_auth.return_value = mock_auth_instance
-
-                            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
-                                # CRITICAL FIX: Use mock_show_progress
-                                with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                                    with patch('devdox_ai_sonar.cli._display_analysis_results'):
-                                        from devdox_ai_sonar.cli import _run_analyze
-
-                                        ctx = Mock()
-                                        ctx.obj = {"verbose": False}
-
-                                        # This should work now!
-                                        _run_analyze(ctx)
-
-                                        # Verify analyzer was called
-                                        mock_analyzer.get_project_issues.assert_called_once()
+                            # Verify
+                            mock_load.assert_called_once()
+                            mock_analyzer.get_project_issues.assert_called_once()
 
     def test_run_analyze_no_results(self):
         """Test analyze when no results returned"""
-        mock_config_service = Mock()
-        mock_config_service.load_auth_config.return_value = {
-            "token": "test-token",
-            "organization": "test-org",
-            "project": "test-project",
-            "project_path": "/tmp/project"
+        # Mock config
+        mock_auth_config = Mock()
+        mock_auth_config.project = "test"
+        mock_auth_config.organization = "org"
+        mock_auth_config.token = "token"
+
+        mock_llm_config = Mock()
+
+        parameters = {
+            "branch": "main",
+            "pull_request": 0,
+            "max_fixes": 10,
+            "severity": "",
+            "types": ""
         }
 
+        # Mock analyzer with no results
         mock_analyzer = MagicMock()
-        mock_analyzer.get_project_issues.return_value = None  # No results
+        mock_analyzer.get_project_issues.return_value = None
 
-        mock_config_manager = Mock()
-        mock_provider_manager = Mock()
-        mock_provider_manager.branch_or_pr.return_value = ("main", None)
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
 
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_cs.return_value = mock_config_service
+            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
+                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        
 
-            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
-                mock_cm.return_value = mock_config_manager
+                        ctx = Mock()
+                        ctx.obj = {"verbose": False}
 
-                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
-                    mock_pm.return_value = mock_provider_manager
+                        _run_analyze(ctx)
 
-                    with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer') as mock_sa:
-                        mock_sa.return_value = mock_analyzer
-
-                        with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                            mock_auth_instance = Mock()
-                            mock_auth_instance.validate.return_value = (True, None)
-                            mock_auth_instance.project = "test"
-                            mock_auth_instance.organization = "org"
-                            mock_auth.return_value = mock_auth_instance
-
-                            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
-                                with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                                    from devdox_ai_sonar.cli import _run_analyze
-
-                                    ctx = Mock()
-                                    ctx.obj = {"verbose": False}
-
-                                    _run_analyze(ctx)
-
-                                    # Should still call analyzer
-                                    mock_analyzer.get_project_issues.assert_called_once()
+                        # Should still call analyzer
+                        mock_analyzer.get_project_issues.assert_called_once()
 
     def test_run_analyze_no_config(self):
-        """Test analyze without config"""
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_instance = Mock()
-            mock_instance.load_auth_config.return_value = None
-            mock_cs.return_value = mock_instance
+        """Test analyze without config - _load_and_validate_config raises Abort"""
+
+
+        # _load_and_validate_config will raise click.Abort if no config
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.side_effect = click.Abort()
+
+            
 
             ctx = Mock()
             ctx.obj = {"verbose": False}
 
-            _run_analyze(ctx)
+            with pytest.raises(click.Abort):
+                _run_analyze(ctx)
+
+    def test_run_inspect_no_config(self):
+        """Test inspect without config - _load_and_validate_config raises Abort"""
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.side_effect = click.Abort()
+
+            ctx = Mock()
+            ctx.obj = {"verbose": False}
+
+            with pytest.raises(click.Abort):
+                _run_inspect(ctx)
+
+
+    def test_run_analyze_with_severity_and_types(self):
+        """Test analyze with severity and type filters"""
+        mock_auth_config = Mock()
+        mock_auth_config.project = "test"
+        mock_auth_config.organization = "org"
+        mock_auth_config.token = "token"
+
+        mock_llm_config = Mock()
+
+        parameters = {
+            "branch": "main",
+            "pull_request": 0,
+            "max_fixes": 10,
+            "severity": "BLOCKER,CRITICAL",
+            "types": "BUG,VULNERABILITY"
+        }
+
+        mock_analyzer = MagicMock()
+        mock_analyzer.get_project_issues.return_value = None
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
+
+            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
+                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with patch('devdox_ai_sonar.cli._validate_severities') as mock_sev:
+                            with patch('devdox_ai_sonar.cli._validate_issue_types') as mock_types:
+
+                                ctx = Mock()
+                                ctx.obj = {"verbose": False}
+
+                                _run_analyze(ctx)
+
+                                # Should validate filters
+                                mock_sev.assert_called()
+                                mock_types.assert_called()
+
 
 
 # ============================================================================
@@ -873,38 +933,73 @@ class TestInspectCommand:
                 _run_inspect(ctx)
 
     def test_run_inspect_no_config(self):
-        """Test inspect without config"""
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_instance = Mock()
-            mock_instance.load_auth_config.return_value = None
-            mock_cs.return_value = mock_instance
+        """Test inspect without config - _load_and_validate_config raises Abort"""
+        import click
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.side_effect = click.Abort()
+
 
             ctx = Mock()
             ctx.obj = {"verbose": False}
 
-            _run_inspect(ctx)
+            with pytest.raises(click.Abort):
+                _run_inspect(ctx)
 
-    def test_run_inspect_invalid_config(self, mock_config_service):
-        """Test inspect with invalid config"""
-        mock_config_service.load_auth_config.return_value = {
-            "token": "",
-            "organization": "",
-            "project": "",
-            "project_path": ""
+    def test_run_inspect_invalid_config(self):
+        """Test inspect with invalid config - EXPECTS click.Abort"""
+
+        # Mock _load_and_validate_config to raise click.Abort (as it should!)
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            # When config is invalid, _load_and_validate_config raises click.Abort
+            mock_load.side_effect = click.Abort()
+
+
+            ctx = Mock()
+            ctx.obj = {"verbose": False}
+
+            # Assert that click.Abort is raised (this is CORRECT behavior!)
+            with pytest.raises(click.Abort):
+                _run_inspect(ctx)
+
+            # Verify _load_and_validate_config was called
+            mock_load.assert_called_once()
+
+
+    def test_run_inspect_empty_analysis(self):
+        """Test inspect with empty analysis results"""
+        mock_auth_config = Mock()
+        mock_auth_config.project_path = "/tmp/empty"
+        mock_auth_config.token = "token"
+        mock_auth_config.organization = "org"
+
+        mock_llm_config = Mock()
+        parameters = {"branch": "main", "pull_request": 0}
+
+        # Mock analyzer with empty results
+        mock_analyzer = MagicMock()
+        mock_analyzer.analyze_project_directory.return_value = {
+            "total_files": 0,
+            "python_files": 0,
+            "javascript_files": 0,
+            "java_files": 0,
+            "has_sonar_config": False,
+            "has_git": False,
+            "potential_source_dirs": []
         }
 
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_cs.return_value = mock_config_service
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
 
-            with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                mock_auth_instance = Mock()
-                mock_auth_instance.validate.return_value = (False, "Invalid config")
-                mock_auth.return_value = mock_auth_instance
+            with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
 
                 ctx = Mock()
                 ctx.obj = {"verbose": False}
 
                 _run_inspect(ctx)
+
+                # Should still complete successfully
+                mock_analyzer.analyze_project_directory.assert_called_once()
 
 
 # ============================================================================
@@ -1188,3 +1283,57 @@ class TestLoadAndValidateConfig:
                         _load_and_validate_config()
 
 
+
+# ============================================================================
+# TEST CLASS: TEST WITH FIXTURES
+# ============================================================================
+
+class TestWithFixtures:
+    """Cleaner tests using fixtures"""
+
+    def test_run_analyze_with_fixtures(self, mock_loaded_config):
+        """Test analyze using fixtures"""
+
+        mock_analyzer = MagicMock()
+        mock_analyzer.get_project_issues.return_value = AnalysisResult(
+            project_key="test",
+            organization="org",
+            branch="main",
+            total_issues=0,
+            issues=[],
+            issues_by_severity={}
+        )
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config', return_value=mock_loaded_config):
+            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
+                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+
+                        with patch('devdox_ai_sonar.cli._display_analysis_results'):
+                            from devdox_ai_sonar.cli import _run_analyze
+
+                            ctx = Mock()
+                            ctx.obj = {"verbose": False}
+
+                            _run_analyze(ctx)
+
+    def test_run_inspect_with_fixtures(self, mock_loaded_config):
+        """Test inspect using fixtures"""
+        mock_analyzer = MagicMock()
+        mock_analyzer.analyze_project_directory.return_value = {
+            "total_files": 5,
+            "python_files": 3,
+            "javascript_files": 2,
+            "java_files": 0,
+            "has_sonar_config": True,
+            "has_git": True,
+            "potential_source_dirs": ["src"]
+        }
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config', return_value=mock_loaded_config):
+            with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+
+                ctx = Mock()
+                ctx.obj = {"verbose": False}
+
+                _run_inspect(ctx)

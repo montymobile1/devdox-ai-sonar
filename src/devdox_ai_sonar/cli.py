@@ -1127,49 +1127,26 @@ def _run_fix_security_issues(
 
 
 def _run_analyze(
-    ctx: click.Context,
-    severity: Optional[str] = None,
-    types: Optional[str] = None,
-    **kwargs: Any
+        ctx: click.Context,
+        severity: Optional[str] = None,
+        types: Optional[str] = None,
+        **kwargs: Any
 ) -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
     try:
-        config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
-        auth_config = config_service.load_auth_config()
 
-        if not auth_config:
-            console.print(AUTHENTICATION_NOT_FOUND)
-            console.print(DEVDOX_SONAR_CONFIG)
-            return
-
-        auth_config = AuthConfig(**auth_config)
-        is_valid, error_msg = auth_config.validate()
-        if not is_valid:
-            console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
-            return
-
-
+        # Load and validate configuration
+        auth_config, llm_config, parameters = _load_and_validate_config()
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
-        # Get branch/PR with smart prompt
-        manager = ConfigManager(config_path=settings.config_file_path)
-        manager.load_config()
-        ui = ProviderConfigUI()
-        validator = ProviderValidator()
-        provider_manager = ProviderConfigManager(manager, ui, validator)
-        branch, pull_request = provider_manager.branch_or_pr()
 
-        if not branch and not pull_request:
-            console.print(NO_BRANCH_OR_PR_SPECIFIED)
-            return
-
-        # Get limit with smart prompt
+        # Get limit
         limit_str = smart_prompt(
             f"Max issues to fetch (max: {settings.MAX_FIXES_LIMIT})",
-            default=str(settings.MAX_FIXES_LIMIT)
+            default=str(parameters.get("max_fixes",settings.MAX_FIXES_LIMIT))
         )
 
         try:
@@ -1183,17 +1160,15 @@ def _run_analyze(
         # Fetch and display results
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
 
-
         with show_progress("Fetching issues...") as (progress, task):
             result = analyzer.get_project_issues(
                 project_key=auth_config.project,
-                branch=branch,
+                branch=parameters.get("branch",""),
                 max_issues=limit,
-                pull_request_number=_safe_convert_pr(pull_request),
-                severities=_validate_severities(severity),
-                types=_validate_issue_types(types),
+                pull_request_number=_safe_convert_pr(parameters.get("pull_request",0)),
+                severities=_validate_severities(parameters.get("severity","")),
+                types=_validate_issue_types(parameters.get("types","")),
             )
-
 
         if result:
             _display_analysis_results(result, limit)
@@ -1201,26 +1176,13 @@ def _run_analyze(
     except SwitchCommandException:
         raise
 
-
 def _run_inspect(ctx: click.Context) -> None:
     """Run the inspect command."""
     console.print("\n[bold cyan]🔍 Inspect Local Project[/bold cyan]\n")
 
     try:
-        config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
-        auth_config = config_service.load_auth_config()
-
-        if not auth_config:
-            console.print(AUTHENTICATION_NOT_FOUND)
-            console.print(DEVDOX_SONAR_CONFIG)
-            return
-
-        auth_config = AuthConfig(**auth_config)
-        is_valid, error_msg = auth_config.validate()
-
-        if not is_valid:
-            console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
-            return
+        # Use helper instead of inline code
+        auth_config, llm_config, parameters = _load_and_validate_config()
 
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
         analysis = analyzer.analyze_project_directory(str(auth_config.project_path))
@@ -1247,8 +1209,6 @@ def _run_inspect(ctx: click.Context) -> None:
 
     except SwitchCommandException:
         raise
-
-
 # ============================================================================
 # HELPER FUNCTIONS (Reusing from original code)
 # ============================================================================
