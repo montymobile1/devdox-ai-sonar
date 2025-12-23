@@ -688,31 +688,48 @@ def _handle_update_existing_provider(
 def _run_interactive_mode(ctx: click.Context) -> None:
     """Run the interactive command selection loop with command switching support."""
     while True:
-        try:
-            command = show_command_selector()
+        if _execute_interactive_iteration(ctx):
+            return
 
-            if _should_exit_interactive_mode(command):
-                _exit_application()
-                return
 
-            _execute_interactive_command(ctx, command)
+def _execute_interactive_iteration(ctx: click.Context) -> bool:
+    """
+    Execute one iteration of the interactive loop.
 
-            if not _should_continue_to_menu():
-                _exit_application()
-                return
+    Returns:
+        True if should exit the loop, False to continue
+    """
+    try:
+        return _process_interactive_command(ctx)
+    except SwitchCommandException:
+        _handle_command_switch()
+        return False
+    except KeyboardInterrupt:
+        return _handle_keyboard_interrupt()
+    except Exception as e:
+        return _handle_interactive_error(e)
 
-        except SwitchCommandException:
-            _handle_command_switch()
-            continue
 
-        except KeyboardInterrupt:
-            if _handle_keyboard_interrupt():
-                return
+def _process_interactive_command(ctx: click.Context) -> bool:
+    """
+    Process a single interactive command.
 
-        except Exception as e:
-            if _handle_interactive_error(e):
-                return
+    Returns:
+        True if should exit, False if should continue
+    """
+    command = show_command_selector()
 
+    if _should_exit_interactive_mode(command):
+        _exit_application()
+        return True
+
+    _execute_interactive_command(ctx, command)
+
+    if not _should_continue_to_menu():
+        _exit_application()
+        return True
+
+    return False
 
 def _should_exit_interactive_mode(command: Optional[str]) -> bool:
     """Check if user wants to exit interactive mode."""
@@ -1240,7 +1257,6 @@ def _process_each_file(
 
         fix = _generate_fix_for_file(
             issues,
-            file_path,
             services,
             auth_config
         )
@@ -1256,7 +1272,6 @@ def _process_each_file(
 
 def _generate_fix_for_file(
         issues: List[Any],
-        file_path: str,
         services: Dict[str, Any],
         auth_config: AuthConfig
 ) -> Optional[FixSuggestion]:
