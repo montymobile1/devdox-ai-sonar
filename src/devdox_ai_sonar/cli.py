@@ -859,18 +859,29 @@ def _run_interactive_mode(ctx: click.Context) -> None:
             try:
                 if smart_confirm("Exit application?", default=False, allow_switch=False):
                     sys.exit(0)
-            except:
-                continue
+            except (KeyboardInterrupt, EOFError):
+                    # User insists on exiting (double Ctrl+C or EOF)
+                    console.print("\n[yellow]Force exit...[/yellow]")
+                    sys.exit(130)  # Standard Unix exit code for SIGINT
+            except Exception as e:
+                # Log unexpected errors during exit confirmation
+                console.print(f"\n[red]Error during exit: {e}[/red]")
+                sys.exit(1)
 
         except Exception as e:
             console.print(f"\n[red]❌ Error: {str(e)}[/red]")
 
-
             try:
                 if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
                     sys.exit(1)
-            except:
-                continue
+            except (KeyboardInterrupt, EOFError):
+                # User wants to exit after error
+                console.print("\n[yellow]Exiting after error...[/yellow]")
+                sys.exit(1)
+            except Exception as confirm_error:
+                # smart_confirm itself failed - this is serious
+                console.print(f"\n[red]Fatal: Cannot prompt user ({confirm_error})[/red]")
+                sys.exit(2)
 
 
 def  change_field(manager, field,message, default_value, choices:List[str] = None, multiple:bool = True)->Optional[Union[str, List[str]]]:
@@ -1035,9 +1046,10 @@ def _run_fix_issues(
         )
 
     except SwitchCommandException:
-        raise  # Propagate to main loop
+        console.print("\n[yellow]↩ Switching commands...[/yellow]")
+        raise  # Re-raise to be caught by interactive mode loop
 
-def   display_configuration(parameters, dry_run,apply):
+def display_configuration(parameters, dry_run,apply):
 
 
         console.print("[bold]Configuration:[/bold]")
@@ -1150,7 +1162,7 @@ def _run_inspect() -> None:
 
     try:
         # Use helper instead of inline code
-        auth_config, _, parameters = _load_and_validate_config()
+        auth_config, _, _ = _load_and_validate_config()
 
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
         analysis = analyzer.analyze_project_directory(str(auth_config.project_path))
