@@ -919,32 +919,25 @@ class TestAnalyzeCommand:
 class TestInspectCommand:
     """Test inspect command"""
 
-    def test_run_inspect_success(self, mock_config_service, mock_analyzer):
-        """Test successful inspection"""
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_cs.return_value = mock_config_service
+    def test_run_inspect_success(self, mock_loaded_config, mock_analyzer):
+
+        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
+            mock_load.return_value = mock_loaded_config
 
             with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer') as mock_sa:
                 mock_sa.return_value = mock_analyzer
 
+
                 ctx = Mock()
                 ctx.obj = {"verbose": False}
 
+                # ✅ Works in CI/CD!
                 _run_inspect(ctx)
 
-    def test_run_inspect_no_config(self):
-        """Test inspect without config - _load_and_validate_config raises Abort"""
-        import click
+                # Verify
+                mock_load.assert_called_once()
+                mock_analyzer.analyze_project_directory.assert_called_once()
 
-        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
-            mock_load.side_effect = click.Abort()
-
-
-            ctx = Mock()
-            ctx.obj = {"verbose": False}
-
-            with pytest.raises(click.Abort):
-                _run_inspect(ctx)
 
     def test_run_inspect_invalid_config(self):
         """Test inspect with invalid config - EXPECTS click.Abort"""
