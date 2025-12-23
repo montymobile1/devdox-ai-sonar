@@ -685,59 +685,107 @@ def _handle_update_existing_provider(
         console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
 
 
-
 def _run_interactive_mode(ctx: click.Context) -> None:
     """Run the interactive command selection loop with command switching support."""
     while True:
         try:
             command = show_command_selector()
 
-            if command is None or command == 'exit':
-                console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
-                sys.exit(0)
+            if _should_exit_interactive_mode(command):
+                _exit_application()
+                return
 
-            console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-            _execute_command( ctx=ctx, command=command)
+            _execute_interactive_command(ctx, command)
 
-            # After command execution, ask to continue
-            console.print("\n" + "─" * 50 + "\n")
-
-            if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
-                console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
-                sys.exit(0)
+            if not _should_continue_to_menu():
+                _exit_application()
+                return
 
         except SwitchCommandException:
-            console.print("\n[yellow]↩ Returning to command menu...[/yellow]\n")
+            _handle_command_switch()
             continue
 
         except KeyboardInterrupt:
-            console.print("\n\n[yellow]⚠ Interrupted by user[/yellow]")
-            try:
-                if smart_confirm("Exit application?", default=False, allow_switch=False):
-                    sys.exit(0)
-            except (KeyboardInterrupt, EOFError):
-                    # User insists on exiting (double Ctrl+C or EOF)
-                    console.print("\n[yellow]Force exit...[/yellow]")
-                    sys.exit(130)  # Standard Unix exit code for SIGINT
-            except Exception as e:
-                # Log unexpected errors during exit confirmation
-                console.print(f"\n[red]Error during exit: {e}[/red]")
-                sys.exit(1)
+            if _handle_keyboard_interrupt():
+                return
 
         except Exception as e:
-            console.print(f"\n[red]❌ Error: {str(e)}[/red]")
+            if _handle_interactive_error(e):
+                return
 
-            try:
-                if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
-                    sys.exit(1)
-            except (KeyboardInterrupt, EOFError):
-                # User wants to exit after error
-                console.print("\n[yellow]Exiting after error...[/yellow]")
-                sys.exit(1)
-            except Exception as confirm_error:
-                # smart_confirm itself failed - this is serious
-                console.print(f"\n[red]Fatal: Cannot prompt user ({confirm_error})[/red]")
-                sys.exit(2)
+
+def _should_exit_interactive_mode(command: Optional[str]) -> bool:
+    """Check if user wants to exit interactive mode."""
+    return command is None or command == 'exit'
+
+
+def _exit_application() -> None:
+    """Exit the application with goodbye message."""
+    console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
+    sys.exit(0)
+
+
+def _execute_interactive_command(ctx: click.Context, command: str) -> None:
+    """Execute a command in interactive mode."""
+    console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
+    _execute_command(ctx=ctx, command=command)
+    console.print("\n" + "─" * 50 + "\n")
+
+
+def _should_continue_to_menu() -> bool:
+    """Ask user if they want to return to main menu."""
+    return smart_confirm("Return to main menu?", default=True, allow_switch=False)
+
+
+def _handle_command_switch() -> None:
+    """Handle command switching exception."""
+    console.print("\n[yellow]↩ Returning to command menu...[/yellow]\n")
+
+
+def _handle_keyboard_interrupt() -> bool:
+    """
+    Handle keyboard interrupt (Ctrl+C).
+
+    Returns:
+        True if should exit, False if should continue
+    """
+    console.print("\n\n[yellow]⚠ Interrupted by user[/yellow]")
+
+    try:
+        if smart_confirm("Exit application?", default=False, allow_switch=False):
+            sys.exit(0)
+        return False
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Force exit...[/yellow]")
+        sys.exit(130)
+
+    except Exception as e:
+        console.print(f"\n[red]Error during exit: {e}[/red]")
+        sys.exit(1)
+
+
+def _handle_interactive_error(error: Exception) -> bool:
+    """
+    Handle errors in interactive mode.
+
+    Returns:
+        True if should exit, False if should continue
+    """
+    console.print(f"\n[red]❌ Error: {str(error)}[/red]")
+
+    try:
+        if not smart_confirm("Return to main menu?", default=True, allow_switch=False):
+            sys.exit(1)
+        return False
+
+    except (KeyboardInterrupt, EOFError):
+        console.print("\n[yellow]Exiting after error...[/yellow]")
+        sys.exit(1)
+
+    except Exception as confirm_error:
+        console.print(f"\n[red]Fatal: Cannot prompt user ({confirm_error})[/red]")
+        sys.exit(2)
 
 
 def  change_field(manager, field,message, default_value, choices:List[str] = None, multiple:bool = True)->Optional[Union[str, List[str]]]:
@@ -1110,24 +1158,65 @@ def _validate_severities(severity_str: Optional[str]) -> Optional[List[str]]:
 
 
 def _process_and_fix_issues(
-    auth_config: AuthConfig,
-    llm_config: LLMConfig,
-    branch: Optional[str],
-    pull_request: Optional[str],
-    fix_params: Dict[str, Any]
+        auth_config: AuthConfig,
+        llm_config: LLMConfig,
+        branch: Optional[str],
+        pull_request: Optional[str],
+        fix_params: Dict[str, Any]
 ) -> None:
-    """Process and fix issues with command switching support."""
+    """Process and fix issues - Refactored."""
+    services = _initialize_fix_services(auth_config, llm_config)
+
+    fixable_issues = _fetch_fixable_issues(
+        services['analyzer'],
+        auth_config,
+        branch,
+        pull_request,
+        fix_params
+    )
+
+    if not fixable_issues:
+        console.print("[yellow]No fixable issues found[/yellow]")
+        return
+
+    console.print(f"\n[green]✓ Found {len(fixable_issues)} fixable issues[/green]\n")
+
+    _process_each_file(
+        fixable_issues,
+        services,
+        auth_config,
+        fix_params
+    )
+
+
+def _initialize_fix_services(
+        auth_config: AuthConfig,
+        llm_config: LLMConfig
+) -> Dict[str, Any]:
+    """Initialize services for fixing issues."""
     console.print("[dim]Initializing services...[/dim]")
 
-    analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
-    ruler = RuleAnalyzer(auth_config.token, auth_config.organization)
-    fixer = LLMFixer(
-        provider=llm_config.provider,
-        model=llm_config.model,
-        api_key=llm_config.api_key
-    )
+    return {
+        'analyzer': SonarCloudAnalyzer(auth_config.token, auth_config.organization),
+        'ruler': RuleAnalyzer(auth_config.token, auth_config.organization),
+        'fixer': LLMFixer(
+            provider=llm_config.provider,
+            model=llm_config.model,
+            api_key=llm_config.api_key
+        )
+    }
+
+
+def _fetch_fixable_issues(
+        analyzer: SonarCloudAnalyzer,
+        auth_config: AuthConfig,
+        branch: Optional[str],
+        pull_request: Optional[str],
+        fix_params: Dict[str, Any]
+) -> Dict[str, List[Any]]:
+    """Fetch fixable issues from SonarCloud."""
     with show_progress("Fetching issues...") as (progress, task):
-        fixable_issues = analyzer.get_fixable_issues_by_files(
+        return analyzer.get_fixable_issues_by_files(
             project_key=auth_config.project,
             branch=branch or "",
             pull_request=int(pull_request) if pull_request else 0,
@@ -1136,73 +1225,144 @@ def _process_and_fix_issues(
             types_list=fix_params['types_list'],
         )
 
-    if not fixable_issues:
-        console.print("[yellow]No fixable issues found[/yellow]")
-        return
 
-    console.print(f"\n[green]✓ Found {len(fixable_issues)} fixable issues[/green]\n")
+def _process_each_file(
+        fixable_issues: Dict[str, List[Any]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """Process each file with issues."""
+    total_files = len(fixable_issues)
 
-    # Process each file with command switching support
     for idx, (file_path, issues) in enumerate(fixable_issues.items(), 1):
-        console.print(f"\n[blue]Processing ({idx}/{len(fixable_issues)}): {file_path}[/blue]")
-        with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
+        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_path}[/blue]")
 
-            rule_info_list: Dict[str, Dict[str, str]] = {}
-            for issue in issues:
-                rule_info = ruler.get_rule_by_key(issue.rule)
-                rule_info_list[issue.rule] = rule_info
-
-            fix = fixer.generate_fix_by_file(issues, Path(str(auth_config.project_path)), rule_info_list)
-
+        fix = _generate_fix_for_file(
+            issues,
+            file_path,
+            services,
+            auth_config
+        )
 
         if fix:
-            _display_fix_preview(fix, issues)
-
-            # Use smart_confirm for command switching
-            if fix_params['apply']:
-                result = fixer.apply_fixes_with_validation(
-                    fixes=[fix],
-                    issues=issues,
-                    project_path=Path(str(auth_config.project_path)),
-                    create_backup=True,
-                    dry_run=fix_params['dry_run'],
-                    use_validator=True,
-                    validator_provider=fixer.provider,
-                    validator_model=fixer.model,
-                    validator_api_key=fixer.api_key,
-                )
-                _display_fix_results(result)
-            else:
-                console.print("[dim]Skipped[/dim]")
+            _handle_generated_fix(fix, issues, services['fixer'], auth_config, fix_params)
         else:
             console.print("[yellow]No fix could be generated[/yellow]")
 
-        # Ask if user wants to continue to next file
-        if idx < len(fixable_issues):
-            if not smart_confirm("Continue to next file?", default=True):
-                console.print("[yellow]Stopped processing remaining files[/yellow]")
-                break
+        if not _should_continue_to_next_file(idx, total_files):
+            break
+
+
+def _generate_fix_for_file(
+        issues: List[Any],
+        file_path: str,
+        services: Dict[str, Any],
+        auth_config: AuthConfig
+) -> Optional[FixSuggestion]:
+    """Generate fix for a file."""
+    with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
+        rule_info_list = _collect_rule_information(issues, services['ruler'])
+
+        return services['fixer'].generate_fix_by_file(
+            issues,
+            Path(str(auth_config.project_path)),
+            rule_info_list
+        )
+
+
+def _collect_rule_information(
+        issues: List[Any],
+        ruler: RuleAnalyzer
+) -> Dict[str, Dict[str, str]]:
+    """Collect rule information for all issues."""
+    rule_info_list = {}
+    for issue in issues:
+        rule_info = ruler.get_rule_by_key(issue.rule)
+        rule_info_list[issue.rule] = rule_info
+    return rule_info_list
+
+
+def _handle_generated_fix(
+        fix: FixSuggestion,
+        issues: List[Any],
+        fixer: LLMFixer,
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """Handle a generated fix."""
+    _display_fix_preview(fix, issues)
+
+    if fix_params['apply']:
+        result = fixer.apply_fixes_with_validation(
+            fixes=[fix],
+            issues=issues,
+            project_path=Path(str(auth_config.project_path)),
+            create_backup=True,
+            dry_run=fix_params['dry_run'],
+            use_validator=True,
+            validator_provider=fixer.provider,
+            validator_model=fixer.model,
+            validator_api_key=fixer.api_key,
+        )
+        _display_fix_results(result)
+    else:
+        console.print("[dim]Skipped[/dim]")
+
+
+def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
+    """Check if should continue to next file."""
+    if current_idx >= total_files:
+        return False
+
+    if not smart_confirm("Continue to next file?", default=True):
+        console.print("[yellow]Stopped processing remaining files[/yellow]")
+        return False
+
+    return True
 
 
 def _process_security_issues(
+        auth_config: AuthConfig,
+        llm_config: LLMConfig,
+        branch: Optional[str],
+        pull_request: Optional[str],
+        fix_params: Dict[str, Any]
+) -> None:
+    """Process security issues - Refactored."""
+    services = _initialize_fix_services(auth_config, llm_config)
+
+    issues_by_file = _fetch_security_issues(
+        services['analyzer'],
+        auth_config,
+        branch,
+        pull_request,
+        fix_params
+    )
+
+    if not issues_by_file:
+        console.print("[yellow]No fixable security issues found[/yellow]")
+        return
+
+    console.print(f"\n[green]✓ Found {len(issues_by_file)} security issues[/green]\n")
+
+    _process_security_files(
+        issues_by_file,
+        services,
+        auth_config,
+        fix_params
+    )
+
+def _fetch_security_issues(
+    analyzer: SonarCloudAnalyzer,
     auth_config: AuthConfig,
-    llm_config: LLMConfig,
     branch: Optional[str],
     pull_request: Optional[str],
     fix_params: Dict[str, Any]
-) -> None:
-    """Process security issues with command switching support."""
-    console.print("[dim]Initializing services...[/dim]")
-
-    analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
-    ruler = RuleAnalyzer(auth_config.token, auth_config.organization)
-    fixer = LLMFixer(
-        provider=llm_config.provider,
-        model=llm_config.model,
-        api_key=llm_config.api_key
-    )
+) -> Dict[str, List[Any]]:
+    """Fetch security issues from SonarCloud."""
     with show_progress("Fetching security issues....") as (progress, task):
-        issues = analyzer.get_fixable_security_issues(
+        return analyzer.get_fixable_security_issues(
             project_key=auth_config.project,
             branch=branch or "",
             pull_request=int(pull_request) if pull_request else 0,
@@ -1210,50 +1370,72 @@ def _process_security_issues(
         )
 
 
-    if not issues:
-        console.print("[yellow]No fixable security issues found[/yellow]")
-        return
-    issues_by_file = issues
-    console.print(f"\n[green]✓ Found {len(issues)} security issues[/green]\n")
+def _process_security_files(
+        issues_by_file: Dict[str, List[Any]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """Process each file with security issues."""
+    total_files = len(issues_by_file)
 
-
-    # Process each file with command switching support
     for idx, (file_path, file_issues) in enumerate(issues_by_file.items(), 1):
-        console.print(f"\n[blue]Processing ({idx}/{len(issues_by_file)}): {file_path}[/blue]")
+        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_path}[/blue]")
 
-        with show_progress("Generating fixes....",total=len(file_issues)) as (progress, task):
-
-            rule_info_list: Dict[str, Dict[str, str]] = {}
-            for issue in file_issues:
-                rule_info = ruler.get_rule_by_key(issue.rule)
-                rule_info_list[issue.rule] = rule_info
-
-            fix = fixer.generate_fix_by_file(file_issues, Path(str(auth_config.project_path)), rule_info_list)
+        fix = _generate_security_fix(
+            file_issues,
+            services,
+            auth_config
+        )
 
         if fix:
-            _display_fix_preview(fix, file_issues)
+            _handle_security_fix(fix, file_issues, services['fixer'], auth_config, fix_params)
 
-            if fix_params['apply']:
-                result = fixer.apply_fixes_with_validation(
-                    fixes=[fix],
-                    issues=file_issues,
-                    project_path=Path(str(auth_config.project_path)),
-                    create_backup=fix_params['create_backup'],
-                    dry_run=fix_params['dry_run'],
-                    use_validator=True,
-                    validator_provider=fixer.provider,
-                    validator_model=fixer.model,
-                    validator_api_key=fixer.api_key,
-                )
-                _display_fix_results(result)
-            else:
-                console.print("[dim]Skipped[/dim]")
+        if not _should_continue_to_next_file(idx, total_files):
+            break
 
-        # Ask if user wants to continue
-        if idx < len(issues_by_file):
-            if not smart_confirm("Continue to next file?", default=True):
-                console.print("[yellow]Stopped processing remaining files[/yellow]")
-                break
+
+def _handle_security_fix(
+        fix: FixSuggestion,
+        file_issues: List[Any],
+        fixer: LLMFixer,
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """Handle a generated security fix."""
+    _display_fix_preview(fix, file_issues)
+
+    if fix_params['apply']:
+        result = fixer.apply_fixes_with_validation(
+            fixes=[fix],
+            issues=file_issues,
+            project_path=Path(str(auth_config.project_path)),
+            create_backup=fix_params['create_backup'],
+            dry_run=fix_params['dry_run'],
+            use_validator=True,
+            validator_provider=fixer.provider,
+            validator_model=fixer.model,
+            validator_api_key=fixer.api_key,
+        )
+        _display_fix_results(result)
+    else:
+        console.print("[dim]Skipped[/dim]")
+
+def _generate_security_fix(
+        file_issues: List[Any],
+        services: Dict[str, Any],
+        auth_config: AuthConfig
+) -> Optional[FixSuggestion]:
+    """Generate security fix for a file."""
+    with show_progress("Generating fixes....", total=len(file_issues)) as (progress, task):
+        rule_info_list = _collect_rule_information(file_issues, services['ruler'])
+
+        return services['fixer'].generate_fix_by_file(
+            file_issues,
+            Path(str(auth_config.project_path)),
+            rule_info_list
+        )
+
 
 
 def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:

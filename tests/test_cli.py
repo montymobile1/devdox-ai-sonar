@@ -4,11 +4,12 @@ import pytest
 from contextlib import contextmanager
 import click
 from click.testing import CliRunner
+from devdox_ai_sonar.services.configuration import AuthConfig, LLMConfig
 from unittest.mock import Mock, patch, MagicMock
 from devdox_ai_sonar.cli import (
     main,
     _safe_convert_pr,
-    smart_prompt,
+    _should_exit_interactive_mode,
     SwitchCommandException,
     ReturnToMenuException,
     show_progress,
@@ -26,14 +27,21 @@ from devdox_ai_sonar.cli import (
     display_configuration,
     change_field,
     change_max_fix,
+    _exit_application,
+    _execute_interactive_command,
+    _should_continue_to_menu,
+    _handle_command_switch,
+    _handle_interactive_error,
+    _run_interactive_mode,
+_collect_rule_information,
+_initialize_fix_services,
+_handle_keyboard_interrupt,
+_fetch_fixable_issues
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     AnalysisResult,
-    FixSuggestion,
-    FixResult,
-    ProjectMetrics,
-    Severity
+    FixSuggestion
 )
 
 
@@ -252,6 +260,81 @@ class TestSafeConversionUtilities:
         """Test PR with whitespace"""
         assert _safe_convert_pr("  123  ") == 123
         assert _safe_convert_pr("\t42\n") == 42
+
+    def test_convert_empty_string_returns_zero(self):
+        """Test empty string returns 0."""
+        assert _safe_convert_pr("") == 0
+
+    def test_convert_negative_pr_returns_zero(self, capsys):
+        """Test negative PR number returns 0 with warning."""
+        result = _safe_convert_pr("-5")
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Negative PR numbers not allowed" in captured.out
+
+    def test_convert_invalid_string_returns_zero(self, capsys):
+        """Test invalid string returns 0 with warning."""
+        result = _safe_convert_pr("not_a_number")
+
+        assert result == 0
+        captured = capsys.readouterr()
+        assert "Invalid PR number" in captured.out
+
+    def test_convert_zero_pr(self):
+        """Test converting zero PR number."""
+        assert _safe_convert_pr("0") == 0
+
+
+# ============================================================================
+# Test Interactive Mode Helper Functions
+# ============================================================================
+
+class TestShouldExitInteractiveMode:
+    """Test cases for _should_exit_interactive_mode."""
+
+    def test_should_exit_when_command_is_none(self):
+        """Test returns True when command is None."""
+        assert _should_exit_interactive_mode(None) is True
+
+    def test_should_exit_when_command_is_exit(self):
+        """Test returns True when command is 'exit'."""
+        assert _should_exit_interactive_mode('exit') is True
+
+    def test_should_not_exit_with_valid_command(self):
+        """Test returns False with valid command."""
+        assert _should_exit_interactive_mode('fix_issues') is False
+        assert _should_exit_interactive_mode('analyze') is False
+
+
+class TestExitApplication:
+    """Test cases for _exit_application."""
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_exit_prints_goodbye_message(self, mock_console):
+        """Test exit prints goodbye message."""
+        with pytest.raises(SystemExit) as exc_info:
+            _exit_application()
+
+        assert exc_info.value.code == 0
+        mock_console.print.assert_called_once()
+        assert "Thank you for using DevDox AI Sonar" in str(mock_console.print.call_args)
+
+
+class TestExecuteInteractiveCommand:
+    """Test cases for _execute_interactive_command."""
+
+    @patch('devdox_ai_sonar.cli._execute_command')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_executes_command_with_context(self, mock_console, mock_execute):
+        """Test command execution with context."""
+        mock_ctx = Mock(spec=click.Context)
+
+        _execute_interactive_command(mock_ctx, 'fix_issues')
+
+        mock_execute.assert_called_once_with(ctx=mock_ctx, command='fix_issues')
+        assert mock_console.print.call_count >= 2  # Running message and separator
+
 
 
 # ============================================================================
@@ -1241,3 +1324,318 @@ class TestWithFixtures:
             with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
 
                 _run_inspect()
+
+
+class TestShouldContinueToMenu:
+    """Test cases for _should_continue_to_menu."""
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    def test_should_continue_returns_true(self, mock_confirm):
+        """Test returns True when user confirms."""
+        mock_confirm.return_value = True
+
+        result = _should_continue_to_menu()
+
+        assert result is True
+        mock_confirm.assert_called_once_with(
+            "Return to main menu?",
+            default=True,
+            allow_switch=False
+        )
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    def test_should_continue_returns_false(self, mock_confirm):
+        """Test returns False when user declines."""
+        mock_confirm.return_value = False
+
+        result = _should_continue_to_menu()
+
+        assert result is False
+
+
+class TestHandleCommandSwitch:
+    """Test cases for _handle_command_switch."""
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_prints_switch_message(self, mock_console):
+        """Test prints command switch message."""
+        _handle_command_switch()
+
+        mock_console.print.assert_called_once()
+        assert "Returning to command menu" in str(mock_console.print.call_args)
+
+
+class TestHandleKeyboardInterrupt:
+    """Test cases for _handle_keyboard_interrupt."""
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_user_confirms_exit(self, mock_console, mock_confirm):
+        """Test user confirms exit."""
+        mock_confirm.return_value = True
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_keyboard_interrupt()
+
+        assert exc_info.value.code == 0
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_user_declines_exit(self, mock_console, mock_confirm):
+        """Test user declines exit."""
+        mock_confirm.return_value = False
+
+        result = _handle_keyboard_interrupt()
+
+        assert result is False
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_double_keyboard_interrupt(self, mock_console, mock_confirm):
+        """Test double Ctrl+C forces exit."""
+        mock_confirm.side_effect = KeyboardInterrupt()
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_keyboard_interrupt()
+
+        assert exc_info.value.code == 130  # SIGINT exit code
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_eof_error_forces_exit(self, mock_console, mock_confirm):
+        """Test EOF error forces exit."""
+        mock_confirm.side_effect = EOFError()
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_keyboard_interrupt()
+
+        assert exc_info.value.code == 130
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_unexpected_exception_during_exit(self, mock_console, mock_confirm):
+        """Test unexpected exception during exit confirmation."""
+        mock_confirm.side_effect = RuntimeError("Unexpected error")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_keyboard_interrupt()
+
+        assert exc_info.value.code == 1
+
+
+class TestHandleInteractiveError:
+    """Test cases for _handle_interactive_error."""
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_user_returns_to_menu(self, mock_console, mock_confirm):
+        """Test user chooses to return to menu."""
+        mock_confirm.return_value = True
+        error = ValueError("Test error")
+
+        result = _handle_interactive_error(error)
+
+        assert result is False
+        mock_console.print.assert_called()
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_user_exits_after_error(self, mock_console, mock_confirm):
+        """Test user chooses to exit after error."""
+        mock_confirm.return_value = False
+        error = ValueError("Test error")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_interactive_error(error)
+
+        assert exc_info.value.code == 1
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_keyboard_interrupt_during_error_handling(self, mock_console, mock_confirm):
+        """Test keyboard interrupt during error handling."""
+        mock_confirm.side_effect = KeyboardInterrupt()
+        error = ValueError("Test error")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_interactive_error(error)
+
+        assert exc_info.value.code == 1
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_fatal_error_during_confirmation(self, mock_console, mock_confirm):
+        """Test fatal error during confirmation prompt."""
+        mock_confirm.side_effect = RuntimeError("Fatal error")
+        error = ValueError("Test error")
+
+        with pytest.raises(SystemExit) as exc_info:
+            _handle_interactive_error(error)
+
+        assert exc_info.value.code == 2
+
+
+# ============================================================================
+# Test _run_interactive_mode (Integration)
+# ============================================================================
+
+class TestRunInteractiveMode:
+    """Integration tests for _run_interactive_mode."""
+
+    @patch('devdox_ai_sonar.cli.show_command_selector')
+    @patch('devdox_ai_sonar.cli._exit_application')
+    def test_exits_when_no_command_selected(self, mock_exit, mock_selector):
+        """Test exits when no command selected."""
+        mock_selector.return_value = None
+        mock_exit.side_effect = SystemExit(0)
+        mock_ctx = Mock(spec=click.Context)
+
+        with pytest.raises(SystemExit):
+            _run_interactive_mode(mock_ctx)
+
+        mock_exit.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.show_command_selector')
+    @patch('devdox_ai_sonar.cli._execute_interactive_command')
+    @patch('devdox_ai_sonar.cli._should_continue_to_menu')
+    @patch('devdox_ai_sonar.cli._exit_application')
+    def test_executes_command_and_exits(
+            self, mock_exit, mock_continue, mock_execute, mock_selector
+    ):
+        """Test executes command then exits."""
+        mock_selector.return_value = 'fix_issues'
+        mock_continue.return_value = False
+        mock_exit.side_effect = SystemExit(0)
+        mock_ctx = Mock(spec=click.Context)
+
+        with pytest.raises(SystemExit):
+            _run_interactive_mode(mock_ctx)
+
+        mock_execute.assert_called_once()
+        mock_exit.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.show_command_selector')
+    @patch('devdox_ai_sonar.cli._execute_interactive_command')
+    @patch('devdox_ai_sonar.cli._should_continue_to_menu')
+    def test_handles_switch_command_exception(
+            self, mock_continue, mock_execute, mock_selector
+    ):
+        """Test handles SwitchCommandException."""
+        mock_selector.side_effect = [
+            'fix_issues',
+            'exit'
+        ]
+        mock_execute.side_effect = SwitchCommandException()
+        mock_continue.return_value = True
+        mock_ctx = Mock(spec=click.Context)
+
+        with pytest.raises(SystemExit):
+            _run_interactive_mode(mock_ctx)
+
+        # Should have tried to execute twice (once raises exception, once exits)
+        assert mock_selector.call_count == 2
+
+
+# ============================================================================
+# Test _process_and_fix_issues Refactored Functions
+# ============================================================================
+
+class TestInitializeFixServices:
+    """Test cases for _initialize_fix_services."""
+
+    @patch('devdox_ai_sonar.cli.SonarCloudAnalyzer')
+    @patch('devdox_ai_sonar.cli.RuleAnalyzer')
+    @patch('devdox_ai_sonar.cli.LLMFixer')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_initializes_all_services(
+            self, mock_console, mock_fixer, mock_ruler, mock_analyzer
+    ):
+        """Test initializes all required services."""
+        auth_config = AuthConfig(
+            token="test_token",
+            organization="test_org",
+            project="test_project",
+            project_path="/test/path"
+        )
+        llm_config = LLMConfig(
+            provider="openai",
+            model="gpt-4",
+            api_key="test_key",
+            models=["gpt-4"]
+        )
+
+        services = _initialize_fix_services(auth_config, llm_config)
+
+        assert 'analyzer' in services
+        assert 'ruler' in services
+        assert 'fixer' in services
+
+        mock_analyzer.assert_called_once_with("test_token", "test_org")
+        mock_ruler.assert_called_once_with("test_token", "test_org")
+        mock_fixer.assert_called_once_with(
+            provider="openai",
+            model="gpt-4",
+            api_key="test_key"
+        )
+
+
+class TestFetchFixableIssues:
+    """Test cases for _fetch_fixable_issues."""
+
+    @patch('devdox_ai_sonar.cli.show_progress')
+    def test_fetches_issues_from_analyzer(self, mock_progress):
+        """Test fetches issues from analyzer."""
+        mock_analyzer = Mock()
+        mock_analyzer.get_fixable_issues_by_files.return_value = {
+            'file1.py': ['issue1', 'issue2']
+        }
+
+        mock_progress.return_value.__enter__.return_value = (Mock(), Mock())
+
+        auth_config = AuthConfig(
+            token="test_token",
+            organization="test_org",
+            project="test_project",
+            project_path="/test/path"
+        )
+
+        fix_params = {
+            'max_fixes': 10,
+            'severities_list': ['CRITICAL'],
+            'types_list': ['BUG']
+        }
+
+        result = _fetch_fixable_issues(
+            mock_analyzer,
+            auth_config,
+            "main",
+            "123",
+            fix_params
+        )
+
+        assert result == {'file1.py': ['issue1', 'issue2']}
+        mock_analyzer.get_fixable_issues_by_files.assert_called_once()
+
+
+class TestCollectRuleInformation:
+    """Test cases for _collect_rule_information."""
+
+    def test_collects_rules_for_all_issues(self):
+        """Test collects rule information for all issues."""
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.side_effect = [
+            {'key': 'rule1', 'name': 'Rule 1'},
+            {'key': 'rule2', 'name': 'Rule 2'}
+        ]
+
+        issues = [
+            Mock(rule='rule1'),
+            Mock(rule='rule2')
+        ]
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert len(result) == 2
+        assert 'rule1' in result
+        assert 'rule2' in result
+        assert mock_ruler.get_rule_by_key.call_count == 2
