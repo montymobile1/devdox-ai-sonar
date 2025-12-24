@@ -1080,7 +1080,7 @@ def _run_inspect() -> None:
 def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
-    manager, ui, validator, provider_manager, sonar_ui, config_service= _initialize_managers()
+    manager, _, _, provider_manager, _, config_service= _initialize_managers()
 
     auth_config_dict = config_service.load_auth_config()
 
