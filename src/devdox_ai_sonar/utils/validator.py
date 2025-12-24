@@ -7,15 +7,21 @@ data integrity and provide clear error messages.
 
 from typing import Union, List, Set
 from pathlib import Path
+from enum import Enum
 
 from devdox_ai_sonar.utils.exceptions import ValidationError, ConfigurationError
+
+class IssueType(Enum):
+    """Type of issues to process."""
+    REGULAR = "regular"
+    SECURITY = "security"
 
 
 class InputValidator:
     """Validates user inputs with clear error messages."""
 
     # Constants for validation
-    VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL", "SECURITY_HOTSPOT"}
+    VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL"}
     VALID_SEVERITIES: Set[str] = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"}
     VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai"}
 

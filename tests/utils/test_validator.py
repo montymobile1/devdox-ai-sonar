@@ -317,10 +317,10 @@ class TestValidateIssueTypes:
     def test_validate_issue_types_all_valid_types(self):
         """Test validation with all valid types."""
         result = InputValidator.validate_issue_types(
-            "BUG,VULNERABILITY,CODE_SMELL,SECURITY_HOTSPOT"
+            "BUG,VULNERABILITY,CODE_SMELL"
         )
 
-        assert len(result) == 4
+        assert len(result) == 3
         assert set(result) == InputValidator.VALID_ISSUE_TYPES
 
     def test_validate_issue_types_invalid_type(self):
@@ -692,8 +692,7 @@ class TestValidatorConstants:
         assert "BUG" in InputValidator.VALID_ISSUE_TYPES
         assert "VULNERABILITY" in InputValidator.VALID_ISSUE_TYPES
         assert "CODE_SMELL" in InputValidator.VALID_ISSUE_TYPES
-        assert "SECURITY_HOTSPOT" in InputValidator.VALID_ISSUE_TYPES
-        assert len(InputValidator.VALID_ISSUE_TYPES) == 4
+        assert len(InputValidator.VALID_ISSUE_TYPES) == 3
 
     def test_valid_severities_constant(self):
         """Test VALID_SEVERITIES constant."""

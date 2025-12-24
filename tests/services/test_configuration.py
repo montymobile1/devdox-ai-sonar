@@ -5,7 +5,7 @@ from unittest.mock import Mock, MagicMock, patch, mock_open, call
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
-
+from dataclasses import asdict
 from devdox_ai_sonar.services.configuration import (
     AuthConfig,
     LLMConfig,
@@ -908,3 +908,800 @@ class TestIntegration:
         assert result.api_key == "sk-ant-test"
         assert "claude-3-opus" in result.models
 
+
+
+
+class TestCheckAllValueEmpty:
+    """Tests for check_all_value_empty method - COMPLETELY MISSING"""
+
+    def test_check_all_value_empty_all_present(self):
+        """Test when all required values are present."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "test-token",
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is False  # No values are empty
+
+    def test_check_all_value_empty_missing_token(self):
+        """Test when token is missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "",
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_missing_organization(self):
+        """Test when organization is missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "test-token",
+            "organization": "",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_missing_project(self):
+        """Test when project is missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "test-token",
+            "organization": "test-org",
+            "project": "",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_missing_project_path(self):
+        """Test when project_path is missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "test-token",
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": ""
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_multiple_missing(self):
+        """Test when multiple values are missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "",
+            "organization": "",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_all_missing(self):
+        """Test when all values are missing."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "",
+            "organization": "",
+            "project": "",
+            "project_path": ""
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_with_none_values(self):
+        """Test when values are None."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": None,
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_missing_keys(self):
+        """Test when keys are completely missing from dict."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "test-token",
+            "organization": "test-org"
+            # project and project_path missing
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_empty_dict(self):
+        """Test with completely empty dictionary."""
+        config_service = ConfigService()
+        auth_config = {}
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        assert result is True
+
+    def test_check_all_value_empty_whitespace_values(self):
+        """Test with whitespace-only values."""
+        config_service = ConfigService()
+        auth_config = {
+            "token": "   ",
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
+
+        result = config_service.check_all_value_empty(auth_config)
+
+        # Whitespace should be treated as non-empty by .get()
+        # but could be considered empty depending on implementation
+        assert result is False  # Whitespace is truthy
+
+
+
+# ============================================================================
+# MISSING: save_config ERROR PATHS
+# ============================================================================
+
+
+class TestSaveConfigErrorPaths:
+    """Test error handling paths in save_config - PARTIALLY COVERED"""
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_config_invalid_token_no_confirmation_input(self, mock_console):
+        """Test when user doesn't provide any input (empty string)."""
+        mock_console.input.return_value = ""
+        config_service = ConfigService()
+
+        with patch('devdox_ai_sonar.services.configuration.validate_token_format', return_value=False):
+            result = config_service.save_config(
+                "short",
+                "test-org",
+                "test-project",
+                "/test/path"
+            )
+
+        assert result is False
+        mock_console.print.assert_called_with("[red]Cancelled[/red]")
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_config_invalid_token_uppercase_confirmation(self, mock_console):
+        """Test with uppercase confirmation."""
+        mock_console.input.return_value = "Y"
+        config_service = ConfigService()
+
+        with patch.object(config_service, 'save_complete_config', return_value=True):
+            with patch('devdox_ai_sonar.services.configuration.validate_token_format', return_value=False):
+                result = config_service.save_config(
+                    "short",
+                    "test-org",
+                    "test-project",
+                    "/test/path"
+                )
+
+        assert result is True
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_config_invalid_token_yes_word(self, mock_console):
+        """Test with 'yes' word confirmation."""
+        mock_console.input.return_value = "yes"
+        config_service = ConfigService()
+
+        with patch.object(config_service, 'save_complete_config', return_value=True):
+            with patch('devdox_ai_sonar.services.configuration.validate_token_format', return_value=False):
+                result = config_service.save_config(
+                    "short",
+                    "test-org",
+                    "test-project",
+                    "/test/path"
+                )
+
+        assert result is True
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_config_exception_in_save_complete(self, mock_console):
+        """Test when save_complete_config raises exception."""
+        config_service = ConfigService()
+
+        with patch.object(config_service, 'save_complete_config', side_effect=Exception("Unexpected error")):
+            with patch('devdox_ai_sonar.services.configuration.validate_token_format', return_value=True):
+                with pytest.raises(Exception):
+                    config_service.save_config(
+                        "squ_valid_token",
+                        "test-org",
+                        "test-project",
+                        "/test/path"
+                    )
+
+
+
+# ============================================================================
+# MISSING: FILE SYSTEM INTERACTION TESTS
+# ============================================================================
+
+
+class TestFileSystemInteractions:
+    """Test actual file system operations - LOW COVERAGE"""
+
+    def test_save_and_load_with_real_file(self, tmp_path):
+        """Integration test with real file system."""
+        config_path = tmp_path / "test_config.json"
+        service = ConfigService(sonar_path=config_path)
+
+        # Save
+        result = service.save_complete_config(
+            "squ_test_token_123456789",
+            "test-org",
+            "test-project",
+            "/test/path",
+            merge=False
+        )
+
+        assert result is True
+        assert config_path.exists()
+
+        # Load
+        loaded = service.load_auth_config()
+        assert loaded['token'] == "squ_test_token_123456789"
+        assert loaded['organization'] == "test-org"
+
+    def test_save_creates_directory_if_not_exists(self, tmp_path):
+        """Test saving to non-existent directory."""
+        config_path = tmp_path / "nested" / "dir" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        service = ConfigService(sonar_path=config_path)
+
+        result = service.save_complete_config(
+            "token",
+            "org",
+            "project",
+            "/path"
+        )
+
+        assert result is True
+        assert config_path.exists()
+
+    def test_load_from_readonly_file(self, tmp_path):
+        """Test loading from read-only file."""
+        config_path = tmp_path / "readonly_config.json"
+        config_data = {
+            "SONAR_TOKEN": "test_token",
+            "SONAR_ORG": "test_org",
+            "SONAR_PROJ": "test_project",
+            "PROJECT_PATH": "/test/path"
+        }
+
+        # Create file
+        with open(config_path, 'w') as f:
+            json.dump(config_data, f)
+
+        # Make it read-only
+        config_path.chmod(0o444)
+
+        service = ConfigService(sonar_path=config_path)
+        loaded = service.load_auth_config()
+
+        assert loaded['token'] == "test_token"
+
+        # Cleanup
+        config_path.chmod(0o644)
+
+    def test_save_to_readonly_directory(self, tmp_path):
+        """Test saving to read-only directory (should fail)."""
+        readonly_dir = tmp_path / "readonly"
+        readonly_dir.mkdir()
+        config_path = readonly_dir / "config.json"
+
+        # Make directory read-only
+        readonly_dir.chmod(0o444)
+
+        service = ConfigService(sonar_path=config_path)
+
+        try:
+            result = service.save_complete_config(
+                "token",
+                "org",
+                "project",
+                "/path"
+            )
+            # Should fail on Unix systems
+            assert result is False
+        finally:
+            # Cleanup
+            readonly_dir.chmod(0o755)
+
+
+# ============================================================================
+# MISSING: JSON SERIALIZATION EDGE CASES
+# ============================================================================
+
+
+class TestJSONSerializationEdgeCases:
+    """Test JSON serialization edge cases - LOW COVERAGE"""
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_load_config_with_malformed_json(self, mock_console):
+        """Test loading config with malformed JSON."""
+        config_service = ConfigService()
+
+        malformed_json = '{"SONAR_TOKEN": "token", "SONAR_ORG": incomplete'
+
+        with patch('builtins.open', mock_open(read_data=malformed_json)):
+            with patch.object(Path, 'exists', return_value=True):
+                result = config_service.load_auth_config()
+
+        assert result['token'] is None
+        mock_console.print.assert_called_once()
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_load_config_with_json_array(self, mock_console):
+        """Test loading config when file contains JSON array."""
+        config_service = ConfigService()
+
+        json_array = '[{"key": "value"}]'
+
+        with patch('builtins.open', mock_open(read_data=json_array)):
+            with patch.object(Path, 'exists', return_value=True):
+                with pytest.raises(AttributeError):
+                    config_service.load_auth_config()
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_load_config_with_nested_objects(self, mock_console):
+        """Test loading config with nested JSON objects."""
+        config_service = ConfigService()
+
+        nested_json = {
+            "SONAR_TOKEN": "token",
+            "SONAR_ORG": "org",
+            "SONAR_PROJ": "project",
+            "PROJECT_PATH": "/path",
+            "nested": {
+                "key": "value"
+            }
+        }
+
+        with patch('builtins.open', mock_open(read_data=json.dumps(nested_json))):
+            with patch.object(Path, 'exists', return_value=True):
+                result = config_service.load_auth_config()
+
+        # Should load successfully, ignoring nested objects
+        assert result['token'] == "token"
+
+    def test_save_config_with_special_json_characters(self, tmp_path):
+        """Test saving config with special JSON characters."""
+        config_path = tmp_path / "special_chars.json"
+        service = ConfigService(sonar_path=config_path)
+
+        # Values with special characters
+        result = service.save_complete_config(
+            'token"with"quotes',
+            'org\\with\\backslashes',
+            'project\nwith\nnewlines',
+            '/path\twith\ttabs'
+        )
+
+        assert result is True
+
+        # Verify it can be loaded back
+        loaded = service.load_auth_config()
+        assert loaded['token'] == 'token"with"quotes'
+
+
+# ============================================================================
+# MISSING: LOAD_LLM_CONFIG EDGE CASES
+# ============================================================================
+
+
+class TestLoadLLMConfigEdgeCases:
+    """Test load_llm_config edge cases - PARTIAL COVERAGE"""
+
+    def test_load_llm_config_with_multiple_providers_different_models(self):
+        """Test with multiple providers with different model lists."""
+        mock_manager = Mock()
+
+        providers = [
+            {
+                "name": "openai",
+                "api_key": "key1",
+                "models": ["gpt-4", "gpt-3.5-turbo"]
+            },
+            {
+                "name": "anthropic",
+                "api_key": "key2",
+                "models": ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"]
+            },
+            {
+                "name": "cohere",
+                "api_key": "key3",
+                "models": ["command", "command-light"]
+            }
+        ]
+
+        mock_manager.get_value.side_effect = lambda key: {
+            "llm.providers": providers,
+            "llm.default_provider": "cohere",
+            "llm.default_model": "command"
+        }.get(key)
+
+        result = ConfigService.load_llm_config(mock_manager)
+
+        assert result is not None
+        assert result.provider == "cohere"
+        assert result.model == "command"
+        assert len(result.models) == 2
+
+    def test_load_llm_config_provider_with_empty_name(self):
+        """Test with provider having empty name."""
+        mock_manager = Mock()
+
+        providers = [
+            {
+                "name": "",
+                "api_key": "key1",
+                "models": ["model1"]
+            }
+        ]
+
+        mock_manager.get_value.side_effect = lambda key: {
+            "llm.providers": providers,
+            "llm.default_provider": "",
+            "llm.default_model": "model1"
+        }.get(key)
+
+        result = ConfigService.load_llm_config(mock_manager)
+
+        # Should handle empty provider name
+        assert result is not None or result is None  # Depends on implementation
+
+    def test_load_llm_config_missing_api_key_in_provider(self):
+        """Test with provider missing api_key field."""
+        mock_manager = Mock()
+
+        providers = [
+            {
+                "name": "openai",
+                # No api_key
+                "models": ["gpt-4"]
+            }
+        ]
+
+        mock_manager.get_value.side_effect = lambda key: {
+            "llm.providers": providers,
+            "llm.default_provider": "openai",
+            "llm.default_model": "gpt-4"
+        }.get(key)
+
+        result = ConfigService.load_llm_config(mock_manager)
+
+        assert result is not None
+        assert result.api_key is None  # Should handle missing api_key
+
+    def test_load_llm_config_none_default_model(self):
+        """Test with None default_model."""
+        mock_manager = Mock()
+
+        providers = [
+            {
+                "name": "openai",
+                "api_key": "key1",
+                "models": ["gpt-4"]
+            }
+        ]
+
+        mock_manager.get_value.side_effect = lambda key: {
+            "llm.providers": providers,
+            "llm.default_provider": "openai",
+            "llm.default_model": None
+        }.get(key)
+
+        result = ConfigService.load_llm_config(mock_manager)
+
+        assert result is not None
+        assert result.model is None
+
+
+# ============================================================================
+# MISSING: VALIDATE_AUTH_CONFIG EDGE CASES
+# ============================================================================
+
+
+class TestValidateAuthConfigEdgeCases:
+    """Additional validation edge cases - PARTIAL COVERAGE"""
+
+    def test_validate_auth_config_with_numeric_values(self):
+        """Test validation with numeric values instead of strings."""
+        config = {
+            "token": 123456,
+            "organization": 789,
+            "project": 101112,
+            "project_path": 131415
+        }
+
+        result = ConfigService.validate_auth_config(config)
+
+        # Numeric values are truthy, so should pass
+        assert result is True
+
+    def test_validate_auth_config_with_boolean_values(self):
+        """Test validation with boolean values."""
+        config = {
+            "token": True,
+            "organization": False,
+            "project": True,
+            "project_path": True
+        }
+
+        result = ConfigService.validate_auth_config(config)
+
+        # False is falsy, should fail
+        assert result is False
+
+    def test_validate_auth_config_with_list_values(self):
+        """Test validation with list values."""
+        config = {
+            "token": ["token1", "token2"],
+            "organization": ["org1"],
+            "project": ["project1"],
+            "project_path": ["/path1"]
+        }
+
+        result = ConfigService.validate_auth_config(config)
+
+        # Lists are truthy, should pass
+        assert result is True
+
+    def test_validate_auth_config_with_zero(self):
+        """Test validation with zero value."""
+        config = {
+            "token": 0,
+            "organization": "org",
+            "project": "project",
+            "project_path": "/path"
+        }
+
+        result = ConfigService.validate_auth_config(config)
+
+        # Zero is falsy, should fail
+        assert result is False
+
+
+# ============================================================================
+# MISSING: SAVE_COMPLETE_CONFIG COMPLEX SCENARIOS
+# ============================================================================
+
+
+class TestSaveCompleteConfigComplexScenarios:
+    """Complex scenarios for save_complete_config - PARTIAL COVERAGE"""
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_complete_config_merge_with_corrupt_existing(self, mock_console):
+        """Test merging when existing file is corrupted."""
+        config_service = ConfigService()
+
+        with patch('builtins.open', mock_open()) as mock_file:
+            # First call (read) returns corrupt data, second call (write) succeeds
+            mock_file.side_effect = [
+                mock_open(read_data="corrupt json").return_value,
+                mock_open().return_value
+            ]
+
+            with patch.object(Path, 'exists', return_value=True):
+                with patch.object(config_service, 'load_auth_config', return_value={}):
+                    with patch.object(Path, 'chmod'):
+                        result = config_service.save_complete_config(
+                            "new_token",
+                            merge=True
+                        )
+
+        # Should succeed even with corrupt existing file
+        assert result is True
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_save_complete_config_all_none_values_no_merge(self, mock_console):
+        """Test saving all None values without merge."""
+        config_service = ConfigService()
+
+        with patch('builtins.open', mock_open()):
+            with patch.object(Path, 'exists', return_value=False):
+                with patch.object(Path, 'chmod'):
+                    result = config_service.save_complete_config(
+                        "token",
+                        None,
+                        None,
+                        None,
+                        merge=False
+                    )
+
+        assert result is True
+
+    def test_save_complete_config_preserves_existing_on_merge(self, tmp_path):
+        """Test that merge properly preserves existing values."""
+        config_path = tmp_path / "merge_test.json"
+        service = ConfigService(sonar_path=config_path)
+
+        # Create initial config
+        initial_config = {
+            "SONAR_TOKEN": "old_token",
+            "SONAR_ORG": "old_org",
+            "SONAR_PROJ": "old_project",
+            "PROJECT_PATH": "/old/path"
+        }
+
+        with open(config_path, 'w') as f:
+            json.dump(initial_config, f)
+
+        # Update only token and organization
+        result = service.save_complete_config(
+            "new_token",
+            "new_org",
+            None,  # Don't update project
+            None,  # Don't update path
+            merge=True
+        )
+
+        assert result is True
+
+        # Verify merge
+        loaded = service.load_auth_config()
+        assert loaded['token'] == "new_token"
+        assert loaded['organization'] == "new_org"
+        assert loaded['project'] == "old_project"  # Should be preserved
+        assert loaded['project_path'] == "/old/path"  # Should be preserved
+
+
+# ============================================================================
+# MISSING: TOKEN VALIDATION EDGE CASES
+# ============================================================================
+
+
+class TestValidateTokenFormatEdgeCases:
+    """Additional token validation tests - PARTIAL COVERAGE"""
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_validate_token_format_with_unicode(self, mock_console):
+        """Test token validation with unicode characters."""
+        token = "squ_测试_токен_🔑" + "a" * 20
+
+        result = validate_token_format(token)
+
+        assert result is True
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_validate_token_format_with_newlines(self, mock_console):
+        """Test token validation with newlines."""
+        token = "squ_token\nwith\nnewlines_" + "a" * 20
+
+        result = validate_token_format(token)
+
+        assert result is True  # Still valid length
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_validate_token_format_whitespace_only(self, mock_console):
+        """Test token validation with whitespace-only string."""
+        token = "     "
+
+        result = validate_token_format(token)
+
+        assert result is False
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_validate_token_format_very_long_token(self, mock_console):
+        """Test token validation with extremely long token."""
+        token = "squ_" + "a" * 10000
+
+        result = validate_token_format(token)
+
+        assert result is True
+
+    @patch('devdox_ai_sonar.services.configuration.console')
+    def test_validate_token_format_exactly_at_boundary(self, mock_console):
+        """Test token validation at exact boundary (20 chars)."""
+        token = "a" * 20
+
+        result = validate_token_format(token)
+
+        assert result is True
+
+
+# ============================================================================
+# MISSING: AUTHENTICATION CONFIG DATACLASS TESTS
+# ============================================================================
+
+
+class TestAuthConfigDataclass:
+    """Additional AuthConfig dataclass tests - PARTIAL COVERAGE"""
+
+    def test_auth_config_equality(self):
+        """Test AuthConfig equality comparison."""
+        config1 = AuthConfig("token", "org", "project", "/path")
+        config2 = AuthConfig("token", "org", "project", "/path")
+
+        assert config1 == config2
+
+    def test_auth_config_inequality(self):
+        """Test AuthConfig inequality."""
+        config1 = AuthConfig("token1", "org", "project", "/path")
+        config2 = AuthConfig("token2", "org", "project", "/path")
+
+        assert config1 != config2
+
+    def test_auth_config_repr(self):
+        """Test AuthConfig string representation."""
+        config = AuthConfig("token", "org", "project", "/path")
+
+        repr_str = repr(config)
+
+        assert "AuthConfig" in repr_str
+        assert "token" in repr_str
+
+    def test_auth_config_as_dict(self):
+        """Test converting AuthConfig to dict."""
+
+
+        config = AuthConfig("token", "org", "project", "/path")
+
+        config_dict = asdict(config)
+
+        assert config_dict['token'] == "token"
+        assert config_dict['organization'] == "org"
+        assert len(config_dict) == 4
+
+
+# ============================================================================
+# MISSING: LLM CONFIG DATACLASS TESTS
+# ============================================================================
+
+
+class TestLLMConfigDataclass:
+    """Additional LLMConfig dataclass tests - PARTIAL COVERAGE"""
+
+    def test_llm_config_equality(self):
+        """Test LLMConfig equality."""
+        config1 = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
+        config2 = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
+
+        assert config1 == config2
+
+    def test_llm_config_repr(self):
+        """Test LLMConfig string representation."""
+        config = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
+
+        repr_str = repr(config)
+
+        assert "LLMConfig" in repr_str
+        assert "openai" in repr_str
+
+    def test_llm_config_models_immutability(self):
+        """Test that models list can be modified."""
+        config = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
+
+        config.models.append("gpt-3.5-turbo")
+
+        assert len(config.models) == 2

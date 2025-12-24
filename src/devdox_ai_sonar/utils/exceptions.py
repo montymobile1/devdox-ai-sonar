@@ -131,3 +131,14 @@ class RuleNotFoundError(DevDoxSonarError):
         self.rule_key = rule_key
         message = f"SonarCloud rule not found: {rule_key}"
         super().__init__(message)
+
+
+
+class SwitchCommandException(Exception):
+    """Exception raised when user wants to switch commands."""
+    pass
+
+
+class ReturnToMenuException(Exception):
+    """Exception raised when user wants to return to main menu."""
+    pass

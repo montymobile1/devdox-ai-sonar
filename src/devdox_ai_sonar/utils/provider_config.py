@@ -9,6 +9,9 @@ from devdox_ai_sonar.utils.exceptions import ValidationError
 
 console = Console()
 CONFIG_PROVIDERS="llm.providers"
+CONFIG_DEFAULT_BRANCH="sonar.default_branch"
+CONFIG_DEFAULT_PULL="sonar.default_pull"
+CONFIG_CLONE_TYPE="sonar.sonar_options.clone_type"
 
 
 class ProviderUpdateContext:
@@ -246,6 +249,22 @@ class ProviderConfigManager:
 
         return result
 
+    def branch_or_pr(self) -> Tuple[str, int]:
+        """Prompt user for branch or PR number"""
+        clone_type = self.config_manager.get_value(CONFIG_CLONE_TYPE)
+        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
+        if clone_type == "pr":
+            default_branch=""
+        else:
+            default_pull=0
+        return default_branch, default_pull
+
+    def get_params(self):
+        return self.config_manager.get_value("sonar.configuration")
+
+
+
 
     def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
@@ -260,7 +279,7 @@ class ProviderConfigManager:
 
     def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""
-        default_branch = self.config_manager.get_value("sonar.default_branch") or "main"
+        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
         branch_input = Prompt.ask("Branch name", default=default_branch)
 
         try:
@@ -268,10 +287,18 @@ class ProviderConfigManager:
             console.print(f"[green]✓[/green] Analyzing branch: [cyan]{branch}[/cyan]")
 
             self._save_as_default_if_changed(
-                config_key="sonar.default_branch",
+                config_key=CONFIG_DEFAULT_BRANCH,
                 new_value=branch,
                 current_default=default_branch,
                 display_name=f"branch '{branch}'",
+            )
+
+            self._save_as_default_if_changed(
+                config_key=CONFIG_CLONE_TYPE,
+                new_value="branch",
+                current_default="pr",
+                display_name="",
+                confirm=False
             )
 
             return branch, 0
@@ -282,7 +309,7 @@ class ProviderConfigManager:
 
     def _handle_pull_request_selection(self) -> Tuple[str, int]:
         """Handle pull request selection workflow."""
-        default_pull = self.config_manager.get_value("sonar.default_pull")
+        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         pr_default = str(default_pull) if default_pull else "0"
         pr_input = Prompt.ask("Pull Request number", default=pr_default)
 
@@ -291,10 +318,18 @@ class ProviderConfigManager:
             console.print(f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]")
 
             self._save_as_default_if_changed(
-                config_key="sonar.default_pull",
+                config_key=CONFIG_DEFAULT_PULL,
                 new_value=pull_request,
                 current_default=default_pull,
-                display_name=f"PR #{pull_request}",
+                display_name=f"PR #{pull_request}"
+            )
+
+            self._save_as_default_if_changed(
+                config_key=CONFIG_CLONE_TYPE,
+                new_value="pr",
+                current_default="branch",
+                display_name="",
+                confirm=False
             )
 
             return "", pull_request
@@ -309,16 +344,18 @@ class ProviderConfigManager:
             new_value: Any,
             current_default: Any,
             display_name: str,
+            confirm: bool = True
     ) -> None:
         """Save new value as default if it differs from current default."""
         if str(new_value) == str(current_default):
             return
-
-        if not Confirm.ask(
-                "Save this as default for future runs?", default=False
-        ):
-            return
+        if confirm and  not Confirm.ask(
+                    "Save this as default for future runs?", default=False
+            ):
+                return
 
         self.config_manager.set_value(config_key, new_value)
         self.config_manager.save_config()
-        console.print(f"[green]✓[/green] Saved {display_name} as default")
+        if confirm:
+            console.print(f"[green]✓[/green] Saved {display_name} as default")
+
