@@ -52,7 +52,9 @@ _generate_fix_for_file,
 handle_fix,
 _execute_interactive_iteration,
 _should_continue_to_next_file,
-_fetch_issues_by_type
+_fetch_issues_by_type,
+_display_project_header,
+_display_metrics_section
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -1750,7 +1752,34 @@ class TestDisplayFunctions:
         with patch('devdox_ai_sonar.cli.console'):
             _display_fix_results(sample_fix_result)
 
+    def test_display_project_header(self):
+        """Test header display"""
+        result = AnalysisResult(
+            project_key="test",
+            organization="org",
+            branch="main",
+            total_issues=5,
+            issues=[],
+            issues_by_severity={}
+        )
 
+        # Should not raise exception
+        _display_project_header(result)
+
+    def test_display_metrics_section_no_metrics(self):
+        """Test metrics display with no metrics"""
+        result = AnalysisResult(
+            project_key="test",
+            organization="org",
+            branch="main",
+            total_issues=5,
+            issues=[],
+            issues_by_severity={},
+            metrics=None
+        )
+
+        # Should handle None gracefully
+        _display_metrics_section(result)
 
 # ============================================================================
 # FILE PROCESSING TESTS

@@ -1290,13 +1290,13 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
     console.print(Panel(fix.fixed_code[:500] + ("..." if len(fix.fixed_code) > 500 else ""),
                        title="Fixed Code Preview", border_style="green"))
 
-
-def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> None:
-    """Display analysis results."""
+def _display_project_header(result: AnalysisResult) -> None:
+    """Display project header information."""
     console.print(Panel.fit("[bold]Analysis Results[/bold]"))
     console.print(f"Project: [cyan]{result.project_key}[/cyan]")
     console.print(f"Total Issues: [cyan]{result.total_issues}[/cyan]")
 
+def _display_metrics_section(result: AnalysisResult) -> None:
     if result.metrics:
         console.print("\n[bold]Metrics:[/bold]")
         if result.metrics.lines_of_code:
@@ -1307,6 +1307,8 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
             console.print(f"  Bugs: {result.metrics.bugs}")
         if result.metrics.vulnerabilities:
             console.print(f"  Vulnerabilities: {result.metrics.vulnerabilities}")
+
+def _display_issues_table(result: AnalysisResult, limit: Optional[int]) -> None:
 
     if result.issues:
         issues_to_show = result.issues[:limit] if limit else result.issues
@@ -1327,6 +1329,15 @@ def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> N
 
         console.print("\n")
         console.print(table)
+
+def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> None:
+    """Display analysis results."""
+    _display_project_header(result)
+    _display_metrics_section(result)
+    _display_issues_table(result, limit)
+
+
+
 
 
 def _display_fix_results(result: FixResult) -> None:
