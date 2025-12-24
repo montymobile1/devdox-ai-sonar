@@ -1,6 +1,7 @@
 
 
 import pytest
+from pathlib import Path
 from contextlib import contextmanager
 import click
 from click.testing import CliRunner
@@ -11,6 +12,8 @@ from devdox_ai_sonar.cli import (
     main,
     _safe_convert_pr,
     _should_exit_interactive_mode,
+    _configure_sonarcloud,
+    _fallback_command_selector,
     SwitchCommandException,
     ReturnToMenuException,
     show_progress,
@@ -34,15 +37,28 @@ from devdox_ai_sonar.cli import (
     _handle_command_switch,
     _handle_interactive_error,
     _run_interactive_mode,
-_collect_rule_information,
-_initialize_fix_services,
-_handle_keyboard_interrupt,
-_process_and_fix_issues
+    _collect_rule_information,
+    _initialize_fix_services,
+    _handle_keyboard_interrupt,
+    _process_and_fix_issues,
+    _select_existing_ui,
+    _check_reconfiguration_consent,
+    _handle_cli_error,
+    _display_fix_preview,
+    _display_analysis_results,
+    _display_fix_results,
+    _process_files_with_issues,
+_generate_fix_for_file,
+handle_fix,
+_execute_interactive_iteration,
+_should_continue_to_next_file,
+_fetch_issues_by_type
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     AnalysisResult,
-    FixSuggestion
+    FixSuggestion,
+    FixResult
 )
 
 
@@ -61,6 +77,32 @@ def mock_ui():
     ui = Mock()
     ui.select_provider_from_list.return_value = 'openai'
     return ui
+
+@pytest.fixture
+def sample_fix_result():
+    """Sample fix result"""
+    return FixResult(
+        successful_fixes=[
+            FixSuggestion(
+                issue_key="issue-1",
+                rule="python:S1234",
+                file_path="test.py",
+                original_code="old_code",
+                fixed_code="new_code",
+                explanation="Fixed issue",
+                confidence=0.95,
+                sonar_line_number=10,
+                llm_model="open-ai"
+            )
+        ],
+        failed_fixes=[],
+        skipped_files=[],
+        total_fixes_attempted=1,
+        success_rate=1.0,
+        backup_created=True,
+        project_path=Path("/tmp/project"),
+        backup_path=Path("/tmp/backup")
+    )
 
 @contextmanager
 def mock_show_progress(message: str, total=None):
@@ -327,6 +369,43 @@ class TestExitApplication:
         mock_console.print.assert_called_once()
         assert "Thank you for using DevDox AI Sonar" in str(mock_console.print.call_args)
 
+class TestFallbackCommandSelector:
+    """Tests for _fallback_command_selector"""
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_fallback_valid_selection(self, mock_console):
+        """Test valid command selection"""
+        mock_console.input.return_value = '1'
+
+        result = _fallback_command_selector()
+
+        assert result == 'fix_issues'
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_fallback_all_options(self, mock_console):
+        """Test all options"""
+        test_cases = [
+            ('1', 'fix_issues'),
+            ('2', 'fix_security_issues'),
+            ('3', 'analyze'),
+            ('4', 'inspect'),
+            ('5', 'exit'),
+        ]
+
+        for input_val, expected in test_cases:
+            mock_console.input.return_value = input_val
+            result = _fallback_command_selector()
+            assert result == expected
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_fallback_invalid_input(self, mock_console):
+        """Test invalid input"""
+        mock_console.input.return_value = 'invalid'
+
+        result = _fallback_command_selector()
+
+        assert result is None
+
 
 class TestExecuteInteractiveCommand:
     """Test cases for _execute_interactive_command."""
@@ -457,6 +536,19 @@ class TestConfigurationManagement:
 
                         ctx = Mock()
                         init_config(ctx)
+
+    def test_check_reconfiguration_consent_no_providers(self):
+        """Test with no providers"""
+        result = _check_reconfiguration_consent([])
+
+        assert result is True
+
+    def test_check_reconfiguration_consent_existing_providers(self):
+        """Test with existing providers"""
+        with patch('devdox_ai_sonar.cli.click'):
+            result = _check_reconfiguration_consent(["openai", "anthropic"])
+
+            assert result is False
 
     def test_init_config_existing_config(
             self, runner, mock_config_service, mock_config_manager, mock_provider_manager
@@ -963,6 +1055,59 @@ class TestConfigurationManagement:
 
 
 # ============================================================================
+# CONFIGURATION HELPERS TESTS
+# ============================================================================
+
+class TestConfigureSonarCloud:
+    """Tests for _configure_sonarcloud"""
+
+    def test_configure_sonarcloud_success(self):
+        """Test successful configuration"""
+        mock_sonar_ui = Mock()
+        mock_config_service = Mock()
+
+        mock_config_service.load_auth_config.return_value = {
+            "token": "",
+            "organization": "",
+            "project": "",
+            "project_path": ""
+        }
+        mock_config_service.check_all_value_empty.return_value = True
+
+        mock_sonar_config = Mock()
+        mock_sonar_config.token = "new_token"
+        mock_sonar_config.organization = "new_org"
+        mock_sonar_config.project = "new_project"
+        mock_sonar_config.project_path = "/new/path"
+
+        mock_sonar_ui.configure_sonarcloud.return_value = mock_sonar_config
+        mock_config_service.save_config.return_value = True
+
+        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+
+        assert result is True
+        mock_sonar_ui.display_welcome.assert_called_once()
+
+    def test_configure_sonarcloud_already_configured(self):
+        """Test when already configured"""
+        mock_sonar_ui = Mock()
+        mock_config_service = Mock()
+
+        mock_config_service.load_auth_config.return_value = {
+            "token": "existing",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+        mock_config_service.check_all_value_empty.return_value = False
+
+        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+
+        assert result is True
+        mock_sonar_ui.configure_sonarcloud.assert_not_called()
+
+
+# ============================================================================
 # TEST CLASS: FIX ISSUES COMMAND
 # ============================================================================
 
@@ -1316,6 +1461,31 @@ class TestInspectCommand:
                 mock_analyzer.analyze_project_directory.assert_called_once()
 
 
+
+class TestSelectExistingUI:
+    """Tests for _select_existing_ui"""
+
+    @patch('devdox_ai_sonar.cli.inquirer')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_select_existing_ui_success(self, mock_console, mock_inquirer):
+        """Test successful selection"""
+        mock_inquirer.prompt.return_value = {"provider": "openai"}
+
+        result = _select_existing_ui("provider", "Select provider", ["openai", "anthropic"])
+
+        assert result == "openai"
+
+    @patch('devdox_ai_sonar.cli.inquirer')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_select_existing_ui_cancelled(self, mock_console, mock_inquirer):
+        """Test cancelled selection"""
+        mock_inquirer.prompt.return_value = None
+
+        result = _select_existing_ui("provider", "Select", ["openai"])
+
+        assert result == ""
+
+
 # ============================================================================
 # TEST CLASS: VALIDATION HELPERS
 # ============================================================================
@@ -1518,6 +1688,172 @@ class TestProcessFunctions:
                                 )
 
                                 mock_fixer.generate_fix_by_file.assert_called_once()
+
+
+# ============================================================================
+# DISPLAY FUNCTIONS TESTS
+# ============================================================================
+
+class TestDisplayFunctions:
+    """Tests for display functions"""
+
+    def test_display_fix_preview_basic(self):
+        """Test basic fix preview"""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            original_code="old",
+            fixed_code="new",
+            explanation="Fixed",
+            confidence=0.95,
+            llm_model="a",
+            file_path="test.py",
+            sonar_line_number=10
+        )
+
+        with patch('devdox_ai_sonar.cli.console'):
+            with patch('devdox_ai_sonar.cli.Panel'):
+                _display_fix_preview(fix, [Mock()])
+
+    def test_display_fix_preview_long_code(self):
+        """Test with long code"""
+        long_code = "x = 1\n" * 100
+
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="long.py",
+            original_code="old",
+            fixed_code=long_code,
+            explanation="Fixed",
+            llm_model="a",
+            confidence=0.9,
+            sonar_line_number=5
+        )
+
+        with patch('devdox_ai_sonar.cli.console'):
+            with patch('devdox_ai_sonar.cli.Panel') as mock_panel:
+                _display_fix_preview(fix, [Mock()])
+
+                panel_call = mock_panel.call_args[0][0]
+                assert len(panel_call) <= 504
+
+    def test_display_analysis_results_with_metrics(self, sample_analysis_result):
+        """Test displaying results with metrics"""
+        with patch('devdox_ai_sonar.cli.console'):
+            with patch('devdox_ai_sonar.cli.Panel'):
+                with patch('devdox_ai_sonar.cli.Table'):
+                    _display_analysis_results(sample_analysis_result, limit=10)
+
+    def test_display_fix_results_success(self, sample_fix_result):
+        """Test displaying fix results"""
+        with patch('devdox_ai_sonar.cli.console'):
+            _display_fix_results(sample_fix_result)
+
+
+
+# ============================================================================
+# FILE PROCESSING TESTS
+# ============================================================================
+
+class TestFileProcessing:
+    """Tests for file processing functions"""
+
+    def test_process_files_with_issues_basic(self):
+        """Test basic file processing"""
+        issues_by_file = {"test.py": [Mock(rule="python:S1234")]}
+
+        mock_services = {
+            'analyzer': Mock(),
+            'ruler': Mock(),
+            'fixer': Mock()
+        }
+        mock_services['ruler'].get_rule_by_key.return_value = {}
+        mock_services['fixer'].generate_fix_by_file.return_value = None
+
+        with patch('devdox_ai_sonar.cli.console'):
+            with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                with patch('devdox_ai_sonar.cli._should_continue_to_next_file', return_value=False):
+                    _process_files_with_issues(
+                        issues_by_file,
+                        mock_services,
+                        Mock(project_path="/tmp"),
+                        {"apply": False, "dry_run": False}
+                    )
+
+    def test_generate_fix_for_file_success(self):
+        """Test successful fix generation"""
+        issues = [Mock(rule="python:S1234")]
+
+        mock_services = {
+            'ruler': Mock(),
+            'fixer': Mock()
+        }
+        mock_services['ruler'].get_rule_by_key.return_value = {}
+
+        mock_fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="Fixed",
+            confidence=0.9,
+            llm_model="a",
+            sonar_line_number=10
+        )
+        mock_services['fixer'].generate_fix_by_file.return_value = mock_fix
+
+        with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+            result = _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"))
+
+            assert result == mock_fix
+
+    def test_handle_fix_apply_true(self):
+        """Test applying fix"""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="Fixed",
+            confidence=0.9,
+            llm_model="a",
+            sonar_line_number=10
+        )
+
+        mock_fixer = Mock()
+        mock_fixer.apply_fixes_with_validation.return_value = FixResult(
+            successful_fixes=[fix],
+            failed_fixes=[],
+            skipped_files=[],
+            total_fixes_attempted=1,
+            success_rate=1.0,
+            backup_created=True,
+            backup_path=Path("/tmp/backup"),
+            project_path=Path("/tmp/backup")
+        )
+
+        with patch('devdox_ai_sonar.cli._display_fix_preview'):
+            with patch('devdox_ai_sonar.cli._display_fix_results'):
+                handle_fix(
+                    fix,
+                    [Mock()],
+                    mock_fixer,
+                    Mock(project_path="/tmp"),
+                    {"apply": 1, "dry_run": 0, "create_backup": 1}
+                )
+
+                mock_fixer.apply_fixes_with_validation.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.smart_confirm')
+    def test_should_continue_to_next_file_last_file(self, mock_confirm):
+        """Test on last file"""
+        result = _should_continue_to_next_file(5, 5)
+
+        assert result is False
+        mock_confirm.assert_not_called()
 
 
 # ============================================================================
@@ -1795,6 +2131,71 @@ class TestHandleInteractiveError:
 
         assert exc_info.value.code == 2
 
+# ============================================================================
+# FETCH ISSUES TESTS
+# ============================================================================
+
+class TestFetchIssues:
+    """Tests for fetch issues functions"""
+
+    def test_fetch_issues_by_type_security(self):
+        """Test fetching security issues"""
+        mock_analyzer = Mock()
+        mock_analyzer.get_fixable_security_issues.return_value = {"test.py": [Mock()]}
+
+        with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+            result = _fetch_issues_by_type(
+                mock_analyzer,
+                Mock(project="test"),
+                "main",
+                None,
+                {"max_fixes": 10},
+                IssueType.SECURITY
+            )
+
+            assert len(result) == 1
+
+    def test_fetch_issues_by_type_regular(self):
+        """Test fetching regular issues"""
+        mock_analyzer = Mock()
+        mock_analyzer.get_fixable_issues_by_files.return_value = {"test.py": [Mock()]}
+
+        with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+            result = _fetch_issues_by_type(
+                mock_analyzer,
+                Mock(project="test"),
+                "main",
+                None,
+                {"max_fixes": 10, "severities_list": None, "types_list": None},
+                IssueType.REGULAR
+            )
+
+            assert len(result) == 1
+
+
+
+class TestInteractiveMode:
+    """Tests for interactive mode functions"""
+
+    @patch('devdox_ai_sonar.cli._process_interactive_command')
+    def test_execute_interactive_iteration_normal(self, mock_process):
+        """Test normal iteration"""
+        mock_process.return_value = False
+
+        result = _execute_interactive_iteration(Mock())
+
+        assert result is False
+
+    @patch('devdox_ai_sonar.cli._process_interactive_command')
+    @patch('devdox_ai_sonar.cli._handle_command_switch')
+    def test_execute_interactive_iteration_switch(self, mock_handle, mock_process):
+        """Test with command switch"""
+        mock_process.side_effect = SwitchCommandException()
+
+        result = _execute_interactive_iteration(Mock())
+
+        assert result is False
+        mock_handle.assert_called_once()
 
 # ============================================================================
 # Test _run_interactive_mode (Integration)
@@ -2135,3 +2536,15 @@ class TestUpdateProviderComplete:
                     with pytest.raises(click.Abort):
                         update_provider()
 
+
+class TestHandleCliError:
+    """Tests for _handle_cli_error"""
+
+
+    def test_handle_cli_error_generic_exception(self):
+        """Test handling generic exception"""
+        error = ValueError("Test error")
+
+        with patch('devdox_ai_sonar.cli.console'):
+            with pytest.raises(click.ClickException):
+                _handle_cli_error(error)
