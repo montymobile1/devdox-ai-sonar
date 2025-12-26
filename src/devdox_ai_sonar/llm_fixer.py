@@ -161,7 +161,7 @@ class LLMFixer:
             project_path: Path,
             rule_info_list: Dict[str, Dict[str, str]],
             modified_content: str = "",
-            error_message: str = "",
+            error_message: str = ""
     ) -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for one or more SonarCloud issues in the same file.
@@ -189,8 +189,8 @@ class LLMFixer:
         try:
             # Step 1: Validate issues and calculate ranges
             file_path, line_range = _validate_and_extract_issue_info(
-                issues, project_path
-            )
+                    issues, project_path
+                )
 
             # Step 2: Read file and extract context
             context_info = _prepare_context(
@@ -199,7 +199,6 @@ class LLMFixer:
                 modified_content,
                 self.context_lines
             )
-
             if not context_info:
                 return None
 
@@ -211,10 +210,8 @@ class LLMFixer:
                 rule_info_list,
                 error_message
             )
-
             if not fix_response:
                 return None
-
             # Step 4: Build fix suggestion
             return _build_fix_suggestion(
                 fix_response,

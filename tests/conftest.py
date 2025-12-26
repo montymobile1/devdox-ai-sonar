@@ -194,8 +194,35 @@ def sample_analysis_result(sample_sonar_issue):
         project_key="test-project",
         organization="test-org",
         branch="main",
-        total_issues=1,
-        issues=[sample_sonar_issue],
+        total_issues=5,
+        issues=[SonarIssue(
+                key="issue-1",
+                rule="python:S1234",
+                severity="CRITICAL",
+                component="test.py",
+                project="test-project",
+                first_line=10,
+                last_line=12,
+                message="Critical security issue",
+                type="VULNERABILITY",
+                status="OPEN",
+                file="test.py"
+            ),
+            SonarIssue(
+                key="issue-2",
+                rule="python:S5678",
+                severity="MAJOR",
+                component="main.py",
+                project="test-project",
+                first_line=20,
+                last_line=25,
+                message="Major code smell",
+                type="CODE_SMELL",
+                status="OPEN",
+                file="main.py"
+            )
+        ],
+        issues_by_severity={"CRITICAL": 1, "MAJOR": 1},
         metrics=ProjectMetrics(
             project_key="test-project",
             lines_of_code=1000,

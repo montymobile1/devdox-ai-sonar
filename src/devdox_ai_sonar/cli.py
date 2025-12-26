@@ -41,7 +41,7 @@ from devdox_ai_sonar.utils.provider_config import (
     ProviderConfigManager,
 )
 
-from devdox_ai_sonar.utils.exceptions import SwitchCommandException, ReturnToMenuException
+from devdox_ai_sonar.utils.exceptions import SwitchCommandException
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
@@ -247,7 +247,12 @@ def _fallback_command_selector() -> Optional[str]:
     type=click.IntRange(0, settings.MAX_FIXES_LIMIT),
     help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})"
 )
-@click.option("--apply", is_flag=True, help="Apply fixes to the codebase")
+@click.option(
+    "--apply",
+    type=click.IntRange(0, 1),
+    default=None,
+    help="Apply fixes (1 = apply, 0 = preview only)"
+)
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
 )
@@ -259,7 +264,7 @@ def main(
     types: Optional[str],
     severity: Optional[str],
     max_fixes: Optional[int],
-    apply: bool = False,
+    apply:  Optional[int],
     dry_run: bool = False
 ) -> None:
     """
@@ -532,7 +537,7 @@ def init_config(  types: Optional[str] = None,
     max_fixes: int = 0,
     apply: bool=False,
     dry_run: bool=False):
-    """CLI for config management - Complexity: 8 (under limit of 15)"""
+    """CLI for config management """
     try:
         # Initialize all managers
         manager, ui, _ , provider_manager, sonar_ui, config_service = _initialize_managers()
@@ -597,7 +602,7 @@ def add_provider():
 
 
 def update_provider():
-    """CLI command for managing provider configuration - Complexity: 7 (under limit of 15)"""
+    """CLI command for managing provider configuration """
     try:
         # Initialize components
         manager, _, _, provider_manager, _, _ = _initialize_managers()
@@ -900,7 +905,7 @@ def _run_fix_issues(
     console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
 
     try:
-        apply_value = 1 if kwargs.get("apply", False) else 0
+        apply_value =  kwargs.get("apply", None)
         dry_run_value = 1 if kwargs.get("dry_run", False) else 0
 
 
@@ -921,7 +926,7 @@ def _run_fix_issues(
             fix_params.get("branch",""),
             pull_request=parameters.get("pull_request",0),
             fix_params=fix_params,
-            issue_type= IssueType.REGULAR
+            issue_type= IssueType.REGULAR,
         )
 
     except SwitchCommandException:
@@ -930,7 +935,6 @@ def _run_fix_issues(
 
 def display_configuration(parameters, dry_run,apply):
 
-
         console.print("[bold]Configuration:[/bold]")
         pull_request = parameters.get("pull_request",0)
         branch = parameters.get("branch","")
@@ -938,8 +942,9 @@ def display_configuration(parameters, dry_run,apply):
             console.print(f"  Pull Request: [cyan]{pull_request}[/cyan]")
         elif branch:
             console.print(f"  Branch: [cyan]{branch}[/cyan]")
+        apply_value = apply if apply is not None else parameters.get("apply", 0)
         console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
-        console.print(f"  Apply: [cyan]{apply}[/cyan]")
+        console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
         console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
 
         fix_params={
@@ -948,7 +953,7 @@ def display_configuration(parameters, dry_run,apply):
         'max_fixes':  parameters.get("max_fixes",0),
         'types_list': _validate_issue_types(parameters.get("types","")),
         'severities_list': _validate_severities(parameters.get("severities","")),
-        "apply":apply,
+        "apply":apply_value,
         'dry_run': dry_run,
         "create_backup":parameters.get("create_backup",0),
     }
@@ -967,7 +972,7 @@ def _run_fix_security_issues(
         auth_config, llm_config, parameters= _load_and_validate_config()
 
 
-        apply_value = kwargs.get("apply", parameters.get("apply", 0) if parameters.get("apply") is not None else 0)
+        apply_value =  kwargs.get("apply", None)
         dry_run_value = kwargs.get("dry_run", parameters.get("dry_run", 0) if parameters.get("dry_run") is not None else 0)
 
         fix_params = display_configuration(parameters, dry_run_value,apply_value)
@@ -1139,7 +1144,7 @@ def _process_and_fix_issues(
     """Process and fix issues - Refactored."""
     services = _initialize_fix_services(auth_config, llm_config)
     # Fetch issues based on type
-    issues_by_file = _fetch_issues_by_type(
+    issues= _fetch_issues_by_type(
         services['analyzer'],
         auth_config,
         branch,
@@ -1147,13 +1152,13 @@ def _process_and_fix_issues(
         fix_params,
         issue_type
     )
-    if not issues_by_file:
+    if not issues:
         msg = "No fixable security issues found" if issue_type == IssueType.SECURITY else "No fixable issues found"
         console.print(f"[yellow]{msg}[/yellow]")
         return
 
-    console.print(f"\n[green]✓ Found {len(issues_by_file)} fixable issues[/green]\n")
-    _process_files_with_issues(issues_by_file, services, auth_config,fix_params)
+    console.print(f"\n[green]✓ Found {len(issues)} fixable issues[/green]\n")
+    _process_files_with_issues(issues, services, auth_config,fix_params,issue_type)
 
 
 
@@ -1179,29 +1184,128 @@ def _process_files_with_issues(
         issues_by_file: Dict[str, List[Any]],
         services: Dict[str, Any],
         auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+        issue_type: IssueType
 ) -> None:
     """
     Process files with issues.
 
 
     """
+    if issue_type == IssueType.SECURITY:
+        _process_security_issues(issues_by_file, services, auth_config, fix_params)
+    else:
+        _process_regular_issues(issues_by_file, services, auth_config, fix_params)
+
+
+
+
+def _process_regular_issues(
+        issues_by_rule: Dict[str, Dict[str, List[Any]]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """
+    Process regular issues grouped by rule.
+
+    Regular issues are processed individually within each rule.
+    """
+    total_rules = len(issues_by_rule)
+
+    for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
+        issues_list = rule_data['issue']
+
+
+        console.print(f"\n[blue]Processing ({rule_num}/{total_rules}): {rule_key}[/blue]")
+
+        if not _process_issues_for_rule(
+                rule_key, issues_list, services, auth_config, fix_params
+        ):
+            break
+
+
+def _process_issues_for_rule(
+        rule_key: str,
+        issues_list: List[Any],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> bool:
+    """
+    Process all issues for a specific rule.
+
+    Returns:
+        bool: True to continue processing, False to stop
+
+
+    """
+    total_issues = len(issues_list)
+
+    for idx, issue in enumerate(issues_list, 1):
+        _process_single_fix(
+            issues=[issue],
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            rule_key=rule_key
+        )
+
+        if not _should_continue_to_next_file(idx, total_issues):
+            return False  # Stop processing
+
+    return True  # Continue to next rule
+
+
+def _process_single_fix(
+        issues: List[Any],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any],
+        issue_type: IssueType,
+        rule_key: str
+) -> None:
+    """
+    Generate and handle a single fix.
+    """
+    fix = _generate_fix_for_file(issues, services, auth_config, issue_type, rule_key)
+
+    if fix:
+        handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
+    else:
+        console.print("[yellow]No fix could be generated[/yellow]")
+
+
+
+def _process_security_issues(
+        issues_by_file: Dict[str, List[Any]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """
+    Process security issues grouped by file.
+
+    Security issues are processed once per file.
+    """
     total_files = len(issues_by_file)
 
-    for idx, (file_path, issues) in enumerate(issues_by_file.items(), 1):
-        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_path}[/blue]")
+    for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
 
-        fix = _generate_fix_for_file(issues, services, auth_config)
-        print("fix ", fix)
-        if fix:
-            print("fixer ", services)
-            handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
-        else:
-            console.print("[yellow]No fix could be generated[/yellow]")
+        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
+
+        _process_single_fix(
+            issues=issues,
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.SECURITY,
+            rule_key=file_key
+        )
 
         if not _should_continue_to_next_file(idx, total_files):
             break
-
 
 def handle_fix(
         fix: FixSuggestion,
@@ -1237,22 +1341,29 @@ def handle_fix(
 def _generate_fix_for_file(
         issues: List[Any],
         services: Dict[str, Any],
-        auth_config: AuthConfig
+        auth_config: AuthConfig,
+        issue_type:IssueType,
+        rule_name:Optional[str]=None
 ) -> Optional[FixSuggestion]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
-        rule_info_list = _collect_rule_information(issues, services['ruler'])
+        if issue_type == IssueType.SECURITY:
+            rule_info_dic = _collect_rule_information(issues, services['ruler'])
+        else:
+            ruler =  services['ruler']
+            rule_info = ruler.get_rule_by_key(rule_name)
+
+            rule_info_dic = {rule_name:rule_info}
 
         return services['fixer'].generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
-            rule_info_list
+            rule_info_dic
         )
-
 
 def _collect_rule_information(
         issues: List[Any],
-        ruler: RuleAnalyzer
+        ruler: RuleAnalyzer,
 ) -> Dict[str, Dict[str, str]]:
     """Collect rule information for all issues."""
     rule_info_list = {}
@@ -1273,8 +1384,6 @@ def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
         return False
 
     return True
-
-
 
 
 
@@ -1373,13 +1482,14 @@ def _fetch_issues_by_type(
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
-            return analyzer.get_fixable_issues_by_files(
+            return analyzer.get_fixable_issues_by_types(
                 project_key=auth_config.project,
                 branch=branch or "",
                 pull_request=pr_number,
                 max_issues=fix_params['max_fixes'],
                 severities=fix_params['severities_list'],
                 types_list=fix_params['types_list'],
+                group_by="rules"
             )
 
 

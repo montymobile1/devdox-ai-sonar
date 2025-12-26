@@ -91,7 +91,6 @@ class SonarCloudAnalyzer:
             {"Authorization": f"Bearer {token}", "Accept": "application/json"}
         )
 
-
     def get_project_issues(
         self,
         project_key: str,
@@ -101,6 +100,10 @@ class SonarCloudAnalyzer:
         statuses: Optional[List[str]] = None,
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
+        facets:Optional[str]=None,
+        filter_by:Optional[str]=None,
+        filter_values:Optional[List[str]]=None
+
     ) -> Optional[AnalysisResult]:
         if statuses is None:
             statuses = ["OPEN"]
@@ -116,6 +119,9 @@ class SonarCloudAnalyzer:
                 statuses,
                 severities,
                 types,
+                facets=facets,
+                filter_by=filter_by,
+                filter_values=filter_values
             )
             issues = self._fetch_issues(url, params, "issues")
             parsed_issues = self._parse_issues(issues)
@@ -139,6 +145,55 @@ class SonarCloudAnalyzer:
             )
             return None
 
+
+
+    def get_project_rules(
+        self,
+        project_key: str,
+        branch: str = "",
+        pull_request_number: Optional[int] = None,
+        statuses: Optional[List[str]] = None,
+        severities: Optional[List[str]] = None,
+        types: Optional[List[str]] = None,
+        facets:Optional[str]=None,
+        total:Optional[int]=0
+    ) -> Optional[AnalysisResult]:
+        if statuses is None:
+            statuses = ["OPEN"]
+
+        url = urljoin(self.base_url, "/api/issues/search")
+        try:
+            params = self._build_query_params(
+                project_key,
+                branch,
+                1,
+                pull_request_number,
+                statuses,
+                severities,
+                types,
+                facets=facets
+            )
+            rules = self._fetch_issues(url, params, "facets")
+            final_rules = []
+            if len(rules) > 0:
+                for rule in rules:
+                    for rule_info in  rule.get("values",[]):
+                        total-=rule_info.get("count",0)
+                        final_rules.append(rule_info.get("val",""))
+                        if total <= 0:
+                            break
+
+            return final_rules
+        except requests.RequestException as e:
+            self._handle_exceptions(e, project_key)
+            return None
+        except Exception as e:
+            logger.error(
+                f"Unexpected error fetching issues for {project_key}: {e}",
+                exc_info=settings.EXC_INFO,
+            )
+            return None
+
     def _build_query_params(
         self,
         project_key: str,
@@ -149,6 +204,9 @@ class SonarCloudAnalyzer:
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
         field_key: str = "componentKeys",
+        facets:Optional[str]=None,
+            filter_by:Optional[str]=None,
+            filter_values:Optional[List[str]]=None
     ) -> Dict[str, Union[str, int]]:
         params: Dict[str, Union[str, int]] = {
             field_key: project_key,
@@ -168,6 +226,10 @@ class SonarCloudAnalyzer:
             params["severities"] = ",".join(severities)
         if types:
             params["types"] = ",".join(types)
+        if facets:
+            params["facets"] = facets
+        if filter_by and filter_values:
+            params[filter_by] =  ",".join(filter_values)
         return params
 
     def _fetch_issues(
@@ -179,7 +241,6 @@ class SonarCloudAnalyzer:
         data = response.json()
         issues = data.get(key_name, [])
         all_issues.extend(issues)
-
         return all_issues
 
     def _handle_exceptions(
@@ -568,6 +629,71 @@ class SonarCloudAnalyzer:
 
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
+
+    def get_fixable_issues_by_types(
+            self,
+            project_key: str,
+            branch: str = "",
+            pull_request: Optional[int] = 0,
+            max_issues: Optional[int] = 10,
+            severities: Optional[List[str]] = None,
+            types_list: Optional[List[str]] = None,
+            group_by: Optional[str] = "file",
+    ) -> Dict[str, List[SonarIssue]]:
+        """
+        Get issues that are potentially fixable by LLM.
+
+        Args:
+            project_key: SonarCloud project key
+            branch: Branch to analyze
+            types_list: Optional list of issue types to filter by
+
+        Returns:
+            List of fixable SonarIssue objects
+        """
+        filter_values =None
+        filter_by=None
+        if group_by=="rules":
+
+            rules = self.get_project_rules(
+                project_key,
+                branch,
+                pull_request_number=pull_request,
+                severities=severities,
+                types=types_list,
+                facets=group_by,
+                total=max_issues
+
+            )
+            if len(rules)>0:
+                filter_values = rules
+                filter_by="rules"
+
+        analysis = self.get_project_issues(
+            project_key,
+            branch,
+            max_issues=max_issues,
+            pull_request_number=pull_request,
+            severities=severities,
+            types=types_list,
+            filter_by=filter_by,
+            filter_values=filter_values
+
+        )
+        if not analysis:
+            return {}
+        all_issues = {}
+        if group_by=="rules":
+            for issue in analysis.issues:
+                if issue.rule:
+                    rule = str(issue.rule)
+                    all_issues.setdefault(rule, {"issue": []})["issue"].append(issue)
+            return all_issues
+
+
+        fixable_by_file = analysis.fixable_issues_by_file
+        return fixable_by_file
+
 
     def get_fixable_security_issues(
         self,

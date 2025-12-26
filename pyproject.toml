@@ -32,10 +32,10 @@ classifiers = [
 
 # Core dependencies
 dependencies = [
-    "click===8.1.7",
+    "click==8.1.7",
     #"rich==13.8.1",
     "rich-click==1.9.4",
-    "requests==2.32",
+    "requests>=2.32",
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
     "pydantic-settings==2.12.0",

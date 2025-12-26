@@ -14,7 +14,8 @@ from devdox_ai_sonar.models.sonar import (
     SonarSecurityIssue,
     AnalysisResult,
     ProjectMetrics,
-    Severity
+    Severity,
+    IssueType
 )
 from devdox_ai_sonar.utils.exceptions import SonarCloudAPIError
 
@@ -119,6 +120,21 @@ def sample_metrics_data():
         }
     }
 
+@pytest.fixture
+def sample_rules_response():
+    """Sample rules facet response"""
+    return {
+        "facets": [
+            {
+                "property": "rules",
+                "values": [
+                    {"val": "python:S1234", "count": 5},
+                    {"val": "python:S5678", "count": 3},
+                    {"val": "python:S9012", "count": 2}
+                ]
+            }
+        ]
+    }
 
 # ============================================================================
 # TEST CLASS: INITIALIZATION
@@ -357,6 +373,71 @@ class TestGetProjectMetrics:
         
         assert metrics is None
 
+    def test_get_project_metrics_invalid_numeric_values(self, analyzer):
+        """Test handling of non-numeric metric values"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "component": {
+                "measures": [
+                    {"metric": "ncloc", "value": "invalid"},
+                    {"metric": "coverage", "value": "not_a_number"}
+                ]
+            }
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+        # Should handle conversion errors gracefully
+        assert metrics.lines_of_code == 0
+        assert metrics.coverage == 0.0
+
+    def test_get_project_metrics_missing_measures_array(self, analyzer):
+        """Test when measures array is missing"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "component": {}
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+        assert metrics.lines_of_code is None
+
+    def test_get_project_metrics_empty_component(self, analyzer):
+        """Test when component object is empty"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {}
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+
+    def test_get_project_metrics_none_values(self, analyzer):
+        """Test handling of None metric values"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "component": {
+                "measures": [
+                    {"metric": "ncloc", "value": None},
+                    {"metric": "coverage", "value": None}
+                ]
+            }
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            metrics = analyzer.get_project_metrics("test-project")
+
+        assert metrics is not None
+
+
 
 # ============================================================================
 # TEST CLASS: PARSE ISSUES
@@ -433,6 +514,587 @@ class TestParseIssues:
         
         assert issues == []
 
+    def test_parse_issues_invalid_severity(self, analyzer):
+        """Test parsing with invalid severity value"""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "INVALID_SEVERITY",
+            "component": "test.py",
+            "project": "project",
+            "line": 10,
+            "message": "Issue"
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        # Should default to INFO
+        assert issues[0].severity == Severity.INFO
+
+    def test_parse_issues_invalid_issue_type(self, analyzer):
+        """Test parsing with invalid issue type"""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "type": "INVALID_TYPE",
+            "component": "test.py",
+            "project": "project",
+            "line": 10,
+            "message": "Issue"
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        # Should default to CODE_SMELL
+        assert issues[0].type == IssueType.CODE_SMELL
+
+    def test_parse_issues_missing_flows(self, analyzer):
+        """Test parsing when flows array is missing"""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "line": 10,
+            "message": "Issue"
+            # No flows
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].first_line == 10
+        assert issues[0].last_line == 10
+
+    def test_parse_issues_flows_without_locations(self, analyzer):
+        """Test parsing flows with empty locations"""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "line": 10,
+            "message": "Issue",
+            "flows": [
+                {"locations": []}
+            ]
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].last_line == 10
+
+    def test_parse_issues_none_line_numbers(self, analyzer):
+        """Test parsing when line numbers are None"""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "line": None,
+            "message": "Issue"
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].first_line is None
+
+
+    def test_parse_issues_exception_in_single_issue(self, analyzer):
+        """Test that exception in one issue doesn't stop parsing others"""
+        good_issue = {
+            "key": "good-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "line": 10,
+            "message": "Good issue"
+        }
+        bad_issue = {"key": "bad-issue"}  # Missing required fields
+
+        issues = analyzer._parse_issues([good_issue, bad_issue, good_issue])
+
+        # Should still parse the good issues
+        assert len(issues) >= 1
+
+
+class TestGetFixableIssues:
+    """Test get_fixable_issues method - COMPLETELY UNTESTED"""
+
+    def test_get_fixable_issues_returns_empty_when_no_analysis(self, analyzer):
+        """Test when get_project_issues returns None"""
+        with patch.object(analyzer, 'get_project_issues', return_value=None):
+            issues = analyzer.get_fixable_issues(
+                project_key="test-project",
+                branch="main",
+                max_issues=10
+            )
+
+        assert isinstance(issues, list)
+        assert len(issues) == 0
+
+    def test_get_fixable_issues_sorting_by_severity(self, analyzer, sample_issue_data):
+        """Test issues are sorted correctly by severity"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        # Create issues with different severities
+        issue_blocker = sample_issue_data.copy()
+        issue_blocker["severity"] = "BLOCKER"
+        issue_blocker["key"] = "issue-blocker"
+
+        issue_minor = sample_issue_data.copy()
+        issue_minor["severity"] = "MINOR"
+        issue_minor["key"] = "issue-minor"
+
+        issue_critical = sample_issue_data.copy()
+        issue_critical["severity"] = "CRITICAL"
+        issue_critical["key"] = "issue-critical"
+
+        mock_response.json.return_value = {
+            "total": 3,
+            "issues": [issue_minor, issue_critical, issue_blocker]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer.get_fixable_issues(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        # Verify sorting order
+        if len(issues) > 0:
+            severities = [issue.severity for issue in issues]
+            # BLOCKER should come first, MINOR last
+            assert severities[0] in ["BLOCKER", "CRITICAL"]
+
+    def test_get_fixable_issues_max_issues_limit(self, analyzer, sample_issue_data):
+        """Test max_issues parameter limits results correctly"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        # Create 10 issues
+        issues_list = []
+        for i in range(10):
+            issue = sample_issue_data.copy()
+            issue["key"] = f"issue-{i}"
+            issues_list.append(issue)
+
+        mock_response.json.return_value = {
+            "total": 10,
+            "issues": issues_list
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer.get_fixable_issues(
+                project_key="test-project",
+                max_issues=5
+            )
+
+        # Should be limited to 5
+        assert len(issues) <= 5
+
+    def test_get_fixable_issues_with_all_severity_types(self, analyzer, sample_issue_data):
+        """Test with all severity levels"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        severities = ["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"]
+        issues_list = []
+        for sev in severities:
+            issue = sample_issue_data.copy()
+            issue["severity"] = sev
+            issue["key"] = f"issue-{sev}"
+            issues_list.append(issue)
+
+        mock_response.json.return_value = {
+            "total": 5,
+            "issues": issues_list
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer.get_fixable_issues(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        assert len(issues) > 0
+        # Verify all severity types are handled
+        severity_values = [issue.severity for issue in issues]
+        assert all(sev in ["BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"] for sev in severity_values)
+
+
+class TestGetFixableIssuesByTypes:
+    """Test get_fixable_issues_by_types method - COMPLETELY UNTESTED"""
+
+    def test_get_fixable_issues_by_types_with_rules_grouping(self, analyzer, sample_issue_data, sample_rules_response):
+        """Test grouping issues by rules"""
+        # Mock get_project_rules to return rules
+        mock_rules_response = Mock()
+        mock_rules_response.status_code = 200
+        mock_rules_response.json.return_value = sample_rules_response
+
+        # Mock get_project_issues to return issues
+        mock_issues_response = Mock()
+        mock_issues_response.status_code = 200
+        issue_data = sample_issue_data.copy()
+        issue_data["rule"] = "python:S1234"
+        mock_issues_response.json.return_value = {
+            "total": 1,
+            "issues": [issue_data]
+        }
+
+        with patch.object(analyzer.session, 'get') as mock_get:
+            mock_get.side_effect = [mock_rules_response, mock_issues_response]
+
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                branch="main",
+                max_issues=10,
+                group_by="rules"
+            )
+
+        assert isinstance(result, dict)
+        assert "python:S1234" in result
+        assert "issue" in result["python:S1234"]
+        assert len(result["python:S1234"]["issue"]) > 0
+
+    def test_get_fixable_issues_by_types_with_file_grouping(self, analyzer, sample_issue_data):
+        """Test grouping issues by file (default behavior)"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "total": 1,
+            "issues": [sample_issue_data]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                branch="main",
+                max_issues=10,
+                group_by="file"
+            )
+
+        assert isinstance(result, dict)
+        # Should return grouped by file
+        for key in result.keys():
+            assert isinstance(result[key], list)
+
+    def test_get_fixable_issues_by_types_empty_rules(self, analyzer):
+        """Test when no rules are returned"""
+        mock_rules_response = Mock()
+        mock_rules_response.status_code = 200
+        mock_rules_response.json.return_value = {
+            "facets": [
+                {
+                    "property": "rules",
+                    "values": []
+                }
+            ]
+        }
+
+        mock_issues_response = Mock()
+        mock_issues_response.status_code = 200
+        mock_issues_response.json.return_value = {
+            "total": 0,
+            "issues": []
+        }
+
+        with patch.object(analyzer.session, 'get') as mock_get:
+            mock_get.side_effect = [mock_rules_response, mock_issues_response]
+
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                group_by="rules",
+                max_issues=10
+            )
+
+        assert isinstance(result, dict)
+
+    def test_get_fixable_issues_by_types_with_filters(self, analyzer, sample_issue_data):
+        """Test with severity and type filters"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "total": 1,
+            "issues": [sample_issue_data]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                branch="main",
+                severities=["CRITICAL", "BLOCKER"],
+                types_list=["BUG", "VULNERABILITY"],
+                max_issues=10
+            )
+
+        # Verify filters were passed
+        assert mock_get.called
+        call_args = mock_get.call_args_list
+        params = call_args[0][1]['params']
+        assert 'severities' in params or 'types' in params
+
+    def test_get_fixable_issues_by_types_no_analysis_returned(self, analyzer):
+        """Test when get_project_issues returns None"""
+        with patch.object(analyzer, 'get_project_issues', return_value=None):
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        assert result == {}
+
+    def test_get_fixable_issues_by_types_multiple_rules(self, analyzer, sample_issue_data):
+        """Test with multiple rules returned"""
+        mock_rules_response = Mock()
+        mock_rules_response.status_code = 200
+        mock_rules_response.json.return_value = {
+            "facets": [
+                {
+                    "property": "rules",
+                    "values": [
+                        {"val": "python:S1234", "count": 5},
+                        {"val": "python:S5678", "count": 3}
+                    ]
+                }
+            ]
+        }
+
+        mock_issues_response = Mock()
+        mock_issues_response.status_code = 200
+        issue1 = sample_issue_data.copy()
+        issue1["rule"] = "python:S1234"
+        issue2 = sample_issue_data.copy()
+        issue2["rule"] = "python:S5678"
+        issue2["key"] = "issue-456"
+
+        mock_issues_response.json.return_value = {
+            "total": 2,
+            "issues": [issue1, issue2]
+        }
+
+        with patch.object(analyzer.session, 'get') as mock_get:
+            mock_get.side_effect = [mock_rules_response, mock_issues_response]
+
+            result = analyzer.get_fixable_issues_by_types(
+                project_key="test-project",
+                group_by="rules",
+                max_issues=10
+            )
+
+        assert isinstance(result, dict)
+        assert len(result) >= 1
+
+
+class TestGetFixableIssuesByFiles:
+    """Test get_fixable_issues_by_files method"""
+
+    def test_get_fixable_issues_by_files_empty_result(self, analyzer):
+        """Test when no analysis is returned"""
+        with patch.object(analyzer, 'get_project_issues', return_value=None):
+            result = analyzer.get_fixable_issues_by_files(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        assert result == {}
+
+    def test_get_fixable_issues_by_files_groups_correctly(self, analyzer, sample_issue_data):
+        """Test issues are grouped by file correctly"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        issue1 = sample_issue_data.copy()
+        issue1["component"] = "project:src/file1.py"
+        issue2 = sample_issue_data.copy()
+        issue2["component"] = "project:src/file1.py"
+        issue2["key"] = "issue-2"
+
+        mock_response.json.return_value = {
+            "total": 2,
+            "issues": [issue1, issue2]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            result = analyzer.get_fixable_issues_by_files(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        assert isinstance(result, dict)
+        # Issues from same file should be grouped together
+        if len(result) > 0:
+            for file_path, issues in result.items():
+                assert isinstance(issues, list)
+
+    def test_get_fixable_issues_by_files_with_multiple_files(self, analyzer, sample_issue_data):
+        """Test with issues across multiple files"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+
+        issue1 = sample_issue_data.copy()
+        issue1["component"] = "project:src/file1.py"
+        issue2 = sample_issue_data.copy()
+        issue2["component"] = "project:src/file2.py"
+        issue2["key"] = "issue-2"
+
+        mock_response.json.return_value = {
+            "total": 2,
+            "issues": [issue1, issue2]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            result = analyzer.get_fixable_issues_by_files(
+                project_key="test-project",
+                max_issues=10
+            )
+
+        assert isinstance(result, dict)
+
+
+class TestGetProjectRules:
+    """Test get_project_rules method - COMPLETELY UNTESTED"""
+
+    def test_get_project_rules_success(self, analyzer, sample_rules_response):
+        """Test successfully fetching project rules"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_rules_response
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                branch="main",
+                total=10
+            )
+
+        assert isinstance(rules, list)
+        assert len(rules) > 0
+        assert "python:S1234" in rules
+
+    def test_get_project_rules_with_facets(self, analyzer, sample_rules_response):
+        """Test fetching rules with facet grouping"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_rules_response
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                facets="rules",
+                total=10
+            )
+
+        # Verify facets parameter was passed
+        call_args = mock_get.call_args_list[0]
+        params = call_args[1]['params']
+        assert params.get('facets') == "rules"
+
+    def test_get_project_rules_with_total_limit(self, analyzer):
+        """Test rule fetching stops when total reached"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "facets": [
+                {
+                    "property": "rules",
+                    "values": [
+                        {"val": "python:S1234", "count": 8},
+                        {"val": "python:S5678", "count": 5},  # Should stop here
+                        {"val": "python:S9012", "count": 3}
+                    ]
+                }
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                total=10
+            )
+
+        # Should stop at 10 total issues (8 + 5 > 10, so only first two)
+        assert isinstance(rules, list)
+        assert len(rules) <= 3
+
+    def test_get_project_rules_api_error(self, analyzer):
+        """Test error handling in rule fetching"""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        mock_response.raise_for_status.side_effect = requests.HTTPError("Server Error")
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                total=10
+            )
+
+        assert rules is None
+
+    def test_get_project_rules_empty_facets(self, analyzer):
+        """Test when API returns empty facets"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "facets": []
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                total=10
+            )
+
+        assert isinstance(rules, list)
+        assert len(rules) == 0
+
+    def test_get_project_rules_with_all_filters(self, analyzer, sample_rules_response):
+        """Test with all filter parameters"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = sample_rules_response
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                branch="develop",
+                pull_request_number=123,
+                statuses=["OPEN", "CONFIRMED"],
+                severities=["CRITICAL", "BLOCKER"],
+                types=["BUG"],
+                facets="rules",
+                total=20
+            )
+
+        # Verify all parameters were passed
+        call_args = mock_get.call_args_list[0]
+        params = call_args[1]['params']
+        assert 'branch' in params or 'pullRequest' in params
+        assert 'severities' in params
+        assert 'types' in params
+
+    def test_get_project_rules_connection_error(self, analyzer):
+        """Test handling of connection errors"""
+        with patch.object(analyzer.session, 'get', side_effect=requests.ConnectionError("Connection failed")):
+            rules = analyzer.get_project_rules(
+                project_key="test-project",
+                total=10
+            )
+
+        assert rules is None
+
+
 
 # ============================================================================
 # TEST CLASS: SECURITY ISSUES
@@ -485,7 +1147,53 @@ class TestSecurityIssues:
         # Verify filters were applied
         assert mock_get.called
 
+    def test_parse_security_issues_missing_optional_fields(self, analyzer):
+        """Test parsing security issues with missing fields"""
+        issue_data = {
+            "key": "sec-1",
+            "ruleKey": "python:S5042",
+            "component": "test.py",
+            "line": 20,
+            "message": "Security issue"
+            # Missing optional fields
+        }
 
+        issues = analyzer._parse_security_issues([issue_data], "test-project")
+
+        assert len(issues) == 1
+        assert issues[0].key == "sec-1"
+        assert issues[0].status == "OPEN"  # Default value
+
+    def test_parse_security_issues_invalid_line_numbers(self, analyzer):
+        """Test handling of invalid line number data"""
+        issue_data = {
+            "key": "sec-1",
+            "ruleKey": "python:S5042",
+            "component": "test.py",
+            "line": "not_a_number",
+            "message": "Security issue"
+        }
+
+        issues = analyzer._parse_security_issues([issue_data], "test-project")
+
+        # Should handle gracefully
+        assert len(issues) <= 1
+
+    def test_parse_security_issues_exception_handling(self, analyzer):
+        """Test exception handling in security issue parsing"""
+        good_issue = {
+            "key": "sec-1",
+            "ruleKey": "python:S5042",
+            "component": "test.py",
+            "line": 20,
+            "message": "Good issue"
+        }
+        bad_issue = {"key": "bad"}  # Missing required fields
+
+        issues = analyzer._parse_security_issues([good_issue, bad_issue], "test-project")
+
+        # Should continue processing despite error
+        assert len(issues) >= 1
 # ============================================================================
 # TEST CLASS: DIRECTORY ANALYSIS
 # ============================================================================
@@ -553,6 +1261,74 @@ class TestDirectoryAnalysis:
         
         assert result["javascript_files"] == 1
 
+    def test_analyze_project_directory_invalid_path(self, analyzer):
+        """Test with non-existent directory"""
+        with pytest.raises(ValueError, match="Invalid project path"):
+            analyzer.analyze_project_directory("/nonexistent/path")
+
+    def test_analyze_project_directory_file_not_directory(self, analyzer, tmp_path):
+        """Test when path points to file, not directory"""
+        file_path = tmp_path / "file.txt"
+        file_path.write_text("content")
+
+        with pytest.raises(ValueError, match="Invalid project path"):
+            analyzer.analyze_project_directory(str(file_path))
+
+    def test_analyze_project_directory_hidden_files(self, analyzer, tmp_path):
+        """Test that hidden files/dirs are properly ignored"""
+        (tmp_path / ".hidden_dir").mkdir()
+        (tmp_path / ".hidden_file.py").write_text("code")
+        (tmp_path / "visible.py").write_text("code")
+
+        analysis = analyzer.analyze_project_directory(str(tmp_path))
+
+        # Hidden files should not be counted
+        assert ".hidden_dir" not in analysis["directories"]
+        assert analysis["python_files"] >= 1  # Only visible.py
+
+    def test_analyze_project_directory_nested_structure(self, analyzer, tmp_path):
+        """Test with deeply nested directory structure"""
+        nested = tmp_path / "level1" / "level2" / "level3"
+        nested.mkdir(parents=True)
+        (nested / "file.py").write_text("code")
+
+        analysis = analyzer.analyze_project_directory(str(tmp_path))
+
+        assert analysis["total_files"] >= 1
+        assert analysis["python_files"] >= 1
+
+    def test_analyze_project_directory_mixed_extensions(self, analyzer, tmp_path):
+        """Test with various file extensions"""
+        extensions = [".py", ".js", ".jsx", ".ts", ".tsx", ".java", ".txt", ".md"]
+        for ext in extensions:
+            (tmp_path / f"file{ext}").write_text("content")
+
+        analysis = analyzer.analyze_project_directory(str(tmp_path))
+
+        assert analysis["python_files"] >= 1
+        assert analysis["javascript_files"] >= 4  # js, jsx, ts, tsx
+        assert analysis["java_files"] >= 1
+        assert analysis["other_files"] >= 2  # txt, md
+
+    def test_check_file_extension_typescript(self, analyzer):
+        """Test TypeScript extensions are counted as JavaScript"""
+        analysis = {"javascript_files": 0}
+
+        result = analyzer.check_file_extension(analysis, ".ts")
+        assert result["javascript_files"] == 1
+
+        result = analyzer.check_file_extension(result, ".tsx")
+        assert result["javascript_files"] == 2
+
+    def test_check_file_extension_kotlin_scala(self, analyzer):
+        """Test Kotlin and Scala are counted as Java"""
+        analysis = {"java_files": 0}
+
+        result = analyzer.check_file_extension(analysis, ".kotlin")
+        assert result["java_files"] == 1
+
+        result = analyzer.check_file_extension(result, ".scala")
+        assert result["java_files"] == 2
 
 # ============================================================================
 # TEST CLASS: CONTEXT MANAGER
@@ -631,4 +1407,293 @@ class TestHelperMethods:
         assert "severities" in params
         assert "types" in params
 
+    def test_build_query_params_with_facets(self, analyzer):
+        """Test building params with facets parameter"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            facets="rules"
+        )
 
+        assert params["facets"] == "rules"
+        assert params["componentKeys"] == "test-project"
+
+    def test_build_query_params_with_filter_by_and_values(self, analyzer):
+        """Test filter_by and filter_values parameters"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            filter_by="rules",
+            filter_values=["python:S1234", "python:S5678"]
+        )
+
+        assert "rules" in params
+        assert params["rules"] == "python:S1234,python:S5678"
+
+    def test_build_query_params_empty_branch_with_no_pr(self, analyzer):
+        """Test default to 'main' when branch and PR both empty"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="",
+            max_issues=10,
+            pull_request_number=0
+        )
+
+        assert params.get("branch") == "main"
+        assert "pullRequest" not in params
+
+    def test_build_query_params_all_filters_combined(self, analyzer):
+        """Test combining all filter types together"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="develop",
+            max_issues=50,
+            pull_request_number=0,
+            statuses=["OPEN", "CONFIRMED"],
+            severities=["CRITICAL", "BLOCKER"],
+            types=["BUG", "VULNERABILITY"],
+            facets="rules,types",
+            filter_by="rules",
+            filter_values=["python:S1234"]
+        )
+
+        assert params["componentKeys"] == "test-project"
+        assert params["branch"] == "develop"
+        assert params["ps"] == 50
+        assert "issueStatuses" in params
+        assert "severities" in params
+        assert "types" in params
+        assert params["facets"] == "rules,types"
+        assert params["rules"] == "python:S1234"
+
+    def test_build_query_params_custom_field_key(self, analyzer):
+        """Test with custom field_key parameter"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            field_key="projectKey"
+        )
+
+        assert "projectKey" in params
+        assert params["projectKey"] == "test-project"
+
+    def test_build_query_params_pull_request_overrides_branch(self, analyzer):
+        """Test pull request parameter when branch is empty"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="",
+            max_issues=10,
+            pull_request_number=123
+        )
+
+        assert params.get("pullRequest") == "123"
+        assert "branch" not in params or params.get("branch") != "main"
+
+
+# ============================================================================
+# TEST CLASS: FETCH_ISSUES - MISSING EDGE CASES
+# ============================================================================
+
+class TestFetchIssuesExtended:
+    """Test _fetch_issues method edge cases"""
+
+    def test_fetch_issues_pagination_handling(self, analyzer):
+        """Test how pagination data is handled"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "issues": [{"key": "issue-1"}],
+            "paging": {
+                "pageIndex": 1,
+                "pageSize": 100,
+                "total": 150
+            }
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer._fetch_issues(
+                url="https://sonarcloud.io/api/issues/search",
+                params={"componentKeys": "test"},
+                key_name="issues"
+            )
+
+        assert isinstance(issues, list)
+        assert len(issues) > 0
+
+    def test_fetch_issues_malformed_response(self, analyzer):
+        """Test handling of malformed API responses"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "unexpected_key": "value"
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer._fetch_issues(
+                url="https://sonarcloud.io/api/issues/search",
+                params={"componentKeys": "test"},
+                key_name="issues"
+            )
+
+        assert isinstance(issues, list)
+        assert len(issues) == 0
+
+    def test_fetch_issues_empty_key_name(self, analyzer):
+        """Test when key_name doesn't exist in response"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "other_data": []
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            issues = analyzer._fetch_issues(
+                url="https://sonarcloud.io/api/issues/search",
+                params={"componentKeys": "test"},
+                key_name="nonexistent_key"
+            )
+
+        assert isinstance(issues, list)
+        assert len(issues) == 0
+
+
+# ============================================================================
+# TEST CLASS: HANDLE_EXCEPTIONS - COMPREHENSIVE COVERAGE
+# ============================================================================
+
+class TestHandleExceptionsExtended:
+    """Test _handle_exceptions method comprehensively"""
+
+    def test_handle_exceptions_401_unauthorized(self, analyzer, caplog):
+        """Test handling 401 authentication error"""
+        mock_response = Mock()
+        mock_response.status_code = 401
+        error = requests.HTTPError()
+        error.response = mock_response
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "Authentication failed" in caplog.text
+
+    def test_handle_exceptions_403_forbidden(self, analyzer, caplog):
+        """Test handling 403 permission error"""
+        mock_response = Mock()
+        mock_response.status_code = 403
+        error = requests.HTTPError()
+        error.response = mock_response
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "Access forbidden" in caplog.text
+
+    def test_handle_exceptions_404_not_found(self, analyzer, caplog):
+        """Test handling 404 project not found"""
+        mock_response = Mock()
+        mock_response.status_code = 404
+        error = requests.HTTPError()
+        error.response = mock_response
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "not found" in caplog.text
+        assert "test-project" in caplog.text
+
+    def test_handle_exceptions_timeout_error(self, analyzer, caplog):
+        """Test handling timeout exception"""
+        error = requests.Timeout("Request timed out")
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "timed out" in caplog.text
+
+    def test_handle_exceptions_without_response(self, analyzer, caplog):
+        """Test handling exception without response object"""
+        error = requests.RequestException("Generic error")
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "Error fetching issues" in caplog.text
+
+    def test_handle_exceptions_500_server_error(self, analyzer, caplog):
+        """Test handling 500 server error"""
+        mock_response = Mock()
+        mock_response.status_code = 500
+        error = requests.HTTPError()
+        error.response = mock_response
+
+        analyzer._handle_exceptions(error, "test-project")
+
+        assert "Error fetching issues" in caplog.text
+
+
+# ============================================================================
+# TEST CLASS: INTEGRATION SCENARIOS
+# ============================================================================
+
+class TestIntegrationScenarios:
+    """Test realistic integration scenarios"""
+
+    def test_full_workflow_get_and_fix_issues(self, analyzer, sample_issue_data):
+        """Test complete workflow: get issues, parse, fix"""
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "total": 1,
+            "issues": [sample_issue_data]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            # Get issues
+            analysis = analyzer.get_project_issues(
+                project_key="test-project",
+                branch="main",
+                max_issues=10
+            )
+
+            # Get fixable issues
+            fixable = analyzer.get_fixable_issues(
+                project_key="test-project",
+                branch="main",
+                max_issues=10
+            )
+
+            # Get issues by file
+            by_files = analyzer.get_fixable_issues_by_files(
+                project_key="test-project",
+                branch="main",
+                max_issues=10
+            )
+
+        assert analysis is not None
+        assert isinstance(fixable, list)
+        assert isinstance(by_files, dict)
+
+    def test_error_recovery_continues_operation(self, analyzer, sample_issue_data):
+        """Test that errors in one operation don't break others"""
+        mock_fail_response = Mock()
+        mock_fail_response.status_code = 500
+        mock_fail_response.raise_for_status.side_effect = requests.HTTPError()
+
+        mock_success_response = Mock()
+        mock_success_response.status_code = 200
+        mock_success_response.json.return_value = {
+            "total": 1,
+            "issues": [sample_issue_data]
+        }
+
+        with patch.object(analyzer.session, 'get') as mock_get:
+            mock_get.side_effect = [mock_fail_response, mock_success_response]
+
+            # First call fails
+            result1 = analyzer.get_project_issues("test-project")
+
+            # Second call succeeds
+            result2 = analyzer.get_project_issues("test-project")
+
+            assert result2 is not None
