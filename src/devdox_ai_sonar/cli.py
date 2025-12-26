@@ -1215,7 +1215,6 @@ def _process_regular_issues(
 
     for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
         issues_list = rule_data['issue']
-        total_issues = len(issues_list)
 
 
         console.print(f"\n[blue]Processing ({rule_num}/{total_rules}): {rule_key}[/blue]")
