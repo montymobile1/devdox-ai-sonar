@@ -48,13 +48,16 @@ from devdox_ai_sonar.cli import (
     _display_fix_results,
     _process_files_with_issues,
     _generate_fix_for_file,
-    show_command_selector,
+    _process_single_fix,
     handle_fix,
     _execute_interactive_iteration,
     _should_continue_to_next_file,
     _fetch_issues_by_type,
     _display_project_header,
-    _display_metrics_section
+    _display_metrics_section,
+    _process_security_issues,
+    _process_issues_for_rule,
+    _process_regular_issues
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -72,6 +75,27 @@ from devdox_ai_sonar.models.sonar import (
 def runner():
     """Create CLI test runner"""
     return CliRunner()
+
+
+@pytest.fixture
+def fix_params():
+    """Mock fix parameters."""
+    return {
+        "apply": 0,
+        "dry_run": 0,
+        "create_backup": 1
+    }
+
+
+@pytest.fixture
+def mock_services():
+    """Mock services dictionary."""
+    return {
+        'analyzer': Mock(),
+        'ruler': Mock(),
+        'fixer': Mock()
+    }
+
 
 @pytest.fixture
 def mock_ui():
@@ -122,6 +146,16 @@ def mock_show_progress(message: str, total=None):
     yield mock_progress, mock_task
 
 
+
+@pytest.fixture
+def auth_config():
+    """Mock auth config."""
+    return AuthConfig(
+        token="test-token",
+        organization="test-org",
+        project="test-project",
+        project_path="/tmp/test"
+    )
 
 @pytest.fixture
 def mock_config_service():
@@ -273,7 +307,8 @@ def sample_fix_suggestion():
         fixed_code="new_code = False",
         explanation="Fixed the issue",
         confidence=0.95,
-        sonar_line_number=10
+        sonar_line_number=10,
+        llm_model="gpt-3.5-turbo"
     )
 
 
@@ -1495,6 +1530,194 @@ class TestFixSecurityIssuesCommand:
                     _run_fix_security_issues()
 
 
+class TestSecurityIssuesProcessing:
+    """Test security issues processing."""
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_next_file')
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_security_issues_single_file(
+            self, mock_single_fix, mock_continue,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing single security issue file."""
+        mock_continue.return_value = False  # Stop after first
+
+        issues_by_file = {
+            "security.py": [Mock(), Mock()]
+        }
+
+        _process_security_issues(
+            issues_by_file, mock_services, auth_config, fix_params
+        )
+
+
+        mock_single_fix.assert_called_once()
+        mock_continue.assert_called_once_with(1, 1)
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_next_file')
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_security_issues_multiple_files(
+            self, mock_single_fix, mock_continue,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing multiple security issue files."""
+        mock_continue.side_effect = [True, False]  # Continue first, stop second
+
+        issues_by_file = {
+            "auth.py": [Mock()],
+            "crypto.py": [Mock(), Mock()]
+        }
+
+        _process_security_issues(
+            issues_by_file, mock_services, auth_config, fix_params
+        )
+
+        assert mock_single_fix.call_count == 2
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_next_file')
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_security_issues_user_stops_early(
+            self, mock_single_fix, mock_continue,
+            mock_services, auth_config, fix_params
+    ):
+        """Test user stopping processing early."""
+        mock_continue.return_value = False  # User stops
+
+        issues_by_file = {
+            "file1.py": [Mock()],
+            "file2.py": [Mock()],
+            "file3.py": [Mock()]
+        }
+
+        _process_security_issues(
+            issues_by_file, mock_services, auth_config, fix_params
+        )
+
+        # Should only process first file
+        assert mock_single_fix.call_count == 1
+
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_empty_issues_dict(
+            self, mock_single_fix,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing with empty issues dict."""
+        issues_by_file = {}
+
+        _process_security_issues(
+            issues_by_file, mock_services, auth_config, fix_params
+        )
+
+        # Should handle gracefully
+        mock_single_fix.assert_not_called()
+
+    @patch('devdox_ai_sonar.cli._process_issues_for_rule')
+    def test_process_rule_with_empty_issues_list(
+            self, mock_process_rule,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing rule with empty issues list."""
+        mock_process_rule.return_value = True
+
+        issues_by_rule = {
+            "python:S1234": {"issue": []}  # Empty list
+        }
+
+        _process_regular_issues(
+            issues_by_rule, mock_services, auth_config, fix_params
+        )
+
+        # Should still call process_rule
+        mock_process_rule.assert_called_once()
+        
+# ============================================================================
+# TEST CLASS: REGULAR ISSUES PROCESSING
+# ============================================================================
+
+class TestRegularIssuesProcessing:
+    """Test regular issues processing."""
+
+    @patch('devdox_ai_sonar.cli._process_issues_for_rule')
+    def test_process_regular_issues_single_rule(
+            self, mock_process_rule,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing single rule."""
+        mock_process_rule.return_value = True
+
+        issues_by_rule = {
+            "python:S1234": {
+                "issue": [Mock(), Mock()]
+            }
+        }
+
+        _process_regular_issues(
+            issues_by_rule, mock_services, auth_config, fix_params
+        )
+
+
+        mock_process_rule.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._process_issues_for_rule')
+    def test_process_regular_issues_multiple_rules(
+            self, mock_process_rule,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing multiple rules."""
+        mock_process_rule.side_effect = [True, True, False]  # Stop at third
+
+        issues_by_rule = {
+            "python:S1234": {"issue": [Mock()]},
+            "python:S5678": {"issue": [Mock()]},
+            "python:S9012": {"issue": [Mock()]}
+        }
+
+        _process_regular_issues(
+            issues_by_rule, mock_services, auth_config, fix_params
+        )
+
+        assert mock_process_rule.call_count == 3
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_next_file')
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_issues_for_rule_all_issues(
+            self, mock_single_fix, mock_continue,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing all issues for a rule."""
+        mock_continue.side_effect = [True, True, False]
+
+        issues_list = [Mock(), Mock(), Mock()]
+
+        result = _process_issues_for_rule(
+            "python:S1234", issues_list,
+            mock_services, auth_config, fix_params
+        )
+
+        assert result is False  # Stopped by user
+        assert mock_single_fix.call_count == 3
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_next_file')
+    @patch('devdox_ai_sonar.cli._process_single_fix')
+    def test_process_issues_for_rule_continues(
+            self, mock_single_fix, mock_continue,
+            mock_services, auth_config, fix_params
+    ):
+        """Test processing continues to next rule."""
+        mock_continue.return_value = True  # Continue all
+
+        issues_list = [Mock(), Mock()]
+
+        result = _process_issues_for_rule(
+            "python:S1234", issues_list,
+            mock_services, auth_config, fix_params
+        )
+
+        assert result is True  # Should continue
+        assert mock_single_fix.call_count == 2
+
+
+
 # ============================================================================
 # TEST CLASS: ANALYZE COMMAND
 # ============================================================================
@@ -2142,6 +2365,40 @@ class TestFileProcessing:
 
         assert result is False
         mock_confirm.assert_not_called()
+
+    @patch('devdox_ai_sonar.cli._process_security_issues')
+    def test_process_files_security_type(
+            self, mock_process_security,
+            mock_services, auth_config, fix_params, sample_issues
+    ):
+        """Test dispatches to security processing."""
+        issues_by_file = {"test.py": sample_issues}
+
+        _process_files_with_issues(
+            issues_by_file, mock_services, auth_config,
+            fix_params, IssueType.SECURITY
+        )
+
+        mock_process_security.assert_called_once_with(
+            issues_by_file, mock_services, auth_config, fix_params
+        )
+
+    @patch('devdox_ai_sonar.cli._process_regular_issues')
+    def test_process_files_regular_type(
+            self, mock_process_regular,
+            mock_services, auth_config, fix_params
+    ):
+        """Test dispatches to regular processing."""
+        issues_by_rule = {"python:S1234": {"issue": [Mock()]}}
+
+        _process_files_with_issues(
+            issues_by_rule, mock_services, auth_config,
+            fix_params, IssueType.REGULAR
+        )
+
+        mock_process_regular.assert_called_once_with(
+            issues_by_rule, mock_services, auth_config, fix_params
+        )
 
 
 # ============================================================================
@@ -3073,3 +3330,56 @@ class TestConcurrentScenarios:
 
         # Should handle gracefully
         assert mock_init.call_count == 3
+
+
+class TestHelperFunctions:
+    """Test extracted helper functions."""
+
+
+    @patch('devdox_ai_sonar.cli._generate_fix_for_file')
+    @patch('devdox_ai_sonar.cli.handle_fix')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_process_single_fix_success(
+            self, mock_console, mock_handle, mock_generate,
+        auth_config, fix_params, sample_fix_suggestion
+    ):
+        """Test successful single fix processing."""
+        mock_generate.return_value = sample_fix_suggestion
+        issues = [Mock()]
+
+        mock_services = {
+            'analyzer': Mock(),
+            'ruler': Mock(),
+            'fixer': Mock()
+        }
+        _process_single_fix(
+            issues, mock_services, auth_config,
+            fix_params, IssueType.SECURITY, "test.py"
+        )
+
+        mock_generate.assert_called_once()
+        mock_handle.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._generate_fix_for_file')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_process_single_fix_no_fix_generated(
+            self, mock_console, mock_generate
+            ,auth_config, fix_params
+    ):
+        """Test when no fix can be generated."""
+        mock_generate.return_value = None
+        issues = [Mock()]
+        mock_services = {
+            'analyzer': Mock(),
+            'ruler': Mock(),
+            'fixer': Mock()
+        }
+        _process_single_fix(
+            issues, mock_services, auth_config,
+            fix_params, IssueType.SECURITY, "test.py"
+        )
+
+        # Should print warning
+        call_args = str(mock_console.print.call_args_list)
+        assert 'No fix' in call_args or 'could not be generated' in call_args
+

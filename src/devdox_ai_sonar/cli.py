@@ -537,7 +537,7 @@ def init_config(  types: Optional[str] = None,
     max_fixes: int = 0,
     apply: bool=False,
     dry_run: bool=False):
-    """CLI for config management - Complexity: 8 (under limit of 15)"""
+    """CLI for config management """
     try:
         # Initialize all managers
         manager, ui, _ , provider_manager, sonar_ui, config_service = _initialize_managers()
@@ -602,7 +602,7 @@ def add_provider():
 
 
 def update_provider():
-    """CLI command for managing provider configuration - Complexity: 7 (under limit of 15)"""
+    """CLI command for managing provider configuration """
     try:
         # Initialize components
         manager, _, _, provider_manager, _, _ = _initialize_managers()
@@ -1192,39 +1192,121 @@ def _process_files_with_issues(
 
 
     """
-    total_files = len(issues_by_file)
     if issue_type == IssueType.SECURITY:
-
-        for idx, (key, issues) in enumerate(issues_by_file.items(), 1):
-
-            console.print(f"\n[blue]Processing ({idx}/{total_files}): {key}[/blue]")
-
-            fix = _generate_fix_for_file(issues, services, auth_config,issue_type, key)
-            if fix:
-                handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
-            else:
-                console.print("[yellow]No fix could be generated[/yellow]")
-
-            if not _should_continue_to_next_file(idx, total_files):
-                break
+        _process_security_issues(issues_by_file, services, auth_config, fix_params)
     else:
+        _process_regular_issues(issues_by_file, services, auth_config, fix_params)
 
 
-        for num, (key, issues) in enumerate(issues_by_file.items(), 1):
-            total = len(issues['issue'])
-            console.print(f"\n[blue]Processing ({num}/{total}): {key}[/blue]")
 
-            for idx,issue in  enumerate(issues['issue'],1):
-                fix = _generate_fix_for_file([issue], services, auth_config, issue_type, key)
-                if fix:
-                    handle_fix(fix, [issue], services['fixer'], auth_config, fix_params)
-                else:
-                    console.print("[yellow]No fix could be generated[/yellow]")
 
-                if not _should_continue_to_next_file(idx, total):
+def _process_regular_issues(
+        issues_by_rule: Dict[str, Dict[str, List[Any]]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """
+    Process regular issues grouped by rule.
 
-                    break
+    Regular issues are processed individually within each rule.
+    """
+    total_rules = len(issues_by_rule)
 
+    for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
+        issues_list = rule_data['issue']
+        total_issues = len(issues_list)
+
+
+        console.print(f"\n[blue]Processing ({rule_num}/{total_rules}): {rule_key}[/blue]")
+
+        if not _process_issues_for_rule(
+                rule_key, issues_list, services, auth_config, fix_params
+        ):
+            break
+
+
+def _process_issues_for_rule(
+        rule_key: str,
+        issues_list: List[Any],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> bool:
+    """
+    Process all issues for a specific rule.
+
+    Returns:
+        bool: True to continue processing, False to stop
+
+
+    """
+    total_issues = len(issues_list)
+
+    for idx, issue in enumerate(issues_list, 1):
+        _process_single_fix(
+            issues=[issue],
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            rule_key=rule_key
+        )
+
+        if not _should_continue_to_next_file(idx, total_issues):
+            return False  # Stop processing
+
+    return True  # Continue to next rule
+
+
+def _process_single_fix(
+        issues: List[Any],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any],
+        issue_type: IssueType,
+        rule_key: str
+) -> None:
+    """
+    Generate and handle a single fix.
+    """
+    fix = _generate_fix_for_file(issues, services, auth_config, issue_type, rule_key)
+
+    if fix:
+        handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
+    else:
+        console.print("[yellow]No fix could be generated[/yellow]")
+
+
+
+def _process_security_issues(
+        issues_by_file: Dict[str, List[Any]],
+        services: Dict[str, Any],
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any]
+) -> None:
+    """
+    Process security issues grouped by file.
+
+    Security issues are processed once per file.
+    """
+    total_files = len(issues_by_file)
+
+    for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
+
+        console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
+
+        _process_single_fix(
+            issues=issues,
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.SECURITY,
+            rule_key=file_key
+        )
+
+        if not _should_continue_to_next_file(idx, total_files):
+            break
 
 def handle_fix(
         fix: FixSuggestion,
@@ -1267,17 +1349,17 @@ def _generate_fix_for_file(
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         if issue_type == IssueType.SECURITY:
-            rule_info_list = _collect_rule_information(issues, services['ruler'])
+            rule_info_dic = _collect_rule_information(issues, services['ruler'])
         else:
             ruler =  services['ruler']
             rule_info = ruler.get_rule_by_key(rule_name)
 
-            rule_info_list = {rule_name:rule_info}
+            rule_info_dic = {rule_name:rule_info}
 
         return services['fixer'].generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
-            rule_info_list
+            rule_info_dic
         )
 
 def _collect_rule_information(
