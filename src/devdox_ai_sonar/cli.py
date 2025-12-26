@@ -1,6 +1,5 @@
 """Command-line interface for SonarCloud Analyzer with Claude Code-style interaction and mid-workflow command switching."""
-
-
+from datetime import timezone, datetime
 import sys
 from pathlib import Path
 from typing import Optional, List, Any,  Sequence, Dict, Tuple, Union, Set
@@ -1192,10 +1191,11 @@ def _process_files_with_issues(
 
 
     """
+    md_file_path =Path(str(auth_config.project_path))/f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
     if issue_type == IssueType.SECURITY:
-        _process_security_issues(issues_by_file, services, auth_config, fix_params)
+        _process_security_issues(issues_by_file, services, auth_config, fix_params,md_file_path)
     else:
-        _process_regular_issues(issues_by_file, services, auth_config, fix_params)
+        _process_regular_issues(issues_by_file, services, auth_config, fix_params,md_file_path)
 
 
 
@@ -1204,7 +1204,8 @@ def _process_regular_issues(
         issues_by_rule: Dict[str, Dict[str, List[Any]]],
         services: Dict[str, Any],
         auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+        md_file_path:Path
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1220,7 +1221,7 @@ def _process_regular_issues(
         console.print(f"\n[blue]Processing ({rule_num}/{total_rules}): {rule_key}[/blue]")
 
         if not _process_issues_for_rule(
-                rule_key, issues_list, services, auth_config, fix_params
+                rule_key, issues_list, services, auth_config, fix_params,md_file_path
         ):
             break
 
@@ -1230,7 +1231,8 @@ def _process_issues_for_rule(
         issues_list: List[Any],
         services: Dict[str, Any],
         auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+        md_file_path:Path
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1242,6 +1244,7 @@ def _process_issues_for_rule(
     """
     total_issues = len(issues_list)
 
+
     for idx, issue in enumerate(issues_list, 1):
         _process_single_fix(
             issues=[issue],
@@ -1249,7 +1252,8 @@ def _process_issues_for_rule(
             auth_config=auth_config,
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
-            rule_key=rule_key
+            rule_key=rule_key,
+            md_file_path=md_file_path
         )
 
         if not _should_continue_to_next_file(idx, total_issues):
@@ -1264,12 +1268,13 @@ def _process_single_fix(
         auth_config: AuthConfig,
         fix_params: Dict[str, Any],
         issue_type: IssueType,
-        rule_key: str
+        rule_key: str,
+        md_file_path: Optional[Path] = None
 ) -> None:
     """
     Generate and handle a single fix.
     """
-    fix = _generate_fix_for_file(issues, services, auth_config, issue_type, rule_key)
+    fix = _generate_fix_for_file(issues, services, auth_config, issue_type, rule_key, md_file_path)
 
     if fix:
         handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
@@ -1282,7 +1287,8 @@ def _process_security_issues(
         issues_by_file: Dict[str, List[Any]],
         services: Dict[str, Any],
         auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+        md_file_path:Path
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1301,7 +1307,8 @@ def _process_security_issues(
             auth_config=auth_config,
             fix_params=fix_params,
             issue_type=IssueType.SECURITY,
-            rule_key=file_key
+            rule_key=file_key,
+            md_file_path=md_file_path
         )
 
         if not _should_continue_to_next_file(idx, total_files):
@@ -1312,7 +1319,8 @@ def handle_fix(
         issues: List[Any],
         fixer: LLMFixer,
         auth_config: AuthConfig,
-        fix_params: Dict[str, Any]
+        fix_params: Dict[str, Any],
+
 ) -> None:
     """
     Handle a generated fix (apply or skip).
@@ -1343,7 +1351,8 @@ def _generate_fix_for_file(
         services: Dict[str, Any],
         auth_config: AuthConfig,
         issue_type:IssueType,
-        rule_name:Optional[str]=None
+        rule_name:Optional[str]=None,
+        md_file_path: Optional[Path] = None
 ) -> Optional[FixSuggestion]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
@@ -1358,7 +1367,9 @@ def _generate_fix_for_file(
         return services['fixer'].generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
-            rule_info_dic
+            rule_info_dic,
+            file_md=md_file_path,
+            #file_md=Path(str(auth_config.project_path))/f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
         )
 
 def _collect_rule_information(

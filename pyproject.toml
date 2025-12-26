@@ -58,7 +58,8 @@ dependencies = [
     "questionary==2.1.1",
     "tomlkit==0.13.3",
     "inquirer==3.4.1",
-    "inquirer3==0.6.1"
+    "inquirer3==0.6.1",
+    "aiofiles==25.1.0"
 ]
 
 [project.optional-dependencies]
@@ -93,7 +94,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_ai_sonar = ["prompts/*.j2","templates/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88

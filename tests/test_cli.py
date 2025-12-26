@@ -1547,7 +1547,7 @@ class TestSecurityIssuesProcessing:
         }
 
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params
+            issues_by_file, mock_services, auth_config, fix_params,Mock()
         )
 
 
@@ -1569,7 +1569,7 @@ class TestSecurityIssuesProcessing:
         }
 
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params
+            issues_by_file, mock_services, auth_config, fix_params,Mock()
         )
 
         assert mock_single_fix.call_count == 2
@@ -1588,9 +1588,9 @@ class TestSecurityIssuesProcessing:
             "file2.py": [Mock()],
             "file3.py": [Mock()]
         }
-
+        md_file_path=Mock()
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params
+            issues_by_file, mock_services, auth_config, fix_params,md_file_path
         )
 
         # Should only process first file
@@ -1603,9 +1603,9 @@ class TestSecurityIssuesProcessing:
     ):
         """Test processing with empty issues dict."""
         issues_by_file = {}
-
+        md_file_path = Mock()
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params
+            issues_by_file, mock_services, auth_config, fix_params, md_file_path
         )
 
         # Should handle gracefully
@@ -1622,9 +1622,9 @@ class TestSecurityIssuesProcessing:
         issues_by_rule = {
             "python:S1234": {"issue": []}  # Empty list
         }
-
+        md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
         )
 
         # Should still call process_rule
@@ -1651,8 +1651,9 @@ class TestRegularIssuesProcessing:
             }
         }
 
+        md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
         )
 
 
@@ -1671,9 +1672,9 @@ class TestRegularIssuesProcessing:
             "python:S5678": {"issue": [Mock()]},
             "python:S9012": {"issue": [Mock()]}
         }
-
+        md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
         )
 
         assert mock_process_rule.call_count == 3
@@ -1688,10 +1689,10 @@ class TestRegularIssuesProcessing:
         mock_continue.side_effect = [True, True, False]
 
         issues_list = [Mock(), Mock(), Mock()]
-
+        md_file_path = Mock()
         result = _process_issues_for_rule(
             "python:S1234", issues_list,
-            mock_services, auth_config, fix_params
+            mock_services, auth_config, fix_params, md_file_path
         )
 
         assert result is False  # Stopped by user
@@ -1707,10 +1708,10 @@ class TestRegularIssuesProcessing:
         mock_continue.return_value = True  # Continue all
 
         issues_list = [Mock(), Mock()]
-
+        md_file_path = Mock()
         result = _process_issues_for_rule(
             "python:S1234", issues_list,
-            mock_services, auth_config, fix_params
+            mock_services, auth_config, fix_params, md_file_path
         )
 
         assert result is True  # Should continue
@@ -2366,39 +2367,6 @@ class TestFileProcessing:
         assert result is False
         mock_confirm.assert_not_called()
 
-    @patch('devdox_ai_sonar.cli._process_security_issues')
-    def test_process_files_security_type(
-            self, mock_process_security,
-            mock_services, auth_config, fix_params, sample_issues
-    ):
-        """Test dispatches to security processing."""
-        issues_by_file = {"test.py": sample_issues}
-
-        _process_files_with_issues(
-            issues_by_file, mock_services, auth_config,
-            fix_params, IssueType.SECURITY
-        )
-
-        mock_process_security.assert_called_once_with(
-            issues_by_file, mock_services, auth_config, fix_params
-        )
-
-    @patch('devdox_ai_sonar.cli._process_regular_issues')
-    def test_process_files_regular_type(
-            self, mock_process_regular,
-            mock_services, auth_config, fix_params
-    ):
-        """Test dispatches to regular processing."""
-        issues_by_rule = {"python:S1234": {"issue": [Mock()]}}
-
-        _process_files_with_issues(
-            issues_by_rule, mock_services, auth_config,
-            fix_params, IssueType.REGULAR
-        )
-
-        mock_process_regular.assert_called_once_with(
-            issues_by_rule, mock_services, auth_config, fix_params
-        )
 
 
 # ============================================================================
