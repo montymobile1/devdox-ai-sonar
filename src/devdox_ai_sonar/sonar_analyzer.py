@@ -156,7 +156,8 @@ class SonarCloudAnalyzer:
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
         facets:Optional[str]=None,
-        total:Optional[int]=0
+        total:Optional[int]=0,
+        rules_excluded:Optional[List[str]]=None
     ) -> Optional[AnalysisResult]:
         if statuses is None:
             statuses = ["OPEN"]
@@ -177,12 +178,13 @@ class SonarCloudAnalyzer:
             final_rules = []
             if len(rules) > 0:
                 for rule in rules:
-                    for rule_info in  rule.get("values",[]):
-                        total-=rule_info.get("count",0)
-                        final_rules.append(rule_info.get("val",""))
-                        if total <= 0:
-                            break
+                    for rule_info in rule.get("values", []):
+                        if rules_excluded is None or rule_info.get("val", "") not in rules_excluded:
 
+                            total -= rule_info.get("count", 0)
+                            final_rules.append(rule_info.get("val", ""))
+                            if total <= 0:
+                                break
             return final_rules
         except requests.RequestException as e:
             self._handle_exceptions(e, project_key)
@@ -639,6 +641,7 @@ class SonarCloudAnalyzer:
             severities: Optional[List[str]] = None,
             types_list: Optional[List[str]] = None,
             group_by: Optional[str] = "file",
+            rules_excluded: Optional[List[str]] = None,
     ) -> Dict[str, List[SonarIssue]]:
         """
         Get issues that are potentially fixable by LLM.
@@ -654,7 +657,6 @@ class SonarCloudAnalyzer:
         filter_values =None
         filter_by=None
         if group_by=="rules":
-
             rules = self.get_project_rules(
                 project_key,
                 branch,
@@ -662,7 +664,8 @@ class SonarCloudAnalyzer:
                 severities=severities,
                 types=types_list,
                 facets=group_by,
-                total=max_issues
+                total=max_issues,
+                rules_excluded=rules_excluded
 
             )
             if len(rules)>0:
