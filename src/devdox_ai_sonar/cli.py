@@ -963,7 +963,6 @@ def display_configuration(parameters, dry_run,apply):
         "create_backup":parameters.get("create_backup",0),
     }
 
-
         return fix_params
 
 
@@ -1011,7 +1010,6 @@ def _run_analyze(
 
         # Load and validate configuration
         auth_config, _, parameters = _load_and_validate_config(use_predefined=True)
-        print("parameters ", parameters)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1507,7 +1505,6 @@ def _fetch_issues_by_type(
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
-            print("=fix_params['exclude_rules'] ",fix_params)
             return analyzer.get_fixable_issues_by_types(
                 project_key=auth_config.project,
                 branch=branch or "",
