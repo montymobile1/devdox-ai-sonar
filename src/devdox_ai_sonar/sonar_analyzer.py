@@ -156,12 +156,14 @@ class SonarCloudAnalyzer:
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
         facets:Optional[str]=None,
-        total:Optional[int]=0
+        total:Optional[int]=0,
+        rules_excluded:Optional[List[str]]=None
     ) -> Optional[AnalysisResult]:
         if statuses is None:
             statuses = ["OPEN"]
 
         url = urljoin(self.base_url, "/api/issues/search")
+        exclude_rules = rules_excluded or []
         try:
             params = self._build_query_params(
                 project_key,
@@ -174,16 +176,8 @@ class SonarCloudAnalyzer:
                 facets=facets
             )
             rules = self._fetch_issues(url, params, "facets")
-            final_rules = []
-            if len(rules) > 0:
-                for rule in rules:
-                    for rule_info in  rule.get("values",[]):
-                        total-=rule_info.get("count",0)
-                        final_rules.append(rule_info.get("val",""))
-                        if total <= 0:
-                            break
+            return self._filter_rules(rules, exclude_rules, total)
 
-            return final_rules
         except requests.RequestException as e:
             self._handle_exceptions(e, project_key)
             return None
@@ -193,6 +187,48 @@ class SonarCloudAnalyzer:
                 exc_info=settings.EXC_INFO,
             )
             return None
+
+    def _filter_rules(
+            self,
+            rules: List[Dict[str, Any]],
+            exclude_rules: List[str],
+            max_rules: int
+    ) -> List[str]:
+        """
+        Filter and limit rules based on exclusions and max count.
+
+        Args:
+            rules: Raw rule data from API
+            exclude_rules: Rule keys to exclude
+            max_rules: Maximum rules to return (0 = unlimited)
+
+        Returns:
+            Filtered list of rule keys
+        """
+        if not rules:
+            return []
+
+        # Convert to set for O(1) lookup
+        excluded_set = set(exclude_rules)
+        filtered_rules = []
+        remaining_count = max_rules if max_rules > 0 else float('inf')
+
+        for rule_facet in rules:
+            for rule_info in rule_facet.get("values", []):
+                rule_key = rule_info.get("val", "")
+                # Skip excluded rules or empty keys
+                if not rule_key or rule_key in excluded_set:
+                    continue
+
+                # Add rule and decrement counter
+                filtered_rules.append(rule_key)
+                remaining_count -= rule_info.get("count", 0)
+
+                # Stop if we've hit the limit
+                if remaining_count <= 0:
+                    return filtered_rules
+
+        return filtered_rules
 
     def _build_query_params(
         self,
@@ -639,6 +675,7 @@ class SonarCloudAnalyzer:
             severities: Optional[List[str]] = None,
             types_list: Optional[List[str]] = None,
             group_by: Optional[str] = "file",
+            rules_excluded: Optional[List[str]] = None,
     ) -> Dict[str, List[SonarIssue]]:
         """
         Get issues that are potentially fixable by LLM.
@@ -654,7 +691,6 @@ class SonarCloudAnalyzer:
         filter_values =None
         filter_by=None
         if group_by=="rules":
-
             rules = self.get_project_rules(
                 project_key,
                 branch,
@@ -662,10 +698,11 @@ class SonarCloudAnalyzer:
                 severities=severities,
                 types=types_list,
                 facets=group_by,
-                total=max_issues
+                total=max_issues,
+                rules_excluded=rules_excluded
 
             )
-            if len(rules)>0:
+            if rules and len(rules)>0:
                 filter_values = rules
                 filter_by="rules"
 

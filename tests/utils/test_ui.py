@@ -383,9 +383,6 @@ class TestPromptWithQuestionary:
         mock_text_prompt.assert_called_once()
         assert result == "user_input"
 
-        # Check for debug print (should be removed in production)
-        captured = capsys.readouterr()
-        assert "not config.choices" in captured.out
 
     @patch('devdox_ai_sonar.utils.ui._questionary_checkbox_prompt')
     def test_checkbox_prompt_when_multiple(self, mock_checkbox_prompt):
