@@ -118,12 +118,12 @@ def show_command_selector() -> Optional[str]:
 
     commands = [
         {
-            'name': '🔍 Add Provider - Add provider or sonar configuration',
+            'name': '➕ Add Provider - Add provider or sonar configuration',
             'value': 'add_provider',
             'description': 'Add provider configuration'
         },
         {
-            'name': '🔍 Update Provider - Update provider or sonar configuration',
+            'name': '✏️  Update Provider - Update provider or sonar configuration',
             'value': 'update_provider',
             'description': 'Update SonarCloud provider configuration'
         },
@@ -148,7 +148,7 @@ def show_command_selector() -> Optional[str]:
             'description': 'Inspect local project structure'
         },
         {
-            'name': '📊 Change Parameters Configuration ',
+            'name': '⚙️  Change Parameters Configuration',
             'value': 'change_parameters',
             'description': 'Change parameters configuration'
         },
