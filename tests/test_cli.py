@@ -2446,8 +2446,334 @@ class TestLoadAndValidateConfig:
                     with pytest.raises(Exception):  # Should abort
                         _load_and_validate_config()
 
+    def test_load_and_validate_config_with_predefined_success(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test successful config load using predefined branch/PR"""
+        # Setup mocks
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {"max_fixes": 10}
+        mock_provider_manager.branch_or_pr.return_value = ("main", "123")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        # Call with use_predefined=True
+                        result = _load_and_validate_config(use_predefined=True)
+
+                        # Assertions
+                        assert result is not None
+                        assert len(result) == 3
+                        auth_config, llm_config, params = result
+
+                        # Verify branch_or_pr() was called, not branch_or_pr_prompt()
+                        mock_provider_manager.branch_or_pr.assert_called_once()
+                        mock_provider_manager.branch_or_pr_prompt.assert_not_called()
+
+                        # Verify params contain correct branch/PR
+                        assert params['branch'] == "main"
+                        assert params['pull_request'] == "123"
+
+    def test_load_and_validate_config_with_predefined_branch_only(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test predefined mode with only branch (no PR)"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr.return_value = ("feature/test", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        result = _load_and_validate_config(use_predefined=True)
+
+                        assert result is not None
+                        _, _, params = result
+                        assert params['branch'] == "feature/test"
+                        assert params['pull_request'] is None
+
+    def test_load_and_validate_config_with_predefined_pr_only(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test predefined mode with only PR (no branch)"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr.return_value = (None, "456")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        result = _load_and_validate_config(use_predefined=True)
+
+                        assert result is not None
+                        _, _, params = result
+                        assert params['branch'] is None
+                        assert params['pull_request'] == "456"
+
+    def test_load_and_validate_config_with_predefined_no_branch_or_pr(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test predefined mode when no branch/PR in config - should abort"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr.return_value = (None, None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with pytest.raises(Exception):  # Should abort
+                            _load_and_validate_config(use_predefined=True)
+
+                        # Verify correct method was attempted
+                        mock_provider_manager.branch_or_pr.assert_called_once()
+
+        # ========================================================================
+        # NEW TESTS: use_predefined=False (Prompt Mode - Explicit)
+        # ========================================================================
+
+    def test_load_and_validate_config_with_prompt_explicit(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test explicit use_predefined=False uses prompt method"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("develop", "789")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        result = _load_and_validate_config(use_predefined=False)
+
+                        assert result is not None
+                        _, _, params = result
+
+                        # Verify prompt method was called, not predefined method
+                        mock_provider_manager.branch_or_pr_prompt.assert_called_once()
+                        mock_provider_manager.branch_or_pr.assert_not_called()
+
+                        assert params['branch'] == "develop"
+                        assert params['pull_request'] == "789"
+
+    def test_load_and_validate_config_prompt_mode_no_branch_or_pr(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test prompt mode when user provides neither branch nor PR - should abort"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr_prompt.return_value = (None, None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with pytest.raises(Exception):  # Should abort
+                            _load_and_validate_config(use_predefined=False)
+
+                        mock_provider_manager.branch_or_pr_prompt.assert_called_once()
+
+        # ========================================================================
+        # NEW TESTS: Edge Cases and Error Scenarios
+        # ========================================================================
+
+    def test_load_and_validate_config_predefined_method_raises_exception(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test predefined mode when branch_or_pr() raises exception"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr.side_effect = Exception("Config error")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with pytest.raises(Exception) as exc_info:
+                            _load_and_validate_config(use_predefined=True)
+
+                        assert "Config error" in str(exc_info.value)
+
+    def test_load_and_validate_config_params_merge_with_existing_config(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test that branch/PR params are merged with existing configuration"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        existing_config = {"max_fixes": 10, "timeout": 30}
+        mock_config_manager.get_value.return_value = existing_config.copy()
+        mock_provider_manager.branch_or_pr.return_value = ("main", "100")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config(use_predefined=True)
+
+                        # Verify existing config is preserved
+                        assert params['max_fixes'] == 10
+                        assert params['timeout'] == 30
+                        # Verify new params are added
+                        assert params['branch'] == "main"
+                        assert params['pull_request'] == "100"
+
+    def test_load_and_validate_config_params_empty_dict_when_no_existing(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test params initialization when no existing config"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = None  # No existing config
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("test", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Should handle None gracefully and create new dict
+                        assert isinstance(params, dict)
+                        assert params['branch'] == "test"
+                        assert params['pull_request'] is None
+
+        # ========================================================================
+        # NEW TESTS: Console Output Verification
+        # ========================================================================
 
 
+
+    def test_load_and_validate_config_returns_correct_types(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test return values have correct types"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr.return_value = ("main", "1")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        auth_config, llm_config, params = _load_and_validate_config(
+                            use_predefined=True
+                        )
+
+                        # Verify types
+                        assert isinstance(auth_config, (Mock, AuthConfig))  # Mock or actual
+                        assert llm_config is not None
+                        assert isinstance(params, dict)  # Should be Dict[str, Any], not Optional[str]
 # ============================================================================
 # TEST CLASS: TEST WITH FIXTURES
 # ============================================================================

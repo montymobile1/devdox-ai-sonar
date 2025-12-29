@@ -909,7 +909,7 @@ def _run_fix_issues(
 
 
         # Load and validate configuration
-        auth_config, llm_config,parameters = _load_and_validate_config()
+        auth_config, llm_config,parameters = _load_and_validate_config(use_predefined=True)
 
         fix_params = display_configuration(parameters, dry_run_value,apply_value)
 
@@ -968,7 +968,7 @@ def _run_fix_security_issues(
     console.print("\n[bold cyan]🔒 Fix Security Issues[/bold cyan]\n")
 
     try:
-        auth_config, llm_config, parameters= _load_and_validate_config()
+        auth_config, llm_config, parameters= _load_and_validate_config(use_predefined=True)
 
 
         apply_value =  kwargs.get("apply", None)
@@ -1003,7 +1003,7 @@ def _run_analyze(
     try:
 
         # Load and validate configuration
-        auth_config, _, parameters = _load_and_validate_config()
+        auth_config, _, parameters = _load_and_validate_config(use_predefined=True)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1048,7 +1048,7 @@ def _run_inspect() -> None:
 
     try:
         # Use helper instead of inline code
-        auth_config, _, _ = _load_and_validate_config()
+        auth_config, _, _ = _load_and_validate_config(use_predefined=True)
 
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
         analysis = analyzer.analyze_project_directory(str(auth_config.project_path))
@@ -1081,7 +1081,7 @@ def _run_inspect() -> None:
 # ============================================================================
 
 
-def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
+def _load_and_validate_config(use_predefined: bool = False) -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
     manager, _, _, provider_manager, _, config_service= _initialize_managers()
@@ -1104,7 +1104,10 @@ def _load_and_validate_config() -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
     if not llm_config:
         console.print("[red]❌ No LLM providers configured[/red]")
         raise click.Abort()
-    branch, pull_request = provider_manager.branch_or_pr_prompt()
+    if use_predefined:
+        branch, pull_request = provider_manager.branch_or_pr()
+    else:
+        branch, pull_request = provider_manager.branch_or_pr_prompt()
 
     if not branch and not pull_request:
         console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
@@ -1219,7 +1222,7 @@ def _process_regular_issues(
         issues_list = rule_data['issue']
 
 
-        console.print(f"\n[blue]Processing ({rule_num}/{total_rules}): {rule_key}[/blue]")
+        console.print(f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]")
 
         if not _process_issues_for_rule(
                 rule_key, issues_list, services, auth_config, fix_params,md_file_path
