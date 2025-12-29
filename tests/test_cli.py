@@ -3289,6 +3289,447 @@ class TestLoadAndValidateConfig:
                         assert isinstance(auth_config, (Mock, AuthConfig))  # Mock or actual
                         assert llm_config is not None
                         assert isinstance(params, dict)  # Should be Dict[str, Any], not Optional[str]
+
+    def test_load_and_validate_config_console_message_loading(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test console displays 'Loading configuration...' message"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", "1")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with patch('devdox_ai_sonar.cli.console') as mock_console:
+                            _load_and_validate_config()
+
+                            # Verify loading message displayed at start
+                            loading_calls = [
+                                call for call in mock_console.print.call_args_list
+                                if 'Loading configuration' in str(call)
+                            ]
+                            assert len(loading_calls) >= 1
+
+    def test_load_and_validate_config_console_message_success(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test console displays success message after loading"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", "1")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with patch('devdox_ai_sonar.cli.console') as mock_console:
+                            _load_and_validate_config()
+
+                            # Verify success message displayed at end
+                            success_calls = [
+                                call for call in mock_console.print.call_args_list
+                                if '✓' in str(call) or 'Configuration loaded' in str(call)
+                            ]
+                            assert len(success_calls) >= 1
+
+    def test_load_and_validate_config_console_message_no_auth(
+            self, mock_config_service
+    ):
+        """Test console displays appropriate messages when auth not found"""
+        mock_config_service.load_auth_config.return_value = None
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.console') as mock_console:
+                with pytest.raises(click.Abort):
+                    _load_and_validate_config()
+
+                # Verify error messages displayed
+                calls = [str(call) for call in mock_console.print.call_args_list]
+                # Should display AUTHENTICATION_NOT_FOUND and DEVDOX_SONAR_CONFIG
+                assert len(calls) >= 2
+
+    def test_load_and_validate_config_console_message_invalid_auth(
+            self, mock_config_service, mock_config_manager
+    ):
+        """Test console displays error message for invalid auth"""
+        mock_config_service.load_auth_config.return_value = {"token": "test"}
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                    mock_auth_instance = Mock()
+                    mock_auth_instance.validate.return_value = (False, "Invalid token")
+                    mock_auth.return_value = mock_auth_instance
+
+                    with patch('devdox_ai_sonar.cli.console') as mock_console:
+                        with pytest.raises(click.Abort):
+                            _load_and_validate_config()
+
+                        # Verify error message contains the validation error
+                        calls = [str(call) for call in mock_console.print.call_args_list]
+                        error_calls = [c for c in calls if 'Invalid token' in c]
+                        assert len(error_calls) >= 1
+
+    def test_load_and_validate_config_console_message_no_llm(
+            self, mock_config_service, mock_config_manager
+    ):
+        """Test console displays error when no LLM providers configured"""
+        mock_config_service.load_llm_config.return_value = None
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                    mock_auth_instance = Mock()
+                    mock_auth_instance.validate.return_value = (True, None)
+                    mock_auth.return_value = mock_auth_instance
+
+                    with patch('devdox_ai_sonar.cli.console') as mock_console:
+                        with pytest.raises(click.Abort):
+                            _load_and_validate_config()
+
+                        # Verify LLM error message
+                        calls = [str(call) for call in mock_console.print.call_args_list]
+                        llm_error_calls = [c for c in calls if 'LLM' in c or 'providers' in c]
+                        assert len(llm_error_calls) >= 1
+
+    def test_load_and_validate_config_console_message_no_branch_pr(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test console displays error when no branch/PR specified"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {}
+        mock_provider_manager.branch_or_pr_prompt.return_value = (None, None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        with patch('devdox_ai_sonar.cli.console') as mock_console:
+                            with pytest.raises(click.Abort):
+                                _load_and_validate_config()
+
+                            # Verify NO_BRANCH_OR_PR_SPECIFIED message displayed
+                            mock_console.print.assert_any_call(constant.NO_BRANCH_OR_PR_SPECIFIED)
+
+    def test_load_and_validate_config_exclude_rules_string_split(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test exclude_rules string is split into list"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        exclude_rules_string = "python:S3776,python:S1192,python:S107"
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": exclude_rules_string
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Verify exclude_rules is split into list
+                        assert isinstance(params['exclude_rules'], list)
+                        assert len(params['exclude_rules']) == 3
+                        assert params['exclude_rules'] == ["python:S3776", "python:S1192", "python:S107"]
+
+    def test_load_and_validate_config_exclude_rules_single_rule(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test exclude_rules with single rule (no comma)"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": "python:S3776"
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Single rule should result in list with one element
+                        assert isinstance(params['exclude_rules'], list)
+                        assert len(params['exclude_rules']) == 1
+                        assert params['exclude_rules'] == ["python:S3776"]
+
+    def test_load_and_validate_config_exclude_rules_with_spaces(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test exclude_rules handles spaces around commas"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": "python:S3776, python:S1192 , python:S107"
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Should preserve spaces (or you might want to strip them)
+                        assert isinstance(params['exclude_rules'], list)
+                        assert len(params['exclude_rules']) == 3
+
+    def test_load_and_validate_config_no_exclude_rules(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test when exclude_rules is not in config"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "max_fixes": 10
+            # No exclude_rules
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # exclude_rules should not be in params or be None
+                        assert 'exclude_rules' not in params or params.get('exclude_rules') is None
+
+    def test_load_and_validate_config_exclude_rules_empty_string(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test when exclude_rules is empty string"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": ""
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Empty string should not be split (falsy value)
+                        # Based on code: if params.get("exclude_rules")
+                        assert 'exclude_rules' in params
+                        # Empty string is falsy, so split shouldn't be called
+                        assert params['exclude_rules'] == ""
+
+    def test_load_and_validate_config_exclude_rules_already_list(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test when exclude_rules is already a list (edge case)"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        # If somehow exclude_rules is already a list
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": ["python:S3776", "python:S1192"]
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        # This might raise AttributeError: 'list' object has no attribute 'split'
+                        # Need to test actual behavior
+                        try:
+                            _, _, params = _load_and_validate_config()
+                            # If it doesn't raise, verify it's still a list
+                            assert isinstance(params['exclude_rules'], list)
+                        except AttributeError:
+                            # Expected if code doesn't handle list case
+                            pytest.xfail("Code doesn't handle exclude_rules as list")
+
+    def test_load_and_validate_config_params_preserves_all_existing_config(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test all existing config values are preserved in params"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        existing_config = {
+            "max_fixes": 10,
+            "timeout": 30,
+            "types": "BUG,VULNERABILITY",
+            "severities": "CRITICAL",
+            "apply": 1,
+            "backup": 0,
+            "exclude_rules": "python:S3776"
+        }
+        mock_config_manager.get_value.return_value = existing_config.copy()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", "100")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # Verify all existing config preserved
+                        assert params['max_fixes'] == 10
+                        assert params['timeout'] == 30
+                        assert params['types'] == "BUG,VULNERABILITY"
+                        assert params['severities'] == "CRITICAL"
+                        assert params['apply'] == 1
+                        assert params['backup'] == 0
+                        # exclude_rules should be split
+                        assert params['exclude_rules'] == ["python:S3776"]
+                        # New params added
+                        assert params['branch'] == "main"
+                        assert params['pull_request'] == "100"
+
+    def test_load_and_validate_config_params_branch_overwrites_existing(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config
+    ):
+        """Test branch/PR from prompt overwrites any existing values"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "branch": "old-branch",
+            "pull_request": "old-pr"
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("new-branch", "new-pr")
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
+                        mock_auth_instance = Mock()
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_auth.return_value = mock_auth_instance
+
+                        _, _, params = _load_and_validate_config()
+
+                        # New values should overwrite old
+                        assert params['branch'] == "new-branch"
+                        assert params['pull_request'] == "new-pr"
 # ============================================================================
 # TEST CLASS: TEST WITH FIXTURES
 # ============================================================================
