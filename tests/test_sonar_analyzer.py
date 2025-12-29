@@ -1362,6 +1362,7 @@ class TestContextManager:
             mock_close.assert_called_once()
 
 
+
 # ============================================================================
 # TEST CLASS: HELPER METHODS
 # ============================================================================
@@ -1495,7 +1496,461 @@ class TestHelperMethods:
         assert params.get("pullRequest") == "123"
         assert "branch" not in params or params.get("branch") != "main"
 
+    def test_filter_rules_empty_input(self, analyzer):
+        """Test with empty rules list"""
 
+
+        result = analyzer._filter_rules(
+            rules=[],
+            exclude_rules=[],
+            max_rules=10
+        )
+
+        assert result == []
+
+    def test_filter_rules_none_input(self, analyzer):
+        """Test with None rules list"""
+
+        result = analyzer._filter_rules(
+            rules=None,
+            exclude_rules=[],
+            max_rules=10
+        )
+
+        assert result == []
+
+    def test_filter_rules_no_exclusions_no_limit(self, analyzer):
+        """Test with no exclusions and unlimited rules (max_rules=0)"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3},
+                    {"val": "python:S107", "count": 2}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        assert len(result) == 3
+        assert result == ["python:S3776", "python:S1192", "python:S107"]
+
+    def test_filter_rules_no_exclusions_with_limit(self, analyzer):
+        """Test with no exclusions but with max_rules limit"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3},
+                    {"val": "python:S107", "count": 2}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=2
+        )
+
+        # Should stop after first rule since count (5) > max_rules (2)
+        assert len(result) == 1
+        assert result == ["python:S3776"]
+
+    def test_filter_rules_with_exclusions_no_limit(self, analyzer):
+        """Test with exclusions but no limit"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3},
+                    {"val": "python:S107", "count": 2}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S1192"],
+            max_rules=0
+        )
+
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S107"]
+        assert "python:S1192" not in result
+
+    def test_filter_rules_with_exclusions_and_limit(self,analyzer):
+        """Test with both exclusions and max_rules limit"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3},
+                    {"val": "python:S1192", "count": 2},  # Excluded
+                    {"val": "python:S107", "count": 3},
+                    {"val": "python:S5852", "count": 1}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S1192"],
+            max_rules=5
+        )
+
+        # S3776 (count=3) -> remaining=2
+        # S1192 excluded
+        # S107 (count=3) -> remaining=-1, stops
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S107"]
+
+    def test_filter_rules_exclude_all_rules(self,analyzer):
+        """Test when all rules are excluded"""
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S3776", "python:S1192"],
+            max_rules=0
+        )
+
+        assert result == []
+
+    def test_filter_rules_exclude_multiple_rules(self,analyzer):
+        """Test excluding multiple rules"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3},
+                    {"val": "python:S107", "count": 2},
+                    {"val": "python:S5852", "count": 1}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S1192", "python:S5852"],
+            max_rules=0
+        )
+
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S107"]
+
+    def test_filter_rules_empty_exclude_list(self,analyzer):
+        """Test with empty exclude_rules list"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S1192"]
+
+    def test_filter_rules_exclude_nonexistent_rule(self,analyzer):
+        """Test excluding rules that don't exist in the data"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S9999", "python:S8888"],
+            max_rules=0
+        )
+
+        # Should return all rules since excluded ones don't exist
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S1192"]
+
+    def test_filter_rules_max_rules_zero_unlimited(self,analyzer):
+        """Test max_rules=0 means unlimited"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": f"python:S{i}", "count": 1}
+                    for i in range(100)
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        # Should return all 100 rules
+        assert len(result) == 100
+
+    def test_filter_rules_max_rules_exact_count(self,analyzer):
+        """Test when max_rules exactly matches cumulative count"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3},
+                    {"val": "python:S1192", "count": 2},
+                    {"val": "python:S107", "count": 5}  # This exceeds
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=5
+        )
+
+        # S3776 (count=3) -> remaining=2
+        # S1192 (count=2) -> remaining=0, stops
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S1192"]
+
+    def test_filter_rules_max_rules_single_rule_exceeds(self,analyzer):
+        """Test when first rule's count exceeds max_rules"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 10},
+                    {"val": "python:S1192", "count": 5}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=5
+        )
+
+        # First rule count (10) > max_rules (5), so it stops after first
+        assert len(result) == 1
+        assert result == ["python:S3776"]
+
+    def test_filter_rules_negative_max_rules(self,analyzer):
+        """Test with negative max_rules (should behave as unlimited)"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 5},
+                    {"val": "python:S1192", "count": 3}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=-1
+        )
+
+        # Negative max_rules treated as unlimited (since condition is max_rules > 0)
+        assert len(result) == 2
+
+    def test_filter_rules_max_rules_one(self,analyzer):
+        """Test with max_rules=1"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 1},
+                    {"val": "python:S1192", "count": 1}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=1
+        )
+
+        # Should stop after first rule (count=1 reaches limit)
+        assert len(result) == 1
+        assert result == ["python:S3776"]
+
+    def test_filter_rules_multiple_facets(self,analyzer):
+        """Test with multiple rule facets"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3},
+                    {"val": "python:S1192", "count": 2}
+                ]
+            },
+            {
+                "values": [
+                    {"val": "python:S107", "count": 1},
+                    {"val": "python:S5852", "count": 4}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        # Should process all facets
+        assert len(result) == 4
+        assert result == ["python:S3776", "python:S1192", "python:S107", "python:S5852"]
+
+    def test_filter_rules_multiple_facets_with_limit(self,analyzer):
+        """Test multiple facets with max_rules limit"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3},
+                    {"val": "python:S1192", "count": 2}
+                ]
+            },
+            {
+                "values": [
+                    {"val": "python:S107", "count": 1},
+                    {"val": "python:S5852", "count": 4}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=6
+        )
+
+        # S3776 (count=3) -> remaining=3
+        # S1192 (count=2) -> remaining=1
+        # S107 (count=1) -> remaining=0, stops
+        assert len(result) == 3
+        assert result == ["python:S3776", "python:S1192", "python:S107"]
+
+    def test_filter_rules_multiple_facets_with_exclusions(self,analyzer):
+        """Test multiple facets with exclusions"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3},
+                    {"val": "python:S1192", "count": 2}
+                ]
+            },
+            {
+                "values": [
+                    {"val": "python:S107", "count": 1},
+                    {"val": "python:S5852", "count": 4}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=["python:S1192", "python:S5852"],
+            max_rules=0
+        )
+
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S107"]
+
+    def test_filter_rules_empty_facet_values(self,analyzer):
+        """Test facet with empty values list"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3}
+                ]
+            },
+            {
+                "values": []  # Empty values
+            },
+            {
+                "values": [
+                    {"val": "python:S1192", "count": 2}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        # Should skip empty facet
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S1192"]
+
+    def test_filter_rules_facet_without_values_key(self,analyzer):
+        """Test facet without 'values' key"""
+
+        rules = [
+            {
+                "values": [
+                    {"val": "python:S3776", "count": 3}
+                ]
+            },
+            {
+                # No 'values' key
+                "other_key": "data"
+            },
+            {
+                "values": [
+                    {"val": "python:S1192", "count": 2}
+                ]
+            }
+        ]
+
+        result = analyzer._filter_rules(
+            rules=rules,
+            exclude_rules=[],
+            max_rules=0
+        )
+
+        # Should skip facet without values
+        assert len(result) == 2
+        assert result == ["python:S3776", "python:S1192"]
 # ============================================================================
 # TEST CLASS: FETCH_ISSUES - MISSING EDGE CASES
 # ============================================================================
