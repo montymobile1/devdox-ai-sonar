@@ -97,7 +97,7 @@ def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
         display_message = config.get_display_message()
 
         if not config.choices:
-            print("not config.choices ","text prompot")
+
             return _questionary_text_prompt(display_message, config.default)
 
         if config.multiple:

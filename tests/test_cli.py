@@ -6,8 +6,9 @@ from contextlib import contextmanager
 import click
 from click.testing import CliRunner
 from devdox_ai_sonar.services.configuration import AuthConfig, LLMConfig
-from devdox_ai_sonar.utils.validator import IssueType
+from devdox_ai_sonar.utils.validator import IssueType, InputValidator
 from unittest.mock import Mock, patch, MagicMock
+from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.cli import (
     main,
     _safe_convert_pr,
@@ -1127,6 +1128,520 @@ class TestConfigurationManagement:
                 with patch('devdox_ai_sonar.cli.change_max_fix'):
                     ctx = Mock()
                     change_parameters(ctx)
+
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_with_types_provided(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that types parameter skips interactive prompt for types"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with types pre-populated
+        change_parameters(types="BUG,VULNERABILITY")
+
+        # change_field should NOT be called for types (skipped because types provided)
+        types_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.types' in str(call)
+        ]
+        assert len(types_calls) == 0, "Types field should be skipped when types provided"
+
+        # But other fields should still be called
+        assert mock_change_field.call_count >= 3
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_with_severity_provided(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that severity parameter skips interactive prompt for severities"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with severity pre-populated
+        change_parameters(severity="CRITICAL,BLOCKER")
+
+        # change_field should NOT be called for severities
+        severity_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.severities' in str(call)
+        ]
+        assert len(severity_calls) == 0, "Severities field should be skipped when severity provided"
+
+        # But other fields should still be called
+        assert mock_change_field.call_count >= 3  # types, apply, backup, exclude_rules
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_with_both_types_and_severity(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that both types and severity parameters skip their prompts"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with both types and severity
+        change_parameters(types="BUG", severity="CRITICAL")
+
+        # Neither types nor severities should be prompted
+        types_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.types' in str(call)
+        ]
+        severity_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.severities' in str(call)
+        ]
+
+        assert len(types_calls) == 0, "Types should be skipped"
+        assert len(severity_calls) == 0, "Severities should be skipped"
+
+        # Only apply, backup, and exclude_rules should be prompted
+        assert mock_change_field.call_count >= 3
+
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_with_apply_in_kwargs(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that apply parameter from kwargs is used as default"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            constant.CONFIGURATION_APPLY: None,  # Not in config
+            constant.CONFIGURATION_BACKUP: None,
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with apply in kwargs
+        change_parameters(apply=1)
+
+        # Find the call for CONFIGURATION_APPLY
+        apply_calls = [
+            call for call in mock_change_field.call_args_list
+            if constant.CONFIGURATION_APPLY in str(call)
+        ]
+
+        assert len(apply_calls) == 1, "Apply field should be called once"
+
+        # Verify default_value is 1 (from kwargs)
+        call_kwargs = apply_calls[0][1]
+        assert call_kwargs['default_value'] == 1, "Should use apply value from kwargs as default"
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_with_create_backup_in_kwargs(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that create_backup parameter from kwargs is used as default"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            constant.CONFIGURATION_APPLY: None,
+            constant.CONFIGURATION_BACKUP: None,  # Not in config
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with create_backup in kwargs
+        change_parameters(create_backup=1)
+
+        # Find the call for CONFIGURATION_BACKUP
+        backup_calls = [
+            call for call in mock_change_field.call_args_list
+            if constant.CONFIGURATION_BACKUP in str(call)
+        ]
+
+        assert len(backup_calls) == 1, "Backup field should be called once"
+
+        # Verify default_value is 1 (from kwargs)
+        call_kwargs = backup_calls[0][1]
+        assert call_kwargs['default_value'] == 1, "Should use create_backup value from kwargs as default"
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_config_overrides_kwargs(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that config values take precedence over kwargs"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            constant.CONFIGURATION_APPLY: 0,  # In config
+            constant.CONFIGURATION_BACKUP: 1,  # In config
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call with different values in kwargs
+        change_parameters(apply=1, create_backup=0)
+
+        # Find the calls
+        apply_calls = [
+            call for call in mock_change_field.call_args_list
+            if constant.CONFIGURATION_APPLY in str(call)
+        ]
+        backup_calls = [
+            call for call in mock_change_field.call_args_list
+            if constant.CONFIGURATION_BACKUP in str(call)
+        ]
+
+        # Config values (0, 1) should be used, not kwargs values (1, 0)
+        assert apply_calls[0][1]['default_value'] == 0, "Should use config value for apply"
+        assert backup_calls[0][1]['default_value'] == 1, "Should use config value for backup"
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_types_field_with_choices(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that types field is called with VALID_ISSUE_TYPES choices"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            "configuration.types": "BUG,CODE_SMELL",
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call without types parameter (should prompt)
+        change_parameters()
+
+        # Find types field call
+        types_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.types' in str(call)
+        ]
+
+        assert len(types_calls) == 1
+        call_kwargs = types_calls[0][1]
+
+        # Verify choices are provided
+        assert 'choices' in call_kwargs
+        assert call_kwargs['choices'] == list(InputValidator.VALID_ISSUE_TYPES)
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_severities_field_with_choices(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that severities field is called with VALID_SEVERITIES choices"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            "configuration.severities": "CRITICAL,BLOCKER",
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call without severity parameter (should prompt)
+        change_parameters()
+
+        # Find severities field call
+        severity_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.severities' in str(call)
+        ]
+
+        assert len(severity_calls) == 1
+        call_kwargs = severity_calls[0][1]
+
+        # Verify choices are provided
+        assert 'choices' in call_kwargs
+        assert call_kwargs['choices'] == list(InputValidator.VALID_SEVERITIES)
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_severities_field_with_choices(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that severities field is called with VALID_SEVERITIES choices"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            "configuration.severities": "CRITICAL,BLOCKER",
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Call without severity parameter (should prompt)
+        change_parameters()
+
+        # Find severities field call
+        severity_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.severities' in str(call)
+        ]
+
+        assert len(severity_calls) == 1
+        call_kwargs = severity_calls[0][1]
+
+        # Verify choices are provided
+        assert 'choices' in call_kwargs
+        assert call_kwargs['choices'] == list(InputValidator.VALID_SEVERITIES)
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_apply_field_with_yes_no_choices(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that apply field has yes/no choices with correct format"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        change_parameters()
+
+        # Find apply field call
+        apply_calls = [
+            call for call in mock_change_field.call_args_list
+            if constant.CONFIGURATION_APPLY in str(call)
+        ]
+
+        assert len(apply_calls) == 1
+        call_kwargs = apply_calls[0][1]
+
+        # Verify choices format
+        assert 'choices' in call_kwargs
+        choices = call_kwargs['choices']
+        assert len(choices) == 2
+        # Check that choices are Choice objects with title and value
+        assert all(hasattr(choice, 'title') and hasattr(choice, 'value') for choice in choices)
+        assert call_kwargs['multiple'] is False
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    def test_change_parameters_exclude_rules_field_no_choices(
+            self, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test that exclude_rules field has no predefined choices"""
+        mock_manager = Mock()
+        mock_manager.get_value.side_effect = lambda key: {
+            "configuration.max_fixes": 10,
+            "configuration.exclude_rules": "python:S3776,python:S1192",
+        }.get(key)
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        change_parameters()
+
+        # Find exclude_rules field call
+        exclude_calls = [
+            call for call in mock_change_field.call_args_list
+            if 'configuration.exclude_rules' in str(call)
+        ]
+
+        assert len(exclude_calls) == 1
+        call_kwargs = exclude_calls[0][1]
+
+        # Verify NO choices are provided (free text input)
+        assert 'choices' not in call_kwargs or call_kwargs.get('choices') is None
+
+    # ========================================================================
+    # NEW TESTS: Branch/PR Validation
+    # ========================================================================
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    def test_change_parameters_with_branch_only(self, mock_init):
+        """Test change_parameters with only branch (no PR)"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("feature/test", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        with patch('devdox_ai_sonar.cli.change_field'):
+            with patch('devdox_ai_sonar.cli.change_max_fix'):
+                # Should succeed with only branch
+                change_parameters()
+                mock_manager.save_config.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    def test_change_parameters_with_pr_only(self, mock_init):
+        """Test change_parameters with only PR (no branch)"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = (None, "123")
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        with patch('devdox_ai_sonar.cli.change_field'):
+            with patch('devdox_ai_sonar.cli.change_max_fix'):
+                # Should succeed with only PR
+                change_parameters()
+                mock_manager.save_config.assert_called_once()
+
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    @patch('devdox_ai_sonar.cli._handle_cli_error')
+    def test_change_parameters_handles_exception_in_change_field(
+            self, mock_handle_error, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test exception handling when change_field raises error"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        # Make change_field raise exception
+        mock_change_field.side_effect = ValueError("Invalid input")
+
+        change_parameters()
+
+        # Should call error handler
+        mock_handle_error.assert_called_once()
+        assert isinstance(mock_handle_error.call_args[0][0], ValueError)
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli.change_field')
+    @patch('devdox_ai_sonar.cli.change_max_fix')
+    @patch('devdox_ai_sonar.cli._handle_cli_error')
+    def test_change_parameters_handles_exception_in_save(
+            self, mock_handle_error, mock_change_max, mock_change_field, mock_init
+    ):
+        """Test exception handling when save_config fails"""
+        mock_manager = Mock()
+        mock_manager.get_value.return_value = 10
+        mock_manager.save_config.side_effect = IOError("Cannot write to file")
+
+        mock_provider_manager = Mock()
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        mock_init.return_value = (
+            mock_manager, Mock(), Mock(),
+            mock_provider_manager, Mock(), Mock()
+        )
+
+        change_parameters()
+
+        # Should call error handler
+        mock_handle_error.assert_called_once()
+        assert isinstance(mock_handle_error.call_args[0][0], IOError)
+
+
+
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli._handle_cli_error')
+    def test_change_parameters_handles_exception_in_init(
+            self, mock_handle_error, mock_init
+    ):
+        """Test exception handling when initialization fails"""
+        # Make init raise exception
+        mock_init.side_effect = RuntimeError("Config error")
+
+        change_parameters()
+
+        # Should call error handler
+        mock_handle_error.assert_called_once()
+        assert isinstance(mock_handle_error.call_args[0][0], RuntimeError)
+
 
     def test_change_parameters_no_branch_or_pr(
             self, runner, mock_config_manager, mock_provider_manager

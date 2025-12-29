@@ -816,6 +816,11 @@ def change_parameters(  types: Optional[str] = None,
                          choices=formatted_choices,
                         multiple=False)
 
+        _ = change_field(manager=manager, field="configuration.exclude_rules",
+                         message="Rules to be excluded  (comma-separated, or press Enter to skip)",
+                         default_value=manager.get_value("configuration.exclude_rules"),
+
+                        )
         manager.save_config(create_backup=False)
 
     except Exception as e:
@@ -954,8 +959,10 @@ def display_configuration(parameters, dry_run,apply):
         'severities_list': _validate_severities(parameters.get("severities","")),
         "apply":apply_value,
         'dry_run': dry_run,
+        "exclude_rules": parameters.get("exclude_rules", None),
         "create_backup":parameters.get("create_backup",0),
     }
+
 
         return fix_params
 
@@ -1004,6 +1011,7 @@ def _run_analyze(
 
         # Load and validate configuration
         auth_config, _, parameters = _load_and_validate_config(use_predefined=True)
+        print("parameters ", parameters)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1113,6 +1121,8 @@ def _load_and_validate_config(use_predefined: bool = False) -> Tuple[AuthConfig,
         console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
         raise click.Abort()
     params = manager.get_value("configuration") or {}
+    if params.get("exclude_rules"):
+        params['exclude_rules'] = params.get("exclude_rules").split(",")
 
     params['branch'] = branch
     params['pull_request'] = pull_request
@@ -1497,6 +1507,7 @@ def _fetch_issues_by_type(
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
+            print("=fix_params['exclude_rules'] ",fix_params)
             return analyzer.get_fixable_issues_by_types(
                 project_key=auth_config.project,
                 branch=branch or "",
@@ -1504,6 +1515,7 @@ def _fetch_issues_by_type(
                 max_issues=fix_params['max_fixes'],
                 severities=fix_params['severities_list'],
                 types_list=fix_params['types_list'],
+                rules_excluded=fix_params['exclude_rules'],
                 group_by="rules"
             )
 
