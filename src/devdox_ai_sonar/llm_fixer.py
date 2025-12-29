@@ -80,6 +80,7 @@ class LLMFixer:
         self.context_lines = context_lines
         self.model = model
         self.prompt_dir = Path(__file__).parent / "prompts"
+        self.template_dir = Path(__file__).parent / "templates"
         self._validate_and_configure_provider(provider, model, api_key)
         self._setup_jinja_env()
 
@@ -87,6 +88,13 @@ class LLMFixer:
         """Setup Jinja2 environment with custom filters"""
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(self.prompt_dir)),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            autoescape=select_autoescape(["html", "xml"]),
+        )
+        self.jinja_env_templates = Environment(
+            loader=FileSystemLoader(str(self.template_dir)),
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
@@ -155,13 +163,54 @@ class LLMFixer:
 
         self.client = genai.Client(api_key=self.api_key)
 
+    def write_explaination(self,file_md:Path, fix_response:[Dict[str, Any]], issues:Union[List[SonarIssue], List[SonarSecurityIssue]], original_code:str):
+        # Ensure parent directory exists
+        file_md.parent.mkdir(parents=True, exist_ok=True)
+
+        # Create file if it does not exist
+        if not file_md.exists():
+            file_md.touch()
+
+        with open(file_md, mode="a", encoding="utf-8") as f:
+                for issue in issues:
+
+
+                    rule = getattr(issue, "rule", "Unknown rule")
+                    severity = getattr(issue, "severity", "")
+                    message = getattr(issue, "message", "No message provided")
+
+                    file_path = getattr(issue, "file_path", "Unknown file")
+                    line = getattr(issue, "line", "N/A")
+
+                    explanation = fix_response.get("explanation", "No explanation provided.")
+                    suggestion = fix_response.get("fixed_code", "No suggestion provided.")
+
+
+                    template = self.jinja_env_templates.get_template("md.j2")
+
+                    # Prepare context for template
+                    context = {
+                        "rule": rule,
+                        "severity": severity,
+                        "message": message,
+                        "file_path": file_path,
+                        "line": line,
+                        "explanation": explanation,
+                        "suggestion": suggestion,
+                        "original_code":original_code
+                    }
+                    # Render enhanced content
+                    template_md = template.render(**context)
+                    f.write(template_md.strip()+"\n\n")
+
     def generate_fix_by_file(
             self,
             issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
             project_path: Path,
             rule_info_list: Dict[str, Dict[str, str]],
             modified_content: str = "",
-            error_message: str = ""
+            error_message: str = "",
+            file_md:str=""
     ) -> Optional[FixSuggestion]:
         """
         Generate a fix suggestion for one or more SonarCloud issues in the same file.
@@ -212,6 +261,8 @@ class LLMFixer:
             )
             if not fix_response:
                 return None
+            file_name = project_path/file_md
+            self.write_explaination(file_name,fix_response,  issues,  context_info.get("context_dict",{}).get("context", ""))
             # Step 4: Build fix suggestion
             return _build_fix_suggestion(
                 fix_response,
@@ -725,7 +776,7 @@ class LLMFixer:
         # We join strategies with newlines for a clean list
         strategy_text = "\n".join(strategies)
 
-        template = self.jinja_env.get_template("fix_issues.j2")
+        template = self.jinja_env.get_template("md.j2")
 
         # Prepare context for template
         context = {
