@@ -1191,7 +1191,8 @@ def _process_files_with_issues(
 
 
     """
-    md_file_path =Path(str(auth_config.project_path))/f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+
+    md_file_path =Path(str(auth_config.project_path))/f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
     if issue_type == IssueType.SECURITY:
         _process_security_issues(issues_by_file, services, auth_config, fix_params,md_file_path)
     else:
