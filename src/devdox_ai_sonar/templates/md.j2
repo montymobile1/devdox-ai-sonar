@@ -5,8 +5,10 @@
 {% endif %}
 **File:** `{{file_path}}`
 
+{% if original_code %}
 ### Original code
 {{original_code}}
+{% endif %}
 
 ### ❗ Problem
 {{message}}

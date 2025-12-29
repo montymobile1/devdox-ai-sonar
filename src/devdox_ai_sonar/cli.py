@@ -1369,7 +1369,7 @@ def _generate_fix_for_file(
             Path(str(auth_config.project_path)),
             rule_info_dic,
             file_md=md_file_path,
-            #file_md=Path(str(auth_config.project_path))/f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+
         )
 
 def _collect_rule_information(

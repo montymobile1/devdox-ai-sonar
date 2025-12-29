@@ -197,6 +197,7 @@ class LLMFixer:
                         "line": line,
                         "explanation": explanation,
                         "suggestion": suggestion,
+                        "original_code":original_code
                     }
                     # Render enhanced content
                     template_md = template.render(**context)
@@ -260,8 +261,8 @@ class LLMFixer:
             )
             if not fix_response:
                 return None
-
-            self.write_explaination(project_path/file_md,fix_response,  issues,  context_info.get("context_dict",{}).get("context", ""))
+            file_name = project_path/file_md
+            self.write_explaination(file_name,fix_response,  issues,  context_info.get("context_dict",{}).get("context", ""))
             # Step 4: Build fix suggestion
             return _build_fix_suggestion(
                 fix_response,
