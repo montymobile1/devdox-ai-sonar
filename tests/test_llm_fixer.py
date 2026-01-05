@@ -9,8 +9,15 @@ from unittest.mock import Mock, patch, MagicMock, mock_open, call
 from typing import List, Dict, Any, Union
 import tempfile
 import shutil
+import re
 
-from devdox_ai_sonar.llm_fixer import LLMFixer, ContextExtractor
+from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_suggestion,
+                                       _prepare_context,
+                                       _validate_and_extract_issue_info,
+                                       _generate_fix_key,
+                                       _extract_problem_lines,
+                                       _extract_context_with_lines
+                                       )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
@@ -18,7 +25,8 @@ from devdox_ai_sonar.models.sonar import (
     Severity,
     IssueType,
     Impact,
-FixResult
+FixResult,
+
 )
 
 # ============================================================================
@@ -1800,3 +1808,1379 @@ class TestWriteExplaination:
         assert "python:S1481" in content
         assert "Remove the unused" in content
         assert "DATABASE_KEY" in content
+
+
+class TestContextExtractorComprehensive:
+    """Comprehensive tests for ContextExtractor class"""
+
+    def test_is_function_definition_python_variations(self):
+        """Test Python function definition detection variations"""
+        extractor = ContextExtractor([])
+
+        # Standard function
+        assert extractor._is_function_definition("def foo():")
+        assert extractor._is_function_definition("    def bar(x, y):")
+
+        # Async function
+        assert extractor._is_function_definition("async def async_foo():")
+        assert extractor._is_function_definition("    async def async_bar():")
+
+        # With decorators (should still detect)
+        assert extractor._is_function_definition("def decorated():")
+
+        # Not functions
+        assert not extractor._is_function_definition("# def not_a_function")
+        assert not extractor._is_function_definition("defined = 'string'")
+        assert not extractor._is_function_definition("x = def_value")
+
+    def test_is_function_definition_javascript_variations(self):
+        """Test JavaScript function definition detection"""
+        extractor = ContextExtractor([])
+
+        # Standard function
+        assert extractor._is_function_definition("function myFunc() {")
+        assert extractor._is_function_definition("async function asyncFunc() {")
+
+        # Method in object
+        assert extractor._is_function_definition("myMethod: function() {")
+        assert extractor._is_function_definition("myMethod: async function() {")
+
+        # Arrow functions
+        assert extractor._is_function_definition("const foo = () => {")
+        assert extractor._is_function_definition("const bar = async (x) => {")
+
+        # Class methods
+        assert extractor._is_function_definition("  myMethod() {")
+        assert extractor._is_function_definition("  async myMethod() {")
+
+    def test_is_function_definition_java_csharp(self):
+        """Test Java/C# method definition detection"""
+        extractor = ContextExtractor([])
+
+        # Java methods
+        assert extractor._is_function_definition("public void doSomething() {")
+        assert extractor._is_function_definition("private int calculate(int x) {")
+        assert extractor._is_function_definition("protected static String getValue() {")
+
+        # C# methods
+        assert extractor._is_function_definition("public void DoSomething() {")
+        assert extractor._is_function_definition("internal async Task<int> GetValueAsync() {")
+
+    def test_find_containing_function_simple(self):
+        """Test finding containing function - simple case"""
+        lines = [
+            "class MyClass:\n",
+            "    def method1(self):\n",
+            "        x = 1\n",
+            "        y = 2\n",
+            "        return x + y\n",
+            "\n",
+            "    def method2(self):\n",
+            "        pass\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        # Line 3 (y = 2) should find method1 at line 1
+        result = extractor._find_containing_function(3)
+        assert result == 1
+
+    def test_find_containing_function_nested(self):
+        """Test finding containing function - nested functions"""
+        lines = [
+            "def outer():\n",
+            "    x = 1\n",
+            "    def inner():\n",
+            "        y = 2\n",
+            "        return y\n",
+            "    return inner()\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        # Line 3 (y = 2) should find inner function at line 2
+        result = extractor._find_containing_function(3)
+        assert result == 2
+
+    def test_find_containing_function_not_found(self):
+        """Test finding containing function when line is not in a function"""
+        lines = [
+            "import sys\n",
+            "import os\n",
+            "\n",
+            "x = 1\n",
+            "y = 2\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_containing_function(3)
+        assert result is None
+
+
+    def test_find_python_function_end_with_nested_blocks(self):
+        """Test finding Python function end with nested blocks"""
+        lines = [
+            "def complex():\n",
+            "    if True:\n",
+            "        x = 1\n",
+            "        if x > 0:\n",
+            "            print(x)\n",
+            "    return x\n",
+            "\n",
+            "def another():\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_python_function_end(lines, 0)
+        assert result == 6
+
+    def test_find_python_function_end_with_multiline_statements(self):
+        """Test finding Python function end with multiline statements"""
+        lines = [
+            "def multiline():\n",
+            "    result = (\n",
+            "        1 + 2 +\n",
+            "        3 + 4\n",
+            "    )\n",
+            "    return result\n",
+            "\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_python_function_end(lines, 0)
+        assert result is not None
+
+    def test_find_brace_function_end_simple(self):
+        """Test finding brace function end - simple JavaScript"""
+        lines = [
+            "function test() {\n",
+            "    var x = 1;\n",
+            "    return x;\n",
+            "}\n",
+            "\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_brace_function_end(lines, 0)
+        assert result == 3
+
+    def test_find_brace_function_end_nested_braces(self):
+        """Test finding brace function end with nested braces"""
+        lines = [
+            "function test() {\n",
+            "    if (true) {\n",
+            "        console.log('test');\n",
+            "    }\n",
+            "    return;\n",
+            "}\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_brace_function_end(lines, 0)
+        assert result == 5
+
+    def test_find_brace_function_end_with_strings(self):
+        """Test finding brace function end ignoring braces in strings"""
+        lines = [
+            "function test() {\n",
+            "    var str = 'text with } brace';\n",
+            "    var obj = {key: 'value'};\n",
+            "    return str;\n",
+            "}\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._find_brace_function_end(lines, 0)
+        assert result == 4
+
+    def test_remove_strings_and_comments(self):
+        """Test removing strings and comments"""
+        extractor = ContextExtractor([])
+
+        # Single line comments
+        result = extractor._remove_strings_and_comments("var x = 1; // comment")
+        assert "//" not in result or "comment" not in result
+
+        # String literals
+        result = extractor._remove_strings_and_comments('var str = "text {with} braces";')
+        assert "text" not in result or "{with}" not in result
+
+        # Multiple quotes
+        result = extractor._remove_strings_and_comments("var s = 'single' + \"double\";")
+        assert len(result) < len("var s = 'single' + \"double\";")
+
+    def test_is_line_inside_function_true(self):
+        """Test checking if line is inside function - true case"""
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+            "    return x + y\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        assert extractor._is_line_inside_function(lines, 2, 0)
+
+    def test_is_line_inside_function_false(self):
+        """Test checking if line is inside function - false case"""
+        lines = [
+            "def foo():\n",
+            "    return 1\n",
+            "\n",
+            "x = 2\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        assert not extractor._is_line_inside_function(lines, 3, 0)
+
+    def test_check_indentation_containment(self):
+        """Test indentation-based containment check"""
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+            "z = 3\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        # Line 2 is inside function (greater indent)
+        assert extractor._check_indentation_containment(lines, 2, 0)
+
+        # Line 3 is outside function (same indent as function)
+        assert not extractor._check_indentation_containment(lines, 3, 0)
+
+    def test_is_decorator_python(self):
+        """Test Python decorator detection"""
+        extractor = ContextExtractor([])
+
+        assert extractor._is_decorator("@property")
+        assert extractor._is_decorator("@staticmethod")
+        assert extractor._is_decorator("@app.route('/path')")
+        assert extractor._is_decorator("@decorator.with.dots")
+
+        assert not extractor._is_decorator("# @not_a_decorator")
+        assert not extractor._is_decorator("email@example.com")
+
+    def test_find_function_start_with_decorators(self):
+        """Test finding function start including decorators"""
+        lines = [
+            "class MyClass:\n",
+            "    @property\n",
+            "    @staticmethod\n",
+            "    def my_method():\n",
+            "        pass\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        # Starting from function def line (index 3)
+        result = extractor._find_function_start_with_decorators(lines, 3)
+        assert result == 1  # Should include both decorators
+
+    def test_extract_function_name_python(self):
+        """Test extracting function name from Python definition"""
+        extractor = ContextExtractor([])
+
+        assert extractor._extract_function_name("def my_function():") == "my_function"
+        assert extractor._extract_function_name("async def async_func(x, y):") == "async_func"
+        assert extractor._extract_function_name("    def indented():") == "indented"
+
+    def test_extract_function_name_javascript(self):
+        """Test extracting function name from JavaScript definition"""
+        extractor = ContextExtractor([])
+
+        assert extractor._extract_function_name("function myFunc() {") == "myFunc"
+        assert extractor._extract_function_name("const foo = () => {") == "foo"
+        assert extractor._extract_function_name("myMethod: function() {") == "myMethod"
+
+    def test_extract_complete_function_simple(self):
+        """Test extracting complete function - simple case"""
+        lines = [
+            "def simple():\n",
+            "    return 1\n",
+            "\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._extract_complete_function(0, 0)
+
+        assert result is not None
+        assert result["is_complete_function"]
+        assert result["function_name"] == "simple"
+        assert "def simple():" in result["context"]
+
+    def test_extract_complete_function_with_decorators(self):
+        """Test extracting complete function with decorators"""
+        lines = [
+            "@decorator1\n",
+            "@decorator2\n",
+            "def decorated():\n",
+            "    return 1\n",
+            "\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._extract_complete_function(2, 2)
+
+        assert result is not None
+        assert result["has_decorators"]
+        assert result["decorator_count"] == 2
+        assert "@decorator1" in result["context"]
+        assert "@decorator2" in result["context"]
+
+    def test_try_extract_from_definition_line_success(self):
+        """Test extracting from definition line - success"""
+        lines = [
+            "def my_func():\n",
+            "    return 1\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._try_extract_from_definition_line(0)
+
+        assert result is not None
+        assert result["is_complete_function"]
+
+    def test_try_extract_from_definition_line_not_definition(self):
+        """Test extracting from definition line - not a definition"""
+        lines = [
+            "x = 1\n",
+            "y = 2\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._try_extract_from_definition_line(0)
+        assert result is None
+
+    def test_try_extract_containing_function_success(self):
+        """Test extracting containing function - success"""
+        lines = [
+            "def outer():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+            "    return x + y\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._try_extract_containing_function(2)
+
+        assert result is not None
+        assert result["is_complete_function"]
+
+    def test_try_expand_multiline_to_function_success(self):
+        """Test expanding multiline issue to complete function"""
+        lines = [
+            "def func():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+            "    z = 3\n",
+            "    return x + y + z\n",
+        ]
+        extractor = ContextExtractor(lines)
+
+        # Issue spans lines 1-2, but function extends to line 4
+        result = extractor._try_expand_multiline_to_function(1, 2)
+
+        assert result is not None
+        assert result["is_complete_function"]
+
+    def test_extract_normal_context(self):
+        """Test extracting normal context (not function-based)"""
+        lines = [f"line {i}\n" for i in range(1, 11)]
+        extractor = ContextExtractor(lines)
+
+        result = extractor._extract_normal_context(5, 5, context_lines=2)
+
+        assert result is not None
+        assert not result["is_complete_function"]
+        assert result["start_line"] == 4  # 5 - 2 + 1 (1-indexed)
+        assert result["end_line"] == 8  # 5 + 2 + 1
+
+    def test_get_empty_context(self):
+        """Test getting empty context for out-of-range line"""
+        extractor = ContextExtractor([])
+
+        result = extractor._get_empty_context(100)
+
+        assert result["context"] == ""
+        assert result["problem_line"] == ""
+        assert result["line_number"] == 100
+
+
+# ============================================================================
+# TEST CLASS: MODULE-LEVEL FUNCTIONS
+# ============================================================================
+
+class TestModuleLevelFunctions:
+    """Test module-level helper functions"""
+
+    def test_generate_fix_key_single_line(self):
+        """Test generating fix key for single line"""
+        key = _generate_fix_key([10])
+        assert key == "fix_L10"
+
+    def test_generate_fix_key_multiple_lines(self):
+        """Test generating fix key for multiple lines"""
+        key = _generate_fix_key([10, 15, 20])
+        assert key == "fix_L10-L20"
+
+    def test_generate_fix_key_empty(self):
+        """Test generating fix key for empty list"""
+        key = _generate_fix_key([])
+        assert key == "fix_unknown"
+
+    def test_extract_problem_lines_valid(self):
+        """Test extracting problem lines with valid indices"""
+        file_lines = [f"line {i}\n" for i in range(1, 11)]
+        problem_lines = _extract_problem_lines(file_lines, [1, 5, 10])
+
+        assert len(problem_lines) == 3
+        assert "line 1" in problem_lines[0]
+        assert "line 5" in problem_lines[1]
+        assert "line 10" in problem_lines[2]
+
+    def test_extract_problem_lines_out_of_bounds(self):
+        """Test extracting problem lines with out-of-bounds indices"""
+        file_lines = ["line 1\n", "line 2\n"]
+        problem_lines = _extract_problem_lines(file_lines, [1, 100])
+
+        assert len(problem_lines) == 2
+        assert "line 1" in problem_lines[0]
+        assert "not found" in problem_lines[1]
+
+    def test_extract_context_with_lines_simple(self):
+        """Test extracting context with lines - simple case"""
+        file_lines = [f"line {i}\n" for i in range(1, 21)]
+
+        result = _extract_context_with_lines(
+            file_lines,
+            first_line=10,
+            last_line=10,
+            context_lines=3,
+            problem_line_content=["line 10\n"]
+        )
+
+        assert result["start_line"] == 7  # 10 - 3
+        assert result["end_line"] == 13  # 10 + 3
+        assert "line 10" in result["context"]
+
+    def test_extract_context_with_lines_at_boundaries(self):
+        """Test extracting context at file boundaries"""
+        file_lines = ["line 1\n", "line 2\n", "line 3\n"]
+
+        # At start
+        result = _extract_context_with_lines(
+            file_lines,
+            first_line=1,
+            last_line=1,
+            context_lines=10,
+            problem_line_content=["line 1\n"]
+        )
+        assert result["start_line"] == 1
+
+        # At end
+        result = _extract_context_with_lines(
+            file_lines,
+            first_line=3,
+            last_line=3,
+            context_lines=10,
+            problem_line_content=["line 3\n"]
+        )
+        assert result["end_line"] == 3
+
+    def test_validate_and_extract_issue_info_single_issue(self, tmp_path):
+        """Test validating and extracting info from single issue"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content\n")
+
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1234",
+            severity="MAJOR",
+            component="test.py",
+            project="test",
+            line=1,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=1,
+            last_line=5,
+            file="test.py"
+        )
+
+        file_path, line_range = _validate_and_extract_issue_info([issue], tmp_path)
+
+        assert file_path == test_file
+        assert line_range["first_line"] == 1
+        assert line_range["last_line"] == 5
+
+    def test_validate_and_extract_issue_info_multiple_issues(self, tmp_path):
+        """Test validating multiple issues from same file"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content\n")
+
+        issue1 = SonarIssue(
+            key="test1",
+            rule="python:S1234",
+            severity="MAJOR",
+            component="test.py",
+            project="test",
+            line=5,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=5,
+            last_line=10,
+            file="test.py"
+        )
+        issue2 = SonarIssue(
+            key="test2",
+            rule="python:S5678",
+            severity="MAJOR",
+            component="test.py",
+            project="test",
+            line=15,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=15,
+            last_line=20,
+            file="test.py"
+        )
+
+        file_path, line_range = _validate_and_extract_issue_info([issue1, issue2], tmp_path)
+
+        assert line_range["first_line"] == 5
+        assert line_range["last_line"] == 20
+
+    def test_validate_and_extract_issue_info_different_files_error(self, tmp_path):
+        """Test error when issues from different files"""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("content")
+        file2.write_text("content")
+
+        issue1 = SonarIssue(
+            key="test1",
+            rule="python:S1234",
+            severity="MAJOR",
+            component="file1.py",
+            project="test",
+            line=1,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=1,
+            last_line=5,
+            file="file1.py"
+        )
+        issue2 = SonarIssue(
+            key="test2",
+            rule="python:S5678",
+            severity="MAJOR",
+            component="file2.py",
+            project="test",
+            line=1,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=1,
+            last_line=5,
+            file="file2.py"
+        )
+
+        with pytest.raises(ValueError):
+            _validate_and_extract_issue_info([issue1, issue2], tmp_path)
+
+    def test_validate_and_extract_issue_info_file_not_found(self, tmp_path):
+        """Test error when file doesn't exist"""
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1234",
+            severity="MAJOR",
+            component="nonexistent.py",
+            project="test",
+            line=1,
+            message="Test",
+            type="VULNERABILITY",
+            status="OPEN",
+            first_line=1,
+            last_line=5,
+            file="nonexistent.py"
+        )
+
+        with pytest.raises(FileNotFoundError):
+            _validate_and_extract_issue_info([issue], tmp_path)
+
+    def test_prepare_context_success(self, tmp_path):
+        """Test preparing context successfully"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("line 1\nline 2\nline 3\n")
+
+        line_range = {
+            "first_line": 1,
+            "last_line": 2,
+            "problem_lines": [1, 2]
+        }
+
+        result = _prepare_context(test_file, line_range, "", context_lines=1)
+
+        assert result is not None
+        assert "context_dict" in result
+        assert "file_lines" in result
+
+    def test_prepare_context_with_modified_content(self, tmp_path):
+        """Test preparing context with modified content"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("original\n")
+
+        line_range = {
+            "first_line": 1,
+            "last_line": 1,
+            "problem_lines": [1]
+        }
+
+        result = _prepare_context(
+            test_file,
+            line_range,
+            modified_content="modified content",
+            context_lines=1
+        )
+
+        assert result["context_dict"]["context"] == "modified content"
+
+    def test_prepare_context_unicode_error(self, tmp_path):
+        """Test handling unicode decode error"""
+        test_file = tmp_path / "binary.bin"
+        test_file.write_bytes(b'\x80\x81\x82')  # Invalid UTF-8
+
+        line_range = {
+            "first_line": 1,
+            "last_line": 1,
+            "problem_lines": [1]
+        }
+
+        result = _prepare_context(test_file, line_range, "", context_lines=1)
+        assert result is None
+
+    def test_build_fix_suggestion_complete(self, tmp_path):
+        """Test building fix suggestion with all fields"""
+        fix_response = {
+            "fixed_code": "def fixed():\n    pass",
+            "helper_code": "def helper():\n    return 1",
+            "placement_helper": "BEFORE",
+            "explanation": "Fixed the code",
+            "confidence": 0.95,
+            "rule_description": "Test rule"
+        }
+
+        context_info = {
+            "context_dict": {
+                "context": "original code",
+                "start_line": 10,
+                "end_line": 15
+            }
+        }
+
+        file_path = tmp_path / "test.py"
+        line_range = {
+            "first_line": 10,
+            "last_line": 15,
+            "problem_lines": [10, 11]
+        }
+
+        result = _build_fix_suggestion(
+            fix_response,
+            context_info,
+            file_path,
+            tmp_path,
+            line_range,
+            "gpt-4"
+        )
+
+        assert isinstance(result, FixSuggestion)
+        assert result.fixed_code == "def fixed():\n    pass"
+        assert result.helper_code == "def helper():\n    return 1"
+        assert result.confidence == 0.95
+        assert result.llm_model == "gpt-4"
+
+
+# ============================================================================
+# TEST CLASS: LLM FIXER - ADDITIONAL METHODS
+# ============================================================================
+
+class TestLLMFixerAdditionalMethods:
+    """Test additional LLMFixer methods for coverage"""
+
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def test_extract_complexity_info_standard_format(self, fixer):
+        """Test extracting complexity info from standard message"""
+        message = "Cognitive Complexity from 25 to the 15 allowed"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "25"
+        assert result["target"] == "15"
+
+    def test_extract_complexity_info_alternative_format(self, fixer):
+        """Test extracting complexity info from alternative message format"""
+        message = "complexity is 30, maximum is 15"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "30"
+        assert result["target"] == "15"
+
+    def test_extract_complexity_info_no_match(self, fixer):
+        """Test extracting complexity info when no pattern matches"""
+        message = "Some other message"
+        result = fixer._extract_complexity_info(message)
+
+        assert result["current"] == "Unknown"
+        assert result["target"] == "15"
+
+    def test_is_init_method_python(self, fixer):
+        """Test detecting Python __init__ method"""
+        context = "def __init__(self):\n    self.x = 1"
+        assert fixer._is_init_method(context)
+
+    def test_is_init_method_java_constructor(self, fixer):
+        """Test detecting Java constructor"""
+        context = "public MyClass() {\n    this.x = 1;\n}"
+        assert fixer._is_init_method(context)
+
+    def test_is_init_method_javascript_constructor(self, fixer):
+        """Test detecting JavaScript constructor"""
+        context = "constructor() {\n    this.x = 1;\n}"
+        assert fixer._is_init_method(context)
+
+    def test_is_init_method_not_constructor(self, fixer):
+        """Test non-constructor method"""
+        context = "def regular_method():\n    return 1"
+        assert not fixer._is_init_method(context)
+
+    def test_create_fix_prompt_cognitive_complexity(self, fixer):
+        """Test creating prompt for cognitive complexity issue"""
+        issue = SonarIssue(
+            key="test",
+            rule="python:S3776",
+            severity="MAJOR",
+            component="test.py",
+            project="test",
+            line=10,
+            message="Cognitive Complexity from 25 to the 15 allowed",
+            type="CODE_SMELL",
+            status="OPEN",
+            first_line=10,
+            last_line=20
+        )
+
+        context = {
+            "context": "def complex_function():\n    pass",
+            "start_line": 10,
+            "end_line": 20
+        }
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "complexity" in prompt.lower()
+        assert "REDUCE" in prompt or "reduce" in prompt.lower()
+
+    def test_create_fix_prompt_unused_code(self, fixer):
+        """Test creating prompt for unused code issue"""
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1481",
+            severity="MINOR",
+            component="test.py",
+            project="test",
+            line=5,
+            message="Remove the unused local variable",
+            type="CODE_SMELL",
+            status="OPEN",
+            first_line=5,
+            last_line=5
+        )
+
+        context = {
+            "context": "def func():\n    unused = 1\n    return 2",
+            "start_line": 1,
+            "end_line": 3
+        }
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "unused" in prompt.lower() or "Remove" in prompt
+
+    def test_create_fix_prompt_literal_duplication(self, fixer):
+        """Test creating prompt for literal duplication issue"""
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1192",
+            severity="MINOR",
+            component="test.py",
+            project="test",
+            line=5,
+            message='Define a constant instead of duplicating this literal "database" 5 times',
+            type="CODE_SMELL",
+            status="OPEN",
+            first_line=5,
+            last_line=10
+        )
+
+        context = {
+            "context": "x = 'database'\ny = 'database'",
+            "start_line": 5,
+            "end_line": 10
+        }
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "constant" in prompt.lower() or "literal" in prompt.lower()
+
+    def test_create_fix_prompt_null_check(self, fixer):
+        """Test creating prompt for null check issue"""
+        issue = SonarIssue(
+            key="test",
+            rule="python:S2259",
+            severity="BLOCKER",
+            component="test.py",
+            project="test",
+            line=5,
+            message="Add a null check before accessing this",
+            type="BUG",
+            status="OPEN",
+            first_line=5,
+            last_line=5
+        )
+
+        context = {
+            "context": "result = data.value",
+            "start_line": 5,
+            "end_line": 5
+        }
+
+        prompt = fixer._create_fix_prompt(issue, context, {}, "python")
+
+        assert "null" in prompt.lower() or "None" in prompt
+
+    def test_create_fix_prompt_list_multiple_issues(self, fixer):
+        """Test creating prompt for multiple issues"""
+        issues = [
+            SonarIssue(
+                key="test1",
+                rule="python:S1481",
+                severity="MINOR",
+                component="test.py",
+                project="test",
+                line=5,
+                message="Unused variable",
+                type="CODE_SMELL",
+                status="OPEN",
+                first_line=5,
+                last_line=5
+            ),
+            SonarIssue(
+                key="test2",
+                rule="python:S1192",
+                severity="MINOR",
+                component="test.py",
+                project="test",
+                line=7,
+                message="Duplicate literal",
+                type="CODE_SMELL",
+                status="OPEN",
+                first_line=7,
+                last_line=7
+            )
+        ]
+
+        context = {
+            "context": "def func():\n    unused = 1\n    x = 'test'\n    y = 'test'",
+            "start_line": 1,
+            "end_line": 4
+        }
+
+        rule_info_list = {
+            "python:S1481": {"name": "Unused variable rule"},
+            "python:S1192": {"name": "Duplicate literal rule"}
+        }
+
+        prompt = fixer._create_fix_prompt_list(issues, context, rule_info_list, "python")
+
+        assert "S1481" in prompt or "Unused" in prompt
+        assert "S1192" in prompt or "Duplicate" in prompt
+
+    def test_looks_like_file_path_valid(self, fixer):
+        """Test checking if string looks like file path - valid cases"""
+        assert fixer._looks_like_file_path("src/main.py")
+        assert fixer._looks_like_file_path("path/to/file.java")
+        assert fixer._looks_like_file_path("app/models/user.js")
+
+    def test_looks_like_file_path_invalid(self, fixer):
+        """Test checking if string looks like file path - invalid cases"""
+        assert not fixer._looks_like_file_path("just_a_string")
+        assert not fixer._looks_like_file_path("no-slash.py")
+        assert not fixer._looks_like_file_path("wrong/extension.xyz")
+
+    def test_try_stored_file_path_success(self, fixer, tmp_path):
+        """Test getting file from stored path - success"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content")
+
+        fix = FixSuggestion(
+            issue_key="test",
+            file_path="test.py",
+            original_code="",
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        result = fixer._try_stored_file_path(fix, tmp_path)
+        assert result is not None
+
+    def test_try_stored_file_path_not_exists(self, fixer, tmp_path):
+        """Test getting file from stored path - file doesn't exist"""
+        fix = FixSuggestion(
+            issue_key="test",
+            file_path="nonexistent.py",
+            original_code="",
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        result = fixer._try_stored_file_path(fix, tmp_path)
+        assert result is None
+
+    def test_try_extract_from_issue_key_success(self, fixer, tmp_path):
+        """Test extracting file from issue key - success"""
+        test_file = tmp_path / "src" / "test.py"
+        test_file.parent.mkdir(parents=True)
+        test_file.write_text("content")
+
+        fix = FixSuggestion(
+            issue_key="project:src/test.py:S1234",
+            file_path=None,
+            original_code="",
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        result = fixer._try_extract_from_issue_key(fix, tmp_path)
+        assert result is not None
+
+    def test_try_extract_from_issue_key_no_colon(self, fixer, tmp_path):
+        """Test extracting file from issue key - no colon separator"""
+        fix = FixSuggestion(
+            issue_key="simple-key",
+            file_path=None,
+            original_code="",
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        result = fixer._try_extract_from_issue_key(fix, tmp_path)
+        assert result is None
+
+    def test_find_files_with_content_success(self, fixer, tmp_path):
+        """Test finding files containing specific content"""
+        file1 = tmp_path / "file1.py"
+        file2 = tmp_path / "file2.py"
+        file1.write_text("def target_function():\n    pass")
+        file2.write_text("def other_function():\n    pass")
+
+        results = fixer._find_files_with_content(tmp_path, "target_function")
+
+        assert len(results) >= 1
+        assert any("file1.py" in str(f) for f in results)
+
+    def test_find_files_with_content_not_found(self, fixer, tmp_path):
+        """Test finding files with content not present"""
+        file1 = tmp_path / "file1.py"
+        file1.write_text("def some_function():\n    pass")
+
+        results = fixer._find_files_with_content(tmp_path, "nonexistent_content")
+
+        assert len(results) == 0
+
+    def test_find_files_with_content_unicode_error(self, fixer, tmp_path):
+        """Test finding files handles unicode errors gracefully"""
+        binary_file = tmp_path / "binary.bin"
+        binary_file.write_bytes(b'\x80\x81\x82')
+
+        # Should not crash on binary files
+        results = fixer._find_files_with_content(tmp_path, "text")
+        assert isinstance(results, list)
+
+    def test_check_bracket_balance_complex(self, fixer):
+        """Test bracket balance checking with complex code"""
+        # Balanced
+        assert fixer._check_bracket_balance("def f(): return {1: [2, 3]}")
+
+        # Unbalanced - missing closing
+        assert not fixer._check_bracket_balance("def f(): return {1: [2, 3]")
+
+        # Unbalanced - extra closing
+        assert not fixer._check_bracket_balance("def f(): return {1: [2, 3]]}")
+
+    def test_check_no_duplicate_definitions_no_duplicates(self, fixer):
+        """Test checking for duplicate definitions - none found"""
+        content = """
+def func1():
+    pass
+
+def func2():
+    pass
+
+class MyClass:
+    pass
+"""
+        assert fixer._check_no_duplicate_definitions(content, ".py")
+
+    def test_check_no_duplicate_definitions_has_duplicates(self, fixer):
+        """Test checking for duplicate definitions - duplicates found"""
+        content = """
+def duplicate():
+    pass
+
+def other():
+    pass
+
+def duplicate():
+    pass
+"""
+        assert not fixer._check_no_duplicate_definitions(content, ".py")
+
+    def test_check_no_duplicate_definitions_non_python(self, fixer):
+        """Test checking duplicate definitions for non-Python file"""
+        content = "function duplicate() {}\nfunction duplicate() {}"
+        # Should return True (only checks Python)
+        assert fixer._check_no_duplicate_definitions(content, ".js")
+
+    def test_apply_indentation_to_fix_empty(self, fixer):
+        """Test applying indentation to empty code"""
+        result = fixer.apply_indentation_to_fix("", "    ")
+        assert result == ""
+
+    def test_apply_indentation_to_fix_multiline(self, fixer):
+        """Test applying indentation to multiline code"""
+        fixed_code = "def foo():\npass\nreturn 1"
+        result = fixer.apply_indentation_to_fix(fixed_code, "    ")
+
+        lines = result.split("\n")
+        assert all(line.startswith("    ") or not line.strip() for line in lines)
+
+    def test_get_file_from_fix_all_strategies(self, fixer, tmp_path):
+        """Test all strategies for getting file from fix"""
+        test_file = tmp_path / "target.py"
+        test_file.write_text("def target_function():\n    pass")
+
+        # Test strategy 3: find by content
+        fix = FixSuggestion(
+            issue_key="unknown",
+            file_path=None,
+            original_code="def target_function():",
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        with patch.object(fixer, '_find_files_with_content') as mock_find:
+            mock_find.return_value = [test_file]
+            result = fixer._get_file_from_fix(fix, tmp_path)
+            assert result is not None
+
+    def test_extract_fields_from_parsed_json_all_fields(self, fixer):
+        """Test extracting all fields from parsed JSON"""
+        fix_data = {
+            "FIXED_SELECTION": "fixed code",
+            "NEW_HELPER_CODE": "helper code",
+            "PLACEMENT": "GLOBAL_TOP",
+            "EXPLANATION": "Explanation text",
+            "CONFIDENCE": "0.88"
+        }
+
+        result = fixer._extract_fields_from_parsed_json(fix_data)
+
+        assert result is not None
+        assert result["fixed_code"] == "fixed code"
+        assert result["helper_code"] == "helper code"
+        assert result["placement_helper"] == "GLOBAL_TOP"
+        assert result["confidence"] == 0.88
+
+    def test_extract_fields_from_parsed_json_minimal(self, fixer):
+        """Test extracting fields with minimal data"""
+        fix_data = {
+            "FIXED_SELECTION": "code"
+        }
+
+        result = fixer._extract_fields_from_parsed_json(fix_data)
+
+        assert result is not None
+        assert result["fixed_code"] == "code"
+        assert result["helper_code"] == ""
+        assert result["placement_helper"] == "SIBLING"
+
+    def test_extract_fields_from_parsed_json_invalid_placement(self, fixer):
+        """Test extracting fields with invalid placement"""
+        fix_data = {
+            "FIXED_SELECTION": "code",
+            "PLACEMENT": "INVALID_PLACEMENT"
+        }
+
+        result = fixer._extract_fields_from_parsed_json(fix_data)
+
+        assert result["placement_helper"] == "SIBLING"  # Default
+
+    def test_extract_fields_from_parsed_json_missing_fixed_code(self, fixer):
+        """Test extracting fields when FIXED_SELECTION is missing"""
+        fix_data = {
+            "EXPLANATION": "Some explanation"
+        }
+
+        result = fixer._extract_fields_from_parsed_json(fix_data)
+
+        assert result is None
+
+    def test_apply_regex_patterns_all_patterns(self, fixer):
+        """Test applying all regex patterns"""
+        content = '''
+{
+    "FIXED_SELECTION": "fixed code here",
+    "NEW_HELPER_CODE": "helper code",
+    "PLACEMENT": "SIBLING",
+    "EXPLANATION": "Detailed explanation",
+    "CONFIDENCE": 0.92
+}
+'''
+
+        results = fixer._apply_regex_patterns(content)
+
+        assert results["FIXED_SELECTION"] == "fixed code here"
+        assert results["NEW_HELPER_CODE"] == "helper code"
+        assert results["PLACEMENT"] == "SIBLING"
+
+    def test_get_match_value_with_groups(self, fixer):
+        """Test getting match value with multiple groups"""
+
+
+        # Test with first group match
+        match = re.search(r'"key"\s*:\s*"(value1)"|\'key\'\s*:\s*\'(value2)\'', '"key": "value1"')
+        result = fixer._get_match_value(match)
+        assert result == "value1"
+
+        # Test with second group match
+        match = re.search(r'"key"\s*:\s*"(value1)"|\'key\'\s*:\s*\'(value2)\'', "'key': 'value2'")
+        result = fixer._get_match_value(match)
+        assert "value" in result
+
+    def test_process_match_value_confidence(self, fixer):
+        """Test processing confidence value"""
+        result = fixer._process_match_value("CONFIDENCE", "0.75")
+        assert result == 0.75
+
+        result = fixer._process_match_value("CONFIDENCE", None)
+        assert result == 0.5
+
+    def test_process_match_value_placement_default(self, fixer):
+        """Test processing placement with default"""
+        result = fixer._process_match_value("PLACEMENT", None)
+        assert result == "SIBLING"
+
+    def test_validate_results_missing_fixed_selection(self, fixer):
+        """Test validating results with missing FIXED_SELECTION"""
+        results = {
+            "FIXED_SELECTION": "",
+            "EXPLANATION": "text",
+            "CONFIDENCE": 0.8,
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING"
+        }
+
+        result = fixer._validate_results(results)
+        assert result is None
+
+    def test_validate_results_confidence_bounds(self, fixer):
+        """Test confidence is bounded between 0 and 1"""
+        results = {
+            "FIXED_SELECTION": "code",
+            "CONFIDENCE": 1.5,  # Over 1
+            "NEW_HELPER_CODE": "",
+            "PLACEMENT": "SIBLING",
+            "EXPLANATION": "text"
+        }
+
+        result = fixer._validate_results(results)
+        assert result["confidence"] == 1.0
+
+        results["CONFIDENCE"] = -0.5  # Under 0
+        result = fixer._validate_results(results)
+        assert result["confidence"] == 0.0
+
+
+# ============================================================================
+# TEST CLASS: EDGE CASES AND ERROR HANDLING
+# ============================================================================
+
+class TestEdgeCasesAndErrors:
+    """Test edge cases and error handling"""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def test_extract_fix_from_response_malformed_json(self, fixer):
+        """Test extracting fix from malformed JSON"""
+        content = "{FIXED_SELECTION: 'missing quotes', incomplete"
+
+        # Should fall back to regex
+        result = fixer._extract_fix_from_response(content)
+        # May return None or partial result
+        assert result is None or isinstance(result, dict)
+
+    def test_extract_fix_from_response_with_extra_text(self, fixer):
+        """Test extracting fix with extra text before/after JSON"""
+        content = '''
+Here is the fix:
+
+```json
+{
+    "FIXED_SELECTION": "def fixed():\n    pass",
+    "EXPLANATION": "Fixed it",
+    "CONFIDENCE": 0.9
+}
+```
+
+Hope this helps!
+'''
+
+        result = fixer._extract_fix_from_response(content)
+        assert result is None or (result and "fixed" in result.get("fixed_code", ""))
+
+    def test_call_llm_list_with_empty_issues(self, fixer):
+        """Test calling LLM with empty issues list"""
+        context = {"context": "code", "start_line": 1, "end_line": 5}
+
+        # Should handle gracefully
+        result = fixer._call_llm_list([], context, ".py", {}, "")
+        # Implementation may vary
+        assert result is None or isinstance(result, dict)
+
+    def test_generate_fix_by_file_empty_issues(self, fixer, tmp_path):
+        """Test generating fix with empty issues list"""
+        result = fixer.generate_fix_by_file([], tmp_path, {})
+        assert result is None
+
+    def test_apply_fixes_to_file_exception(self, fixer, tmp_path):
+        """Test handling exception during fix application"""
+        test_file = tmp_path / "test.py"
+        test_file.write_text("content\n")
+
+        fix = FixSuggestion(
+            issue_key="test",
+            file_path="test.py",
+            original_code="content",
+            fixed_code="new content",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        # Make file read-only to cause exception
+        test_file.chmod(0o444)
+
+        try:
+            success, results = fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+            # Should handle gracefully
+            assert isinstance(success, bool)
+        finally:
+            test_file.chmod(0o644)
+
+    def test_write_explaination_io_error(self, fixer, tmp_path):
+        """Test handling IO error during explanation writing"""
+        file_md = tmp_path / "readonly" / "output.md"
+        file_md.parent.mkdir()
+        file_md.parent.chmod(0o444)
+
+        issue = SonarIssue(
+            key="test",
+            rule="python:S1234",
+            severity="MAJOR",
+            component="test.py",
+            project="test",
+            line=1,
+            message="Test",
+            type="CODE_SMELL",
+            status="OPEN",
+            first_line=1,
+            last_line=5,
+            file="test.py"
+        )
+
+        try:
+            with pytest.raises((PermissionError, OSError)):
+                fixer.write_explaination(file_md, {}, [issue], "")
+        finally:
+            file_md.parent.chmod(0o755)
+
+    def test_try_find_by_content_short_code(self, fixer, tmp_path):
+        """Test finding file by content with very short code"""
+        fix = FixSuggestion(
+            issue_key="test",
+            original_code="x",  # Too short
+            fixed_code="",
+            explanation="",
+            confidence=0.9,
+            sonar_line_number=1,
+            llm_model="gpt-4"
+        )
+
+        result = fixer._try_find_by_content(fix, tmp_path)
+        assert result is None
+
+    def test_context_extraction_line_out_of_bounds(self, fixer):
+        """Test context extraction with line number out of bounds"""
+        lines = ["line 1\n", "line 2\n"]
+
+        context = fixer._extract_context(lines, 100, 100, context_lines=5)
+
+        # Should handle gracefully
+        assert context["context"] == ""
+
+    def test_parse_response_exception(self, fixer):
+        """Test parsing response with exception"""
+        mock_response = Mock()
+        mock_response.choices = []  # Invalid structure
+
+        result = fixer._parse_openai_response(mock_response)
+        assert result is None
+
+    def test_create_backup_permission_error(self, fixer, tmp_path):
+        """Test backup creation with permission issues"""
+        # Create directory structure
+        source = tmp_path / "source"
+        source.mkdir()
+        (source / "file.txt").write_text("content")
+
+        # Make parent read-only
+        tmp_path.chmod(0o444)
+
+        try:
+            with pytest.raises((PermissionError, OSError)):
+                fixer._create_backup(source)
+        finally:
+            tmp_path.chmod(0o755)

@@ -727,7 +727,7 @@ class LLMFixer:
         # We join strategies with newlines for a clean list
         strategy_text = "\n".join(strategies)
 
-        template = self.jinja_env.get_template("md.j2")
+        template = self.jinja_env.get_template("fix_issues.j2")
 
         # Prepare context for template
         context_dic = {
@@ -1691,6 +1691,8 @@ class ContextExtractor:
             r"^\w+\s*=\s*async\s*\([^)]*\)\s*=>\s*\{",  # functionName = async (params) => {
             r"^\s*\w+\s*\([^)]*\)\s*\{",  # methodName() { (in class/object)
             r"^\s*async\s+\w+\s*\([^)]*\)\s*\{",  # async methodName() {
+            r"^(?:const|let|var)\s+\w+\s*=\s*\([^)]*\)\s*=>\s*\{",
+            r"^(?:const|let|var)\s+\w+\s*=\s*async\s*\([^)]*\)\s*=>\s*\{",
         ]
 
         # Java/C# method patterns

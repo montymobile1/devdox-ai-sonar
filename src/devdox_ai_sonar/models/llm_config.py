@@ -8,6 +8,8 @@ import shutil
 from datetime import datetime
 from devdox_ai_sonar.models.sonar import SonarType
 
+failed_load_config = "Failed to load configuration"
+
 
 class AppConfig(BaseModel):
     """Complete application configuration"""
@@ -93,7 +95,7 @@ class ConfigManager:
             self.load_config()
 
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         keys = key_path.split(".")
         current: Dict[str, Any] = self.config
@@ -191,7 +193,7 @@ class ConfigManager:
             self.load_config()
 
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         # Find the provider
         llm_config = self.config.get("llm", {})
@@ -226,7 +228,7 @@ class ConfigManager:
             self.load_config()
 
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         provider_name = provider_config.get("name")
         if not provider_name:
@@ -269,7 +271,7 @@ class ConfigManager:
             self.load_config()
 
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         llm_config = self.config.get("llm", {})
 
@@ -296,7 +298,7 @@ class ConfigManager:
         if not self.config:
             self.load_config()
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         llm_config = self.config.get("llm", {})
         providers: List[Dict[str, Any]] = llm_config.get("providers", [])
@@ -308,7 +310,7 @@ class ConfigManager:
             self.load_config()
 
         if not self.config:
-            raise RuntimeError("Failed to load configuration")
+            raise RuntimeError(failed_load_config)
 
         llm_config = self.config.get("llm", {})
         providers: List[Dict[str, Any]] = llm_config.get("providers", [])
