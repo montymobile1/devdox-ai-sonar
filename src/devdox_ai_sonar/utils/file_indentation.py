@@ -166,10 +166,9 @@ def find_import_insertion_point(lines: List[str]) -> int:
         return 0
 
 
-def process_import_line( i: int, line: str, lines: List[str], state: ImportState
-
+def process_import_line(
+    i: int, line: str, lines: List[str], state: ImportState
 ) -> Tuple[ImportState, bool]:
-
     """Process a single line for import detection."""
 
     stripped = line.strip()
@@ -221,9 +220,9 @@ def handle_docstring(
                 state["last_docstring_line"] = i
             return True, state
     else:
-        docstring_quote =  state.get("docstring_quote") or '"""'
+        docstring_quote = state.get("docstring_quote") or '"""'
 
-        if  docstring_quote in stripped:
+        if docstring_quote in stripped:
             state["in_docstring"] = False
             state["last_docstring_line"] = i
             return True, state
@@ -323,7 +322,7 @@ def apply_complex_fix(
     indented_code = apply_indentation_to_fix(fix.fixed_code, base_indent)
 
     # Normalize helper code
-    helper_code = fix.helper_code.replace("\\n", "\n")  if fix.helper_code else ""
+    helper_code = fix.helper_code.replace("\\n", "\n") if fix.helper_code else ""
 
     if not helper_code:
         lines = replace_lines_simple(lines, line_range, indented_code)

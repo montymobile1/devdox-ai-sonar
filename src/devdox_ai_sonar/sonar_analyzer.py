@@ -689,7 +689,6 @@ class SonarCloudAnalyzer:
             rules_excluded,
         )
 
-
         analysis = self.get_project_issues(
             project_key,
             branch,
@@ -718,15 +717,15 @@ class SonarCloudAnalyzer:
         return fixable_by_file
 
     def _resolve_rule_filter(
-            self,
-            project_key: str,
-            branch: str,
-            pull_request: Optional[int],
-            max_issues: Optional[int],
-            severities: Optional[List[str]],
-            types_list: Optional[List[str]],
-            group_by: Optional[str],
-            rules_excluded: Optional[List[str]],
+        self,
+        project_key: str,
+        branch: str,
+        pull_request: Optional[int],
+        max_issues: Optional[int],
+        severities: Optional[List[str]],
+        types_list: Optional[List[str]],
+        group_by: Optional[str],
+        rules_excluded: Optional[List[str]],
     ) -> tuple[Optional[str], Optional[List[str]]]:
         if group_by != "rules":
             return None, None

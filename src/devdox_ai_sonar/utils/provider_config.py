@@ -77,7 +77,10 @@ class ProviderConfigManager:
     """Manages provider configuration operations."""
 
     def __init__(
-        self, config_manager:ConfigManager, ui: ProviderConfigUI, validator: ProviderValidator
+        self,
+        config_manager: ConfigManager,
+        ui: ProviderConfigUI,
+        validator: ProviderValidator,
     ):
         self.config_manager = config_manager
         self.ui = ui
@@ -109,13 +112,10 @@ class ProviderConfigManager:
         existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
 
         existing_providers: List[Dict[str, Any]] = (
-
             existing_providers_value if existing_providers_value else []
-
         )
 
         return [p["name"] for p in existing_providers]
-
 
     def configure_new_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
         """Configure a new provider with API key and model selection."""
@@ -220,12 +220,10 @@ class ProviderConfigManager:
             # Ensure models is a list of strings
             models = validation_result.models
             if not isinstance(models, list):
-
                 return []
 
             # Validate all items are strings
             if not all(isinstance(m, str) for m in models):
-
                 return [str(m) for m in models if m]
 
             return models
@@ -253,7 +251,9 @@ class ProviderConfigManager:
             # Keep existing API key, use existing models
             models_value = ctx.provider.get("models", [])
 
-            ctx.available_models = models_value if isinstance(models_value, list) else []
+            ctx.available_models = (
+                models_value if isinstance(models_value, list) else []
+            )
             return True
 
         # Get and validate new API key
@@ -270,7 +270,9 @@ class ProviderConfigManager:
         ctx.available_models = validation_result.models
         return True
 
-    def _validate_provider_api_key(self, provider_name: str, api_key: str) -> Optional[Any]:
+    def _validate_provider_api_key(
+        self, provider_name: str, api_key: str
+    ) -> Optional[Any]:
         """Validate provider API key and return validation result."""
         try:
             provider_type = ProviderType(provider_name)
@@ -298,7 +300,7 @@ class ProviderConfigManager:
             default_pull = 0
         return default_branch, default_pull
 
-    def get_params(self)->Any:
+    def get_params(self) -> Any:
         return self.config_manager.get_value("sonar.configuration")
 
     def branch_or_pr_prompt(self) -> Tuple[str, int]:

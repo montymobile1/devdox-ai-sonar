@@ -148,9 +148,11 @@ class SecurityAnalysisResult(BaseModel):
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")
     issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
-    fixable_issues_by_file: Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]] = Field(
-        default_factory=dict,
-        description="Security issues that can be fixed by LLM",
+    fixable_issues_by_file: Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]] = (
+        Field(
+            default_factory=dict,
+            description="Security issues that can be fixed by LLM",
+        )
     )
     analysis_timestamp: Optional[str] = Field(None, description="Analysis timestamp")
 

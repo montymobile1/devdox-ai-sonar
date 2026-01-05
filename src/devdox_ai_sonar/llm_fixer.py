@@ -81,7 +81,7 @@ class LLMFixer:
         self.model = model
         self.prompt_dir = Path(__file__).parent / "prompts"
         self.template_dir = Path(__file__).parent / "templates"
-        self.client: Any=None
+        self.client: Any = None
         self._validate_and_configure_provider(provider, model, api_key)
         self._setup_jinja_env()
 
@@ -170,7 +170,7 @@ class LLMFixer:
         fix_response: Dict[str, Any],
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         original_code: str,
-    )->None:
+    ) -> None:
         # Ensure parent directory exists
         file_md.parent.mkdir(parents=True, exist_ok=True)
 
@@ -211,7 +211,6 @@ class LLMFixer:
 
     def generate_fix_by_file(
         self,
-
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         project_path: Path,
         rule_info: Dict[str, Dict[str, str]],
@@ -465,12 +464,9 @@ class LLMFixer:
 
             elif self.provider == "gemini":
                 model_instance = self.client.models.generate_content(
-
                     model=self.model, contents=prompt
-
                 )
                 return self._parse_gemini_response(model_instance)
-
 
             elif self.provider == "togetherai":
                 response = self.client.chat.completions.create(
@@ -540,9 +536,7 @@ class LLMFixer:
 
             elif self.provider == "gemini":
                 response = self.client.models.generate_content(
-
                     model=self.model, contents=prompt
-
                 )
 
                 return self._parse_gemini_response(response)
@@ -631,12 +625,11 @@ class LLMFixer:
         return {"current": "Unknown", "target": "15"}
 
     def _extend_strategies_for_issue(
-            self,
-            strategies: List[str],
-            issue: Any,
-            code_chunk: str,
+        self,
+        strategies: List[str],
+        issue: Any,
+        code_chunk: str,
     ) -> List[str]:
-
         msg_lower = getattr(issue, "message", "").lower()
 
         # Cognitive Complexity
@@ -671,9 +664,7 @@ class LLMFixer:
                 )
 
         # Unused Code
-        elif (
-                "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower
-        ):
+        elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
             strategies.append("• Remove ONLY the specific unused variable/import.")
             strategies.append("• Do not break code that references adjacent lines.")
 
@@ -701,9 +692,7 @@ class LLMFixer:
             strategies.append("• Use the constant in [FIXED_SELECTION].")
 
         # Null Checks
-        elif (
-                "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower
-        ):
+        elif "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower:
             strategies.append("• Add defensive null/None checks before usage.")
 
         return strategies
@@ -815,7 +804,7 @@ class LLMFixer:
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         context: Dict[str, Any],
-        rule_info_list:Dict[str, Dict[str, str]],
+        rule_info_list: Dict[str, Dict[str, str]],
         language: str = "python",
         error_message: str = "",
     ) -> str:
@@ -831,19 +820,17 @@ class LLMFixer:
             "• Make MINIMAL changes necessary to satisfy the rule.",
         ]
 
-
         for issue in issues:
-
             rule_key = getattr(issue, "rule", "")
 
             if rule_key not in rule_info_list:
                 continue
 
             strategies = self._extend_strategies_for_issue(
-                    strategies=strategies,
-                    issue=issue,
-                    code_chunk=code_chunk,
-                )
+                strategies=strategies,
+                issue=issue,
+                code_chunk=code_chunk,
+            )
 
             # 3. Construct Prompt
             # We join strategies with newlines for a clean list
@@ -1365,7 +1352,7 @@ class LLMFixer:
                                 ):
                                     # Apply the improved fix
                                     if validation_result.final_fix:
-                                        improved_success, _= self._apply_fixes_to_file(
+                                        improved_success, _ = self._apply_fixes_to_file(
                                             file_path,
                                             [validation_result.final_fix],
                                             dry_run,
@@ -2248,7 +2235,7 @@ def _prepare_context(
 
 
 def _validate_and_extract_issue_info(
-    issues:  Union[List[SonarIssue], List[SonarSecurityIssue]], project_path: Path
+    issues: Union[List[SonarIssue], List[SonarSecurityIssue]], project_path: Path
 ) -> Tuple[Path, Dict[str, Any]]:
     """
     Validate that all issues are from the same file and extract line range.

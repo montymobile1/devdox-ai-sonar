@@ -152,7 +152,7 @@ class ConfigService:
 
     def save_config(
         self, token: str, organization: str, project: str, project_path: str
-    )->bool:
+    ) -> bool:
         """Save authentication configuration"""
 
         if not validate_token_format(token) and (

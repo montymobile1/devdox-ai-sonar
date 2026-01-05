@@ -19,7 +19,7 @@ def smart_prompt(
     choices: Optional[List[Union[str, Choice]]] = None,
     allow_switch: bool = True,
     multiple: bool = False,
-) ->  Union[str, List[str]]:
+) -> Union[str, List[str]]:
     """Enhanced prompt that allows switching commands by typing '/'.
 
     Args:
@@ -35,23 +35,7 @@ def smart_prompt(
     Raises:
         SwitchCommandException: If user types '/' to switch commands
     """
-    choice_strings: Optional[List[str]] = None
-    if choices:
-        choice_strings = []
-        for choice in choices:
-            if isinstance(choice, Choice):
-                # Extract value from Choice object, ensuring it's a string
-                if hasattr(choice, "value"):
-                    value = choice.value
-                    # Ensure value is converted to string
-                    choice_strings.append(
-                        str(value) if value is not None else str(choice)
-                    )
-                else:
-                    choice_strings.append(str(choice))
-            else:
-                # Already a string, just append
-                choice_strings.append(str(choice))
+    choice_strings = _normalize_choices(choices)
 
     config = PromptConfig(message, default, choice_strings, allow_switch, multiple)
 
@@ -63,6 +47,23 @@ def smart_prompt(
     _check_for_switch_command(result, allow_switch)
 
     return result
+
+
+def _normalize_choices(
+    choices: Optional[List[Union[str, Choice]]],
+) -> Optional[List[str]]:
+    """Convert a list of Choice objects or strings into a list of strings."""
+    if not choices:
+        return None
+
+    normalized: List[str] = []
+    for choice in choices:
+        if isinstance(choice, Choice):
+            value = getattr(choice, "value", choice)
+            normalized.append(str(value))
+        else:
+            normalized.append(str(choice))
+    return normalized
 
 
 def _check_for_switch_command(
@@ -129,7 +130,6 @@ def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
     """
     display_message = config.get_display_message()
 
-
     if not config.choices:
         text_default: str = config.default if isinstance(config.default, str) else ""
 
@@ -144,18 +144,16 @@ def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
             display_message, config.choices, checkbox_default
         )
     select_default: Optional[str] = (
-
         config.default if isinstance(config.default, str) else None
-
     )
 
     return _questionary_select_prompt(display_message, config.choices, select_default)
 
 
 def _questionary_select_prompt(
-        message: str,
-        choices: List[str],
-        default_value: Optional[str] = None,
+    message: str,
+    choices: List[str],
+    default_value: Optional[str] = None,
 ) -> str:
     """
     Prompt user with single selection.
@@ -169,15 +167,12 @@ def _questionary_select_prompt(
         Selected choice as string
     """
     if default_value is not None:
-
         default = default_value
 
     elif choices:
-
         default = choices[0]
 
     else:
-
         default = ""
 
     result = questionary.select(message, choices=choices, default=default).ask()
@@ -185,10 +180,9 @@ def _questionary_select_prompt(
     return str(result) if result is not None else ""
 
 
-
 def _questionary_text_prompt(
-        message: str,
-        default_value: Optional[str] = None,
+    message: str,
+    default_value: Optional[str] = None,
 ) -> str:
     """
     Prompt user for text input.
@@ -200,10 +194,7 @@ def _questionary_text_prompt(
     Returns:
         User input as string
     """
-    result = questionary.text(
-        message,
-        default=default_value or ""
-    ).ask()
+    result = questionary.text(message, default=default_value or "").ask()
 
     # Ensure we return a string, not Any
     return str(result) if result is not None else ""
@@ -235,9 +226,7 @@ def _questionary_checkbox_prompt(
 
     for choice_str in choices:
         choice_obj = Choice(
-
             title=choice_str, value=choice_str, checked=(choice_str in default_set)
-
         )
 
         choice_objects.append(choice_obj)
@@ -277,7 +266,7 @@ def _confirm_with_questionary(config: ConfirmConfig) -> str:
     import questionary
 
     result = questionary.confirm(config.message, default=config.default).ask()
-    if result :
+    if result:
         return "yes"
     return "no"
 

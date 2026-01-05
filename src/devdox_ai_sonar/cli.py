@@ -694,11 +694,9 @@ def _process_interactive_command(ctx: click.Context) -> bool:
     _execute_interactive_command(ctx, command)
 
     if not _should_continue_to_menu():
-
         _exit_application()
         return True
     return False
-
 
 
 def _should_exit_interactive_mode(command: Optional[str]) -> bool:
@@ -721,7 +719,9 @@ def _execute_interactive_command(ctx: click.Context, command: Optional[str]) -> 
 
 def _should_continue_to_menu() -> bool:
     """Ask user if they want to return to main menu."""
-    result = smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True)
+    result = smart_confirm(
+        constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True
+    )
     return result
 
 

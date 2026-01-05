@@ -155,11 +155,8 @@ class ConfigManager:
 
             providers = llm_config.get("providers", [])
             provider = next(
-
                 (p for p in providers if p["name"] == default_provider),
-
                 None,
-
             )
             if provider and new_value not in provider["models"]:
                 issues.append(
@@ -236,7 +233,11 @@ class ConfigManager:
 
         # Check if provider already exists
         if "llm" not in self.config:
-            self.config["llm"] = {"providers": [], "default_provider": "", "default_model": ""}
+            self.config["llm"] = {
+                "providers": [],
+                "default_provider": "",
+                "default_model": "",
+            }
 
         llm_config = self.config["llm"]
 
@@ -286,9 +287,7 @@ class ConfigManager:
         providers: List[Dict[str, Any]] = llm_config["providers"]
         original_count = len(providers)
 
-        llm_config["providers"] = [
-            p for p in providers if p["name"] != provider_name
-        ]
+        llm_config["providers"] = [p for p in providers if p["name"] != provider_name]
 
         if len(llm_config["providers"]) == original_count:
             raise ValueError(f"Provider '{provider_name}' not found")
