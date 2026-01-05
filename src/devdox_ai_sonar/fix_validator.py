@@ -366,93 +366,77 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
     def _call_llm_validator(self, prompt: str) -> Optional[str]:
         """Call LLM for validation."""
-
         try:
+            if not self.client:
+                logger.error(f"{self.provider} client not properly initialized")
+                return None
+
             if self.provider == "openai":
-                if not self.client:
-                    logger.error("OpenAI client not properly initialized")
+                return self._call_openai_validator(prompt)
 
-                    return None
+            if self.provider == "gemini":
+                return self._call_gemini_validator(prompt)
 
-
-                openai_response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a senior software engineer and security expert specializing in code review. Your reviews are thorough, critical, and focused on preventing bugs and security issues.",
-                        },
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-                    max_tokens=2000,
-                )
-                # Safely extract content
-
-                if openai_response.choices and openai_response.choices[0].message:
-                    content = openai_response.choices[0].message.content
-
-                    return str(content) if content else None
-
-                return None
-
-            elif self.provider == "gemini":
-                if not self.client:
-                    logger.error("Gemini client not properly initialized")
-
-                    return None
-
-
-                gemini_response = self.client.models.generate_content(
-                    model=self.model, contents=prompt
-                )
-                if hasattr(gemini_response, 'text'):
-                    return str(gemini_response.text)
-
-                return None
-
-            elif self.provider == "togetherai":
-
-                if not self.client:
-                    logger.error("Together AI client not properly initialized")
-
-                    return None
-
-                togetherai_response = self.client.chat.completions.create(
-
-                    model=self.model,
-
-                    messages=[
-
-                        {
-
-                            "role": "system",
-
-                            "content": "You are a senior software engineer and security expert specializing in code review.",
-
-                        },
-
-                        {"role": "user", "content": prompt},
-
-                    ],
-
-                    temperature=0.1,
-
-                    max_tokens=2000,
-
-                )
-
-                if togetherai_response.choices and togetherai_response.choices[0].message:
-                    content = togetherai_response.choices[0].message.content
-
-                    return str(content) if content else None
-
-                return None
+            if self.provider == "togetherai":
+                return self._call_togetherai_validator(prompt)
 
             return None
+
         except Exception as e:
             logger.error(f"Error calling validator LLM: {e}", exc_info=True)
             return None
+
+    def _call_gemini_validator(self, prompt: str) -> Optional[str]:
+        response = self.client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+        )
+        return str(response.text) if hasattr(response, "text") else None
+
+    def _call_openai_validator(self, prompt: str) -> Optional[str]:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a senior software engineer and security expert "
+                        "specializing in code review. Your reviews are thorough, "
+                        "critical, and focused on preventing bugs and security issues."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+            max_tokens=2000,
+        )
+
+        return self._extract_openai_content(response)
+
+    def _call_togetherai_validator(self, prompt: str) -> Optional[str]:
+        response = self.client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a senior software engineer and security expert "
+                        "specializing in code review."
+                    ),
+                },
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+            max_tokens=2000,
+        )
+
+        return self._extract_openai_content(response)
+
+    def _extract_openai_content(self, response: Any) -> Optional[str]:
+        if response.choices and response.choices[0].message:
+            content = response.choices[0].message.content
+            return str(content) if content else None
+        return None
 
     def _parse_validation_response(
         self, response_text: str, original_fix: FixSuggestion
