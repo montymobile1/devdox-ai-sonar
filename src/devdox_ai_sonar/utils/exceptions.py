@@ -25,7 +25,9 @@ class DevDoxSonarError(Exception):
 class AuthenticationError(DevDoxSonarError):
     """Raised when authentication with SonarCloud fails."""
 
-    def __init__(self, message: str = "Authentication failed", details: Optional[str] = None):
+    def __init__(
+        self, message: str = "Authentication failed", details: Optional[str] = None
+    ):
         super().__init__(message, details)
 
 
@@ -42,10 +44,10 @@ class SonarCloudAPIError(DevDoxSonarError):
     """Raised when SonarCloud API returns an error."""
 
     def __init__(
-            self,
-            message: str,
-            status_code: Optional[int] = None,
-            response_body: Optional[str] = None
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        response_body: Optional[str] = None,
     ):
         self.status_code = status_code
         self.response_body = response_body
@@ -63,10 +65,7 @@ class FixApplicationError(DevDoxSonarError):
     """Raised when fix application fails."""
 
     def __init__(
-            self,
-            message: str,
-            file_path: str,
-            original_error: Optional[Exception] = None
+        self, message: str, file_path: str, original_error: Optional[Exception] = None
     ):
         self.file_path = file_path
         self.original_error = original_error
@@ -82,11 +81,11 @@ class LLMProviderError(DevDoxSonarError):
     """Raised when LLM provider encounters an error."""
 
     def __init__(
-            self,
-            message: str,
-            provider: str,
-            model: Optional[str] = None,
-            original_error: Optional[Exception] = None
+        self,
+        message: str,
+        provider: str,
+        model: Optional[str] = None,
+        original_error: Optional[Exception] = None,
     ):
         self.provider = provider
         self.model = model
@@ -133,12 +132,13 @@ class RuleNotFoundError(DevDoxSonarError):
         super().__init__(message)
 
 
-
 class SwitchCommandException(Exception):
     """Exception raised when user wants to switch commands."""
+
     pass
 
 
 class ReturnToMenuException(Exception):
     """Exception raised when user wants to return to main menu."""
+
     pass

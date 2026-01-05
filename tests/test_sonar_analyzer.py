@@ -762,11 +762,10 @@ class TestGetFixableIssuesByTypes:
                 max_issues=10,
                 group_by="rules"
             )
-
         assert isinstance(result, dict)
         assert "python:S1234" in result
-        assert "issue" in result["python:S1234"]
-        assert len(result["python:S1234"]["issue"]) > 0
+
+        assert len(result["python:S1234"]) > 0
 
     def test_get_fixable_issues_by_types_with_file_grouping(self, analyzer, sample_issue_data):
         """Test grouping issues by file (default behavior)"""

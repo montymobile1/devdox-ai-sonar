@@ -10,8 +10,7 @@ from typing import List, Dict, Any, Union
 import tempfile
 import shutil
 
-from devdox_ai_sonar.llm_fixer import LLMFixer
-
+from devdox_ai_sonar.llm_fixer import LLMFixer, ContextExtractor
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
@@ -605,7 +604,7 @@ class TestLLMAPICalls:
     @pytest.fixture
     def fixer_gemini(self, mock_gemini_client):
         """Create Gemini fixer"""
-        return LLMFixer(provider="gemini", api_key="test-key")
+        return LLMFixer(provider="gemini", api_key="test-key", model="gemini-pro")
 
     def test_call_llm_openai_success(self, fixer_openai):
         """Test successful OpenAI API call"""
@@ -677,14 +676,22 @@ class TestLLMAPICalls:
 
     def test_call_llm_gemini_success(self, fixer_gemini):
         """Test successful Gemini API call"""
+
+        # Create mock response with proper text attribute
         mock_response = Mock()
         mock_response.text = json.dumps({
             "FIXED_SELECTION": "fixed code",
             "EXPLANATION": "Fixed",
             "CONFIDENCE": 0.9
         })
-        fixer_gemini.client.models.generate_content = Mock(return_value=mock_response)
 
+        # Mock the client.models.generate_content method
+        # This matches the new API structure: self.client.models.generate_content(model=..., contents=...)
+        mock_models = Mock()
+        mock_models.generate_content = Mock(return_value=mock_response)
+        fixer_gemini.client.models = mock_models
+
+        # Create test issue
         issue = SonarIssue(
             key="test",
             rule="python:S1234",
@@ -698,17 +705,32 @@ class TestLLMAPICalls:
             first_line=1,
             last_line=5
         )
+
         context_dict = {"context": "code", "start_line": 1, "end_line": 5}
 
+        # Execute
         result = fixer_gemini._call_llm_list(
             [issue],
             context_dict,
             ".py",
-            {},
+            {"python:S1234": {"name": "Test Rule"}},
             ""
         )
 
+        # Assertions
         assert result is not None
+        assert result["fixed_code"] == "fixed code"
+        assert result["explanation"] == "Fixed"
+        assert result["confidence"] == 0.9
+
+        # Verify the API was called correctly
+        mock_models.generate_content.assert_called_once()
+        call_args = mock_models.generate_content.call_args
+
+        # Verify the call had the correct parameters
+        assert call_args[1]["model"] == "gemini-pro"  # or fixer_gemini.model
+        assert "contents" in call_args[1]
+
 
     def test_call_llm_with_helper_code(self, fixer_openai):
         """Test LLM call returns helper code"""
@@ -1200,7 +1222,7 @@ class TestApplyFixesWithValidation:
                 project_path=tmp_path,
                 use_validator=True
             )
-        print("result failed ", result.failed_fixes, "success ", result.success_rate)
+
         # Fix should fail validation
         assert len(result.failed_fixes) > 0 or result.success_rate < 1.0
 
@@ -1217,6 +1239,10 @@ class TestHelperMethods:
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
         return LLMFixer(provider="openai", api_key="test-key")
+
+    @pytest.fixture
+    def context_extractor(self):
+        return  ContextExtractor(lines=[])
 
     def test_get_language_from_extension_python(self, fixer):
         """Test getting language from .py extension"""
@@ -1269,20 +1295,20 @@ class TestHelperMethods:
 
         assert result.startswith("    ")
 
-    def test_is_actual_function_def_true(self, fixer):
+    def test_is_actual_function_def_true(self, context_extractor):
         """Test detecting actual function definition"""
         line = "def my_function(arg1, arg2):"
-        assert fixer._is_actual_function_def(line) is True
+        assert context_extractor._is_actual_function_def(line) is True
 
-    def test_is_actual_function_def_async(self, fixer):
+    def test_is_actual_function_def_async(self, context_extractor):
         """Test detecting async function definition"""
         line = "async def async_function():"
-        assert fixer._is_actual_function_def(line) is True
+        assert context_extractor._is_actual_function_def(line) is True
 
-    def test_is_actual_function_def_false(self, fixer):
+    def test_is_actual_function_def_false(self, context_extractor):
         """Test non-function line"""
         line = "# This is a comment about def"
-        assert fixer._is_actual_function_def(line) is False
+        assert context_extractor._is_actual_function_def(line) is False
 
 class TestWriteExplaination:
     # The actual method being tested (copy from your class)
@@ -1352,9 +1378,6 @@ class TestWriteExplaination:
         # Assertions
         assert file_md.exists(), "Output file should be created"
         content = file_md.read_text()
-        print("content ")
-        print(content)
-        print("end of content ")
         assert "python:S1481" in content
         assert "MAJOR" in content
         assert "src/example.py" in content

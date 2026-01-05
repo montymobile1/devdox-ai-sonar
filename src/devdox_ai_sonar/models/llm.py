@@ -7,8 +7,9 @@ import openai
 from openai import OpenAI
 from together import Together
 
-API_KEY_EMPTY="API key cannot be empty"
-NO_MODELS_FOUND="No models found for this API key"
+API_KEY_EMPTY = "API key cannot be empty"
+NO_MODELS_FOUND = "No models found for this API key"
+
 
 class ProviderType(str, Enum):
     """Supported LLM providers."""
@@ -52,17 +53,12 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-
-
-
             client = OpenAI(api_key=api_key)
             models = client.models.list().data
             model_list = [model.id for model in models]
 
             if not model_list:
-                return ProviderValidationResult.failure_result(
-                    NO_MODELS_FOUND
-                )
+                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
 
             return ProviderValidationResult.success_result(model_list)
 
@@ -88,16 +84,15 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-
-
             client = genai.Client(api_key=api_key)
             models = client.models.list()
-            model_list = [model.name.replace("models/", "") for model in models]
-
+            model_list = [
+                model.name.replace("models/", "")
+                for model in models
+                if model.name is not None
+            ]
             if not model_list:
-                return ProviderValidationResult.failure_result(
-                    NO_MODELS_FOUND
-                )
+                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
 
             return ProviderValidationResult.success_result(model_list)
 
@@ -117,16 +112,12 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-
-
             client = Together(api_key=api_key)
             models = client.models.list()
             model_list = [model.id for model in models]
 
             if not model_list:
-                return ProviderValidationResult.failure_result(
-                    NO_MODELS_FOUND
-                )
+                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
 
             return ProviderValidationResult.success_result(model_list)
 

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 try:
-    from together import Together  # type: ignore[import]
+    from together import Together
 
     HAS_TOGETHER = True
 except ImportError:
@@ -99,6 +99,11 @@ class FixValidator:
     ):
         self.provider = provider.lower()
         self.min_confidence_threshold = min_confidence_threshold
+        self.model: str = ""
+
+        self.api_key: Optional[str] = None
+
+        self.client: Any = None
         self._setup_provider(model, api_key)
 
     def _setup_provider(self, model: Optional[str], api_key: Optional[str]) -> None:
@@ -144,11 +149,11 @@ class FixValidator:
             raise ImportError(
                 "Gemini library not installed. Install with: pip install google-genai"
             )
-        self.model = model or "claude-3-5-sonnet-20241022"
+        self.model = model or "gemini-1.5-flash"
         self.api_key = api_key
         if not self.api_key:
             raise ValueError(
-                "Gemini API key not provided. Set GEMINI_KEY environment variable."
+                "Gemini API key not provided. Set GEMINI_API_KEY environment variable."
             )
         self.client = genai.Client(api_key=self.api_key)
 
@@ -364,7 +369,13 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
 
         try:
             if self.provider == "openai":
-                response = self.client.chat.completions.create(
+                if not self.client:
+                    logger.error("OpenAI client not properly initialized")
+
+                    return None
+
+
+                openai_response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
                         {
@@ -376,13 +387,68 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
                     temperature=0.1,
                     max_tokens=2000,
                 )
-                return str(response.choices[0].message.content)
+                # Safely extract content
+
+                if openai_response.choices and openai_response.choices[0].message:
+                    content = openai_response.choices[0].message.content
+
+                    return str(content) if content else None
+
+                return None
 
             elif self.provider == "gemini":
-                response = self.client.models.generate_content(
+                if not self.client:
+                    logger.error("Gemini client not properly initialized")
+
+                    return None
+
+
+                gemini_response = self.client.models.generate_content(
                     model=self.model, contents=prompt
                 )
-                return str(response.text)
+                if hasattr(gemini_response, 'text'):
+                    return str(gemini_response.text)
+
+                return None
+
+            elif self.provider == "togetherai":
+
+                if not self.client:
+                    logger.error("Together AI client not properly initialized")
+
+                    return None
+
+                togetherai_response = self.client.chat.completions.create(
+
+                    model=self.model,
+
+                    messages=[
+
+                        {
+
+                            "role": "system",
+
+                            "content": "You are a senior software engineer and security expert specializing in code review.",
+
+                        },
+
+                        {"role": "user", "content": prompt},
+
+                    ],
+
+                    temperature=0.1,
+
+                    max_tokens=2000,
+
+                )
+
+                if togetherai_response.choices and togetherai_response.choices[0].message:
+                    content = togetherai_response.choices[0].message.content
+
+                    return str(content) if content else None
+
+                return None
+
             return None
         except Exception as e:
             logger.error(f"Error calling validator LLM: {e}", exc_info=True)

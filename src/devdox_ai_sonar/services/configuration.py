@@ -1,12 +1,13 @@
 # Create src/devdox_ai_sonar/services/config_service.py
 
-from dataclasses import dataclass, fields
-from typing import Optional, Tuple,  Dict, Any
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
 from pathlib import Path
 import json
 from rich.console import Console
 
 from devdox_ai_sonar.models.llm_config import ConfigManager
+
 
 @dataclass
 class AuthConfig:
@@ -14,6 +15,42 @@ class AuthConfig:
     organization: str
     project: str
     project_path: str
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Optional[str]]) -> Optional["AuthConfig"]:
+        """Create AuthConfig from dictionary with validation.
+
+        Validates that all required fields are present and non-empty.
+
+        Args:
+            data: Dictionary containing configuration values
+
+        Returns:
+            AuthConfig instance if valid, None if any field is missing/empty
+
+        Example:
+            >>> config_dict = {"token": "abc123", "organization": "myorg", ...}
+            >>> auth = AuthConfig.from_dict(config_dict)
+            >>> if auth:
+            ...     print(f"Loaded config for {auth.organization}")
+        """
+        # Extract all required fields
+        token = data.get("token")
+        organization = data.get("organization")
+        project = data.get("project")
+        project_path = data.get("project_path")
+
+        # Validate all are present and non-empty
+        if not token or not organization or not project or not project_path:
+            return None
+
+        # Safe to create now - all values validated as non-None, non-empty strings
+        return cls(
+            token=token,
+            organization=organization,
+            project=project,
+            project_path=project_path,
+        )
 
     def validate(self) -> tuple[bool, Optional[str]]:
         """Validate all fields are present"""
@@ -35,15 +72,17 @@ class LLMConfig:
     api_key: str
     models: list[str]
 
+
 console = Console()
+
 
 class ConfigService:
     """Centralized configuration management"""
+
     def __init__(self, sonar_path: Path = Path("sonar.toml")):
         self.sonar_path = sonar_path
 
         self.config: Optional[Dict[str, Any]] = None
-
 
     def load_auth_config(self) -> Dict[str, Optional[str]]:
         """
@@ -53,9 +92,14 @@ class ConfigService:
             Dictionary with SONAR_TOKEN, SONAR_ORG, and SONAR_PROJ keys.
             Returns empty dict if file doesn't exist or is invalid.
         """
+        empty_config: Dict[str, Optional[str]] = {
+            "token": None,
+            "organization": None,
+            "project": None,
+            "project_path": None,
+        }
         try:
-
-            if  self.sonar_path .exists():
+            if self.sonar_path.exists():
                 with open(self.sonar_path, "r") as f:
                     config = json.load(f)
                     return {
@@ -66,8 +110,9 @@ class ConfigService:
                     }
         except (json.JSONDecodeError, IOError) as e:
             console.print(f"[yellow]Warning: Could not read auth.json: {e}[/yellow]")
+            return empty_config
 
-        return {"token": None, "organization": None, "project": None}
+        return empty_config
 
     @staticmethod
     def load_llm_config(manager: ConfigManager) -> Optional[LLMConfig]:
@@ -80,52 +125,50 @@ class ConfigService:
         default_provider = manager.get_value("llm.default_provider")
         default_model = manager.get_value("llm.default_model")
         provider_config = next(
-            (p for p in providers if p.get("name") == default_provider),
-            None
+            (p for p in providers if p.get("name") == default_provider), None
         )
 
         if not provider_config:
             return None
 
-
         return LLMConfig(
             provider=default_provider,
             model=default_model,
             api_key=provider_config.get("api_key"),
-            models = provider_config.get("models",[])
+            models=provider_config.get("models", []),
         )
 
     @staticmethod
     def validate_auth_config(auth_config: dict) -> bool:
         """Validate authentication configuration with detailed error messages."""
         required_fields = ["token", "organization", "project", "project_path"]
-        missing_fields = [field for field in required_fields if not auth_config.get(field)]
+        missing_fields = [
+            field for field in required_fields if not auth_config.get(field)
+        ]
 
         if missing_fields:
-
             return False
         return True
 
-
-    def save_config(self, token: str, organization: str, project: str, project_path: str):
+    def save_config(
+        self, token: str, organization: str, project: str, project_path: str
+    )->bool:
         """Save authentication configuration"""
 
-        if not validate_token_format(token) and  (
-                    not console.input(
-                        "[yellow]Token format seems unusual. Continue? (y/N): [/yellow]"
-                    )
-                            .lower()
-                            .startswith("y")
-            ):
-                console.print("[red]Cancelled[/red]")
-                return False
+        if not validate_token_format(token) and (
+            not console.input(
+                "[yellow]Token format seems unusual. Continue? (y/N): [/yellow]"
+            )
+            .lower()
+            .startswith("y")
+        ):
+            console.print("[red]Cancelled[/red]")
+            return False
         success = self.save_complete_config(token, organization, project, project_path)
-
 
         return success
 
-
-    def  save_complete_config(
+    def save_complete_config(
         self,
         token: str,
         organization: Optional[str] = None,
@@ -156,11 +199,9 @@ class ConfigService:
             save_token("squ_new_token", "my-org", "my-project", merge=False)
         """
 
-
         try:
             # Load existing config if merging
             if merge and self.sonar_path.exists():
-
                 existing_config = self.load_auth_config()
             else:
                 existing_config = {
@@ -216,6 +257,7 @@ class ConfigService:
             return True
         return False
 
+
 def validate_token_format(token: str) -> bool:
     """
     Validate SonarCloud token format.
@@ -239,5 +281,3 @@ def validate_token_format(token: str) -> bool:
         return False
 
     return True
-
-

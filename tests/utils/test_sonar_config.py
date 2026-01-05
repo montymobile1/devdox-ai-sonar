@@ -311,7 +311,7 @@ class TestConfigureSonarcloud:
         ]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
-            result = SonarCloudConfigUI.configure_sonarcloud()
+            result = SonarCloudConfigUI.configure_sonarcloud(existing_config={})
 
         assert result is not None
         assert isinstance(result, SonarCloudConfig)
@@ -341,7 +341,7 @@ class TestConfigureSonarcloud:
         """Test cancellation during token input."""
         mock_prompt.side_effect = KeyboardInterrupt()
 
-        result = SonarCloudConfigUI.configure_sonarcloud()
+        result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
 
@@ -351,7 +351,7 @@ class TestConfigureSonarcloud:
         """Test cancellation during organization input."""
         mock_prompt.side_effect = ["valid-token", KeyboardInterrupt()]
 
-        result = SonarCloudConfigUI.configure_sonarcloud()
+        result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
 
@@ -361,7 +361,7 @@ class TestConfigureSonarcloud:
         """Test cancellation during project input."""
         mock_prompt.side_effect = ["valid-token", "valid-org", KeyboardInterrupt()]
 
-        result = SonarCloudConfigUI.configure_sonarcloud()
+        result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
 
@@ -376,7 +376,7 @@ class TestConfigureSonarcloud:
             KeyboardInterrupt()
         ]
 
-        result = SonarCloudConfigUI.configure_sonarcloud()
+        result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
 
@@ -396,7 +396,7 @@ class TestConfigureSonarcloud:
                 'validate',
                 return_value=(False, "Token is invalid")
         ):
-            result = SonarCloudConfigUI.configure_sonarcloud()
+            result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
         mock_console.print.assert_any_call(
@@ -439,7 +439,7 @@ class TestConfigureSonarcloud:
         mock_prompt.side_effect = ["token", "org", "project", "/path"]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
-            result = SonarCloudConfigUI.configure_sonarcloud(None)
+            result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is not None
         mock_confirm.assert_not_called()  # No defaults to confirm
@@ -456,7 +456,7 @@ class TestConfigureSonarcloud:
         ]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
-            result = SonarCloudConfigUI.configure_sonarcloud()
+            result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is not None
         assert result.token == "token"
@@ -670,7 +670,7 @@ class TestErrorHandling:
                 'validate',
                 return_value=(False, error_message)
         ):
-            result = SonarCloudConfigUI.configure_sonarcloud()
+            result = SonarCloudConfigUI.configure_sonarcloud({})
 
         assert result is None
         # Verify error message was displayed
@@ -689,7 +689,7 @@ class TestErrorHandling:
                 side_effect=Exception("Validation error")
         ):
             with pytest.raises(Exception):
-                SonarCloudConfigUI.configure_sonarcloud()
+                SonarCloudConfigUI.configure_sonarcloud({})
 
 
 # ============================================================================

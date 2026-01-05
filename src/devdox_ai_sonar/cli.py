@@ -1,18 +1,16 @@
 """Command-line interface for SonarCloud Analyzer with Claude Code-style interaction and mid-workflow command switching."""
+
 from datetime import timezone, datetime
 import sys
 from pathlib import Path
-from typing import Optional, List, Any,  Sequence, Dict, Tuple, Union, Set
+from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 
-import questionary
-from questionary import ValidationError as QValidationError
-from questionary import Validator
 from rich.console import Console
 import inquirer
 from rich.table import Table
 from rich.prompt import Confirm
 from rich.panel import Panel
-from rich.progress import Progress
+from rich.progress import Progress, TaskID
 import rich_click as click
 from questionary.prompts.common import Choice
 from contextlib import contextmanager
@@ -54,7 +52,6 @@ console = Console()
 # ============================================================================
 
 
-
 def _safe_convert_pr(pull_request: Optional[str]) -> int:
     """Safely convert PR string to integer."""
     if not pull_request:
@@ -71,10 +68,10 @@ def _safe_convert_pr(pull_request: Optional[str]) -> int:
         return 0
 
 
-
-
 @contextmanager
-def show_progress(message: str, total: Optional[int] = None):
+def show_progress(
+    message: str, total: Optional[int] = None
+) -> Iterator[Tuple[Progress, TaskID]]:
     """Context manager for progress display."""
     with Progress() as progress:
         task = progress.add_task(message, total=total)
@@ -99,64 +96,64 @@ def show_command_selector() -> Optional[str]:
         import questionary
         from questionary import Style
     except ImportError:
-        console.print("[yellow]⚠ questionary not installed. Using fallback prompt.[/yellow]")
+        console.print(
+            "[yellow]⚠ questionary not installed. Using fallback prompt.[/yellow]"
+        )
         console.print("[dim]Install with: pip install questionary[/dim]\n")
         return _fallback_command_selector()
 
     # Define custom style similar to Claude Code
-    custom_style = Style([
-        ('qmark', constant.BOLD_PURPLE),
-        ('question', 'bold'),
-        ('answer', 'fg:#f44336 bold'),
-        ('pointer', constant.BOLD_PURPLE),
-        ('highlighted', constant.BOLD_PURPLE),
-        ('selected', 'fg:#cc5454'),
-        ('separator', 'fg:#cc5454'),
-        ('instruction', ''),
-        ('text', ''),
-    ])
+    custom_style = Style(
+        [
+            ("qmark", constant.BOLD_PURPLE),
+            ("question", "bold"),
+            ("answer", "fg:#f44336 bold"),
+            ("pointer", constant.BOLD_PURPLE),
+            ("highlighted", constant.BOLD_PURPLE),
+            ("selected", "fg:#cc5454"),
+            ("separator", "fg:#cc5454"),
+            ("instruction", ""),
+            ("text", ""),
+        ]
+    )
 
     commands = [
         {
-            'name': '➕ Add Provider - Add provider or sonar configuration',
-            'value': 'add_provider',
-            'description': 'Add provider configuration'
+            "name": "➕ Add Provider - Add provider or sonar configuration",
+            "value": "add_provider",
+            "description": "Add provider configuration",
         },
         {
-            'name': '✏️  Update Provider - Update provider or sonar configuration',
-            'value': 'update_provider',
-            'description': 'Update SonarCloud provider configuration'
+            "name": "✏️ Update Provider - Update provider or sonar configuration",
+            "value": "update_provider",
+            "description": "Update SonarCloud provider configuration",
         },
         {
-            'name': '🔧 Fix Issues - Generate and apply LLM-powered fixes',
-            'value': 'fix_issues',
-            'description': 'Analyze and fix code quality issues'
+            "name": "🔧 Fix Issues - Generate and apply LLM-powered fixes",
+            "value": "fix_issues",
+            "description": "Analyze and fix code quality issues",
         },
         {
-            'name': '🔒 Fix Security Issues - Specialized security vulnerability fixes',
-            'value': 'fix_security_issues',
-            'description': 'Focus on security vulnerabilities'
+            "name": "🔒 Fix Security Issues - Specialized security vulnerability fixes",
+            "value": "fix_security_issues",
+            "description": "Focus on security vulnerabilities",
         },
         {
-            'name': '📊 Analyze Project - Display SonarCloud analysis',
-            'value': 'analyze',
-            'description': 'View project metrics and issues'
+            "name": "📊 Analyze Project - Display SonarCloud analysis",
+            "value": "analyze",
+            "description": "View project metrics and issues",
         },
         {
-            'name': '🔍 Inspect Project - Analyze local directory structure',
-            'value': 'inspect',
-            'description': 'Inspect local project structure'
+            "name": "🔍 Inspect Project - Analyze local directory structure",
+            "value": "inspect",
+            "description": "Inspect local project structure",
         },
         {
-            'name': '⚙️  Change Parameters Configuration',
-            'value': 'change_parameters',
-            'description': 'Change parameters configuration'
+            "name": "⚙️  Change Parameters Configuration",
+            "value": "change_parameters",
+            "description": "Change parameters configuration",
         },
-        {
-            'name': '❌ Exit',
-            'value': 'exit',
-            'description': 'Exit the application'
-        }
+        {"name": "❌ Exit", "value": "exit", "description": "Exit the application"},
     ]
 
     # Clear screen for clean display
@@ -164,15 +161,21 @@ def show_command_selector() -> Optional[str]:
 
     # Show header
     console.print()
-    console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
-    console.print("[bold cyan]   DevDox AI Sonar - Interactive Mode          [/bold cyan]")
-    console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
+    console.print(
+        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]   DevDox AI Sonar - Interactive Mode          [/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
+    )
     console.print()
 
     try:
         choice = questionary.select(
             "What would you like to do?",
-            choices=[cmd['name'] for cmd in commands],
+            choices=[cmd["name"] for cmd in commands],
             style=custom_style,
             use_shortcuts=True,
             use_arrow_keys=True,
@@ -184,8 +187,8 @@ def show_command_selector() -> Optional[str]:
 
         # Find the command value
         for cmd in commands:
-            if cmd['name'] == choice:
-                return cmd['value']
+            if cmd["name"] == choice:
+                return cmd["value"]
 
         return None
 
@@ -195,16 +198,25 @@ def show_command_selector() -> Optional[str]:
 
 def _fallback_command_selector() -> Optional[str]:
     """Fallback text-based command selector when questionary is not available."""
-    console.print("\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]")
-    console.print("[bold cyan]   DevDox AI Sonar - Command Selection          [/bold cyan]")
-    console.print("[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n")
+    console.print(
+        "\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]   DevDox AI Sonar - Command Selection          [/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n"
+    )
 
     commands = {
-        '1': ('fix_issues', 'Fix Issues - Generate and apply LLM-powered fixes'),
-        '2': ('fix_security_issues', 'Fix Security Issues - Specialized security fixes'),
-        '3': ('analyze', 'Analyze Project - Display SonarCloud analysis'),
-        '4': ('inspect', 'Inspect Project - Analyze local directory structure'),
-        '5': ('exit', 'Exit'),
+        "1": ("fix_issues", "Fix Issues - Generate and apply LLM-powered fixes"),
+        "2": (
+            "fix_security_issues",
+            "Fix Security Issues - Specialized security fixes",
+        ),
+        "3": ("analyze", "Analyze Project - Display SonarCloud analysis"),
+        "4": ("inspect", "Inspect Project - Analyze local directory structure"),
+        "5": ("exit", "Exit"),
     }
 
     for key, (_, desc) in commands.items():
@@ -227,30 +239,25 @@ def _fallback_command_selector() -> Optional[str]:
 @click.version_option(__version__)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
 @click.option(
-    "--command", "-c",
-    type=click.Choice(['fix_issues', 'fix_security_issues', 'analyze', 'inspect']),
-    help="Run specific command directly without interactive mode"
+    "--command",
+    "-c",
+    type=click.Choice(["fix_issues", "fix_security_issues", "analyze", "inspect"]),
+    help="Run specific command directly without interactive mode",
 )
+@click.option("--types", type=str, help="Comma-separated issue types (for fix_issues)")
 @click.option(
-    "--types",
-    type=str,
-    help="Comma-separated issue types (for fix_issues)"
-)
-@click.option(
-    "--severity",
-    type=str,
-    help="Comma-separated severities (for fix_issues)"
+    "--severity", type=str, help="Comma-separated severities (for fix_issues)"
 )
 @click.option(
     "--max-fixes",
     type=click.IntRange(0, settings.MAX_FIXES_LIMIT),
-    help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})"
+    help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})",
 )
 @click.option(
     "--apply",
     type=click.IntRange(0, 1),
     default=None,
-    help="Apply fixes (1 = apply, 0 = preview only)"
+    help="Apply fixes (1 = apply, 0 = preview only)",
 )
 @click.option(
     "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
@@ -263,8 +270,8 @@ def main(
     types: Optional[str],
     severity: Optional[str],
     max_fixes: Optional[int],
-    apply:  Optional[int],
-    dry_run: bool = False
+    apply: Optional[int],
+    dry_run: bool = False,
 ) -> None:
     """
     DevDox AI Sonar - SonarCloud Analyzer with LLM-powered fixes.
@@ -282,13 +289,13 @@ def main(
     """
 
     ctx.ensure_object(dict)
-    ctx.obj['verbose'] = verbose
-    ctx.obj['options'] = {
-        'types': types,
-        'severity': severity,
-        'max_fixes': max_fixes or 0,
-        'apply': apply,
-        'dry_run': dry_run,
+    ctx.obj["verbose"] = verbose
+    ctx.obj["options"] = {
+        "types": types,
+        "severity": severity,
+        "max_fixes": max_fixes or 0,
+        "apply": apply,
+        "dry_run": dry_run,
     }
 
     # If command specified, run it directly
@@ -299,7 +306,10 @@ def main(
     # Otherwise, enter interactive mode
     _run_interactive_mode(ctx)
 
-def _select_existing_ui(field_name:str, message:str,existing_providers: list) -> str:
+
+def _select_existing_ui(
+    field_name: str, message: str, existing_providers: list
+) -> str | Any:
     """Prompt user to select an existing provider.
 
     Args:
@@ -324,8 +334,14 @@ def _select_existing_ui(field_name:str, message:str,existing_providers: list) ->
     return answers[field_name]
 
 
-
-def _initialize_managers():
+def _initialize_managers() -> Tuple[
+    ConfigManager,
+    ProviderConfigUI,
+    ProviderValidator,
+    ProviderConfigManager,
+    SonarCloudConfigUI,
+    ConfigService,
+]:
     """Initialize all required manager instances.
 
     Returns:
@@ -342,7 +358,9 @@ def _initialize_managers():
     return manager, ui, validator, provider_manager, sonar_ui, config_service
 
 
-def _configure_sonarcloud(sonar_ui: SonarCloudConfigUI, config_service: ConfigService) -> bool:
+def _configure_sonarcloud(
+    sonar_ui: SonarCloudConfigUI, config_service: ConfigService
+) -> bool:
     """Configure SonarCloud settings.
 
     Args:
@@ -359,9 +377,6 @@ def _configure_sonarcloud(sonar_ui: SonarCloudConfigUI, config_service: ConfigSe
     if not value_exist:
         return True
 
-    if auth_config is None:
-        console.print("[red]❌ Auth configuration not found[/red]")
-        return False
     sonar_ui.display_welcome()
     sonar_ui.display_step_header(1, 2, "SonarCloud Configuration")
 
@@ -386,10 +401,10 @@ def _configure_sonarcloud(sonar_ui: SonarCloudConfigUI, config_service: ConfigSe
 
 
 def _configure_providers_loop(
-        provider_manager: ProviderConfigManager,
-        manager: ConfigManager,
-        ui: ProviderConfigUI,
-        available_providers: list,
+    provider_manager: ProviderConfigManager,
+    manager: ConfigManager,
+    ui: ProviderConfigUI,
+    available_providers: list,
 ) -> None:
     """Configure providers in a loop until done or cancelled.
 
@@ -400,7 +415,9 @@ def _configure_providers_loop(
         available_providers: List of available provider names
     """
     while available_providers:
-        console.print(f"[cyan]Available providers: {', '.join(available_providers)}[/cyan]\n")
+        console.print(
+            f"[cyan]Available providers: {', '.join(available_providers)}[/cyan]\n"
+        )
 
         provider_name = ui.select_provider_from_list(
             available_providers, "Select a provider to configure"
@@ -423,10 +440,10 @@ def _configure_providers_loop(
 
 
 def _handle_provider_configuration(
-        provider_manager: ProviderConfigManager,
-        manager: ConfigManager,
-        provider_name: str,
-        available_providers: list,
+    provider_manager: ProviderConfigManager,
+    manager: ConfigManager,
+    provider_name: str,
+    available_providers: list,
 ) -> bool:
     """Handle configuration of a single provider.
 
@@ -482,9 +499,7 @@ def _check_reconfiguration_consent(providers: list) -> bool:
 
     click.secho("\n⚠️  Configuration already exists", fg="yellow", bold=True)
 
-
     return False
-
 
 
 def _display_operation_header(operation: str) -> None:
@@ -528,27 +543,26 @@ def _handle_cli_error(error: Exception) -> None:
 # ============================================================================
 
 
-
-
-
-def init_config(  types: Optional[str] = None,
+def init_config(
+    types: Optional[str] = None,
     severity: Optional[str] = None,
     max_fixes: int = 0,
-    apply: bool=False,
-    dry_run: bool=False):
-    """CLI for config management """
+    apply: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """CLI for config management"""
     try:
         # Initialize all managers
-        manager, ui, _ , provider_manager, sonar_ui, config_service = _initialize_managers()
+        manager, ui, _, provider_manager, sonar_ui, config_service = (
+            _initialize_managers()
+        )
         manager.create_default_config()
         manager.load_config()
-
 
         # Check if reconfiguration is needed
         providers = manager.get_value("llm.providers")
         if not _check_reconfiguration_consent(providers):
             return
-
 
         # Configure SonarCloud
         if not _configure_sonarcloud(sonar_ui, config_service):
@@ -570,16 +584,19 @@ def init_config(  types: Optional[str] = None,
         manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
-        change_parameters(types, severity,max_fixes=max_fixes, apply=apply_value, dry_run=dry_run_value)
-
-
-
+        change_parameters(
+            types,
+            severity,
+            max_fixes=max_fixes,
+            apply=apply_value,
+            dry_run=dry_run_value,
+        )
 
     except Exception as e:
         _handle_cli_error(e)
 
 
-def add_provider():
+def add_provider() -> None:
     """CLI command for managing provider configuration"""
     try:
         # Initialize components
@@ -587,7 +604,9 @@ def add_provider():
         manager.load_config()
         available_providers = provider_manager.get_available_providers()
         if not available_providers:
-            console.print("[yellow]⚠ All supported providers are already configured[/yellow]")
+            console.print(
+                "[yellow]⚠ All supported providers are already configured[/yellow]"
+            )
             raise click.Abort()
 
         _display_operation_header("🚀 ADD NEW PROVIDER")
@@ -595,13 +614,12 @@ def add_provider():
         manager.save_config(create_backup=False)
         _display_completion_message()
 
-
     except Exception as e:
         _handle_cli_error(e)
 
 
-def update_provider():
-    """CLI command for managing provider configuration """
+def update_provider() -> None:
+    """CLI command for managing provider configuration"""
     try:
         # Initialize components
         manager, _, _, provider_manager, _, _ = _initialize_managers()
@@ -614,13 +632,17 @@ def update_provider():
             )
             raise click.Abort()
         _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
-        chosen_provider = _select_existing_ui("provider", "Select the provider to update", existing_providers)
+        chosen_provider = _select_existing_ui(
+            "provider", "Select the provider to update", existing_providers
+        )
         if not chosen_provider:
             raise click.Abort()
 
         if provider_manager.update_existing_provider(chosen_provider):
             manager.save_config(create_backup=False)
-            console.print(f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n")
+            console.print(
+                f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n"
+            )
         else:
             console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
 
@@ -672,14 +694,16 @@ def _process_interactive_command(ctx: click.Context) -> bool:
     _execute_interactive_command(ctx, command)
 
     if not _should_continue_to_menu():
+
         _exit_application()
         return True
-
     return False
+
+
 
 def _should_exit_interactive_mode(command: Optional[str]) -> bool:
     """Check if user wants to exit interactive mode."""
-    return command is None or command == 'exit'
+    return command is None or command == "exit"
 
 
 def _exit_application() -> None:
@@ -688,7 +712,7 @@ def _exit_application() -> None:
     sys.exit(0)
 
 
-def _execute_interactive_command(ctx: click.Context, command: str) -> None:
+def _execute_interactive_command(ctx: click.Context, command: Optional[str]) -> None:
     """Execute a command in interactive mode."""
     console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
     _execute_command(ctx=ctx, command=command)
@@ -697,7 +721,8 @@ def _execute_interactive_command(ctx: click.Context, command: str) -> None:
 
 def _should_continue_to_menu() -> bool:
     """Ask user if they want to return to main menu."""
-    return smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False)
+    result = smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True)
+    return result
 
 
 def _handle_command_switch() -> None:
@@ -738,7 +763,9 @@ def _handle_interactive_error(error: Exception) -> bool:
     console.print(f"\n[red]❌ Error: {str(error)}[/red]")
 
     try:
-        if not smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False):
+        if not smart_confirm(
+            constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False
+        ):
             sys.exit(1)
         return False
 
@@ -751,12 +778,16 @@ def _handle_interactive_error(error: Exception) -> bool:
         sys.exit(2)
 
 
-def  change_field(manager, field,message, default_value, choices:List[str] = None, multiple:bool = True)->Optional[Union[str, List[str]]]:
+def change_field(
+    manager: ConfigManager,
+    field: str,
+    message: str,
+    default_value: Optional[Union[str, List[str]]] = None,
+    choices: Optional[List[Union[str, Choice]]] = None,
+    multiple: bool = True,
+) -> Optional[Union[str, List[str]]]:
     types_input = smart_prompt(
-        message,
-        default=default_value,
-        choices=choices,
-        multiple=multiple
+        message, default=default_value, choices=choices, multiple=multiple
     )
 
     types = types_input if types_input else None
@@ -765,13 +796,14 @@ def  change_field(manager, field,message, default_value, choices:List[str] = Non
         manager.set_value(field, types)
     return types
 
-def change_parameters(  types: Optional[str] = None,
-    severity: Optional[str] = None, **kwargs):
-    """CLI for config management """
-    try:
 
+def change_parameters(
+    types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
+) -> None:
+    """CLI for config management"""
+    try:
         # Initialize all managers
-        manager, _, _ , provider_manager, _, _ = _initialize_managers()
+        manager, _, _, provider_manager, _, _ = _initialize_managers()
         branch, pull_request = provider_manager.branch_or_pr_prompt()
 
         if not branch and not pull_request:
@@ -781,100 +813,131 @@ def change_parameters(  types: Optional[str] = None,
         max_fixes = manager.get_value("configuration.max_fixes") or 0
 
         # Max fixes
-        _= change_max_fix(manager,f"Maximum fixes to generate (0-{settings.MAX_FIXES_LIMIT})", max_fixes,settings.MAX_FIXES_LIMIT )
+        change_max_fix(
+            manager,
+            f"Maximum fixes to generate (0-{settings.MAX_FIXES_LIMIT})",
+            max_fixes,
+            settings.MAX_FIXES_LIMIT,
+        )
 
         # Issue types (optional)
         if not types:
-            _ = change_field(manager=manager, field="configuration.types",
-                             message="Issue types (comma-separated, or press Enter to skip)",
-                             default_value=manager.get_value("configuration.types"),
-
-                             choices=list(InputValidator.VALID_ISSUE_TYPES))
+            _ = change_field(
+                manager=manager,
+                field="configuration.types",
+                message="Issue types (comma-separated, or press Enter to skip)",
+                default_value=manager.get_value("configuration.types"),
+                choices=list(InputValidator.VALID_ISSUE_TYPES),
+            )
 
         # Severities (optional)
         if not severity:
-            _ = change_field(manager=manager, field="configuration.severities",
-                             message="Issue severities (comma-separated, or press Enter to skip)",
-                             default_value=manager.get_value("configuration.severities"),
-                             choices=list(InputValidator.VALID_SEVERITIES))
+            _ = change_field(
+                manager=manager,
+                field="configuration.severities",
+                message="Issue severities (comma-separated, or press Enter to skip)",
+                default_value=manager.get_value("configuration.severities"),
+                choices=list(InputValidator.VALID_SEVERITIES),
+            )
 
-        choices = [{"name":"yes","value":1},{"name":"no","value":0}]
+        choices = [{"name": "yes", "value": 1}, {"name": "no", "value": 0}]
 
-        formatted_choices = [Choice(title=choice['name'], value=choice['value']) for choice in choices ]
+        formatted_choices: List[Union[str, Choice]] = [
+            Choice(title=str(choice["name"]), value=choice["value"])
+            for choice in choices
+        ]
 
+        _ = change_field(
+            manager=manager,
+            field=constant.CONFIGURATION_APPLY,
+            message="Apply fixes of SonarQube (press Enter to skip)",
+            default_value=(
+                manager.get_value(constant.CONFIGURATION_APPLY)
+                if manager.get_value(constant.CONFIGURATION_APPLY) is not None
+                else kwargs.get("apply", 0)
+            ),  # optional
+            choices=formatted_choices,
+            multiple=False,
+        )
 
-        _ = change_field(manager=manager, field=constant.CONFIGURATION_APPLY,
-                         message="Apply fixes of SonarQube (press Enter to skip)",
-                        default_value=manager.get_value(constant.CONFIGURATION_APPLY) if manager.get_value(constant.CONFIGURATION_APPLY) is not None else kwargs.get("apply", 0) , # optional
-                        choices=formatted_choices,
-                        multiple=False)
+        _ = change_field(
+            manager=manager,
+            field=constant.CONFIGURATION_BACKUP,
+            message="Create backup before apply fixes (press Enter to skip)",
+            default_value=(
+                manager.get_value(constant.CONFIGURATION_BACKUP)
+                if manager.get_value(constant.CONFIGURATION_BACKUP) is not None
+                else kwargs.get("create_backup", 0)
+            ),  # optional
+            choices=formatted_choices,
+            multiple=False,
+        )
 
-        _ = change_field(manager=manager, field=constant.CONFIGURATION_BACKUP,
-                         message="Create backup before apply fixes (press Enter to skip)",
-                         default_value=manager.get_value(constant.CONFIGURATION_BACKUP) if manager.get_value(
-                             constant.CONFIGURATION_BACKUP) is not None else kwargs.get("create_backup", 0),  # optional
-                         choices=formatted_choices,
-                        multiple=False)
-
-        _ = change_field(manager=manager, field="configuration.exclude_rules",
-                         message="Rules to be excluded  (comma-separated, or press Enter to skip)",
-                         default_value=manager.get_value("configuration.exclude_rules"),
-
-                        )
+        _ = change_field(
+            manager=manager,
+            field="configuration.exclude_rules",
+            message="Rules to be excluded  (comma-separated, or press Enter to skip)",
+            default_value=manager.get_value("configuration.exclude_rules"),
+        )
         manager.save_config(create_backup=False)
 
     except Exception as e:
         _handle_cli_error(e)
 
-def  change_max_fix(manager, message , max_fixes,default_max_fixes):
 
-    max_fixes_str = smart_prompt(
-                message,
-                default=str(max_fixes)
-    )
-    try:
-            max_fixes = int(max_fixes_str)
-            if max_fixes < 1 or max_fixes >default_max_fixes:
-                max_fixes = settings.DEFAULT_MAX_FIXES
-    except ValueError:
-                max_fixes = default_max_fixes
+def change_max_fix(
+    manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
+) -> None:
+    """Change maximum fixes configuration.
 
-
-    manager.set_value("configuration.max_fixes", max_fixes)
-
-
-def _handle_interactive_error(error: Exception) -> bool:
-    """Handle errors in interactive mode."""
-    console.print(f"\n[red]❌ Error: {str(error)}[/red]")
+    Args:
+        manager: Configuration manager
+        message: Prompt message
+        max_fixes: Current max fixes value
+        default_max_fixes: Default/maximum allowed value
+    """
+    max_fixes_str = smart_prompt(message, default=str(max_fixes))
 
     try:
-        if not smart_confirm(constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False):
-            sys.exit(1)
-        return False
+        # Handle both str and List[str] return types
+        if isinstance(max_fixes_str, list):
+            # If list, take first element
+            value_str = max_fixes_str[0] if max_fixes_str else str(default_max_fixes)
+        else:
+            value_str = max_fixes_str
 
-    except (KeyboardInterrupt, EOFError):
-        console.print("\n[yellow]Exiting after error...[/yellow]")
-        sys.exit(1)
+        new_max_fixes = int(value_str)
 
-    except Exception as confirm_error:
-        console.print(f"\n[red]Fatal: Cannot prompt user ({confirm_error})[/red]")
-        sys.exit(2)
+        # Validate range
+        if new_max_fixes < 1 or new_max_fixes > default_max_fixes:
+            new_max_fixes = settings.DEFAULT_MAX_FIXES
+            console.print(
+                f"[yellow]Value out of range (1-{default_max_fixes}), "
+                f"using default: {settings.DEFAULT_MAX_FIXES}[/yellow]"
+            )
+    except (ValueError, IndexError):
+        new_max_fixes = default_max_fixes
+        console.print(
+            f"[yellow]Invalid value, using default: {default_max_fixes}[/yellow]"
+        )
+
+    manager.set_value("configuration.max_fixes", new_max_fixes)
 
 
-def _execute_command(ctx: click.Context, command: str) -> None:
+def _execute_command(ctx: click.Context, command: Optional[str]) -> None:
     """Execute a specific command with command switching support."""
-    options = ctx.obj.get('options', {})
+    options = ctx.obj.get("options", {})
 
     try:
         command_map = {
-            'fix_issues': lambda: _run_fix_issues(**options),
-            'fix_security_issues': lambda: _run_fix_security_issues(**options),
-            'analyze': lambda: _run_analyze(**options),
-            'inspect': _run_inspect,
-            'config': lambda: init_config(**options),
-            'add_provider': add_provider,
-            'update_provider': update_provider,
-            'change_parameters': lambda: change_parameters(**options),
+            "fix_issues": lambda: _run_fix_issues(**options),
+            "fix_security_issues": lambda: _run_fix_security_issues(**options),
+            "analyze": lambda: _run_analyze(**options),
+            "inspect": _run_inspect,
+            "config": lambda: init_config(**options),
+            "add_provider": add_provider,
+            "update_provider": update_provider,
+            "change_parameters": lambda: change_parameters(**options),
         }
 
         if command in command_map:
@@ -892,7 +955,7 @@ def _execute_command(ctx: click.Context, command: str) -> None:
 
     except Exception as e:
         console.print(f"[red]Error: {str(e)}[/red]", markup=False)
-        if ctx.obj.get('verbose'):
+        if ctx.obj.get("verbose"):
             console.print_exception()
         raise
 
@@ -902,21 +965,20 @@ def _execute_command(ctx: click.Context, command: str) -> None:
 # ============================================================================
 
 
-def _run_fix_issues(
-    **kwargs: Any
-) -> None:
+def _run_fix_issues(**kwargs: Any) -> None:
     """Run the fix_issues command with command switching support."""
     console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
 
     try:
-        apply_value =  kwargs.get("apply", None)
+        apply_value = kwargs.get("apply", None)
         dry_run_value = 1 if kwargs.get("dry_run", False) else 0
 
-
         # Load and validate configuration
-        auth_config, llm_config,parameters = _load_and_validate_config(use_predefined=True)
+        auth_config, llm_config, parameters = _load_and_validate_config(
+            use_predefined=True
+        )
 
-        fix_params = display_configuration(parameters, dry_run_value,apply_value)
+        fix_params = display_configuration(parameters, dry_run_value, apply_value)
 
         # Confirm before proceeding
         if not smart_confirm("Proceed with these settings?", default=True):
@@ -927,60 +989,67 @@ def _run_fix_issues(
         _process_and_fix_issues(
             auth_config,
             llm_config,
-            fix_params.get("branch",""),
-            pull_request=parameters.get("pull_request",0),
+            fix_params.get("branch", ""),
+            pull_request=parameters.get("pull_request", 0),
             fix_params=fix_params,
-            issue_type= IssueType.REGULAR,
+            issue_type=IssueType.REGULAR,
         )
 
     except SwitchCommandException:
         console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise  # Re-raise to be caught by interactive mode loop
 
-def display_configuration(parameters, dry_run,apply):
 
-        console.print("[bold]Configuration:[/bold]")
-        pull_request = parameters.get("pull_request",0)
-        branch = parameters.get("branch","")
-        if isinstance(pull_request, int) and pull_request > 0:
-            console.print(f"  Pull Request: [cyan]{pull_request}[/cyan]")
-        elif branch:
-            console.print(f"  Branch: [cyan]{branch}[/cyan]")
-        apply_value = apply if apply is not None else parameters.get("apply", 0)
-        console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
-        console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
-        console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
+def display_configuration(
+    parameters: Dict[str, Any], dry_run: int, apply: int
+) -> Dict[str, Any]:
+    console.print("[bold]Configuration:[/bold]")
+    pull_request = parameters.get("pull_request", 0)
+    branch = parameters.get("branch", "")
+    if isinstance(pull_request, int) and pull_request > 0:
+        console.print(f"  Pull Request: [cyan]{pull_request}[/cyan]")
+    elif branch:
+        console.print(f"  Branch: [cyan]{branch}[/cyan]")
+    apply_value = apply if apply is not None else parameters.get("apply", 0)
+    console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
+    console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
+    console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
 
-        fix_params={
-        "pull_request":pull_request,
-        "branch":branch,
-        'max_fixes':  parameters.get("max_fixes",0),
-        'types_list': _validate_issue_types(parameters.get("types","")),
-        'severities_list': _validate_severities(parameters.get("severities","")),
-        "apply":apply_value,
-        'dry_run': dry_run,
+    fix_params = {
+        "pull_request": pull_request,
+        "branch": branch,
+        "max_fixes": parameters.get("max_fixes", 0),
+        "types_list": _validate_issue_types(parameters.get("types", "")),
+        "severities_list": _validate_severities(parameters.get("severities", "")),
+        "apply": apply_value,
+        "dry_run": dry_run,
         "exclude_rules": parameters.get("exclude_rules", None),
-        "create_backup":parameters.get("create_backup",0),
+        "create_backup": parameters.get("create_backup", 0),
     }
 
-        return fix_params
+    return fix_params
 
 
-
-def _run_fix_security_issues(
-    **kwargs: Any
-) -> None:
+def _run_fix_security_issues(**kwargs: Any) -> None:
     """Run the fix_security_issues command with command switching support."""
     console.print("\n[bold cyan]🔒 Fix Security Issues[/bold cyan]\n")
 
     try:
-        auth_config, llm_config, parameters= _load_and_validate_config(use_predefined=True)
+        auth_config, llm_config, parameters = _load_and_validate_config(
+            use_predefined=True
+        )
 
+        apply_value = kwargs.get("apply", None)
+        dry_run_value = kwargs.get(
+            "dry_run",
+            (
+                parameters.get("dry_run", 0)
+                if parameters.get("dry_run") is not None
+                else 0
+            ),
+        )
 
-        apply_value =  kwargs.get("apply", None)
-        dry_run_value = kwargs.get("dry_run", parameters.get("dry_run", 0) if parameters.get("dry_run") is not None else 0)
-
-        fix_params = display_configuration(parameters, dry_run_value,apply_value)
+        fix_params = display_configuration(parameters, dry_run_value, apply_value)
 
         if not smart_confirm("Proceed with security issue fixing?", default=True):
             console.print("[yellow]Cancelled[/yellow]")
@@ -989,10 +1058,10 @@ def _run_fix_security_issues(
         _process_and_fix_issues(
             auth_config,
             llm_config,
-            fix_params.get("branch",""),
-            fix_params.get("pull_request",0),
+            fix_params.get("branch", ""),
+            fix_params.get("pull_request", 0),
             fix_params,
-            issue_type= IssueType.SECURITY
+            issue_type=IssueType.SECURITY,
         )
 
     except SwitchCommandException:
@@ -1000,31 +1069,40 @@ def _run_fix_security_issues(
         raise
 
 
-def _run_analyze(
-        **kwargs: Any
-) -> None:
+def _run_analyze(**kwargs: Any) -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
     try:
-
         # Load and validate configuration
         auth_config, _, parameters = _load_and_validate_config(use_predefined=True)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
-
         # Get limit
-        limit_str = smart_prompt(
+        limit_response = smart_prompt(
             f"Max issues to fetch (max: {settings.MAX_FIXES_LIMIT})",
-            default=str(parameters.get("max_fixes",settings.MAX_FIXES_LIMIT))
+            default=str(parameters.get("max_fixes", settings.MAX_FIXES_LIMIT)),
         )
 
         try:
+            # Handle both string and list responses
+            if isinstance(limit_response, list):
+                limit_str = (
+                    limit_response[0]
+                    if limit_response
+                    else str(settings.MAX_FIXES_LIMIT)
+                )
+            else:
+                limit_str = limit_response
+
             limit = int(limit_str)
             if limit <= 0 or limit > settings.MAX_FIXES_LIMIT:
+                console.print(
+                    f"[yellow]Limit must be between 1 and {settings.MAX_FIXES_LIMIT}, using default[/yellow]"
+                )
                 limit = settings.MAX_FIXES_LIMIT
-        except ValueError:
+        except (ValueError, IndexError):
             console.print("[red]Invalid limit, using default[/red]")
             limit = settings.MAX_FIXES_LIMIT
 
@@ -1034,11 +1112,11 @@ def _run_analyze(
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
             result = analyzer.get_project_issues(
                 project_key=auth_config.project,
-                branch=parameters.get("branch",""),
+                branch=parameters.get("branch", ""),
                 max_issues=limit,
-                pull_request_number=_safe_convert_pr(parameters.get("pull_request",0)),
-                severities=_validate_severities(parameters.get("severity","")),
-                types=_validate_issue_types(parameters.get("types","")),
+                pull_request_number=_safe_convert_pr(parameters.get("pull_request", 0)),
+                severities=_validate_severities(parameters.get("severity", "")),
+                types=_validate_issue_types(parameters.get("types", "")),
             )
 
         if result:
@@ -1047,6 +1125,7 @@ def _run_analyze(
     except SwitchCommandException:
         console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
+
 
 def _run_inspect() -> None:
     """Run the inspect command."""
@@ -1069,7 +1148,9 @@ def _run_inspect() -> None:
         table.add_row("Python Files", str(analysis["python_files"]))
         table.add_row("JavaScript Files", str(analysis["javascript_files"]))
         table.add_row("Java Files", str(analysis["java_files"]))
-        table.add_row("Has SonarCloud Config", "✓" if analysis["has_sonar_config"] else "✗")
+        table.add_row(
+            "Has SonarCloud Config", "✓" if analysis["has_sonar_config"] else "✗"
+        )
         table.add_row("Has Git Repository", "✓" if analysis["has_git"] else "✗")
 
         console.print(table)
@@ -1082,15 +1163,19 @@ def _run_inspect() -> None:
     except SwitchCommandException:
         console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
+
+
 # ============================================================================
 # HELPER FUNCTIONS (Reusing from original code)
 # ============================================================================
 
 
-def _load_and_validate_config(use_predefined: bool = False) -> Tuple[AuthConfig, LLMConfig, Optional[str]]:
+def _load_and_validate_config(
+    use_predefined: bool = False,
+) -> Tuple[AuthConfig, LLMConfig, Dict[str, Any]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
-    manager, _, _, provider_manager, _, config_service= _initialize_managers()
+    manager, _, _, provider_manager, _, config_service = _initialize_managers()
 
     auth_config_dict = config_service.load_auth_config()
 
@@ -1098,8 +1183,11 @@ def _load_and_validate_config(use_predefined: bool = False) -> Tuple[AuthConfig,
         console.print(constant.AUTHENTICATION_NOT_FOUND)
         console.print(constant.DEVDOX_SONAR_CONFIG)
         raise click.Abort()
+    auth_config = AuthConfig.from_dict(auth_config_dict)
+    if not auth_config:
+        console.print("[red]❌ Configuration error [/red]")
+        raise click.Abort()
 
-    auth_config = AuthConfig(**auth_config_dict)
     is_valid, error_msg = auth_config.validate()
 
     if not is_valid:
@@ -1120,13 +1208,13 @@ def _load_and_validate_config(use_predefined: bool = False) -> Tuple[AuthConfig,
         raise click.Abort()
     params = manager.get_value("configuration") or {}
     if params.get("exclude_rules"):
-        params['exclude_rules'] = params.get("exclude_rules").split(",")
+        params["exclude_rules"] = str(params["exclude_rules"]).split(",")
 
-    params['branch'] = branch
-    params['pull_request'] = pull_request
+    params["branch"] = branch
+    params["pull_request"] = pull_request
 
     console.print("[green]✓[/green] Configuration loaded\n")
-    return auth_config, llm_config,params
+    return auth_config, llm_config, params
 
 
 def _validate_issue_types(types_str: Optional[str]) -> Optional[List[str]]:
@@ -1144,58 +1232,55 @@ def _validate_severities(severity_str: Optional[str]) -> Optional[List[str]]:
 
 
 def _process_and_fix_issues(
-        auth_config: AuthConfig,
-        llm_config: LLMConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any],
-        issue_type: IssueType = IssueType.REGULAR
+    auth_config: AuthConfig,
+    llm_config: LLMConfig,
+    branch: Optional[str],
+    pull_request: Optional[str],
+    fix_params: Dict[str, Any],
+    issue_type: IssueType = IssueType.REGULAR,
 ) -> None:
     """Process and fix issues - Refactored."""
     services = _initialize_fix_services(auth_config, llm_config)
     # Fetch issues based on type
-    issues= _fetch_issues_by_type(
-        services['analyzer'],
-        auth_config,
-        branch,
-        pull_request,
-        fix_params,
-        issue_type
+    issues = _fetch_issues_by_type(
+        services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
     )
     if not issues:
-        msg = "No fixable security issues found" if issue_type == IssueType.SECURITY else "No fixable issues found"
+        msg = (
+            "No fixable security issues found"
+            if issue_type == IssueType.SECURITY
+            else "No fixable issues found"
+        )
         console.print(f"[yellow]{msg}[/yellow]")
         return
 
     console.print(f"\n[green]✓ Found {len(issues)} fixable issues[/green]\n")
-    _process_files_with_issues(issues, services, auth_config,fix_params,issue_type)
-
+    _process_files_with_issues(issues, services, auth_config, fix_params, issue_type)
 
 
 def _initialize_fix_services(
-        auth_config: AuthConfig,
-        llm_config: LLMConfig
+    auth_config: AuthConfig, llm_config: LLMConfig
 ) -> Dict[str, Any]:
     """Initialize services for fixing issues."""
     console.print("[dim]Initializing services...[/dim]")
 
     return {
-        'analyzer': SonarCloudAnalyzer(auth_config.token, auth_config.organization),
-        'ruler': RuleAnalyzer(auth_config.token, auth_config.organization),
-        'fixer': LLMFixer(
+        "analyzer": SonarCloudAnalyzer(auth_config.token, auth_config.organization),
+        "ruler": RuleAnalyzer(auth_config.token, auth_config.organization),
+        "fixer": LLMFixer(
             provider=llm_config.provider,
             model=llm_config.model,
-            api_key=llm_config.api_key
-        )
+            api_key=llm_config.api_key,
+        ),
     }
 
 
 def _process_files_with_issues(
-        issues_by_file: Dict[str, List[Any]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        issue_type: IssueType
+    issues_by_file: Dict[str, List[Any]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
 ) -> None:
     """
     Process files with issues.
@@ -1203,21 +1288,29 @@ def _process_files_with_issues(
 
     """
 
-    md_file_path =Path(str(auth_config.project_path))/f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+    md_file_path = (
+        Path(str(auth_config.project_path))
+        / f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+    )
     if issue_type == IssueType.SECURITY:
-        _process_security_issues(issues_by_file, services, auth_config, fix_params,md_file_path)
+        _process_security_issues(
+            issues_by_file, services, auth_config, fix_params, md_file_path
+        )
     else:
-        _process_regular_issues(issues_by_file, services, auth_config, fix_params,md_file_path)
-
-
+        issues_by_rule_nested = {
+            rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
+        }
+        _process_regular_issues(
+            issues_by_rule_nested, services, auth_config, fix_params, md_file_path
+        )
 
 
 def _process_regular_issues(
-        issues_by_rule: Dict[str, Dict[str, List[Any]]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path:Path
+    issues_by_rule: Dict[str, Dict[str, List[Any]]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1227,24 +1320,25 @@ def _process_regular_issues(
     total_rules = len(issues_by_rule)
 
     for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
-        issues_list = rule_data['issue']
+        issues_list = rule_data["issue"]
 
-
-        console.print(f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]")
+        console.print(
+            f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]"
+        )
 
         if not _process_issues_for_rule(
-                rule_key, issues_list, services, auth_config, fix_params,md_file_path
+            rule_key, issues_list, services, auth_config, fix_params, md_file_path
         ):
             break
 
 
 def _process_issues_for_rule(
-        rule_key: str,
-        issues_list: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path:Path
+    rule_key: str,
+    issues_list: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1256,7 +1350,6 @@ def _process_issues_for_rule(
     """
     total_issues = len(issues_list)
 
-
     for idx, issue in enumerate(issues_list, 1):
         _process_single_fix(
             issues=[issue],
@@ -1265,7 +1358,7 @@ def _process_issues_for_rule(
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
             rule_key=rule_key,
-            md_file_path=md_file_path
+            md_file_path=md_file_path,
         )
 
         if not _should_continue_to_next_file(idx, total_issues):
@@ -1275,32 +1368,33 @@ def _process_issues_for_rule(
 
 
 def _process_single_fix(
-        issues: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        issue_type: IssueType,
-        rule_key: str,
-        md_file_path: Optional[Path] = None
+    issues: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
+    rule_key: str,
+    md_file_path: Optional[Path] = None,
 ) -> None:
     """
     Generate and handle a single fix.
     """
-    fix = _generate_fix_for_file(issues, services, auth_config, issue_type, rule_key, md_file_path)
+    fix = _generate_fix_for_file(
+        issues, services, auth_config, issue_type, rule_key, md_file_path
+    )
 
     if fix:
-        handle_fix(fix, issues, services['fixer'], auth_config, fix_params)
+        handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
     else:
         console.print("[yellow]No fix could be generated[/yellow]")
 
 
-
 def _process_security_issues(
-        issues_by_file: Dict[str, List[Any]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path:Path
+    issues_by_file: Dict[str, List[Any]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1310,7 +1404,6 @@ def _process_security_issues(
     total_files = len(issues_by_file)
 
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
-
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
 
         _process_single_fix(
@@ -1320,19 +1413,19 @@ def _process_security_issues(
             fix_params=fix_params,
             issue_type=IssueType.SECURITY,
             rule_key=file_key,
-            md_file_path=md_file_path
+            md_file_path=md_file_path,
         )
 
         if not _should_continue_to_next_file(idx, total_files):
             break
 
-def handle_fix(
-        fix: FixSuggestion,
-        issues: List[Any],
-        fixer: LLMFixer,
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
 
+def handle_fix(
+    fix: FixSuggestion,
+    issues: List[Any],
+    fixer: LLMFixer,
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
 ) -> None:
     """
     Handle a generated fix (apply or skip).
@@ -1340,13 +1433,13 @@ def handle_fix(
     """
     _display_fix_preview(fix, issues)
 
-    if fix_params['apply']:
+    if fix_params["apply"]:
         result = fixer.apply_fixes_with_validation(
             fixes=[fix],
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
-            create_backup=fix_params.get('create_backup', True),
-            dry_run=fix_params['dry_run'],
+            create_backup=fix_params.get("create_backup", True),
+            dry_run=fix_params["dry_run"],
             use_validator=True,
             validator_provider=fixer.provider,
             validator_model=fixer.model,
@@ -1357,44 +1450,48 @@ def handle_fix(
         console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
-
 def _generate_fix_for_file(
-        issues: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        issue_type:IssueType,
-        rule_name:Optional[str]=None,
-        md_file_path: Optional[Path] = None
+    issues: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    issue_type: IssueType,
+    rule_name: Optional[str] = None,
+    md_file_path: Optional[Path] = None,
 ) -> Optional[FixSuggestion]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         if issue_type == IssueType.SECURITY:
-            rule_info_dic = _collect_rule_information(issues, services['ruler'])
+            rule_info_dic = _collect_rule_information(issues, services["ruler"])
         else:
-            ruler =  services['ruler']
+            if not rule_name:
+                console.print("rule_name is required for non-security issues")
+                return None
+
+            ruler = services["ruler"]
             rule_info = ruler.get_rule_by_key(rule_name)
+            rule_info_dic = {rule_name: rule_info}
 
-            rule_info_dic = {rule_name:rule_info}
-
-        return services['fixer'].generate_fix_by_file(
+        file_md_str = str(md_file_path) if md_file_path else ""
+        fixer: Any = services["fixer"]
+        result: Optional[FixSuggestion] = fixer.generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
             rule_info_dic,
-            file_md=md_file_path,
-
+            file_md=file_md_str,
         )
+        return result
+
 
 def _collect_rule_information(
-        issues: List[Any],
-        ruler: RuleAnalyzer,
-) -> Dict[str, Dict[str, str]]:
+    issues: List[Any],
+    ruler: RuleAnalyzer,
+) -> Dict[str, Any]:
     """Collect rule information for all issues."""
     rule_info_list = {}
     for issue in issues:
         rule_info = ruler.get_rule_by_key(issue.rule)
         rule_info_list[issue.rule] = rule_info
     return rule_info_list
-
 
 
 def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
@@ -1409,8 +1506,6 @@ def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
     return True
 
 
-
-
 def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
     """Display a preview of the fix."""
     console.print("\n[bold]Fix Preview:[/bold]")
@@ -1419,14 +1514,21 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
     console.print(f"Issues fixed: [cyan]{len(issues)}[/cyan]")
 
     console.print("\n[bold]Code Changes:[/bold]")
-    console.print(Panel(fix.fixed_code[:500] + ("..." if len(fix.fixed_code) > 500 else ""),
-                       title="Fixed Code Preview", border_style="green"))
+    console.print(
+        Panel(
+            fix.fixed_code[:500] + ("..." if len(fix.fixed_code) > 500 else ""),
+            title="Fixed Code Preview",
+            border_style="green",
+        )
+    )
+
 
 def _display_project_header(result: AnalysisResult) -> None:
     """Display project header information."""
     console.print(Panel.fit("[bold]Analysis Results[/bold]"))
     console.print(f"Project: [cyan]{result.project_key}[/cyan]")
     console.print(f"Total Issues: [cyan]{result.total_issues}[/cyan]")
+
 
 def _display_metrics_section(result: AnalysisResult) -> None:
     if result.metrics:
@@ -1440,8 +1542,8 @@ def _display_metrics_section(result: AnalysisResult) -> None:
         if result.metrics.vulnerabilities:
             console.print(f"  Vulnerabilities: {result.metrics.vulnerabilities}")
 
-def _display_issues_table(result: AnalysisResult, limit: Optional[int]) -> None:
 
+def _display_issues_table(result: AnalysisResult, limit: Optional[int]) -> None:
     if result.issues:
         issues_to_show = result.issues[:limit] if limit else result.issues
 
@@ -1456,20 +1558,22 @@ def _display_issues_table(result: AnalysisResult, limit: Optional[int]) -> None:
                 issue.severity,
                 issue.type,
                 issue.file or "N/A",
-                issue.message[:47] + "..." if len(issue.message) > 50 else issue.message
+                (
+                    issue.message[:47] + "..."
+                    if len(issue.message) > 50
+                    else issue.message
+                ),
             )
 
         console.print("\n")
         console.print(table)
+
 
 def _display_analysis_results(result: AnalysisResult, limit: Optional[int]) -> None:
     """Display analysis results."""
     _display_project_header(result)
     _display_metrics_section(result)
     _display_issues_table(result, limit)
-
-
-
 
 
 def _display_fix_results(result: FixResult) -> None:
@@ -1485,12 +1589,12 @@ def _display_fix_results(result: FixResult) -> None:
 
 
 def _fetch_issues_by_type(
-        analyzer: SonarCloudAnalyzer,
-        auth_config: AuthConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any],
-        issue_type: IssueType
+    analyzer: SonarCloudAnalyzer,
+    auth_config: AuthConfig,
+    branch: Optional[str],
+    pull_request: Optional[str],
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
 ) -> Dict[str, List[Any]]:
     """Fetch issues from SonarCloud based on issue type."""
     pr_number = _safe_convert_pr(pull_request) if pull_request else 0
@@ -1501,7 +1605,7 @@ def _fetch_issues_by_type(
                 project_key=auth_config.project,
                 branch=branch or "",
                 pull_request=pr_number,
-                max_issues=fix_params['max_fixes'],
+                max_issues=fix_params["max_fixes"],
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
@@ -1509,13 +1613,12 @@ def _fetch_issues_by_type(
                 project_key=auth_config.project,
                 branch=branch or "",
                 pull_request=pr_number,
-                max_issues=fix_params['max_fixes'],
-                severities=fix_params['severities_list'],
-                types_list=fix_params['types_list'],
-                rules_excluded=fix_params['exclude_rules'],
-                group_by="rules"
+                max_issues=fix_params["max_fixes"],
+                severities=fix_params["severities_list"],
+                types_list=fix_params["types_list"],
+                rules_excluded=fix_params["exclude_rules"],
+                group_by="rules",
             )
-
 
 
 if __name__ == "__main__":

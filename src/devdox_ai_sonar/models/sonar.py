@@ -1,6 +1,6 @@
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional, Dict, Any, TypedDict, Tuple
+from typing import List, Optional, Dict, Any, TypedDict, Tuple, Union
 from pydantic import BaseModel, Field, ConfigDict
 
 project_key = "Project key"
@@ -55,7 +55,7 @@ class SonarCloudConfig(BaseModel):
         if not self.project or not self.project.strip():
             return False, "Project key cannot be empty"
 
-        if not self.project_path :
+        if not self.project_path:
             return False, "Project path cannot be empty"
 
         return True, None
@@ -148,7 +148,7 @@ class SecurityAnalysisResult(BaseModel):
     branch: str = Field(default="main", description="Branch analyzed")
     total_issues: int = Field(..., description="Total number of issues")
     issues: List[SonarSecurityIssue] = Field(..., description="List of issues")
-    fixable_issues_by_file: Dict[str, List[SonarIssue]] = Field(
+    fixable_issues_by_file: Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]] = Field(
         default_factory=dict,
         description="Security issues that can be fixed by LLM",
     )
@@ -160,7 +160,6 @@ class SecurityAnalysisResult(BaseModel):
             if issue.file:
                 file_key = str(issue.file_path)
                 self.fixable_issues_by_file.setdefault(file_key, []).append(issue)
-
 
 
 class AnalysisResult(BaseModel):

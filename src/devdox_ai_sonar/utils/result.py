@@ -2,8 +2,8 @@ from typing import TypeVar, Generic, Union, Optional, List
 from dataclasses import dataclass
 from devdox_ai_sonar.utils import constant
 
-T = TypeVar('T')
-E = TypeVar('E', bound=Exception)
+T = TypeVar("T")
+E = TypeVar("E", bound=Exception)
 
 
 @dataclass
@@ -40,6 +40,7 @@ Result = Union[Ok[T], Err[E]]
 @dataclass
 class PromptConfig:
     """Configuration for smart prompt behavior."""
+
     message: str
     default: Optional[Union[str, List[str]]] = None
     choices: Optional[List[str]] = None
@@ -56,6 +57,7 @@ class PromptConfig:
 @dataclass
 class ConfirmConfig:
     """Configuration for confirmation prompt."""
+
     message: str
     default: bool
     allow_switch: bool

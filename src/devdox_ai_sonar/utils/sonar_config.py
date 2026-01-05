@@ -1,6 +1,5 @@
 from typing import Optional, Dict
 from rich.console import Console
-from pathlib import Path
 from rich.prompt import Confirm, Prompt
 
 from devdox_ai_sonar.models.sonar import SonarCloudConfig
@@ -12,7 +11,7 @@ class SonarCloudConfigUI:
     """Handles SonarCloud configuration user interaction."""
 
     @staticmethod
-    def display_welcome()-> None:
+    def display_welcome() -> None:
         """Display welcome message and wizard introduction."""
         console.print("\n" + "=" * 60)
         console.print(
@@ -23,7 +22,7 @@ class SonarCloudConfigUI:
         console.print("Let's set up your SonarCloud integration and LLM providers.\n")
 
     @staticmethod
-    def display_step_header(step: int, total: int, title: str)-> None:
+    def display_step_header(step: int, total: int, title: str) -> None:
         """Display step header in the wizard."""
         console.print("=" * 60)
         console.print(f"[green bold]STEP {step}/{total}: {title}[/green bold]")
@@ -72,18 +71,17 @@ class SonarCloudConfigUI:
 
     @staticmethod
     def configure_sonarcloud(
-        existing_config: Optional[Dict[str, str]] = None,
+        existing_config: Dict[str, Optional[str]],
     ) -> Optional[SonarCloudConfig]:
         """
         Configure SonarCloud settings through interactive prompts.
 
         Args:
-            existing_config: Optional existing configuration to use as defaults
+            existing_config: Existing configuration to use as defaults (empty dict if none)
 
         Returns:
             SonarCloudConfig object or None if cancelled
         """
-        existing_config = existing_config or {}
 
         token = SonarCloudConfigUI.prompt_with_default(
             "SonarCloud authentication token",
@@ -125,7 +123,7 @@ class SonarCloudConfigUI:
             token=token,
             organization=organization,
             project=project,
-            project_path=project_path
+            project_path=project_path,
         )
 
         # Validate configuration

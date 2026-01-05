@@ -10,18 +10,20 @@ from urllib3.util.retry import Retry
 from devdox_ai_sonar.models.sonar import (
     ProcessedRules,
 )
+
 logger = logging.getLogger(__name__)
+
 
 class RuleAnalyzer:
     """Analyzes and processes SonarCloud rules"""
 
     def __init__(
-            self,
-            token: Optional[str] = None,
-            organization: Optional[str] = None,
-            base_url: str = "https://sonarcloud.io",
-            timeout: int = 30,
-            max_retries: int = 3,
+        self,
+        token: Optional[str] = None,
+        organization: Optional[str] = None,
+        base_url: str = "https://sonarcloud.io",
+        timeout: int = 30,
+        max_retries: int = 3,
     ):
         """
         Initialize the SonarCloud analyzer.
@@ -203,7 +205,6 @@ class RuleAnalyzer:
 
     def _contains_keywords(self, name: str, desc: str, keywords: List[str]) -> bool:
         return any(keyword in name or keyword in desc for keyword in keywords)
-
 
     def _process_rules(self, raw_rules: List[Dict]) -> ProcessedRules:
         """
@@ -593,7 +594,7 @@ class RuleAnalyzer:
         return filtered_rules
 
     def export_rules_to_json(
-            self, filename: str, languages: Optional[List[str]] = None
+        self, filename: str, languages: Optional[List[str]] = None
     ) -> None:
         """
 
@@ -613,4 +614,3 @@ class RuleAnalyzer:
 
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(rules_data, f, indent=2, ensure_ascii=False)
-

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple
 import logging
 from devdox_ai_sonar.models.file_structures import (
     LineRange,
@@ -36,7 +36,7 @@ def is_simple_replacement(fix: FixSuggestion) -> bool:
 
 def _apply_simple_replacement(lines: List[str], fix: FixSuggestion) -> None:
     """Apply a simple single-line replacement."""
-    target_line = fix.sonar_line_number - 1
+    target_line = (fix.sonar_line_number or 1) - 1
     base_indent = calculate_base_indentation(lines[target_line])
     indent_spaces = " " * base_indent
 
@@ -89,7 +89,8 @@ def calculate_base_indentation_based_on_line(lines: List[str], line_number: int)
 
     if target_line.strip():
         stripped = target_line.lstrip()
-        return target_line[: len(target_line) - len(stripped)]
+        indent_length = len(target_line) - len(stripped)
+        return target_line[:indent_length]
 
     return ""
 
@@ -150,7 +151,7 @@ def find_import_insertion_point(lines: List[str]) -> int:
         "docstring_quote": None,
     }
     for i, line in enumerate(lines):
-        state, stop = process_import_line(i, line,lines, state)
+        state, stop = process_import_line(i, line, lines, state)
 
         if stop:
             break
@@ -164,7 +165,13 @@ def find_import_insertion_point(lines: List[str]) -> int:
     else:
         return 0
 
-def process_import_line(i: int, line: str, lines: List[str], state: ImportState):
+
+def process_import_line( i: int, line: str, lines: List[str], state: ImportState
+
+) -> Tuple[ImportState, bool]:
+
+    """Process a single line for import detection."""
+
     stripped = line.strip()
     indent = len(line) - len(line.lstrip())
     # Ignore indented lines (inside function/class)
@@ -200,21 +207,23 @@ def process_import_line(i: int, line: str, lines: List[str], state: ImportState)
     return state, False
 
 
-
 def handle_docstring(
     i: int, stripped: str, state: ImportState
 ) -> Tuple[bool, ImportState]:
     if not state.get("in_docstring"):
         if stripped.startswith('"""') or stripped.startswith("'''"):
+            docstring_quote = stripped[:3]
             state["docstring_quote"] = stripped[:3]
             state["in_docstring"] = True
 
-            if stripped.count(state["docstring_quote"]) >= 2:
+            if stripped.count(docstring_quote) >= 2:
                 state["in_docstring"] = False
                 state["last_docstring_line"] = i
             return True, state
     else:
-        if state["docstring_quote"] in stripped:
+        docstring_quote =  state.get("docstring_quote") or '"""'
+
+        if  docstring_quote in stripped:
             state["in_docstring"] = False
             state["last_docstring_line"] = i
             return True, state
@@ -225,7 +234,7 @@ def handle_docstring(
 
 def is_shebang_or_encoding(
     i: int, stripped: str, state: ImportState
-) -> Tuple[bool, Dict[str, str]]:
+) -> Tuple[bool, ImportState]:
     if (
         i < 3
         and stripped.startswith("#")
@@ -308,13 +317,13 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
 
 def apply_complex_fix(
     lines: List[str], fix: FixSuggestion, line_range: LineRange
-) -> None:
+) -> List[str]:
     """Apply a complex fix with potential helper code."""
     base_indent = calculate_base_indentation_based_on_line(lines, line_range.start)
     indented_code = apply_indentation_to_fix(fix.fixed_code, base_indent)
 
     # Normalize helper code
-    helper_code = fix.helper_code.replace("\\n", "\n")
+    helper_code = fix.helper_code.replace("\\n", "\n")  if fix.helper_code else ""
 
     if not helper_code:
         lines = replace_lines_simple(lines, line_range, indented_code)
@@ -327,7 +336,7 @@ def apply_complex_fix(
             lines, line_range, indented_code, helper_code
         )
     elif fix.placement_helper == "GLOBAL_TOP":
-        apply_global_top_helper(lines, line_range, indented_code, helper_code)
+        lines = apply_global_top_helper(lines, line_range, indented_code, helper_code)
     else:
         lines = replace_lines_simple(lines, line_range, indented_code)
     return lines
@@ -339,7 +348,6 @@ def find_global_top_insertion_point(lines: List[str]) -> int:
     This should go after imports but before other code.
     """
     import_end = find_import_insertion_point(lines)
-
 
     # Look for the first non-import, non-comment, non-empty line after imports
     for i in range(import_end, len(lines)):
@@ -353,7 +361,7 @@ def find_global_top_insertion_point(lines: List[str]) -> int:
 
 def apply_global_top_helper(
     lines: List[str], line_range: LineRange, indented_code: str, helper_code: str
-) -> None:
+) -> List[str]:
     """Apply fix with global top helper code."""
     # First replace the target lines
     lines[line_range.start : line_range.end + 1] = [indented_code, "\n"]
@@ -389,5 +397,5 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
         return FixApplication(fix, True)
 
     # Handle complex fix with helper code
-    apply_complex_fix(lines, fix, line_range)
+    lines = apply_complex_fix(lines, fix, line_range)
     return FixApplication(fix, True)
