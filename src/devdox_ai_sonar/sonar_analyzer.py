@@ -677,20 +677,18 @@ class SonarCloudAnalyzer:
         """
         filter_values = None
         filter_by = None
-        if group_by == "rules":
-            rules = self.get_project_rules(
-                project_key,
-                branch,
-                pull_request_number=pull_request,
-                severities=severities,
-                types=types_list,
-                facets=group_by,
-                total=max_issues or 1,
-                rules_excluded=rules_excluded,
-            )
-            if rules and len(rules) > 0:
-                filter_values = rules
-                filter_by = "rules"
+
+        filter_by, filter_values = self._resolve_rule_filter(
+            project_key,
+            branch,
+            pull_request,
+            max_issues,
+            severities,
+            types_list,
+            group_by,
+            rules_excluded,
+        )
+
 
         analysis = self.get_project_issues(
             project_key,
@@ -718,6 +716,33 @@ class SonarCloudAnalyzer:
 
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
+
+    def _resolve_rule_filter(
+            self,
+            project_key: str,
+            branch: str,
+            pull_request: Optional[int],
+            max_issues: Optional[int],
+            severities: Optional[List[str]],
+            types_list: Optional[List[str]],
+            group_by: Optional[str],
+            rules_excluded: Optional[List[str]],
+    ) -> tuple[Optional[str], Optional[List[str]]]:
+        if group_by != "rules":
+            return None, None
+
+        rules = self.get_project_rules(
+            project_key,
+            branch,
+            pull_request_number=pull_request,
+            severities=severities,
+            types=types_list,
+            facets=group_by,
+            total=max_issues or 1,
+            rules_excluded=rules_excluded,
+        )
+
+        return ("rules", rules) if rules else (None, None)
 
     def get_fixable_security_issues(
         self,
