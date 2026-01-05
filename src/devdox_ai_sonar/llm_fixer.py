@@ -469,15 +469,8 @@ class LLMFixer:
                     model=self.model, contents=prompt
 
                 )
-
                 return self._parse_gemini_response(model_instance)
 
-                # Then call generate_content on the instance
-
-
-                # response = self.client.models.generate_content(
-                #     model=self.model, contents=prompt
-                # )
 
             elif self.provider == "togetherai":
                 response = self.client.chat.completions.create(
@@ -552,9 +545,6 @@ class LLMFixer:
 
                 )
 
-                # response = self.client.models.generate_content(
-                #     model=self.model, contents=prompt
-                # )
                 return self._parse_gemini_response(response)
             elif self.provider == "togetherai":
                 response = self.client.chat.completions.create(
@@ -639,6 +629,84 @@ class LLMFixer:
 
         # Default fallback
         return {"current": "Unknown", "target": "15"}
+
+    def _extend_strategies_for_issue(
+            self,
+            strategies: List[str],
+            issue: Any,
+            code_chunk: str,
+    ) -> List[str]:
+
+        msg_lower = getattr(issue, "message", "").lower()
+
+        # Cognitive Complexity
+        if "cognitive complexity" in msg_lower:
+            # Extract numbers if available
+            comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
+            target = comp_info.get("target", "15")
+
+            strategies.extend(
+                [
+                    f"• REDUCE complexity to < {target}.",
+                    "• EXTRACT logic to new helper methods/functions.",
+                    "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
+                    "• If the original code snippet calls functions or methods (e.g., validate(), "
+                    "normalize(), process_data()), DO NOT create new helper definitions for them."
+                    "Assume they already exist in the project and should not be recreated."
+                    "• Only extract logic into a helper function if that logic does not already"
+                    "correspond to Any existing function call present in the snippet."
+                    "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
+                    "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
+                    "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
+                    "• NEVER put the same function definition in both sections.",
+                    "• If the original function is a class method (uses `self` or `cls`), "
+                    "then Any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
+                    "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
+                    "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
+                ]
+            )
+            if self._is_init_method(code_chunk):
+                strategies.append(
+                    "• Keep __init__ signature intact; extract validation logic to helpers."
+                )
+
+        # Unused Code
+        elif (
+                "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower
+        ):
+            strategies.append("• Remove ONLY the specific unused variable/import.")
+            strategies.append("• Do not break code that references adjacent lines.")
+
+        # Literal Duplication
+        elif "duplicating this literal" in msg_lower:
+            match = re.search(
+                r'duplicating this literal "([^"]+)"', getattr(issue, "message", "")
+            )
+            literal = match.group(1) if match else "the repeated value"
+            strategies.append(
+                f'• Extract the literal "{literal}" to a constant/variable.'
+            )
+            strategies.append(
+                "• Place the constant at the class or module level (not inside the function)."
+            )
+            strategies.append(
+                "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
+            )
+            strategies.append(
+                "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
+            )
+            strategies.append(
+                "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
+            )
+            strategies.append("• Use the constant in [FIXED_SELECTION].")
+
+        # Null Checks
+        elif (
+                "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower
+        ):
+            strategies.append("• Add defensive null/None checks before usage.")
+
+        return strategies
 
     def _create_fix_prompt(
         self,
@@ -771,75 +839,11 @@ class LLMFixer:
             if rule_key not in rule_info_list:
                 continue
 
-
-            msg_lower = getattr(issue, "message", "").lower()
-
-            # Cognitive Complexity
-            if "cognitive complexity" in msg_lower:
-                # Extract numbers if available
-                comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
-                target = comp_info.get("target", "15")
-
-                strategies.extend(
-                    [
-                        f"• REDUCE complexity to < {target}.",
-                        "• EXTRACT logic to new helper methods/functions.",
-                        "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
-                        "• If the original code snippet calls functions or methods (e.g., validate(), "
-                        "normalize(), process_data()), DO NOT create new helper definitions for them."
-                        "Assume they already exist in the project and should not be recreated."
-                        "• Only extract logic into a helper function if that logic does not already"
-                        "correspond to Any existing function call present in the snippet."
-                        "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
-                        "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
-                        "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
-                        "• NEVER put the same function definition in both sections.",
-                        "• If the original function is a class method (uses `self` or `cls`), "
-                        "then Any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
-                        "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
-                        "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
-                    ]
+            strategies = self._extend_strategies_for_issue(
+                    strategies=strategies,
+                    issue=issue,
+                    code_chunk=code_chunk,
                 )
-                if self._is_init_method(code_chunk):
-                    strategies.append(
-                        "• Keep __init__ signature intact; extract validation logic to helpers."
-                    )
-
-            # Unused Code
-            elif (
-                "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower
-            ):
-                strategies.append("• Remove ONLY the specific unused variable/import.")
-                strategies.append("• Do not break code that references adjacent lines.")
-
-            # Literal Duplication
-            elif "duplicating this literal" in msg_lower:
-                match = re.search(
-                    r'duplicating this literal "([^"]+)"', getattr(issue, "message", "")
-                )
-                literal = match.group(1) if match else "the repeated value"
-                strategies.append(
-                    f'• Extract the literal "{literal}" to a constant/variable.'
-                )
-                strategies.append(
-                    "• Place the constant at the class or module level (not inside the function)."
-                )
-                strategies.append(
-                    "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
-                )
-                strategies.append(
-                    "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
-                )
-                strategies.append(
-                    "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
-                )
-                strategies.append("• Use the constant in [FIXED_SELECTION].")
-
-            # Null Checks
-            elif (
-                "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower
-            ):
-                strategies.append("• Add defensive null/None checks before usage.")
 
             # 3. Construct Prompt
             # We join strategies with newlines for a clean list
