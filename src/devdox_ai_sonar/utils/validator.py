@@ -9,10 +9,12 @@ from typing import Union, List, Set
 from pathlib import Path
 from enum import Enum
 
-from devdox_ai_sonar.utils.exceptions import ValidationError, ConfigurationError
+from devdox_ai_sonar.utils.exceptions import ValidationError
+
 
 class IssueType(Enum):
     """Type of issues to process."""
+
     REGULAR = "regular"
     SECURITY = "security"
 
@@ -26,7 +28,18 @@ class InputValidator:
     VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai"}
 
     # Git branch name invalid characters
-    INVALID_BRANCH_CHARS: Set[str] = {'~', '^', ':', '?', '*', '[', '\\', ' ', '\t', '\n'}
+    INVALID_BRANCH_CHARS: Set[str] = {
+        "~",
+        "^",
+        ":",
+        "?",
+        "*",
+        "[",
+        "\\",
+        " ",
+        "\t",
+        "\n",
+    }
 
     @staticmethod
     def validate_pull_request_number(value: Union[str, int]) -> int:
@@ -48,14 +61,14 @@ class InputValidator:
                 raise ValidationError(
                     "Pull request number must be positive",
                     field="pull_request",
-                    value=str(value)
+                    value=str(value),
                 )
             return pr_num
         except (ValueError, TypeError) as e:
             raise ValidationError(
                 "Pull request number must be a valid integer",
                 field="pull_request",
-                value=str(value)
+                value=str(value),
             ) from e
 
     @staticmethod
@@ -73,44 +86,41 @@ class InputValidator:
             ValidationError: If branch name is invalid
         """
         if not branch or not branch.strip():
-            raise ValidationError(
-                "Branch name cannot be empty",
-                field="branch"
-            )
+            raise ValidationError("Branch name cannot be empty", field="branch")
 
         branch = branch.strip()
 
         # Check for invalid characters
-        invalid_found = [char for char in InputValidator.INVALID_BRANCH_CHARS if char in branch]
+        invalid_found = [
+            char for char in InputValidator.INVALID_BRANCH_CHARS if char in branch
+        ]
         if invalid_found:
             raise ValidationError(
                 f"Branch name contains invalid characters: {', '.join(invalid_found)}",
                 field="branch",
-                value=branch
+                value=branch,
             )
 
         # Check for invalid patterns
-        if branch.startswith('.') or branch.endswith('.'):
+        if branch.startswith(".") or branch.endswith("."):
             raise ValidationError(
                 "Branch name cannot start or end with a dot",
                 field="branch",
-                value=branch
+                value=branch,
             )
 
-        if '..' in branch:
+        if ".." in branch:
             raise ValidationError(
                 "Branch name cannot contain consecutive dots",
                 field="branch",
-                value=branch
+                value=branch,
             )
 
         return branch
 
     @staticmethod
     def validate_max_issues(
-            value: Union[str, int],
-            max_limit: int,
-            field_name: str = "max_issues"
+        value: Union[str, int], max_limit: int, field_name: str = "max_issues"
     ) -> int:
         """
         Validate maximum number of issues to fetch.
@@ -130,9 +140,7 @@ class InputValidator:
             count = int(value)
             if count <= 0:
                 raise ValidationError(
-                    f"{field_name} must be positive",
-                    field=field_name,
-                    value=str(value)
+                    f"{field_name} must be positive", field=field_name, value=str(value)
                 )
 
             # Cap at max_limit rather than raising error
@@ -144,7 +152,7 @@ class InputValidator:
             raise ValidationError(
                 f"{field_name} must be a valid integer",
                 field=field_name,
-                value=str(value)
+                value=str(value),
             ) from e
 
     @staticmethod
@@ -172,7 +180,7 @@ class InputValidator:
                 f"Invalid issue types: {', '.join(invalid)}. "
                 f"Valid types: {', '.join(InputValidator.VALID_ISSUE_TYPES)}",
                 field="types",
-                value=", ".join(invalid)
+                value=", ".join(invalid),
             )
 
         return types_list
@@ -202,7 +210,7 @@ class InputValidator:
                 f"Invalid severities: {', '.join(invalid)}. "
                 f"Valid severities: {', '.join(InputValidator.VALID_SEVERITIES)}",
                 field="severities",
-                value=", ".join(invalid)
+                value=", ".join(invalid),
             )
 
         return sev_list
@@ -227,14 +235,14 @@ class InputValidator:
             raise ValidationError(
                 f"Project path does not exist: {project_path}",
                 field="project_path",
-                value=str(project_path)
+                value=str(project_path),
             )
 
         if not project_path.is_dir():
             raise ValidationError(
                 f"Project path is not a directory: {project_path}",
                 field="project_path",
-                value=str(project_path)
+                value=str(project_path),
             )
 
         return project_path
@@ -255,10 +263,7 @@ class InputValidator:
             ValidationError: If token format is invalid
         """
         if not token or not token.strip():
-            raise ValidationError(
-                f"{provider} token cannot be empty",
-                field="token"
-            )
+            raise ValidationError(f"{provider} token cannot be empty", field="token")
 
         token = token.strip()
 
@@ -267,7 +272,7 @@ class InputValidator:
             raise ValidationError(
                 f"{provider} token appears too short (expected at least 20 characters)",
                 field="token",
-                value=f"{token[:10]}... ({len(token)} chars)"
+                value=f"{token[:10]}... ({len(token)} chars)",
             )
 
         return token
@@ -293,7 +298,7 @@ class InputValidator:
                 f"Unsupported LLM provider: {provider}. "
                 f"Valid providers: {', '.join(InputValidator.VALID_LLM_PROVIDERS)}",
                 field="provider",
-                value=provider
+                value=provider,
             )
 
         return provider
@@ -316,7 +321,7 @@ class InputValidator:
             raise ValidationError(
                 f"Confidence must be between 0.0 and 1.0, got {confidence}",
                 field="confidence",
-                value=str(confidence)
+                value=str(confidence),
             )
 
         return confidence
@@ -338,8 +343,7 @@ class InputValidator:
         """
         if not model or not model.strip():
             raise ValidationError(
-                f"Model name cannot be empty for provider {provider}",
-                field="model"
+                f"Model name cannot be empty for provider {provider}", field="model"
             )
 
         return model.strip()

@@ -4,14 +4,15 @@ from rich.console import Console
 from simple_term_menu import TerminalMenu
 import rich_click as click
 from devdox_ai_sonar.models.llm import ProviderType, ProviderValidator
+from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.utils.validator import InputValidator
 from devdox_ai_sonar.utils.exceptions import ValidationError
 
 console = Console()
-CONFIG_PROVIDERS="llm.providers"
-CONFIG_DEFAULT_BRANCH="sonar.default_branch"
-CONFIG_DEFAULT_PULL="sonar.default_pull"
-CONFIG_CLONE_TYPE="sonar.sonar_options.clone_type"
+CONFIG_PROVIDERS = "llm.providers"
+CONFIG_DEFAULT_BRANCH = "sonar.default_branch"
+CONFIG_DEFAULT_PULL = "sonar.default_pull"
+CONFIG_CLONE_TYPE = "sonar.sonar_options.clone_type"
 
 
 class ProviderUpdateContext:
@@ -40,7 +41,6 @@ class ProviderConfigUI:
         except KeyboardInterrupt:
             return None
 
-
     @staticmethod
     def select_provider_from_list(providers: List[str], message: str) -> Optional[str]:
         """Select a provider using terminal menu."""
@@ -58,8 +58,11 @@ class ProviderConfigUI:
             menu_highlight_style=("fg_green", "bold"),
         )
 
-        index = menu.show()
-        return providers[index] if index is not None else None
+        menu_index = menu.show()
+        if menu_index is not None and isinstance(menu_index, int):
+            return providers[menu_index]
+
+        return None
 
     @staticmethod
     def confirm_default(message: str = "Make this the default provider?") -> bool:
@@ -74,7 +77,10 @@ class ProviderConfigManager:
     """Manages provider configuration operations."""
 
     def __init__(
-        self, config_manager, ui: ProviderConfigUI, validator: ProviderValidator
+        self,
+        config_manager: ConfigManager,
+        ui: ProviderConfigUI,
+        validator: ProviderValidator,
     ):
         self.config_manager = config_manager
         self.ui = ui
@@ -82,17 +88,33 @@ class ProviderConfigManager:
 
     def get_available_providers(self) -> List[str]:
         """Get list of providers not yet configured."""
-        existing_providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
+        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+
+        existing_providers: List[Dict[str, Any]] = (
+            existing_providers_value if existing_providers_value else []
+        )
         existing_names = {p["name"] for p in existing_providers}
         return [p for p in ProviderType.choices() if p not in existing_names]
 
     def get_default_provider(self) -> Optional[str]:
         """Get default provider name."""
-        return self.config_manager.get_value("llm.default_provider")
+        value = self.config_manager.get_value("llm.default_provider")
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(
+                f"Expected string for llm.default_provider, got {type(value).__name__}"
+            )
+        return value
 
     def get_existing_providers(self) -> List[str]:
         """Get list of already configured providers."""
-        existing_providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
+        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+
+        existing_providers: List[Dict[str, Any]] = (
+            existing_providers_value if existing_providers_value else []
+        )
+
         return [p["name"] for p in existing_providers]
 
     def configure_new_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
@@ -139,7 +161,9 @@ class ProviderConfigManager:
     def update_existing_provider(self, provider_name: str) -> bool:
         """Update an existing provider's configuration."""
         # Find provider
-        providers = self.config_manager.get_value(CONFIG_PROVIDERS) or []
+        providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+
+        providers: List[Dict[str, Any]] = providers_value if providers_value else []
         provider = next((p for p in providers if p["name"] == provider_name), None)
 
         if not provider:
@@ -193,12 +217,20 @@ class ProviderConfigManager:
 
         validation_result = self._validate_provider_api_key(ctx.provider_name, api_key)
         if validation_result and validation_result.success:
-            return validation_result.models
+            # Ensure models is a list of strings
+            models = validation_result.models
+            if not isinstance(models, list):
+                return []
 
+            # Validate all items are strings
+            if not all(isinstance(m, str) for m in models):
+                return [str(m) for m in models if m]
+
+            return models
         return []
 
     def _apply_provider_updates(
-            self, ctx: ProviderUpdateContext, set_as_default: bool
+        self, ctx: ProviderUpdateContext, set_as_default: bool
     ) -> bool:
         """Apply updates to provider configuration."""
         if not ctx.updates:
@@ -213,9 +245,15 @@ class ProviderConfigManager:
 
     def _handle_api_key_update(self, ctx: ProviderUpdateContext) -> bool:
         """Handle API key update flow. Returns False if update should be cancelled."""
-        if not Confirm.ask(f"Change API key for {ctx.provider_name.upper()}?", default=False):
+        if not Confirm.ask(
+            f"Change API key for {ctx.provider_name.upper()}?", default=False
+        ):
             # Keep existing API key, use existing models
-            ctx.available_models = ctx.provider.get("models", [])
+            models_value = ctx.provider.get("models", [])
+
+            ctx.available_models = (
+                models_value if isinstance(models_value, list) else []
+            )
             return True
 
         # Get and validate new API key
@@ -232,7 +270,9 @@ class ProviderConfigManager:
         ctx.available_models = validation_result.models
         return True
 
-    def _validate_provider_api_key(self, provider_name: str, api_key: str):
+    def _validate_provider_api_key(
+        self, provider_name: str, api_key: str
+    ) -> Optional[Any]:
         """Validate provider API key and return validation result."""
         try:
             provider_type = ProviderType(provider_name)
@@ -255,16 +295,13 @@ class ProviderConfigManager:
         default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
         if clone_type == "pr":
-            default_branch=""
+            default_branch = ""
         else:
-            default_pull=0
+            default_pull = 0
         return default_branch, default_pull
 
-    def get_params(self):
+    def get_params(self) -> Any:
         return self.config_manager.get_value("sonar.configuration")
-
-
-
 
     def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
@@ -298,7 +335,7 @@ class ProviderConfigManager:
                 new_value="branch",
                 current_default="pr",
                 display_name="",
-                confirm=False
+                confirm=False,
             )
 
             return branch, 0
@@ -315,13 +352,15 @@ class ProviderConfigManager:
 
         try:
             pull_request = InputValidator.validate_pull_request_number(pr_input)
-            console.print(f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]")
+            console.print(
+                f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]"
+            )
 
             self._save_as_default_if_changed(
                 config_key=CONFIG_DEFAULT_PULL,
                 new_value=pull_request,
                 current_default=default_pull,
-                display_name=f"PR #{pull_request}"
+                display_name=f"PR #{pull_request}",
             )
 
             self._save_as_default_if_changed(
@@ -329,7 +368,7 @@ class ProviderConfigManager:
                 new_value="pr",
                 current_default="branch",
                 display_name="",
-                confirm=False
+                confirm=False,
             )
 
             return "", pull_request
@@ -339,23 +378,22 @@ class ProviderConfigManager:
             raise click.Abort()
 
     def _save_as_default_if_changed(
-            self,
-            config_key: str,
-            new_value: Any,
-            current_default: Any,
-            display_name: str,
-            confirm: bool = True
+        self,
+        config_key: str,
+        new_value: Any,
+        current_default: Any,
+        display_name: str,
+        confirm: bool = True,
     ) -> None:
         """Save new value as default if it differs from current default."""
         if str(new_value) == str(current_default):
             return
-        if confirm and  not Confirm.ask(
-                    "Save this as default for future runs?", default=False
-            ):
-                return
+        if confirm and not Confirm.ask(
+            "Save this as default for future runs?", default=False
+        ):
+            return
 
         self.config_manager.set_value(config_key, new_value)
         self.config_manager.save_config()
         if confirm:
             console.print(f"[green]✓[/green] Saved {display_name} as default")
-

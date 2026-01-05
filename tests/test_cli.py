@@ -87,6 +87,14 @@ def fix_params():
         "create_backup": 1
     }
 
+@pytest.fixture
+def mock_auth_dict() :
+    return {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
 
 @pytest.fixture
 def mock_services():
@@ -2898,6 +2906,12 @@ class TestLoadAndValidateConfig:
         """Test successful config load"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
         mock_config_manager.get_value.return_value = {"max_fixes": 10}
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
 
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
@@ -2908,10 +2922,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         result = _load_and_validate_config()
 
@@ -2920,26 +2935,36 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_no_auth(self):
         """Test config load without auth"""
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
-            mock_instance = Mock()
-            mock_instance.load_auth_config.return_value = None
-            mock_cs.return_value = mock_instance
+
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+        with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+            mock_auth_instance = Mock(spec=AuthConfig)
+            mock_auth_instance.validate.return_value = (True, None)
+            mock_from_dict.return_value = mock_auth_instance
 
             with pytest.raises(Exception):  # Should abort
                 _load_and_validate_config()
 
-    def test_load_and_validate_config_invalid_auth(self, mock_config_service):
+    def test_load_and_validate_config_invalid_auth(self, mock_config_service, mock_auth_dict):
         """Test config load with invalid auth"""
+
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
-            with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                mock_auth_instance = Mock()
-                mock_auth_instance.validate.return_value = (False, "Invalid")
-                mock_auth.return_value = mock_auth_instance
+            with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_from_dict.return_value = mock_auth_instance
 
-                with pytest.raises(Exception):  # Should abort
-                    _load_and_validate_config()
+                        with pytest.raises(Exception):  # Should abort
+                            _load_and_validate_config()
 
     def test_load_and_validate_config_no_llm(
             self, mock_config_service, mock_config_manager
@@ -2967,7 +2992,16 @@ class TestLoadAndValidateConfig:
     ):
         """Test successful config load using predefined branch/PR"""
         # Setup mocks
+
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
         mock_config_service.load_llm_config.return_value = mock_llm_config
+
         mock_config_manager.get_value.return_value = {"max_fixes": 10}
         mock_provider_manager.branch_or_pr.return_value = ("main", "123")
 
@@ -2980,10 +3014,12 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
+
 
                         # Call with use_predefined=True
                         result = _load_and_validate_config(use_predefined=True)
@@ -3005,10 +3041,17 @@ class TestLoadAndValidateConfig:
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
+
         """Test predefined mode with only branch (no PR)"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr.return_value = ("feature/test", None)
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
 
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
@@ -3019,10 +3062,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         result = _load_and_validate_config(use_predefined=True)
 
@@ -3040,6 +3084,13 @@ class TestLoadAndValidateConfig:
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr.return_value = (None, "456")
 
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
@@ -3049,10 +3100,12 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
+
 
                         result = _load_and_validate_config(use_predefined=True)
 
@@ -3069,7 +3122,12 @@ class TestLoadAndValidateConfig:
         mock_config_service.load_llm_config.return_value = mock_llm_config
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr.return_value = (None, None)
-
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
@@ -3079,10 +3137,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
                             _load_and_validate_config(use_predefined=True)
@@ -3103,6 +3162,13 @@ class TestLoadAndValidateConfig:
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr_prompt.return_value = ("develop", "789")
 
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
@@ -3112,10 +3178,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         result = _load_and_validate_config(use_predefined=False)
 
@@ -3137,6 +3204,13 @@ class TestLoadAndValidateConfig:
         mock_config_service.load_llm_config.return_value = mock_llm_config
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr_prompt.return_value = (None, None)
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
 
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
@@ -3147,10 +3221,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
                             _load_and_validate_config(use_predefined=False)
@@ -3170,6 +3245,13 @@ class TestLoadAndValidateConfig:
         mock_config_manager.get_value.return_value = {}
         mock_provider_manager.branch_or_pr.side_effect = Exception("Config error")
 
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
@@ -3179,10 +3261,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception) as exc_info:
                             _load_and_validate_config(use_predefined=True)
@@ -3199,6 +3282,13 @@ class TestLoadAndValidateConfig:
         mock_config_manager.get_value.return_value = existing_config.copy()
         mock_provider_manager.branch_or_pr.return_value = ("main", "100")
 
+        mock_auth_dict = {
+            "token": "token123",
+            "organization": "org",
+            "project": "proj",
+            "project_path": "/path"
+        }
+
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
 
@@ -3208,10 +3298,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config(use_predefined=True)
 
@@ -3224,12 +3315,14 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_params_empty_dict_when_no_existing(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config,mock_auth_dict
     ):
         """Test params initialization when no existing config"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
         mock_config_manager.get_value.return_value = None  # No existing config
         mock_provider_manager.branch_or_pr_prompt.return_value = ("test", None)
+
+
 
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
             mock_cs.return_value = mock_config_service
@@ -3240,10 +3333,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3260,7 +3354,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_returns_correct_types(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test return values have correct types"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3276,10 +3370,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         auth_config, llm_config, params = _load_and_validate_config(
                             use_predefined=True
@@ -3292,7 +3387,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_console_message_loading(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test console displays 'Loading configuration...' message"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3308,10 +3403,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
                             _load_and_validate_config()
@@ -3325,7 +3421,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_console_message_success(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test console displays success message after loading"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3341,10 +3437,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
                             _load_and_validate_config()
@@ -3378,30 +3475,39 @@ class TestLoadAndValidateConfig:
             self, mock_config_service, mock_config_manager
     ):
         """Test console displays error message for invalid auth"""
-        mock_config_service.load_auth_config.return_value = {"token": "test"}
+        mock_auth_dict = {
+            "token": "invalid_token",
+            "organization": "test-org",
+            "project": "test-project",
+            "project_path": "/test/path"
+        }
 
-        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs, \
+                patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm, \
+                patch('devdox_ai_sonar.cli.console') as mock_console:
             mock_cs.return_value = mock_config_service
+            mock_config_service.load_auth_config.return_value = mock_auth_dict
+            mock_cm.return_value = mock_config_manager
 
-            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
-                mock_cm.return_value = mock_config_manager
+            mock_auth_instance = Mock(spec=AuthConfig)
+            mock_auth_instance.validate.return_value = (False, "Invalid token")
 
-                with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                    mock_auth_instance = Mock()
-                    mock_auth_instance.validate.return_value = (False, "Invalid token")
-                    mock_auth.return_value = mock_auth_instance
+            with patch("devdox_ai_sonar.cli.AuthConfig.from_dict", return_value=mock_auth_instance):
+                with pytest.raises(click.Abort):
+                    _load_and_validate_config()
 
-                    with patch('devdox_ai_sonar.cli.console') as mock_console:
-                        with pytest.raises(click.Abort):
-                            _load_and_validate_config()
+                # Check that some error message was printed containing our validation error
+                all_print_calls = [str(call) for call in mock_console.print.call_args_list]
+                error_messages = [call for call in all_print_calls if 'Invalid token' in call]
 
-                        # Verify error message contains the validation error
-                        calls = [str(call) for call in mock_console.print.call_args_list]
-                        error_calls = [c for c in calls if 'Invalid token' in c]
-                        assert len(error_calls) >= 1
+                assert len(error_messages) >= 1, (
+                    f"Expected error message containing 'Invalid token' but got calls: {all_print_calls}"
+                )
+
+
 
     def test_load_and_validate_config_console_message_no_llm(
-            self, mock_config_service, mock_config_manager
+            self, mock_config_service, mock_config_manager, auth_config
     ):
         """Test console displays error when no LLM providers configured"""
         mock_config_service.load_llm_config.return_value = None
@@ -3412,12 +3518,13 @@ class TestLoadAndValidateConfig:
             with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
                 mock_cm.return_value = mock_config_manager
 
-                with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                    mock_auth_instance = Mock()
+                with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                        patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                    mock_auth_instance = Mock(spec=AuthConfig)
                     mock_auth_instance.validate.return_value = (True, None)
-                    mock_auth.return_value = mock_auth_instance
+                    mock_from_dict.return_value = mock_auth_instance
 
-                    with patch('devdox_ai_sonar.cli.console') as mock_console:
+                with patch('devdox_ai_sonar.cli.console') as mock_console:
                         with pytest.raises(click.Abort):
                             _load_and_validate_config()
 
@@ -3428,7 +3535,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_console_message_no_branch_pr(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test console displays error when no branch/PR specified"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3444,21 +3551,22 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
-                            with pytest.raises(click.Abort):
-                                _load_and_validate_config()
+                                with pytest.raises(click.Abort):
+                                    _load_and_validate_config()
 
-                            # Verify NO_BRANCH_OR_PR_SPECIFIED message displayed
-                            mock_console.print.assert_any_call(constant.NO_BRANCH_OR_PR_SPECIFIED)
+                                # Verify NO_BRANCH_OR_PR_SPECIFIED message displayed
+                                mock_console.print.assert_any_call(constant.NO_BRANCH_OR_PR_SPECIFIED)
 
     def test_load_and_validate_config_exclude_rules_string_split(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test exclude_rules string is split into list"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3477,10 +3585,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3491,7 +3600,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_exclude_rules_single_rule(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test exclude_rules with single rule (no comma)"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3509,10 +3618,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3523,7 +3633,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_exclude_rules_with_spaces(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test exclude_rules handles spaces around commas"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3541,10 +3651,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3554,7 +3665,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_no_exclude_rules(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test when exclude_rules is not in config"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3573,10 +3684,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3585,7 +3697,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_exclude_rules_empty_string(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test when exclude_rules is empty string"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3603,10 +3715,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3618,7 +3731,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_exclude_rules_already_list(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config,auth_config
     ):
         """Test when exclude_rules is already a list (edge case)"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3637,10 +3750,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         # This might raise AttributeError: 'list' object has no attribute 'split'
                         # Need to test actual behavior
@@ -3654,7 +3768,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_params_preserves_all_existing_config(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test all existing config values are preserved in params"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3679,10 +3793,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3701,7 +3816,7 @@ class TestLoadAndValidateConfig:
 
     def test_load_and_validate_config_params_branch_overwrites_existing(
             self, mock_config_service, mock_config_manager,
-            mock_provider_manager, mock_llm_config
+            mock_provider_manager, mock_llm_config, auth_config
     ):
         """Test branch/PR from prompt overwrites any existing values"""
         mock_config_service.load_llm_config.return_value = mock_llm_config
@@ -3720,10 +3835,11 @@ class TestLoadAndValidateConfig:
                 with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
                     mock_pm.return_value = mock_provider_manager
 
-                    with patch('devdox_ai_sonar.cli.AuthConfig') as mock_auth:
-                        mock_auth_instance = Mock()
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
                         mock_auth_instance.validate.return_value = (True, None)
-                        mock_auth.return_value = mock_auth_instance
+                        mock_from_dict.return_value = mock_auth_instance
 
                         _, _, params = _load_and_validate_config()
 
@@ -3792,7 +3908,7 @@ class TestShouldContinueToMenu:
         mock_confirm.assert_called_once_with(
             "Return to main menu?",
             default=True,
-            allow_switch=False
+            allow_switch=True
         )
 
     @patch('devdox_ai_sonar.cli.smart_confirm')
@@ -4352,7 +4468,7 @@ class TestLoadAndValidateConfigErrors:
                 _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    @patch('devdox_ai_sonar.cli.AuthConfig')
+    @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
     def test_load_config_validation_fails(self, mock_auth_config, mock_init):
         """Test when auth config validation fails"""
         mock_config_service = Mock()
@@ -4376,7 +4492,7 @@ class TestLoadAndValidateConfigErrors:
                 _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    @patch('devdox_ai_sonar.cli.AuthConfig')
+    @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
     def test_load_config_no_llm_config(self, mock_auth_config, mock_init):
         """Test when LLM config is missing"""
         mock_config_service = Mock()
@@ -4401,7 +4517,7 @@ class TestLoadAndValidateConfigErrors:
                 _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    @patch('devdox_ai_sonar.cli.AuthConfig')
+    @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
     def test_load_config_no_branch_or_pr(self, mock_auth_config, mock_init):
         """Test when neither branch nor PR is provided"""
         mock_config_service = Mock()

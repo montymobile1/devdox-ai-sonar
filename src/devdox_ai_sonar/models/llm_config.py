@@ -8,6 +8,8 @@ import shutil
 from datetime import datetime
 from devdox_ai_sonar.models.sonar import SonarType
 
+failed_load_config = "Failed to load configuration"
+
 
 class AppConfig(BaseModel):
     """Complete application configuration"""
@@ -49,7 +51,6 @@ class ConfigManager:
         # Write default config
         with open(self.config_path, "wb") as f:
             tomli_w.dump(self.DEFAULT_CONFIG, f)
-
 
     def load_config(self) -> Dict[str, Any]:
         """Load and parse config file"""
@@ -93,8 +94,11 @@ class ConfigManager:
         if not self.config:
             self.load_config()
 
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
         keys = key_path.split(".")
-        current = self.config
+        current: Dict[str, Any] = self.config
 
         # Navigate to the parent of the target key
         for key in keys[:-1]:
@@ -121,17 +125,22 @@ class ConfigManager:
                     + "\n".join(f"  - {issue}" for issue in issues)
                 )
 
-
     def validate_change(self, key_path: str, new_value: Any) -> tuple[bool, List[str]]:
         """
         Validate a configuration change
         Returns: (is_valid, list_of_issues)
         """
         issues = []
+        if not self.config:
+            raise RuntimeError("No configuration to save")
 
         # Validate default_provider change
         if key_path == "llm.default_provider":
-            provider_names = [p["name"] for p in self.config["llm"]["providers"]]
+            llm_config = self.config.get("llm", {})
+
+            providers = llm_config.get("providers", [])
+
+            provider_names = [p["name"] for p in providers]
             if new_value not in provider_names:
                 issues.append(
                     f"Provider '{new_value}' not found in configured providers. "
@@ -140,13 +149,13 @@ class ConfigManager:
 
         # Validate default_model change
         if key_path == "llm.default_model":
-            default_provider = self.config["llm"]["default_provider"]
+            llm_config = self.config.get("llm", {})
+
+            default_provider = llm_config.get("default_provider")
+
+            providers = llm_config.get("providers", [])
             provider = next(
-                (
-                    p
-                    for p in self.config["llm"]["providers"]
-                    if p["name"] == default_provider
-                ),
+                (p for p in providers if p["name"] == default_provider),
                 None,
             )
             if provider and new_value not in provider["models"]:
@@ -180,8 +189,13 @@ class ConfigManager:
         if not self.config:
             self.load_config()
 
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
         # Find the provider
-        providers = self.config["llm"]["providers"]
+        llm_config = self.config.get("llm", {})
+
+        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
 
         provider_idx = next(
             (i for i, p in enumerate(providers) if p["name"] == provider_name), None
@@ -200,7 +214,6 @@ class ConfigManager:
 
         # Set as default if requested
         if set_as_default:
-
             self.config["llm"]["default_provider"] = provider_name
             self.config["llm"]["default_model"] = provider["default_model"]
 
@@ -211,19 +224,34 @@ class ConfigManager:
         if not self.config:
             self.load_config()
 
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
         provider_name = provider_config.get("name")
         if not provider_name:
             raise ValueError("Provider must have a 'name' field")
 
         # Check if provider already exists
-        if self.config.get("llm", {}).get("providers"):
-            existing_names = [p["name"] for p in self.config["llm"]["providers"]]
-            if provider_name in existing_names:
-                raise ValueError(f"Provider '{provider_name}' already exists")
-        else:
-            self.config.setdefault("llm", {}).setdefault("providers", [])
-            self.config.setdefault("llm", {}).setdefault("default_provider", "")
+        if "llm" not in self.config:
+            self.config["llm"] = {
+                "providers": [],
+                "default_provider": "",
+                "default_model": "",
+            }
 
+        llm_config = self.config["llm"]
+
+        # Initialize providers list if needed
+        if "providers" not in llm_config:
+            llm_config["providers"] = []
+
+        providers: List[Dict[str, Any]] = llm_config["providers"]
+
+        # Check if provider already exists
+        existing_names = [p["name"] for p in providers]
+
+        if provider_name in existing_names:
+            raise ValueError(f"Provider '{provider_name}' already exists")
         # Validate required fields
         required = ["name", "api_key", "models"]
         missing = [field for field in required if field not in provider_config]
@@ -243,37 +271,50 @@ class ConfigManager:
         if not self.config:
             self.load_config()
 
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
+        llm_config = self.config.get("llm", {})
+
         # Check if it's the default provider
-        if self.config["llm"]["default_provider"] == provider_name:
+        if llm_config["default_provider"] == provider_name:
             raise ValueError(
                 f"Cannot remove default provider '{provider_name}'. "
                 f"Set a different default provider first."
             )
 
         # Find and remove provider
-        providers = self.config["llm"]["providers"]
+        providers: List[Dict[str, Any]] = llm_config["providers"]
         original_count = len(providers)
 
-        self.config["llm"]["providers"] = [
-            p for p in providers if p["name"] != provider_name
-        ]
+        llm_config["providers"] = [p for p in providers if p["name"] != provider_name]
 
-        if len(self.config["llm"]["providers"]) == original_count:
+        if len(llm_config["providers"]) == original_count:
             raise ValueError(f"Provider '{provider_name}' not found")
 
     def list_providers(self) -> List[Dict[str, Any]]:
         """List all configured providers"""
         if not self.config:
             self.load_config()
+        if not self.config:
+            raise RuntimeError(failed_load_config)
 
-        return self.config["llm"]["providers"]
+        llm_config = self.config.get("llm", {})
+        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
+        return providers
 
     def show_provider(self, provider_name: str) -> Dict[str, Any]:
         """Show details of a specific provider"""
         if not self.config:
             self.load_config()
 
-        for provider in self.config["llm"]["providers"]:
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
+        llm_config = self.config.get("llm", {})
+        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
+
+        for provider in providers:
             if provider["name"] == provider_name:
                 return provider
 
@@ -284,11 +325,13 @@ class ConfigManager:
         if create_backup:
             self.create_backup()
 
+        if not self.config:
+            raise RuntimeError("No configuration to save")
+
         doc = tomlkit.document()
 
         for section_key, section_value in self.config.items():
-            doc[section_key] = self._build_section_value( section_value)
-
+            doc[section_key] = self._build_section_value(section_value)
 
         with open(self.config_path, "w") as f:
             f.write(tomlkit.dumps(doc))
@@ -319,7 +362,9 @@ class ConfigManager:
         """Check if value is a non-empty provider array"""
         return isinstance(value, list) and len(value) > 0
 
-    def _build_providers_array(self, providers: List[Dict[str, Any]]) -> tomlkit.items.AoT:
+    def _build_providers_array(
+        self, providers: List[Dict[str, Any]]
+    ) -> tomlkit.items.AoT:
         """Build array of tables for providers"""
         aot = tomlkit.aot()
 

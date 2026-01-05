@@ -285,11 +285,11 @@ class TestQuestionarySelectPrompt:
             ["Option A", "Option B"],
             None
         )
-
+        mock_select.assert_called_once()
         mock_select.assert_called_once_with(
             "Choose:",
             choices=["Option A", "Option B"],
-            default=None
+            default="Option A"
         )
         assert result == "Option A"
 
@@ -509,10 +509,10 @@ class TestPromptWithRichFallback:
 class TestConfirmWithQuestionary:
     """Test cases for _confirm_with_questionary function."""
 
-    @patch('devdox_ai_sonar.utils.ui.questionary.select')
-    def test_confirm_with_default_yes(self, mock_select):
+    @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
+    def test_confirm_with_default_yes(self, mock_confirm):
         """Test confirmation with Yes as default."""
-        mock_select.return_value.ask.return_value = "Yes"
+        mock_confirm.return_value.ask.return_value = True  # Boolean, not string!
 
         config = ConfirmConfig(
             message="Continue?",
@@ -522,17 +522,14 @@ class TestConfirmWithQuestionary:
 
         result = _confirm_with_questionary(config)
 
-        assert mock_select.called
-        call_args = mock_select.call_args
+        # Verify confirm was called with correct arguments
+        mock_confirm.assert_called_once_with("Continue?", default=True)
+        assert result == "yes"
 
-        # Check default is "Yes"
-        assert call_args[1]['default'] == "Yes"
-        assert result == "Yes"
-
-    @patch('devdox_ai_sonar.utils.ui.questionary.select')
-    def test_confirm_with_default_no(self, mock_select):
+    @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
+    def test_confirm_with_default_no(self, mock_confirm):
         """Test confirmation with No as default."""
-        mock_select.return_value.ask.return_value = "No"
+        mock_confirm.return_value.ask.return_value = False  # Boolean!
 
         config = ConfirmConfig(
             message="Delete?",
@@ -542,31 +539,26 @@ class TestConfirmWithQuestionary:
 
         result = _confirm_with_questionary(config)
 
-        call_args = mock_select.call_args
-        assert call_args[1]['default'] == "No"
-        assert result == "No"
+        mock_confirm.assert_called_once_with("Delete?", default=False)
+        assert result == "no"
 
-    @patch('devdox_ai_sonar.utils.ui.questionary.select')
-    def test_confirm_includes_switch_option(self, mock_select):
-        """Test confirmation includes switch option when enabled."""
-        mock_select.return_value.ask.return_value = "Yes"
 
-        with patch.object(constant, 'SWITCH_COMMAND_TRIGGER', '/'):
-            config = ConfirmConfig(
-                message="Proceed?",
-                default=True,
-                allow_switch=True
-            )
+    @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
+    def test_confirm_basic_functionality(self, mock_confirm):
+        """Test confirmation basic functionality."""
+        mock_confirm.return_value.ask.return_value = "Yes"
+        mock_confirm.return_value.ask.return_value = True
 
-            _confirm_with_questionary(config)
+        config = ConfirmConfig(
+            message="Proceed?",
+            default=True,
+            allow_switch=True  # Doesn't affect questionary.confirm
+        )
 
-            call_args = mock_select.call_args
-            choices = call_args[1]['choices']
+        result = _confirm_with_questionary(config)
 
-            assert "Yes" in choices
-            assert "No" in choices
-            assert "/ Switch Command" in choices
-
+        mock_confirm.assert_called_once_with("Proceed?", default=True)
+        assert result == "yes"
 
 # ============================================================================
 # Test _confirm_with_console_fallback

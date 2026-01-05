@@ -88,7 +88,7 @@ class TestFixValidatorInitialization:
         validator = FixValidator(provider="gemini", api_key="test-key")
 
         assert validator.provider == "gemini"
-        assert validator.model == "claude-3-5-sonnet-20241022"
+        assert validator.model == "gemini-1.5-flash"
 
     @patch("devdox_ai_sonar.fix_validator.HAS_GEMINI", False)
     def test_init_gemini_missing_library(self):
@@ -193,7 +193,7 @@ CONCERNS:
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
-        validator = FixValidator(provider="openai", api_key="test-key")
+        validator = FixValidator(provider="openai", api_key="test-key",model="gpt-4o")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.REJECTED

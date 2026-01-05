@@ -3,9 +3,6 @@
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from urllib.parse import urljoin
-import re
-import time
-import json
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -21,10 +18,8 @@ from devdox_ai_sonar.models.sonar import (
     Severity,
     IssueType,
     Impact,
-    ProcessedRules,
 )
-from devdox_ai_sonar.utils.result import Result, Ok, Err
-from devdox_ai_sonar.utils.exceptions import SonarCloudAPIError
+
 
 from devdox_ai_sonar.config import settings
 
@@ -100,10 +95,9 @@ class SonarCloudAnalyzer:
         statuses: Optional[List[str]] = None,
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
-        facets:Optional[str]=None,
-        filter_by:Optional[str]=None,
-        filter_values:Optional[List[str]]=None
-
+        facets: Optional[str] = None,
+        filter_by: Optional[str] = None,
+        filter_values: Optional[List[str]] = None,
     ) -> Optional[AnalysisResult]:
         if statuses is None:
             statuses = ["OPEN"]
@@ -114,14 +108,14 @@ class SonarCloudAnalyzer:
             params = self._build_query_params(
                 project_key,
                 branch,
-                max_issues,
+                max_issues or 10,
                 pull_request_number,
                 statuses,
                 severities,
                 types,
                 facets=facets,
                 filter_by=filter_by,
-                filter_values=filter_values
+                filter_values=filter_values,
             )
             issues = self._fetch_issues(url, params, "issues")
             parsed_issues = self._parse_issues(issues)
@@ -145,8 +139,6 @@ class SonarCloudAnalyzer:
             )
             return None
 
-
-
     def get_project_rules(
         self,
         project_key: str,
@@ -155,10 +147,10 @@ class SonarCloudAnalyzer:
         statuses: Optional[List[str]] = None,
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
-        facets:Optional[str]=None,
-        total:Optional[int]=0,
-        rules_excluded:Optional[List[str]]=None
-    ) -> Optional[AnalysisResult]:
+        facets: Optional[str] = None,
+        total: int = 0,
+        rules_excluded: Optional[List[str]] = None,
+    ) -> Optional[List[str]]:
         if statuses is None:
             statuses = ["OPEN"]
 
@@ -173,7 +165,7 @@ class SonarCloudAnalyzer:
                 statuses,
                 severities,
                 types,
-                facets=facets
+                facets=facets,
             )
             rules = self._fetch_issues(url, params, "facets")
             return self._filter_rules(rules, exclude_rules, total)
@@ -189,10 +181,7 @@ class SonarCloudAnalyzer:
             return None
 
     def _filter_rules(
-            self,
-            rules: List[Dict[str, Any]],
-            exclude_rules: List[str],
-            max_rules: int
+        self, rules: List[Dict[str, Any]], exclude_rules: List[str], max_rules: int
     ) -> List[str]:
         """
         Filter and limit rules based on exclusions and max count.
@@ -211,7 +200,7 @@ class SonarCloudAnalyzer:
         # Convert to set for O(1) lookup
         excluded_set = set(exclude_rules)
         filtered_rules = []
-        remaining_count = max_rules if max_rules > 0 else float('inf')
+        remaining_count = max_rules if max_rules > 0 else float("inf")
 
         for rule_facet in rules:
             for rule_info in rule_facet.get("values", []):
@@ -234,15 +223,15 @@ class SonarCloudAnalyzer:
         self,
         project_key: str,
         branch: str,
-        max_issues: Optional[int] ,
+        max_issues: int,
         pull_request_number: Optional[int],
         statuses: Optional[List[str]] = None,
         severities: Optional[List[str]] = None,
         types: Optional[List[str]] = None,
         field_key: str = "componentKeys",
-        facets:Optional[str]=None,
-            filter_by:Optional[str]=None,
-            filter_values:Optional[List[str]]=None
+        facets: Optional[str] = None,
+        filter_by: Optional[str] = None,
+        filter_values: Optional[List[str]] = None,
     ) -> Dict[str, Union[str, int]]:
         params: Dict[str, Union[str, int]] = {
             field_key: project_key,
@@ -265,13 +254,13 @@ class SonarCloudAnalyzer:
         if facets:
             params["facets"] = facets
         if filter_by and filter_values:
-            params[filter_by] =  ",".join(filter_values)
+            params[filter_by] = ",".join(filter_values)
         return params
 
     def _fetch_issues(
         self, url: str, params: Dict[str, Union[str, int]], key_name: str
-    ) -> Result[List[SonarIssue], SonarCloudAPIError]:
-        all_issues = []
+    ) -> List[Dict[str, Any]]:
+        all_issues: List[Dict[str, Any]] = []
         response = self.session.get(url, params=params, timeout=self.timeout)
         response.raise_for_status()
         data = response.json()
@@ -282,12 +271,13 @@ class SonarCloudAnalyzer:
     def _handle_exceptions(
         self, e: requests.RequestException, project_key: str
     ) -> None:
-
         status_code = (
             e.response.status_code if hasattr(e, "response") and e.response else None
         )
 
-        logger.error(f"Error fetching issues for {project_key}: {e}", exc_info=settings.EXC_INFO)
+        logger.error(
+            f"Error fetching issues for {project_key}: {e}", exc_info=settings.EXC_INFO
+        )
         if isinstance(e, requests.Timeout):
             logger.warning(
                 f"Request timed out while fetching issues for {project_key}."
@@ -397,14 +387,14 @@ class SonarCloudAnalyzer:
         except requests.Timeout:
             logger.error(
                 f"Request timeout while fetching metrics for {project_key}",
-                exc_info=settings.EXC_INFO
+                exc_info=settings.EXC_INFO,
             )
             return None
 
         except requests.HTTPError as e:
             logger.error(
                 f"HTTP error {e.response.status_code} fetching metrics for {project_key}: {e.response.text}",
-                exc_info=settings.EXC_INFO
+                exc_info=settings.EXC_INFO,
             )
             return None
 
@@ -417,7 +407,7 @@ class SonarCloudAnalyzer:
         except Exception as e:
             logger.error(
                 f"Unexpected error fetching metrics for {project_key}: {e}",
-                exc_info=settings.EXC_INFO
+                exc_info=settings.EXC_INFO,
             )
             return None
 
@@ -507,7 +497,7 @@ class SonarCloudAnalyzer:
             except Exception as e:
                 logger.error(
                     f"Error parsing issue {issue_data.get('key', 'unknown')}: {e}",
-                    exc_info=settings.EXC_INFO
+                    exc_info=settings.EXC_INFO,
                 )
                 continue
 
@@ -553,7 +543,7 @@ class SonarCloudAnalyzer:
             except Exception as e:
                 logger.error(
                     f"Error parsing issue {issue_data.get('key', 'unknown')}: {e}",
-                    exc_info=settings.EXC_INFO
+                    exc_info=settings.EXC_INFO,
                 )
                 continue
 
@@ -613,8 +603,6 @@ class SonarCloudAnalyzer:
 
         fixable = analysis.fixable_issues
 
-
-
         # Sort by severity (most critical first)
         severity_order = {
             Severity.BLOCKER: 0,
@@ -659,7 +647,6 @@ class SonarCloudAnalyzer:
             types=types_list,
         )
 
-
         if not analysis:
             return {}
 
@@ -667,15 +654,15 @@ class SonarCloudAnalyzer:
         return fixable_by_file
 
     def get_fixable_issues_by_types(
-            self,
-            project_key: str,
-            branch: str = "",
-            pull_request: Optional[int] = 0,
-            max_issues: Optional[int] = 10,
-            severities: Optional[List[str]] = None,
-            types_list: Optional[List[str]] = None,
-            group_by: Optional[str] = "file",
-            rules_excluded: Optional[List[str]] = None,
+        self,
+        project_key: str,
+        branch: str = "",
+        pull_request: Optional[int] = 0,
+        max_issues: Optional[int] = 10,
+        severities: Optional[List[str]] = None,
+        types_list: Optional[List[str]] = None,
+        group_by: Optional[str] = "file",
+        rules_excluded: Optional[List[str]] = None,
     ) -> Dict[str, List[SonarIssue]]:
         """
         Get issues that are potentially fixable by LLM.
@@ -688,23 +675,19 @@ class SonarCloudAnalyzer:
         Returns:
             List of fixable SonarIssue objects
         """
-        filter_values =None
-        filter_by=None
-        if group_by=="rules":
-            rules = self.get_project_rules(
-                project_key,
-                branch,
-                pull_request_number=pull_request,
-                severities=severities,
-                types=types_list,
-                facets=group_by,
-                total=max_issues,
-                rules_excluded=rules_excluded
+        filter_values = None
+        filter_by = None
 
-            )
-            if rules and len(rules)>0:
-                filter_values = rules
-                filter_by="rules"
+        filter_by, filter_values = self._resolve_rule_filter(
+            project_key,
+            branch,
+            pull_request,
+            max_issues,
+            severities,
+            types_list,
+            group_by,
+            rules_excluded,
+        )
 
         analysis = self.get_project_issues(
             project_key,
@@ -714,23 +697,51 @@ class SonarCloudAnalyzer:
             severities=severities,
             types=types_list,
             filter_by=filter_by,
-            filter_values=filter_values
-
+            filter_values=filter_values,
         )
         if not analysis:
             return {}
-        all_issues = {}
-        if group_by=="rules":
+        all_issues: Dict[str, List[SonarIssue]] = {}
+        if group_by == "rules":
             for issue in analysis.issues:
                 if issue.rule:
                     rule = str(issue.rule)
-                    all_issues.setdefault(rule, {"issue": []})["issue"].append(issue)
-            return all_issues
+                    if rule not in all_issues:
+                        all_issues[rule] = []
 
+                    all_issues[rule].append(issue)
+
+            return all_issues
 
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
 
+    def _resolve_rule_filter(
+        self,
+        project_key: str,
+        branch: str,
+        pull_request: Optional[int],
+        max_issues: Optional[int],
+        severities: Optional[List[str]],
+        types_list: Optional[List[str]],
+        group_by: Optional[str],
+        rules_excluded: Optional[List[str]],
+    ) -> tuple[Optional[str], Optional[List[str]]]:
+        if group_by != "rules":
+            return None, None
+
+        rules = self.get_project_rules(
+            project_key,
+            branch,
+            pull_request_number=pull_request,
+            severities=severities,
+            types=types_list,
+            facets=group_by,
+            total=max_issues or 1,
+            rules_excluded=rules_excluded,
+        )
+
+        return ("rules", rules) if rules else (None, None)
 
     def get_fixable_security_issues(
         self,
@@ -738,7 +749,7 @@ class SonarCloudAnalyzer:
         branch: str = "",
         pull_request: Optional[int] = 0,
         max_issues: Optional[int] = None,
-    ) -> Dict[str, List[SonarIssue]]:
+    ) -> Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]]:
         """
         Get issues that are potentially fixable by LLM.
 
@@ -774,7 +785,7 @@ class SonarCloudAnalyzer:
             params = self._build_query_params(
                 project_key,
                 branch,
-                max_issues,
+                max_issues or 10,
                 pull_request_number,
                 field_key="projectKey",
                 statuses=["OPEN"],
@@ -796,11 +807,13 @@ class SonarCloudAnalyzer:
         except Exception as e:
             logger.error(
                 f"Unexpected error fetching issues for {project_key}: {e}",
-                exc_info=settings.EXC_INFO
+                exc_info=settings.EXC_INFO,
             )
             return None
 
-    def check_file_extension(self, analysis: Dict[str, Any], suffix: str)->Dict[str, Any]:
+    def check_file_extension(
+        self, analysis: Dict[str, Any], suffix: str
+    ) -> Dict[str, Any]:
         if suffix == ".py":
             analysis["python_files"] = analysis["python_files"] + 1
         elif suffix in [".js", ".jsx", ".ts", ".tsx"]:
