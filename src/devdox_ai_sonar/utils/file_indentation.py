@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
-import time
-import random
+import tempfile
 import os
 from git import Repo
 from typing import List, Tuple
@@ -37,12 +36,15 @@ def  remove_tmp_files(relative_path:str)->bool:
     except (OSError, ValueError) as e:
         raise ValueError(f"Invalid path '{relative_path}': {e}")
 
-def generate_tmp_path():
-    timestamp = int(time.time() * 1000)  # milliseconds
-    rand = random.randint(1000, 9999)
-    tmp_path = os.path.join("/tmp/new_test", f"test_{timestamp}_{rand}")
+def generate_tmp_path()->str:
+    tmp_dir = tempfile.mkdtemp(
+        prefix="devdox_",
+        suffix="_test",
+        dir=None  # Uses system temp dir (respects TMPDIR env var)
+    )
+    return tmp_dir
 
-    return tmp_path
+
 
 def download_latest_version(repo_url:str, repo_path:str, branch:str):
     try:
