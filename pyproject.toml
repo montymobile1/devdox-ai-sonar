@@ -45,10 +45,8 @@ dependencies = [
     "sonar-tools==3.16.2",
     "pycodestyle==2.14.0",
     "autopep8==2.3.2",
-    "gitpython==3.1.0",
     "pathlib2==2.3.0",
-    "langchain-together==0.3.0",
-    #"together==1.5.32",
+     "GitPython==3.1.46",
      "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
     "Jinja2==3.1.6",
     "types-requests==2.32.4.20250913",
@@ -58,7 +56,7 @@ dependencies = [
     "questionary==2.1.1",
     "tomlkit==0.13.3",
     "inquirer==3.4.1",
-    "inquirer3==0.6.1",
+#    "inquirer3==0.6.1",
     "aiofiles==25.1.0"
 ]
 

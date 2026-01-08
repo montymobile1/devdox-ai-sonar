@@ -16,7 +16,13 @@ from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_su
                                        _validate_and_extract_issue_info,
                                        _generate_fix_key,
                                        _extract_problem_lines,
-                                       _extract_context_with_lines
+                                       _extract_context_with_lines,
+                                       get_content_range,
+                                       _find_exact_match,
+
+                                       _find_fuzzy_match,
+                                       _find_all_single_line_matches,
+                                       _create_result
                                        )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -110,6 +116,37 @@ def another_function():
 """
     file.write_text(content)
     return file
+
+
+@pytest.fixture
+def sample_code():
+    """Sample Python code for testing."""
+    return """import os
+import sys
+
+def calculate_sum(a, b):
+    result = a + b
+    return result
+
+def calculate_product(a, b):
+    result = a * b
+    return result
+
+class Calculator:
+    def __init__(self):
+        self.history = []
+
+    def add(self, a, b):
+        result = a + b
+        self.history.append(result)
+        return result
+"""
+
+@pytest.fixture
+def temp_dir():
+    """Create a temporary directory for test files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
 
 
 @pytest.fixture
@@ -414,11 +451,13 @@ class TestGenerateFixByFile:
             result = fixer.generate_fix_by_file(
                 [sample_issue],
                 tmp_path,
+                tmp_path,
                 rule_info,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
 
         assert result is not None
+
         assert isinstance(result, FixSuggestion)
         assert result.confidence == 0.95
         assert "Simplified function" in result.explanation
@@ -429,6 +468,7 @@ class TestGenerateFixByFile:
 
         result = fixer.generate_fix_by_file(
             [sample_issue],
+            tmp_path,
             tmp_path,
             rule_info
         )
@@ -477,6 +517,7 @@ class TestGenerateFixByFile:
             result = fixer.generate_fix_by_file(
                 [issue1, issue2],
                 tmp_path,
+                tmp_path,
                 rule_info,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
@@ -518,6 +559,7 @@ class TestGenerateFixByFile:
         result = fixer.generate_fix_by_file(
             [issue1, issue2],
             tmp_path,
+            tmp_path,
             rule_info
         )
 
@@ -537,6 +579,7 @@ class TestGenerateFixByFile:
 
             result = fixer.generate_fix_by_file(
                 [sample_issue],
+                tmp_path,
                 tmp_path,
                 rule_info,
                 modified_content=modified_content,
@@ -563,6 +606,7 @@ class TestGenerateFixByFile:
             result = fixer.generate_fix_by_file(
                 [sample_issue],
                 tmp_path,
+                tmp_path,
                 rule_info,
                 error_message=error_msg,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
@@ -580,6 +624,7 @@ class TestGenerateFixByFile:
             result = fixer.generate_fix_by_file(
                 [sample_issue],
                 tmp_path,
+                tmp_path,
                 rule_info
             )
 
@@ -594,6 +639,7 @@ class TestGenerateFixByFile:
 
             result = fixer.generate_fix_by_file(
                 [sample_issue],
+                tmp_path,
                 tmp_path,
                 rule_info
             )
@@ -3081,7 +3127,7 @@ Hope this helps!
 
     def test_generate_fix_by_file_empty_issues(self, fixer, tmp_path):
         """Test generating fix with empty issues list"""
-        result = fixer.generate_fix_by_file([], tmp_path, {})
+        result = fixer.generate_fix_by_file([], tmp_path,tmp_path, {})
         assert result is None
 
     def test_apply_fixes_to_file_exception(self, fixer, tmp_path):
@@ -3184,3 +3230,592 @@ Hope this helps!
                 fixer._create_backup(source)
         finally:
             tmp_path.chmod(0o755)
+
+
+class TestGetContentRange:
+    """Test suite for get_content_range function."""
+
+
+    # ==================== UNIT TESTS ====================
+
+    def test_exact_match_scenario(self, temp_dir, sample_code):
+        """Test Case 1: Exact match - content exists at same lines."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+        actual_file.write_text(sample_code)
+
+        line_range = {
+            'first_line': 4,
+            'last_line': 6,
+            'problem_lines': [5]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 4
+        assert result['last_line'] == 6
+        assert result['problem_lines'] == [5]
+        assert result['confidence'] == 1.0
+        assert result['match_type'] == 'exact'
+
+    def test_code_shifted_down(self, temp_dir, sample_code):
+        """Test Case 2: Code moved - lines shifted down by adding comments."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+
+        # Add comments at the beginning
+        modified_code = "# Header comment 1\n# Header comment 2\n\n" + sample_code
+        actual_file.write_text(modified_code)
+
+        line_range = {
+            'first_line': 4,
+            'last_line': 6,
+            'problem_lines': [5]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 7  # Shifted by 3 lines
+        assert result['last_line'] == 9
+        assert result['problem_lines'] == [8]  # Adjusted problem line
+        assert result['confidence'] == 1.0
+        assert result['match_type'] == 'exact'
+
+    def test_code_shifted_up(self, temp_dir, sample_code):
+        """Test Case 3: Code moved - lines shifted up by removing content."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+
+        # Remove first two lines
+        lines = sample_code.split('\n')
+        modified_code = '\n'.join(lines[2:])
+        actual_file.write_text(modified_code)
+
+        line_range = {
+            'first_line': 4,
+            'last_line': 6,
+            'problem_lines': [5]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 2  # Shifted up by 2 lines
+        assert result['last_line'] == 4
+        assert result['problem_lines'] == [3]
+        assert result['confidence'] == 1.0
+
+    def test_duplicate_code_blocks(self, temp_dir):
+        """Test Case 4: Duplicate code - same code appears multiple times."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        code_with_duplicate = """def function_one():
+    x = 1
+    y = 2
+    return x + y
+
+def function_two():
+    x = 1
+    y = 2
+    return x + y
+
+def function_three():
+    x = 1
+    y = 2
+    return x * y
+"""
+
+        tmp_file.write_text(code_with_duplicate)
+        actual_file.write_text(code_with_duplicate)
+
+        # Looking for lines 2-3 which appear in multiple functions
+        line_range = {
+            'first_line': 2,
+            'last_line': 3,
+            'problem_lines': [2, 3]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        # Should find first occurrence (with context matching)
+        assert result['first_line'] == 2
+        assert result['last_line'] == 3
+        assert result['confidence'] >= 0.9
+
+    def test_single_line_multiple_occurrences(self, temp_dir):
+        """Test Case 5: Single line appears multiple times."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        code = """def func1():
+    return True
+
+def func2():
+    return True
+
+def func3():
+    return False
+"""
+
+        tmp_file.write_text(code)
+        actual_file.write_text(code)
+
+        line_range = {
+            'first_line': 2,
+            'last_line': 2,
+            'problem_lines': [2]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        # Should find closest match to original line 2
+        assert result['first_line'] == 2
+        assert result['problem_lines'] == [2]
+
+    def test_modified_code_fuzzy_match(self, temp_dir, sample_code):
+        """Test Case 6: Code slightly modified (comments added)."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+
+        # Modify the code slightly
+        modified = sample_code.replace(
+            "def calculate_sum(a, b):",
+            "def calculate_sum(a, b):  # Modified with comment"
+        )
+        actual_file.write_text(modified)
+
+
+        line_range = {
+            'first_line': 4,
+            'last_line': 6,
+            'problem_lines': [5]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        # Should still find it with fuzzy matching or context
+        assert result is not None
+        assert result['first_line'] is not None
+        assert result['confidence'] >= 0.65
+
+    def test_content_not_found(self, temp_dir, sample_code):
+        """Test Case 7: Content completely removed/not found."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+
+        # Completely different content
+        actual_file.write_text("def different_function():\n    pass\n")
+
+        line_range = {
+            'first_line': 4,
+            'last_line': 6,
+            'problem_lines': [5]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] is None
+        assert result['last_line'] is None
+        assert result['confidence'] == 0.0
+        assert result['match_type'] == 'not_found'
+        assert 'error' in result
+
+    def test_multiline_range(self, temp_dir, sample_code):
+        """Test Case 8: Multi-line range (class with multiple methods)."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(sample_code)
+        actual_file.write_text(sample_code)
+
+        line_range = {
+            'first_line': 12,
+            'last_line': 19,
+            'problem_lines': [14, 17]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 12
+        assert result['last_line'] == 19
+        assert 14 in result['problem_lines']
+        assert 17 in result['problem_lines']
+
+    def test_edge_case_first_line(self, temp_dir):
+        """Test Case 9: Edge case - first line of file."""
+        code = """import os
+import sys
+
+def main():
+    pass
+"""
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(code)
+        actual_file.write_text(code)
+
+        line_range = {
+            'first_line': 1,
+            'last_line': 1,
+            'problem_lines': [1]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 1
+        assert result['problem_lines'] == [1]
+
+    def test_edge_case_last_line(self, temp_dir):
+        """Test Case 10: Edge case - last line of file."""
+        code = """def main():
+    pass
+    return True
+"""
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(code)
+        actual_file.write_text(code)
+
+        line_range = {
+            'first_line': 3,
+            'last_line': 3,
+            'problem_lines': [3]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 3
+        assert result['last_line'] == 3
+
+    def test_empty_file(self, temp_dir):
+        """Test Case 11: Edge case - empty actual file."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text("def test():\n    pass\n")
+        actual_file.write_text("")
+
+        line_range = {
+            'first_line': 1,
+            'last_line': 2,
+            'problem_lines': [1]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['match_type'] == 'not_found'
+
+    def test_whitespace_differences(self, temp_dir):
+        """Test Case 12: Code with different whitespace/indentation."""
+        tmp_code = """def test():
+    x = 1
+    y = 2
+    return x + y
+"""
+
+        # Different indentation
+        actual_code = """def test():
+        x = 1
+        y = 2
+        return x + y
+"""
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(tmp_code)
+        actual_file.write_text(actual_code)
+
+        line_range = {
+            'first_line': 2,
+            'last_line': 3,
+            'problem_lines': [2]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        # Should not find exact match due to whitespace
+        assert result is not None
+        # Might find with fuzzy matching or not at all
+        if result['match_type'] != 'not_found':
+            assert result['confidence'] < 1.0
+
+    def test_unicode_content(self, temp_dir):
+        """Test Case 13: Files with unicode characters."""
+        code = """def greet():
+    message = "Hello 世界! 🌍"
+    return message
+"""
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(code, encoding='utf-8')
+        actual_file.write_text(code, encoding='utf-8')
+
+        line_range = {
+            'first_line': 2,
+            'last_line': 2,
+            'problem_lines': [2]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 2
+        assert result['match_type'] == 'exact'
+
+    def test_very_long_file(self, temp_dir):
+        """Test Case 14: Performance - large file with many lines."""
+        # Generate a large file
+        lines = []
+        for i in range(1000):
+            lines.append(f"def function_{i}():\n")
+            lines.append(f"    x = {i}\n")
+            lines.append(f"    return x\n")
+            lines.append("\n")
+
+        large_code = "".join(lines)
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(large_code)
+        actual_file.write_text(large_code)
+
+        # Look for something in the middle
+        line_range = {
+            'first_line': 502,
+            'last_line': 503,
+            'problem_lines': [502]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        assert result['first_line'] == 502
+        assert result['confidence'] == 1.0
+
+    # ==================== ERROR HANDLING TESTS ====================
+
+    def test_file_not_found_tmp(self, temp_dir):
+        """Test Case 15: Error - temporary file doesn't exist."""
+        tmp_file = temp_dir / "nonexistent.py"
+        actual_file = temp_dir / "actual.py"
+        actual_file.write_text("code")
+
+        line_range = {'first_line': 1, 'last_line': 1, 'problem_lines': [1]}
+
+        with pytest.raises(FileNotFoundError, match="Temporary file not found"):
+            get_content_range(tmp_file, line_range, actual_file)
+
+    def test_file_not_found_actual(self, temp_dir):
+        """Test Case 16: Error - actual file doesn't exist."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "nonexistent.py"
+        tmp_file.write_text("code")
+
+        line_range = {'first_line': 1, 'last_line': 1, 'problem_lines': [1]}
+
+        with pytest.raises(FileNotFoundError, match="Actual file not found"):
+            get_content_range(tmp_file, line_range, actual_file)
+
+    def test_invalid_line_range_missing_keys(self, temp_dir):
+        """Test Case 17: Error - line_range missing required keys."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text("code")
+        actual_file.write_text("code")
+
+        invalid_range = {'problem_lines': [1]}  # Missing first_line and last_line
+
+        with pytest.raises(ValueError, match="must contain 'first_line' and 'last_line'"):
+            get_content_range(tmp_file, invalid_range, actual_file)
+
+    def test_out_of_bounds_line_range(self, temp_dir):
+        """Test Case 18: Error - line range out of bounds."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text("line1\nline2\n")
+        actual_file.write_text("line1\nline2\n")
+
+        out_of_bounds = {'first_line': 5, 'last_line': 10, 'problem_lines': [5]}
+
+        with pytest.raises(ValueError, match="out of bounds"):
+            get_content_range(tmp_file, out_of_bounds, actual_file)
+
+    def test_negative_line_numbers(self, temp_dir):
+        """Test Case 19: Error - negative line numbers."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text("line1\nline2\n")
+        actual_file.write_text("line1\nline2\n")
+
+        invalid_range = {'first_line': -1, 'last_line': 2, 'problem_lines': []}
+
+        with pytest.raises(ValueError, match="out of bounds"):
+            get_content_range(tmp_file, invalid_range, actual_file)
+
+    def test_first_line_greater_than_last_line(self, temp_dir):
+        """Test Case 20: Error - first_line > last_line."""
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text("line1\nline2\nline3\n")
+        actual_file.write_text("line1\nline2\nline3\n")
+
+        invalid_range = {'first_line': 3, 'last_line': 1, 'problem_lines': []}
+
+        # This should return None as the slice will be empty
+        result = get_content_range(tmp_file, invalid_range, actual_file)
+        assert result is None
+
+    # ==================== INTEGRATION TESTS ====================
+
+    def test_real_world_scenario_refactoring(self, temp_dir):
+        """Test Case 21: Real scenario - code refactored with new structure."""
+        original = """def process_data(data):
+    cleaned = clean(data)
+    validated = validate(cleaned)
+    return validated
+
+def clean(data):
+    return data.strip()
+
+def validate(data):
+    return len(data) > 0
+"""
+
+        refactored = """class DataProcessor:
+    def process(self, data):
+        cleaned = self.clean(data)
+        validated = self.validate(cleaned)
+        return validated
+
+    def clean(self, data):
+        return data.strip()
+
+    def validate(self, data):
+        return len(data) > 0
+"""
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(original)
+        actual_file.write_text(refactored)
+
+        # Looking for the clean function
+        line_range = {'first_line': 7, 'last_line': 8, 'problem_lines': [8]}
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        # Should find it with context or fuzzy matching
+        assert result is not None
+        if result['match_type'] != 'not_found':
+            assert result['confidence'] >= 0.7
+
+    def test_problem_lines_adjustment(self, temp_dir):
+        """Test Case 22: Verify problem_lines are correctly adjusted."""
+        code = """def func():
+    line2
+    line3
+    line4
+    line5
+"""
+
+        shifted_code = "# comment\n# comment\n" + code
+
+        tmp_file = temp_dir / "temp.py"
+        actual_file = temp_dir / "actual.py"
+
+        tmp_file.write_text(code)
+        actual_file.write_text(shifted_code)
+
+        line_range = {
+            'first_line': 2,
+            'last_line': 4,
+            'problem_lines': [2, 3, 4]
+        }
+
+        result = get_content_range(tmp_file, line_range, actual_file)
+
+        assert result is not None
+        # Lines should be shifted by 2
+        assert result['first_line'] == 4
+        assert result['last_line'] == 6
+        assert set(result['problem_lines']) == {4, 5, 6}
+
+    def test_find_exact_match_found(self):
+        """Test _find_exact_match when content exists."""
+        target = ["line1\n", "line2\n"]
+        actual = ["other\n", "line1\n", "line2\n", "more\n"]
+
+        result = _find_exact_match(target, actual)
+
+        assert result is not None
+        assert result['start'] == 1
+        assert result['end'] == 3
+
+    def test_find_exact_match_not_found(self):
+        """Test _find_exact_match when content doesn't exist."""
+        target = ["line1\n", "line2\n"]
+        actual = ["other\n", "different\n"]
+
+        result = _find_exact_match(target, actual)
+
+        assert result is None
+
+    def test_find_all_single_line_matches(self):
+        """Test finding all occurrences of a single line."""
+        target = "return True\n"
+        actual = ["def f1():\n", "return True\n", "def f2():\n", "return True\n", "def f3():\n"]
+
+        matches = _find_all_single_line_matches(target, actual, original_line_num=2)
+
+        assert len(matches) == 2
+        assert matches[0] == 1  # Closest to line 2
+        assert matches[1] == 3
+
+    def test_create_result(self):
+        """Test result dictionary creation."""
+        match = {'start': 5, 'end': 8}
+        problem_lines_tmp = [3, 4]
+        first_line_tmp = 2
+
+        result = _create_result(match, problem_lines_tmp, first_line_tmp, 0.95, 'context')
+
+        assert result['first_line'] == 6
+        assert result['last_line'] == 8
+        assert result['confidence'] == 0.95
+        assert result['match_type'] == 'context'
+        # Problem lines adjusted: offset = 6 - 2 = 4, so [3+4, 4+4] = [7, 8]
+        assert set(result['problem_lines']) == {7, 8}
+

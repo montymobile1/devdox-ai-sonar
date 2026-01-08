@@ -1,4 +1,9 @@
 from pathlib import Path
+import shutil
+import time
+import random
+import os
+from git import Repo
 from typing import List, Tuple
 import logging
 from devdox_ai_sonar.models.file_structures import (
@@ -11,6 +16,39 @@ from devdox_ai_sonar.models.sonar import FixSuggestion
 
 logger = logging.getLogger(__name__)
 
+def  remove_tmp_files(relative_path:str)->bool:
+    try:
+        # Convert to Path object and validate
+        relative_path = Path(relative_path)
+
+        # Validate path components
+        if not relative_path.parts:
+            raise ValueError("Empty path provided")
+
+        # Check for problematic path components
+        if any(part in ("..", ".", "") for part in relative_path.parts):
+            raise ValueError(f"Path contains invalid components: {relative_path}")
+
+        # Resolve path relative to base directory
+        repo_path = relative_path.resolve()
+
+        shutil.rmtree(relative_path)
+        return True
+    except (OSError, ValueError) as e:
+        raise ValueError(f"Invalid path '{relative_path}': {e}")
+
+def generate_tmp_path():
+    timestamp = int(time.time() * 1000)  # milliseconds
+    rand = random.randint(1000, 9999)
+    tmp_path = os.path.join("/tmp/new_test", f"test_{timestamp}_{rand}")
+
+def download_latest_version(repo_url:str, repo_path:str, branch:str):
+    try:
+        repo = Repo.clone_from(repo_url, repo_path, branch=branch)
+        return repo
+    except Exception as e:
+        print(f"Error loading files from {repo_url}: {e}")
+        return None
 
 def read_file_lines(file_path: Path) -> List[str]:
     """Read file and return list of lines."""

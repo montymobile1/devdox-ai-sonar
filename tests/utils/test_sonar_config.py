@@ -51,7 +51,8 @@ def valid_config_dict():
         "token": "test-token-123",
         "organization": "test-org",
         "project": "test-project",
-        "project_path": "/test/project/path"
+        "project_path": "/test/project/path",
+        "git_url":":https://github.com/test-org/test-project.git"
     }
 
 
@@ -307,7 +308,8 @@ class TestConfigureSonarcloud:
             "new-token",
             "new-org",
             "new-project",
-            "/new/path"
+            "/new/path",
+            "https://github.com/new-org/new-project.git"
         ]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
@@ -319,6 +321,7 @@ class TestConfigureSonarcloud:
         assert result.organization == "new-org"
         assert result.project == "new-project"
         assert result.project_path == "/new/path"
+        assert result.git_url == "https://github.com/new-org/new-project.git"
 
     def test_configure_sonarcloud_success_with_existing_config(
             self, mock_console, mock_confirm, mock_prompt, valid_config_dict
@@ -388,7 +391,8 @@ class TestConfigureSonarcloud:
             "invalid-token",
             "invalid-org",
             "invalid-project",
-            "/invalid/path"
+            "/invalid/path",
+            "invalid-git-url"
         ]
 
         with patch.object(
@@ -407,7 +411,7 @@ class TestConfigureSonarcloud:
             self, mock_console, mock_confirm, mock_prompt
     ):
         """Test configuration with empty existing config."""
-        mock_prompt.side_effect = ["token", "org", "project", "/path"]
+        mock_prompt.side_effect = ["token", "org", "project", "/path","https://github.com/new-org/new-project.git"]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
             result = SonarCloudConfigUI.configure_sonarcloud({})
@@ -420,7 +424,7 @@ class TestConfigureSonarcloud:
     ):
         """Test using some defaults and some new values."""
         # Accept first two defaults, provide new values for last two
-        mock_confirm.side_effect = [True, True, False, False]
+        mock_confirm.side_effect = [True, True, False, False,True]
         mock_prompt.side_effect = ["new-project", "/new/path"]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
@@ -436,7 +440,7 @@ class TestConfigureSonarcloud:
             self, mock_console, mock_confirm, mock_prompt
     ):
         """Test handling of None as existing config."""
-        mock_prompt.side_effect = ["token", "org", "project", "/path"]
+        mock_prompt.side_effect = ["token", "org", "project", "/path","https://github.com/new-org/new-project.git"]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
             result = SonarCloudConfigUI.configure_sonarcloud({})
@@ -452,7 +456,8 @@ class TestConfigureSonarcloud:
             "  token  ",
             "  org  ",
             "  project  ",
-            "  /path  "
+            "  /path  ",
+            " https://github.com/new-org/new-project.git "
         ]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
@@ -482,7 +487,8 @@ class TestSonarCloudConfigUIIntegration:
             "token": "old-token",
             "organization": "old-org",
             "project": "old-project",
-            "project_path": "/old/path"
+            "project_path": "/old/path",
+            "git_url": "https://github.com/old-org/old-project.git"
         }
 
         # User flow: reject all defaults and provide new values
@@ -491,7 +497,8 @@ class TestSonarCloudConfigUIIntegration:
             "new-token",
             "new-org",
             "new-project",
-            "/new/path"
+            "/new/path",
+            "https://github.com/old-org/old-project.git"
         ]
 
         # Display welcome
@@ -623,7 +630,7 @@ class TestEdgeCases:
         }
 
         mock_confirm.return_value = True  # Accept existing values
-        mock_prompt.side_effect = ["new-project", "/new/path"]
+        mock_prompt.side_effect = ["new-project", "/new/path","https://github.com/old-org/old-project.git"]
 
         with patch.object(SonarCloudConfig, 'validate', return_value=(True, None)):
             result = SonarCloudConfigUI.configure_sonarcloud(partial_config)
@@ -662,7 +669,7 @@ class TestErrorHandling:
             self, mock_console, mock_confirm, mock_prompt
     ):
         """Test that validation errors are properly displayed."""
-        mock_prompt.side_effect = ["token", "org", "project", "/path"]
+        mock_prompt.side_effect = ["token", "org", "project", "/path","https://github.com/new-org/new-project.git"]
 
         error_message = "Invalid token format"
         with patch.object(

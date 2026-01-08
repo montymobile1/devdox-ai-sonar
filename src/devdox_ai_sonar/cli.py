@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 
+
 from rich.console import Console
 import inquirer
 from rich.table import Table
@@ -22,6 +23,7 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
+from devdox_ai_sonar.utils.file_indentation import remove_tmp_files, download_latest_version , generate_tmp_path
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.exceptions import ValidationError
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -353,6 +355,7 @@ def _initialize_managers() -> Tuple[
     validator = ProviderValidator()
     provider_manager = ProviderConfigManager(manager, ui, validator)
     sonar_ui = SonarCloudConfigUI()
+
     config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
 
     return manager, ui, validator, provider_manager, sonar_ui, config_service
@@ -390,6 +393,7 @@ def _configure_sonarcloud(
         organization=sonar_config.organization,
         project=sonar_config.project,
         project_path=str(sonar_config.project_path),
+        git_url=sonar_config.git_url
     )
 
     if not save_success:
@@ -1240,7 +1244,24 @@ def _process_and_fix_issues(
     issue_type: IssueType = IssueType.REGULAR,
 ) -> None:
     """Process and fix issues - Refactored."""
+
     services = _initialize_fix_services(auth_config, llm_config)
+
+
+    if int(pull_request) > 0:
+        branch = services["analyzer"].get_branch_from_pr(
+            project_key=auth_config.project,
+            pull_request=str(pull_request))
+
+
+    tmp_path = generate_tmp_path()
+
+    console.print(f"Cloning {auth_config.project} to {tmp_path}")
+    downloaded = download_latest_version(auth_config.git_url,tmp_path,branch)
+    if not downloaded:
+        console.print("Not able to download latest version")
+        return  click.Abort()
+
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
         services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
@@ -1252,10 +1273,12 @@ def _process_and_fix_issues(
             else "No fixable issues found"
         )
         console.print(f"[yellow]{msg}[/yellow]")
+        remove_tmp_files(tmp_path)
         return
 
     console.print(f"\n[green]✓ Found {len(issues)} fixable issues[/green]\n")
-    _process_files_with_issues(issues, services, auth_config, fix_params, issue_type)
+    _process_files_with_issues(issues, services, auth_config, fix_params, issue_type,Path(tmp_path))
+    remove_tmp_files(tmp_path)
 
 
 def _initialize_fix_services(
@@ -1275,12 +1298,14 @@ def _initialize_fix_services(
     }
 
 
+
 def _process_files_with_issues(
     issues_by_file: Dict[str, List[Any]],
     services: Dict[str, Any],
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     issue_type: IssueType,
+    tmp_path:Path
 ) -> None:
     """
     Process files with issues.
@@ -1294,14 +1319,14 @@ def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path
+            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path
         )
     else:
         issues_by_rule_nested = {
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
         _process_regular_issues(
-            issues_by_rule_nested, services, auth_config, fix_params, md_file_path
+            issues_by_rule_nested, services, auth_config, fix_params, md_file_path,tmp_path
         )
 
 
@@ -1311,6 +1336,7 @@ def _process_regular_issues(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
+    tmp_path:Path
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1327,7 +1353,7 @@ def _process_regular_issues(
         )
 
         if not _process_issues_for_rule(
-            rule_key, issues_list, services, auth_config, fix_params, md_file_path
+            rule_key, issues_list, services, auth_config, fix_params, md_file_path, tmp_path
         ):
             break
 
@@ -1339,6 +1365,7 @@ def _process_issues_for_rule(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
+    tmp_path:Path
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1359,6 +1386,7 @@ def _process_issues_for_rule(
             issue_type=IssueType.REGULAR,
             rule_key=rule_key,
             md_file_path=md_file_path,
+            tmp_path=tmp_path
         )
 
         if not _should_continue_to_next_file(idx, total_issues):
@@ -1374,13 +1402,16 @@ def _process_single_fix(
     fix_params: Dict[str, Any],
     issue_type: IssueType,
     rule_key: str,
+    tmp_path:Path,
     md_file_path: Optional[Path] = None,
+
 ) -> None:
     """
     Generate and handle a single fix.
     """
     fix = _generate_fix_for_file(
-        issues, services, auth_config, issue_type, rule_key, md_file_path
+        issues, services, auth_config, issue_type, tmp_path, rule_key, md_file_path,
+
     )
 
     if fix:
@@ -1395,6 +1426,7 @@ def _process_security_issues(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
+    tmp_path:Path
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1414,6 +1446,7 @@ def _process_security_issues(
             issue_type=IssueType.SECURITY,
             rule_key=file_key,
             md_file_path=md_file_path,
+            tmp_path=tmp_path
         )
 
         if not _should_continue_to_next_file(idx, total_files):
@@ -1455,6 +1488,7 @@ def _generate_fix_for_file(
     services: Dict[str, Any],
     auth_config: AuthConfig,
     issue_type: IssueType,
+    tmp_path:str,
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
 ) -> Optional[FixSuggestion]:
@@ -1476,7 +1510,8 @@ def _generate_fix_for_file(
         result: Optional[FixSuggestion] = fixer.generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
-            rule_info_dic,
+            tmp_path=tmp_path,
+            rule_info=rule_info_dic,
             file_md=file_md_str,
         )
         return result
@@ -1619,6 +1654,8 @@ def _fetch_issues_by_type(
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
             )
+
+
 
 
 if __name__ == "__main__":

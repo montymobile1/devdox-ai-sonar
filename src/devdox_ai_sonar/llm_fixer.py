@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import difflib
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import json
@@ -213,6 +214,7 @@ class LLMFixer:
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         project_path: Path,
+        tmp_path:Path,
         rule_info: Dict[str, Dict[str, str]],
         modified_content: str = "",
         error_message: str = "",
@@ -242,11 +244,24 @@ class LLMFixer:
             return None
 
         try:
+
             # Step 1: Validate issues and calculate ranges
+            file_path_tmp, line_range_tmp = _validate_and_extract_issue_info(
+                issues, tmp_path
+            )
+
             file_path, line_range = _validate_and_extract_issue_info(
                 issues, project_path
             )
-
+            # if line_range_tmp != line_range:
+            line_range = get_content_range(file_path_tmp,line_range_tmp,file_path)
+            if line_range is None:
+                None
+            if line_range.get("error", "")!="":
+                logger.error(
+                    f"Error checking error  fix for issue {issues[0].key}: {line_range.get("error", "")}", exc_info=True
+                )
+                return None
             # Step 2: Read file and extract context
             context_info = _prepare_context(
                 file_path, line_range, modified_content, self.context_lines
@@ -2232,6 +2247,214 @@ def _prepare_context(
     except Exception as e:
         logger.error(f"Error reading file {file_path}: {e}")
         return None
+
+
+def get_content_range(
+    file_path_tmp: Path,
+    line_range_tmp: Dict[str, Any],
+    file_path: Path
+) -> Optional[Dict[str, Any]]:
+
+    if not file_path_tmp.exists():
+        raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"Actual file not found: {file_path}")
+
+        # Extract line range info
+    first_line_tmp = line_range_tmp.get('first_line')
+    last_line_tmp = line_range_tmp.get('last_line')
+    problem_lines_tmp = line_range_tmp.get('problem_lines', [])
+
+
+    if first_line_tmp is None or last_line_tmp is None:
+        raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
+
+    # Read files
+    try:
+        with open(file_path_tmp, 'r', encoding='utf-8') as f:
+            tmp_lines = f.readlines()
+        with open(file_path, 'r', encoding='utf-8') as f:
+            actual_lines = f.readlines()
+    except UnicodeDecodeError:
+        # Try with different encoding
+        with open(file_path_tmp, 'r', encoding='latin-1') as f:
+            tmp_lines = f.readlines()
+        with open(file_path, 'r', encoding='latin-1') as f:
+            actual_lines = f.readlines()
+
+    # Extract target content from temp file (1-indexed to 0-indexed)
+    start_idx = first_line_tmp - 1
+    end_idx = last_line_tmp  # last_line is inclusive, so we don't subtract 1 for slice
+
+    if start_idx < 0 or end_idx > len(tmp_lines):
+        raise ValueError(f"Line range {first_line_tmp}-{last_line_tmp} out of bounds for temp file")
+
+    target_content = tmp_lines[start_idx:end_idx]
+    print("target_content ", target_content)
+
+    if not target_content:
+        return None
+
+    actual_content = actual_lines[start_idx:end_idx]
+    if actual_content == target_content:
+
+        return {
+            'first_line': first_line_tmp,
+            'last_line': last_line_tmp,
+            'problem_lines': problem_lines_tmp,
+            'confidence': 1,
+            'match_type': 'exact',
+            'error': ""
+        }
+
+
+    exact_match = _find_exact_match(target_content, actual_lines)
+
+    if exact_match:
+        return _create_result(
+            exact_match,
+            problem_lines_tmp,
+            first_line_tmp,
+            confidence=1.0,
+            match_type='exact'
+        )
+
+    # Strategy 3: Fuzzy matching for similar content
+    fuzzy_match = _find_fuzzy_match(target_content, actual_lines, threshold=0.65)
+
+    if fuzzy_match:
+            return _create_result(
+                fuzzy_match,
+                problem_lines_tmp,
+                first_line_tmp,
+                confidence=fuzzy_match['confidence'],
+                match_type='fuzzy'
+            )
+
+    # Strategy 4: If single line, try to find all occurrences and use heuristics
+    if len(target_content) == 1:
+            all_matches = _find_all_single_line_matches(
+                target_content[0],
+                actual_lines,
+                first_line_tmp
+            )
+            if all_matches:
+                best_match = all_matches[0]  # Closest to original line number
+                return _create_result(
+                    {'start': best_match, 'end': best_match + 1},
+                    problem_lines_tmp,
+                    first_line_tmp,
+                    confidence=0.7,
+                    match_type='fuzzy'
+                )
+
+    # Content not found
+    return {
+            'first_line': None,
+            'last_line': None,
+            'problem_lines': [],
+            'confidence': 0.0,
+            'match_type': 'not_found',
+            'error': f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file"
+        }
+
+
+def _find_all_single_line_matches(
+        target_line: str,
+        actual_lines: List[str],
+        original_line_num: int
+) -> List[int]:
+    """
+    Find all occurrences of a single line.
+    Returns sorted by proximity to original line number.
+    """
+    matches = []
+    target_stripped = target_line.strip()
+
+    for i, line in enumerate(actual_lines):
+        if line.strip() == target_stripped:
+            matches.append(i)
+
+    if not matches:
+        return []
+
+    # Sort by distance from original line number (0-indexed vs 1-indexed)
+    original_idx = original_line_num - 1
+    matches.sort(key=lambda x: abs(x - original_idx))
+
+    return matches
+
+def _find_fuzzy_match(
+        target_content: List[str],
+        actual_lines: List[str],
+        threshold: float = 0.85
+) -> Optional[Dict[str, Any]]:
+    """
+    Find fuzzy match allowing for minor modifications.
+    Returns match with confidence score.
+    """
+    target_len = len(target_content)
+    best_match = None
+    best_ratio = 0.0
+
+    for i in range(len(actual_lines) - target_len + 1):
+        candidate = actual_lines[i:i + target_len]
+
+        # Calculate similarity ratio
+        ratio = difflib.SequenceMatcher(None, target_content, candidate).ratio()
+
+        if ratio > best_ratio and ratio >= threshold:
+            best_ratio = ratio
+            best_match = {'start': i, 'end': i + target_len}
+
+    if best_match:
+        best_match['confidence'] = best_ratio
+        return best_match
+
+    return None
+
+def _find_exact_match(target_content: List[str], actual_lines: List[str]) -> Optional[Dict[str, int]]:
+    """Find exact match of target content in actual file."""
+    target_len = len(target_content)
+    print("target_len ", target_len)
+    for i in range(len(actual_lines) - target_len + 1):
+        if actual_lines[i:i + target_len] == target_content:
+            return {'start': i, 'end': i + target_len}
+
+    return None
+
+
+def _create_result(
+        match: Dict[str, int],
+        problem_lines_tmp: List[int],
+        first_line_tmp: int,
+        confidence: float,
+        match_type: str
+) -> Dict[str, Any]:
+    """
+    Create standardized result dictionary with adjusted problem lines.
+    """
+    start_line = match['start'] + 1  # Convert to 1-indexed
+    end_line = match['end']  # Already correct for 1-indexed inclusive range
+
+    # Adjust problem lines based on offset
+    offset = start_line - first_line_tmp
+    adjusted_problem_lines = [line + offset for line in problem_lines_tmp]
+
+    # Ensure problem lines are within the found range
+    adjusted_problem_lines = [
+        line for line in adjusted_problem_lines
+        if start_line <= line <= end_line
+    ]
+
+    return {
+        'first_line': start_line,
+        'last_line': end_line,
+        'problem_lines': adjusted_problem_lines,
+        'confidence': confidence,
+        'match_type': match_type
+    }
+
 
 
 def _validate_and_extract_issue_info(

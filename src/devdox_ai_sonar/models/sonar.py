@@ -43,6 +43,7 @@ class SonarCloudConfig(BaseModel):
     organization: str = Field(..., description="SonarCloud organization key")
     project: str = Field(..., description="SonarCloud project key")
     project_path: str = Field(..., description="Path to local project directory")
+    git_url:str = Field(..., description="Git URL for the project")
 
     def validate(self) -> Tuple[bool, Optional[str]]:
         """Validate SonarCloud configuration."""
@@ -57,6 +58,12 @@ class SonarCloudConfig(BaseModel):
 
         if not self.project_path:
             return False, "Project path cannot be empty"
+
+        if not self.git_url or not self.git_url.strip():
+            return False, "Git URL cannot be empty"
+        if not self.git_url.endswith(".git"):
+            return False, "Git URL must end with .git"
+
 
         return True, None
 

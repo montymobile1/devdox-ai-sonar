@@ -58,7 +58,8 @@ from devdox_ai_sonar.cli import (
     _display_metrics_section,
     _process_security_issues,
     _process_issues_for_rule,
-    _process_regular_issues
+    _process_regular_issues,
+    download_latest_version
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -93,7 +94,8 @@ def mock_auth_dict() :
             "token": "token123",
             "organization": "org",
             "project": "proj",
-            "project_path": "/path"
+            "project_path": "/path",
+            "git_url": "https://github.com/org/proj.git"
         }
 
 @pytest.fixture
@@ -163,7 +165,8 @@ def auth_config():
         token="test-token",
         organization="test-org",
         project="test-project",
-        project_path="/tmp/test"
+        project_path="/tmp/test",
+        git_url="https://github.com/test-org/test-project.git"
     )
 
 @pytest.fixture
@@ -175,7 +178,8 @@ def mock_config_service():
             "token": "test-token",
             "organization": "test-org",
             "project": "test-project",
-            "project_path": "/tmp/project"
+            "project_path": "/tmp/project",
+            "git_url": "https://github.com/test-org/test-project.git"
         }
         mock_instance.check_all_value_empty.return_value = False
         mock.return_value = mock_instance
@@ -2070,7 +2074,7 @@ class TestSecurityIssuesProcessing:
         }
 
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params,Mock()
+            issues_by_file, mock_services, auth_config, fix_params,Mock(),tmp_path=Mock()
         )
 
 
@@ -2092,7 +2096,7 @@ class TestSecurityIssuesProcessing:
         }
 
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params,Mock()
+            issues_by_file, mock_services, auth_config, fix_params,Mock(), tmp_path=Mock()
         )
 
         assert mock_single_fix.call_count == 2
@@ -2113,7 +2117,7 @@ class TestSecurityIssuesProcessing:
         }
         md_file_path=Mock()
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params,md_file_path
+            issues_by_file, mock_services, auth_config, fix_params,md_file_path, tmp_path=Mock()
         )
 
         # Should only process first file
@@ -2128,7 +2132,7 @@ class TestSecurityIssuesProcessing:
         issues_by_file = {}
         md_file_path = Mock()
         _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params, md_file_path
+            issues_by_file, mock_services, auth_config, fix_params, md_file_path, tmp_path=Path("/tmp/new")
         )
 
         # Should handle gracefully
@@ -2147,7 +2151,7 @@ class TestSecurityIssuesProcessing:
         }
         md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
         # Should still call process_rule
@@ -2176,7 +2180,7 @@ class TestRegularIssuesProcessing:
 
         md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
 
@@ -2197,7 +2201,7 @@ class TestRegularIssuesProcessing:
         }
         md_file_path = Mock()
         _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
         assert mock_process_rule.call_count == 3
@@ -2215,7 +2219,7 @@ class TestRegularIssuesProcessing:
         md_file_path = Mock()
         result = _process_issues_for_rule(
             "python:S1234", issues_list,
-            mock_services, auth_config, fix_params, md_file_path
+            mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
         assert result is False  # Stopped by user
@@ -2225,7 +2229,7 @@ class TestRegularIssuesProcessing:
     @patch('devdox_ai_sonar.cli._process_single_fix')
     def test_process_issues_for_rule_continues(
             self, mock_single_fix, mock_continue,
-            mock_services, auth_config, fix_params
+            mock_services, auth_config, fix_params,tmp_path="/tmp/new"
     ):
         """Test processing continues to next rule."""
         mock_continue.return_value = True  # Continue all
@@ -2234,7 +2238,7 @@ class TestRegularIssuesProcessing:
         md_file_path = Mock()
         result = _process_issues_for_rule(
             "python:S1234", issues_list,
-            mock_services, auth_config, fix_params, md_file_path
+            mock_services, auth_config, fix_params, md_file_path,tmp_path=tmp_path
         )
 
         assert result is True  # Should continue
@@ -2554,6 +2558,7 @@ class TestProcessFunctions:
         auth_config.organization = "org"
         auth_config.project = "proj"
         auth_config.project_path = "/tmp"
+        auth_config.git_url = "https://github.com/test-org/test-project.git"
 
         # LLM config
         llm_config = Mock()
@@ -2567,7 +2572,8 @@ class TestProcessFunctions:
             "types_list": None,
             "severities_list": None,
             "apply": False,
-            "dry_run": False
+            "dry_run": False,
+
         }
 
         # Patch all the dependencies with proper mocking
@@ -2583,7 +2589,7 @@ class TestProcessFunctions:
                             auth_config,
                             llm_config,
                             "main",
-                            None,
+                            0,
                             fix_params,
                             issue_type=IssueType.SECURITY
                         )
@@ -2621,17 +2627,24 @@ class TestProcessFunctions:
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with patch('devdox_ai_sonar.cli.download_latest_version') as mock_download:
+                            with patch('devdox_ai_sonar.cli.remove_tmp_files') as mock_remove_testing:
 
-                        _process_and_fix_issues(
-                            auth_config,
-                            llm_config,
-                            "main",
-                            None,
-                            fix_params,
-                            issue_type=IssueType.SECURITY
-                        )
+                                mock_download.return_value = "/tmp/downloaded_repo"  # Set return value
 
-                        mock_analyzer.get_fixable_security_issues.assert_called_once()
+
+
+                                _process_and_fix_issues(
+                                    auth_config,
+                                    llm_config,
+                                    "main",
+                                    0,
+                                    fix_params,
+                                    issue_type=IssueType.SECURITY,
+
+                                )
+
+                                mock_analyzer.get_fixable_security_issues.assert_called_once()
 
     def test_process_security_with_issues(self):
         """Test security processing with issues"""
@@ -2664,6 +2677,7 @@ class TestProcessFunctions:
         auth_config.organization = "org"
         auth_config.project = "proj"
         auth_config.project_path = "/tmp"
+        auth_config.git_url = "https://github.com/test-org/test-project.git"
 
         llm_config = Mock()
         llm_config.provider = "openai"
@@ -2681,20 +2695,25 @@ class TestProcessFunctions:
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        with patch('devdox_ai_sonar.cli._display_fix_preview'):
-                            with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
+                        with patch('devdox_ai_sonar.cli.generate_tmp_path') as generate_tmp_path:
+                            with patch('devdox_ai_sonar.cli.download_latest_version') as mock_download:
+                                with patch('devdox_ai_sonar.cli._display_fix_preview'):
+                                    with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
+                                        with patch('devdox_ai_sonar.cli.remove_tmp_files') as mock_remove_testing_files:
 
 
-                                _process_and_fix_issues(
-                                    auth_config,
-                                    llm_config,
-                                    "main",
-                                    None,
-                                    fix_params,
-                                    issue_type=IssueType.SECURITY
-                                )
 
-                                mock_fixer.generate_fix_by_file.assert_called_once()
+                                            _process_and_fix_issues(
+                                                auth_config,
+                                                llm_config,
+                                                "main",
+                                                0,
+                                                fix_params,
+                                                issue_type=IssueType.SECURITY,
+
+                                            )
+
+                                            mock_fixer.generate_fix_by_file.assert_called_once()
 
 
 # ============================================================================
@@ -2813,7 +2832,8 @@ class TestFileProcessing:
                         mock_services,
                         Mock(project_path="/tmp"),
                         {"apply": False, "dry_run": False},
-                        issue_type=IssueType.SECURITY
+                        issue_type=IssueType.SECURITY,
+                        tmp_path= Path("/tmp/new")
                     )
 
     def test_generate_fix_for_file_success(self):
@@ -2840,7 +2860,7 @@ class TestFileProcessing:
         mock_services['fixer'].generate_fix_by_file.return_value = mock_fix
 
         with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-            result = _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"),issue_type=IssueType.SECURITY)
+            result = _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"),issue_type=IssueType.SECURITY, tmp_path= Path("/tmp/new"))
 
             assert result == mock_fix
 
@@ -4173,7 +4193,8 @@ class TestInitializeFixServices:
             token="test_token",
             organization="test_org",
             project="test_project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test/repo.git"
         )
         llm_config = LLMConfig(
             provider="openai",
@@ -4720,7 +4741,7 @@ class TestHelperFunctions:
         }
         _process_single_fix(
             issues, mock_services, auth_config,
-            fix_params, IssueType.SECURITY, "test.py"
+            fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )
 
         mock_generate.assert_called_once()
@@ -4742,7 +4763,7 @@ class TestHelperFunctions:
         }
         _process_single_fix(
             issues, mock_services, auth_config,
-            fix_params, IssueType.SECURITY, "test.py"
+            fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )
 
         # Should print warning

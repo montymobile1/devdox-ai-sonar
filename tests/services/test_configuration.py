@@ -82,13 +82,15 @@ class TestAuthConfig:
             token="test-token",
             organization="test-org",
             project="test-project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         assert config.token == "test-token"
         assert config.organization == "test-org"
         assert config.project == "test-project"
         assert config.project_path == "/test/path"
+        assert config.git_url == "https://github.com/test-org/test-project.git"
 
     def test_auth_config_validate_success(self):
         """Test validation with all valid fields."""
@@ -96,7 +98,8 @@ class TestAuthConfig:
             token="test-token",
             organization="test-org",
             project="test-project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -110,7 +113,8 @@ class TestAuthConfig:
             token="",
             organization="test-org",
             project="test-project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -124,7 +128,8 @@ class TestAuthConfig:
             token="test-token",
             organization="",
             project="test-project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -138,7 +143,8 @@ class TestAuthConfig:
             token="test-token",
             organization="test-org",
             project="",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -152,7 +158,8 @@ class TestAuthConfig:
             token="test-token",
             organization="test-org",
             project="test-project",
-            project_path=""
+            project_path="",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -166,7 +173,8 @@ class TestAuthConfig:
             token=None,
             organization="test-org",
             project="test-project",
-            project_path="/test/path"
+            project_path="/test/path",
+            git_url="https://github.com/test-org/test-project.git"
         )
 
         is_valid, error = config.validate()
@@ -469,7 +477,8 @@ class TestSaveConfig:
                     "squ_valid_token",
                     "test-org",
                     "test-project",
-                    "/test/path"
+                    "/test/path",
+                    "https://github.com/test-org/test-project.git"
                 )
 
         assert result is True
@@ -477,7 +486,8 @@ class TestSaveConfig:
             "squ_valid_token",
             "test-org",
             "test-project",
-            "/test/path"
+            "/test/path",
+            "https://github.com/test-org/test-project.git"
         )
 
     def test_save_config_invalid_token_user_confirms(self, config_service, mock_console):
@@ -490,7 +500,8 @@ class TestSaveConfig:
                     "short",
                     "test-org",
                     "test-project",
-                    "/test/path"
+                    "/test/path",
+                    "https://github.com/test-org/test-project.git"
                 )
 
         assert result is True
@@ -505,7 +516,8 @@ class TestSaveConfig:
                 "short",
                 "test-org",
                 "test-project",
-                "/test/path"
+                "/test/path",
+                "https://github.com/test-org/test-project.git"
             )
 
         assert result is False
@@ -519,7 +531,8 @@ class TestSaveConfig:
                     "squ_valid_token",
                     "test-org",
                     "test-project",
-                    "/test/path"
+                    "/test/path",
+                    "https://github.com/test-org/test-project.git"
                 )
 
         assert result is False
@@ -542,7 +555,8 @@ class TestSaveCompleteConfig:
                         "squ_token",
                         "org",
                         "project",
-                        "/path"
+                        "/path",
+                        "https://github.com/test-org/test-project.git"
                     )
 
         assert result is True
@@ -556,7 +570,8 @@ class TestSaveCompleteConfig:
             "token": "old_token",
             "organization": "old_org",
             "project": "old_project",
-            "project_path": "/old/path"
+            "project_path": "/old/path",
+            "git_url": "https://github.com/test-org/test-project.git"
         }
 
         with patch('builtins.open', mock_open(read_data=json.dumps(valid_config_file_content))) as mock_file:
@@ -582,6 +597,7 @@ class TestSaveCompleteConfig:
                         "new_org",
                         "new_project",
                         "/new/path",
+                        "https://github.com/test-org/test-project.git",
                         merge=False
                     )
 
@@ -593,7 +609,8 @@ class TestSaveCompleteConfig:
             "token": "old_token",
             "organization": "old_org",
             "project": "old_project",
-            "project_path": "/old/path"
+            "project_path": "/old/path",
+            "git_url":"https://github.com/test-org/test-project.git"
         }
 
         with patch('builtins.open', mock_open()) as mock_file:
@@ -752,7 +769,8 @@ class TestEdgeCases:
             token="测试token",
             organization="组织",
             project="项目",
-            project_path="/test/路径"
+            project_path="/test/路径",
+            git_url="https://github.com/test-org/test-project.git",
         )
 
         is_valid, error = config.validate()
@@ -776,6 +794,7 @@ class TestEdgeCases:
             "SONAR_ORG": "org",
             "SONAR_PROJ": "project",
             "PROJECT_PATH": "/path",
+            "GIT_URL": "https://github.com/test-org/test-project.git",
             "EXTRA_FIELD": "extra_value"
         }
 
@@ -921,7 +940,8 @@ class TestCheckAllValueEmpty:
             "token": "test-token",
             "organization": "test-org",
             "project": "test-project",
-            "project_path": "/test/path"
+            "project_path": "/test/path",
+            "git_url": "https://github.com/test-org/test-project.git"
         }
 
         result = config_service.check_all_value_empty(auth_config)
@@ -935,7 +955,8 @@ class TestCheckAllValueEmpty:
             "token": "",
             "organization": "test-org",
             "project": "test-project",
-            "project_path": "/test/path"
+            "project_path": "/test/path",
+            "git_url":"https://github.com/test-org/test-project.git"
         }
 
         result = config_service.check_all_value_empty(auth_config)
@@ -1055,7 +1076,8 @@ class TestCheckAllValueEmpty:
             "token": "   ",
             "organization": "test-org",
             "project": "test-project",
-            "project_path": "/test/path"
+            "project_path": "/test/path",
+            "git_url":"https://github.com/test-org/test-project.git"
         }
 
         result = config_service.check_all_value_empty(auth_config)
@@ -1085,7 +1107,8 @@ class TestSaveConfigErrorPaths:
                 "short",
                 "test-org",
                 "test-project",
-                "/test/path"
+                "/test/path",
+                "https://github.com/test-org/test-project.git"
             )
 
         assert result is False
@@ -1103,7 +1126,8 @@ class TestSaveConfigErrorPaths:
                     "short",
                     "test-org",
                     "test-project",
-                    "/test/path"
+                    "/test/path",
+                    "https://github.com/test-org/test-project.git"
                 )
 
         assert result is True
@@ -1120,7 +1144,8 @@ class TestSaveConfigErrorPaths:
                     "short",
                     "test-org",
                     "test-project",
-                    "/test/path"
+                    "/test/path",
+                    "https://github.com/test-org/test-project.git"
                 )
 
         assert result is True
@@ -1137,7 +1162,8 @@ class TestSaveConfigErrorPaths:
                         "squ_valid_token",
                         "test-org",
                         "test-project",
-                        "/test/path"
+                        "/test/path",
+                        "https://github.com/test-org/test-project.git"
                     )
 
 
@@ -1161,6 +1187,7 @@ class TestFileSystemInteractions:
             "test-org",
             "test-project",
             "/test/path",
+            "https://github.com/test-org/test-project.git",
             merge=False
         )
 
@@ -1182,7 +1209,8 @@ class TestFileSystemInteractions:
             "token",
             "org",
             "project",
-            "/path"
+            "/path",
+            "https://github.com/test-org/test-project.git"
         )
 
         assert result is True
@@ -1195,7 +1223,8 @@ class TestFileSystemInteractions:
             "SONAR_TOKEN": "test_token",
             "SONAR_ORG": "test_org",
             "SONAR_PROJ": "test_project",
-            "PROJECT_PATH": "/test/path"
+            "PROJECT_PATH": "/test/path",
+            "GIT_URL":"https://github.com/test-org/test-project.git"
         }
 
         # Create file
@@ -1229,7 +1258,8 @@ class TestFileSystemInteractions:
                 "token",
                 "org",
                 "project",
-                "/path"
+                "/path",
+                "https://github.com/test-org/test-project.git"
             )
             # Should fail on Unix systems
             assert result is False
@@ -1282,6 +1312,7 @@ class TestJSONSerializationEdgeCases:
             "SONAR_ORG": "org",
             "SONAR_PROJ": "project",
             "PROJECT_PATH": "/path",
+            "GIT_URL": "https://github.com/test-org/test-project.git",
             "nested": {
                 "key": "value"
             }
@@ -1304,7 +1335,8 @@ class TestJSONSerializationEdgeCases:
             'token"with"quotes',
             'org\\with\\backslashes',
             'project\nwith\nnewlines',
-            '/path\twith\ttabs'
+            '/path\twith\ttabs',
+            "https://github.com/test-org/test-project.git"
         )
 
         assert result is True
@@ -1640,21 +1672,21 @@ class TestAuthConfigDataclass:
 
     def test_auth_config_equality(self):
         """Test AuthConfig equality comparison."""
-        config1 = AuthConfig("token", "org", "project", "/path")
-        config2 = AuthConfig("token", "org", "project", "/path")
+        config1 = AuthConfig("token", "org", "project", "/path",None)
+        config2 = AuthConfig("token", "org", "project", "/path",None)
 
         assert config1 == config2
 
     def test_auth_config_inequality(self):
         """Test AuthConfig inequality."""
-        config1 = AuthConfig("token1", "org", "project", "/path")
-        config2 = AuthConfig("token2", "org", "project", "/path")
+        config1 = AuthConfig("token1", "org", "project", "/path","https://github.com/test-org/test-project.git")
+        config2 = AuthConfig("token2", "org", "project", "/path","https://github.com/test-org/test-project.git")
 
         assert config1 != config2
 
     def test_auth_config_repr(self):
         """Test AuthConfig string representation."""
-        config = AuthConfig("token", "org", "project", "/path")
+        config = AuthConfig("token", "org", "project", "/path","https://github.com/test-org/test-project.git")
 
         repr_str = repr(config)
 
@@ -1665,13 +1697,13 @@ class TestAuthConfigDataclass:
         """Test converting AuthConfig to dict."""
 
 
-        config = AuthConfig("token", "org", "project", "/path")
+        config = AuthConfig("token", "org", "project", "/path","https://github.com/test-org/test-project.git")
 
         config_dict = asdict(config)
 
         assert config_dict['token'] == "token"
         assert config_dict['organization'] == "org"
-        assert len(config_dict) == 4
+        assert len(config_dict) == 5
 
 
 # ============================================================================

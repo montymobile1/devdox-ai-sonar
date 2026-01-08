@@ -653,6 +653,25 @@ class SonarCloudAnalyzer:
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
 
+
+    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str:
+        """Get branch name from pull request number."""
+
+        url = urljoin(self.base_url, "/api/project_pull_requests/list")
+        params = {"project": project_key}
+
+        response = self.session.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+
+        # Find PR by key (PR number)
+        for pr in data.get("pullRequests", []):
+            if pr.get("key") == pull_request:
+                return pr.get("branch")
+
+        raise ValueError(f"Pull request {pull_request} not found in project {project_key}")
+
     def get_fixable_issues_by_types(
         self,
         project_key: str,
