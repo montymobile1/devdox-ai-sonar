@@ -29,7 +29,7 @@ def  remove_tmp_files(relative_path:str)->bool:
             raise ValueError(f"Path contains invalid components: {relative_path}")
 
         # Resolve path relative to base directory
-        repo_path = relative_path.resolve()
+        _ = relative_path.resolve()
 
         shutil.rmtree(relative_path)
         return True
