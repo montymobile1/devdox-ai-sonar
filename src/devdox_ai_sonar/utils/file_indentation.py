@@ -25,7 +25,7 @@ def  remove_tmp_files(relative_path:str)->bool:
             raise ValueError("Empty path provided")
 
         # Check for problematic path components
-        if any(part in ("..", ".", "") for part in relative_path.parts):
+        if any(part in ("..", ".", ""," ") for part in relative_path.parts):
             raise ValueError(f"Path contains invalid components: {relative_path}")
 
         # Resolve path relative to base directory
