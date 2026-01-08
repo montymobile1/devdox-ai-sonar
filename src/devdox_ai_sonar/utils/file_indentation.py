@@ -81,7 +81,6 @@ def _apply_simple_replacement(lines: List[str], fix: FixSuggestion) -> None:
     target_line = (fix.sonar_line_number or 1) - 1
     base_indent = calculate_base_indentation(lines[target_line])
     indent_spaces = " " * base_indent
-
     indented_code = apply_indentation_to_fix(fix.fixed_code, indent_spaces)
     lines[target_line] = indented_code + "\n"
 
@@ -291,38 +290,63 @@ def is_shebang_or_encoding(
 
 def normalize_indentation(lines: List[str]) -> List[str]:
     """
-    Remove common leading whitespace from all lines.
+    Remove ALL leading whitespace from each line individually.
+    This handles cases where LLM returns inconsistently indented code.
 
     Args:
         lines: Lines of code
 
     Returns:
-        Lines with normalized indentation
+        Lines with all leading whitespace stripped from each line
     """
     if not lines:
         return lines
 
-    # Find minimum indentation of non-empty lines
-    min_indent = 10**9
-    for line in lines:
-        if line.strip():  # Non-empty line
-            stripped = line.lstrip()
-            indent_length = len(line) - len(stripped)
-            min_indent = min(min_indent, indent_length)
-
-    if min_indent == float("inf") or min_indent == 0:
-        return lines
-
-    # Remove common leading whitespace
     normalized_lines = []
     for line in lines:
         if line.strip():  # Non-empty line
-            normalized_lines.append(line[min_indent:])
-        else:  # Empty line
-            normalized_lines.append(line)
+            # Strip ALL leading whitespace from this line
+            normalized_lines.append(line.lstrip())
+        else:  # Empty or whitespace-only line
+            normalized_lines.append("")  # Keep as empty string
 
     return normalized_lines
 
+
+# def normalize_indentation(lines: List[str]) -> List[str]:
+#     """
+#     Remove common leading whitespace from all lines.
+#
+#     Args:
+#         lines: Lines of code
+#
+#     Returns:
+#         Lines with normalized indentation
+#     """
+#     if not lines:
+#         return lines
+#
+#     # Find minimum indentation of non-empty lines
+#     min_indent = 10**9
+#     for line in lines:
+#         if line.strip():  # Non-empty line
+#             stripped = line.lstrip()
+#             indent_length = len(line) - len(stripped)
+#             min_indent = min(min_indent, indent_length)
+#
+#     if min_indent == float("inf") or min_indent == 0:
+#         return lines
+#
+#     # Remove common leading whitespace
+#     normalized_lines = []
+#     for line in lines:
+#         if line.strip():  # Non-empty line
+#             normalized_lines.append(line[min_indent:])
+#         else:  # Empty line
+#             normalized_lines.append(line)
+#
+#     return normalized_lines
+#
 
 def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
     """
@@ -351,7 +375,7 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
         if line.strip():  # Non-empty line
             indented_lines.append(base_indent + line)
         else:  # Empty line
-            indented_lines.append(line)
+            indented_lines.append("")  # Keep empty without indent
 
     return "\n".join(indented_lines)
 
