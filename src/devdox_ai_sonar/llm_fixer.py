@@ -253,7 +253,7 @@ class LLMFixer:
             file_path, line_range = _validate_and_extract_issue_info(
                 issues, project_path
             )
-            # if line_range_tmp != line_range:
+
             line_range = get_content_range(file_path_tmp,line_range_tmp,file_path)
             if line_range is None:
                 None
