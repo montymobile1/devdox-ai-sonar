@@ -42,6 +42,8 @@ def generate_tmp_path():
     rand = random.randint(1000, 9999)
     tmp_path = os.path.join("/tmp/new_test", f"test_{timestamp}_{rand}")
 
+    return tmp_path
+
 def download_latest_version(repo_url:str, repo_path:str, branch:str):
     try:
         repo = Repo.clone_from(repo_url, repo_path, branch=branch)
