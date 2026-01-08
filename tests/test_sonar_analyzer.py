@@ -5,6 +5,7 @@ import pytest
 import json
 import requests
 from pathlib import Path
+from requests.exceptions import HTTPError, Timeout, RequestException
 from unittest.mock import Mock, patch, MagicMock, call
 from typing import List, Dict, Any
 
@@ -2151,3 +2152,526 @@ class TestIntegrationScenarios:
             result2 = analyzer.get_project_issues("test-project")
 
             assert result2 is not None
+
+
+class TestGetBranchFromPR:
+    """Test suite for get_branch_from_pr method."""
+
+
+    @pytest.fixture
+    def mock_response(self):
+        """Create mock response object."""
+        mock_resp = Mock()
+        mock_resp.raise_for_status = Mock()
+        return mock_resp
+
+    # ==================== SUCCESS SCENARIOS ====================
+
+    def test_get_branch_from_pr_success(self, analyzer, mock_response):
+        """Test 1: Successfully get branch name from PR number."""
+        # Setup
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {
+                    "key": "123",
+                    "branch": "feature/new-feature",
+                    "title": "Add new feature",
+                    "status": "OPEN"
+                }
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            # Execute
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            # Assert
+            assert branch == "feature/new-feature"
+            analyzer.session.get.assert_called_once()
+
+            # Verify API call parameters
+            call_args = analyzer.session.get.call_args
+            assert call_args[1]['params']['project'] == project_key
+            assert 'api/project_pull_requests/list' in call_args[0][0]
+
+    def test_get_branch_from_pr_multiple_prs(self, analyzer, mock_response):
+        """Test 2: Find correct PR when multiple PRs exist."""
+        project_key = "test-project"
+        pull_request = "456"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "feature/old-feature"},
+                {"key": "456", "branch": "feature/target-feature"},
+                {"key": "789", "branch": "feature/another-feature"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/target-feature"
+
+    def test_get_branch_from_pr_first_match(self, analyzer, mock_response):
+        """Test 3: Returns first PR when it matches."""
+        project_key = "test-project"
+        pull_request = "111"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "111", "branch": "main"},
+                {"key": "222", "branch": "develop"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "main"
+
+    def test_get_branch_from_pr_last_match(self, analyzer, mock_response):
+        """Test 4: Returns last PR when it matches."""
+        project_key = "test-project"
+        pull_request = "999"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "111", "branch": "feature/a"},
+                {"key": "222", "branch": "feature/b"},
+                {"key": "999", "branch": "feature/target"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/target"
+
+    def test_get_branch_from_pr_with_special_characters(self, analyzer, mock_response):
+        """Test 5: Handle branch names with special characters."""
+        project_key = "test-project"
+        pull_request = "555"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "555", "branch": "feature/fix-#123-bug"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/fix-#123-bug"
+
+    def test_get_branch_from_pr_with_slashes(self, analyzer, mock_response):
+        """Test 6: Handle branch names with multiple slashes."""
+        project_key = "test-project"
+        pull_request = "777"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "777", "branch": "hotfix/release/v1.2.3"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "hotfix/release/v1.2.3"
+
+    # ==================== ERROR SCENARIOS ====================
+
+    def test_get_branch_from_pr_not_found(self, analyzer, mock_response):
+        """Test 7: Raise ValueError when PR not found."""
+        project_key = "test-project"
+        pull_request = "999"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "feature/a"},
+                {"key": "456", "branch": "feature/b"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(ValueError) as exc_info:
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert "Pull request 999 not found" in str(exc_info.value)
+            assert "test-project" in str(exc_info.value)
+
+    def test_get_branch_from_pr_empty_list(self, analyzer, mock_response):
+        """Test 8: Raise ValueError when no PRs exist."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": []
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(ValueError) as exc_info:
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert "Pull request 123 not found" in str(exc_info.value)
+
+    def test_get_branch_from_pr_missing_pullrequests_key(self, analyzer, mock_response):
+        """Test 9: Handle missing 'pullRequests' key in response."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {}
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(ValueError) as exc_info:
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert "Pull request 123 not found" in str(exc_info.value)
+
+    def test_get_branch_from_pr_http_404(self, analyzer):
+        """Test 10: Handle 404 HTTP error (project not found)."""
+        project_key = "nonexistent-project"
+        pull_request = "123"
+
+        mock_response = Mock()
+        mock_response.status_code = 404
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(HTTPError):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+    def test_get_branch_from_pr_http_401(self, analyzer):
+        """Test 11: Handle 401 HTTP error (authentication failed)."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response = Mock()
+        mock_response.status_code = 401
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(HTTPError):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+    def test_get_branch_from_pr_http_403(self, analyzer):
+        """Test 12: Handle 403 HTTP error (access forbidden)."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response = Mock()
+        mock_response.status_code = 403
+        mock_response.raise_for_status.side_effect = HTTPError(response=mock_response)
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(HTTPError):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+    def test_get_branch_from_pr_timeout(self, analyzer):
+        """Test 13: Handle timeout error."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        with patch.object(analyzer.session, 'get', side_effect=Timeout()):
+            with pytest.raises(Timeout):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+    def test_get_branch_from_pr_network_error(self, analyzer):
+        """Test 14: Handle network connection error."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        with patch.object(analyzer.session, 'get', side_effect=RequestException("Network error")):
+            with pytest.raises(RequestException):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
+    # ==================== EDGE CASES ====================
+
+    def test_get_branch_from_pr_with_string_number(self, analyzer, mock_response):
+        """Test 15: Handle PR number as string."""
+        project_key = "test-project"
+        pull_request = "123"  # String
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "feature/test"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/test"
+
+    def test_get_branch_from_pr_with_leading_zeros(self, analyzer, mock_response):
+        """Test 16: Handle PR number with leading zeros."""
+        project_key = "test-project"
+        pull_request = "007"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "007", "branch": "feature/test"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/test"
+
+    def test_get_branch_from_pr_case_sensitive(self, analyzer, mock_response):
+        """Test 17: PR key matching is case-sensitive."""
+        project_key = "test-project"
+        pull_request = "abc"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "ABC", "branch": "feature/uppercase"},
+                {"key": "abc", "branch": "feature/lowercase"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/lowercase"
+
+    def test_get_branch_from_pr_missing_branch_field(self, analyzer, mock_response):
+        """Test 18: Handle missing 'branch' field in PR data."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "title": "Test PR"}  # Missing 'branch' field
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            # Should return None when branch field is missing
+            assert branch is None
+
+    def test_get_branch_from_pr_null_branch(self, analyzer, mock_response):
+        """Test 19: Handle null branch value."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": None}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch is None
+
+    def test_get_branch_from_pr_empty_branch_string(self, analyzer, mock_response):
+        """Test 20: Handle empty branch string."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": ""}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == ""
+
+    def test_get_branch_from_pr_very_long_branch_name(self, analyzer, mock_response):
+        """Test 21: Handle very long branch name."""
+        project_key = "test-project"
+        pull_request = "123"
+        long_branch = "feature/" + "a" * 200
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": long_branch}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == long_branch
+            assert len(branch) > 200
+
+    # ==================== API CALL VERIFICATION ====================
+
+    def test_get_branch_from_pr_correct_endpoint(self, analyzer, mock_response):
+        """Test 22: Verify correct API endpoint is called."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "main"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            analyzer.get_branch_from_pr(project_key, pull_request)
+
+            # Verify endpoint
+            call_args = mock_get.call_args
+            assert 'api/project_pull_requests/list' in call_args[0][0]
+
+    def test_get_branch_from_pr_correct_params(self, analyzer, mock_response):
+        """Test 23: Verify correct parameters are sent."""
+        project_key = "my-test-project"
+        pull_request = "456"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "456", "branch": "develop"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            analyzer.get_branch_from_pr(project_key, pull_request)
+
+            # Verify parameters
+            call_args = mock_get.call_args
+            params = call_args[1]['params']
+            assert params['project'] == project_key
+
+    def test_get_branch_from_pr_timeout_used(self, analyzer, mock_response):
+        """Test 24: Verify timeout parameter is passed."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "main"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            analyzer.get_branch_from_pr(project_key, pull_request)
+
+            # Verify timeout is passed
+            call_args = mock_get.call_args
+            assert call_args[1]['timeout'] == analyzer.timeout
+
+    def test_get_branch_from_pr_session_called_once(self, analyzer, mock_response):
+        """Test 25: Verify session.get is called exactly once."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": "123", "branch": "main"}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response) as mock_get:
+            analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert mock_get.call_count == 1
+
+    # ==================== INTEGRATION-LIKE TESTS ====================
+
+    def test_get_branch_from_pr_with_real_response_structure(self, analyzer, mock_response):
+        """Test 26: Test with realistic SonarCloud API response structure."""
+        project_key = "devdox-ai-sonar"
+        pull_request = "42"
+
+        # Realistic response from SonarCloud
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {
+                    "key": "42",
+                    "title": "Add new feature",
+                    "branch": "feature/add-new-analyzer",
+                    "base": "main",
+                    "status": {
+                        "qualityGateStatus": "OK",
+                        "bugs": 0,
+                        "vulnerabilities": 0,
+                        "codeSmells": 2
+                    },
+                    "analysisDate": "2024-01-08T10:30:00+0000",
+                    "target": "main"
+                },
+                {
+                    "key": "41",
+                    "title": "Fix bug",
+                    "branch": "bugfix/fix-parser",
+                    "base": "main",
+                    "status": {
+                        "qualityGateStatus": "ERROR",
+                        "bugs": 1,
+                        "vulnerabilities": 0,
+                        "codeSmells": 5
+                    },
+                    "analysisDate": "2024-01-07T15:20:00+0000",
+                    "target": "main"
+                }
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pull_request)
+
+            assert branch == "feature/add-new-analyzer"
+
+
+class TestGetBranchFromPRParametrized:
+    """Parametrized tests for get_branch_from_pr."""
+
+
+
+    @pytest.mark.parametrize("pr_number,expected_branch", [
+        ("123", "feature/test-123"),
+        ("456", "bugfix/issue-456"),
+        ("789", "hotfix/critical-789"),
+        ("1", "main"),
+        ("9999", "release/v1.0.0"),
+    ])
+    def test_get_branch_various_pr_numbers(self, analyzer, pr_number, expected_branch):
+        """Test 27: Parametrized test for various PR numbers."""
+        project_key = "test-project"
+
+        mock_response = Mock()
+        mock_response.raise_for_status = Mock()
+        mock_response.json.return_value = {
+            "pullRequests": [
+                {"key": pr_number, "branch": expected_branch}
+            ]
+        }
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            branch = analyzer.get_branch_from_pr(project_key, pr_number)
+            assert branch == expected_branch
+
+    @pytest.mark.parametrize("http_status,error_type", [
+        (400, HTTPError),
+        (401, HTTPError),
+        (403, HTTPError),
+        (404, HTTPError),
+        (500, HTTPError),
+        (503, HTTPError),
+    ])
+    def test_get_branch_http_errors(self, analyzer, http_status, error_type):
+        """Test 28: Parametrized test for various HTTP errors."""
+        project_key = "test-project"
+        pull_request = "123"
+
+        mock_response = Mock()
+        mock_response.status_code = http_status
+        mock_response.raise_for_status.side_effect = error_type(response=mock_response)
+
+        with patch.object(analyzer.session, 'get', return_value=mock_response):
+            with pytest.raises(error_type):
+                analyzer.get_branch_from_pr(project_key, pull_request)
+
