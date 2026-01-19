@@ -4,6 +4,8 @@ import os
 import re
 import shutil
 import difflib
+import subprocess
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import json
@@ -56,6 +58,7 @@ except ImportError as e:
 java_extension = ".java"
 scala_extension = ".scala"
 prompt_system_message = "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
+
 
 
 class LLMFixer:
@@ -262,9 +265,11 @@ class LLMFixer:
                     f"Error checking error  fix for issue {issues[0].key}: {line_range.get("error", "")}", exc_info=True
                 )
                 return None
+            language = self._get_language_from_extension(file_path.suffix)
+
             # Step 2: Read file and extract context
-            context_info = _prepare_context(
-                file_path, line_range, modified_content, self.context_lines
+            context_info = self._prepare_context(
+                file_path, line_range, modified_content, self.context_lines, language
             )
             if not context_info:
                 return None
@@ -286,6 +291,7 @@ class LLMFixer:
                 issues,
                 context_info.get("context_dict", {}).get("context", ""),
             )
+
             # Step 4: Build fix suggestion
             return _build_fix_suggestion(
                 fix_response,
@@ -463,13 +469,16 @@ class LLMFixer:
         prompt = self._create_fix_prompt_list(
             issues, context, rule_info_dict, language, error_message
         )
-
+        template = self.jinja_env.get_template("fix_issues_new_2026_01_18.j2")
+        prompt_system = template.render()
         try:
+
+
             if self.provider == "openai":
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": prompt_system_message},
+                        {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
@@ -487,7 +496,7 @@ class LLMFixer:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": prompt_system_message},
+                        {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
                     max_tokens=4000,
@@ -639,49 +648,212 @@ class LLMFixer:
         # Default fallback
         return {"current": "Unknown", "target": "15"}
 
+
     def _extend_strategies_for_issue(
         self,
-        strategies: List[str],
         issue: Any,
         code_chunk: str,
     ) -> List[str]:
         msg_lower = getattr(issue, "message", "").lower()
 
+        # Start with core rules (always included)
+
+        strategies_list = [
+            "🚨 CRITICAL - PRESERVE ORIGINAL FUNCTION:",
+            ". Take care of syntax , logic and structure",
+            "• Keep EXACT same function name from original code",
+            "• Keep EXACT same function signature (name, parameters, types)",
+            "• DO NOT rename the function",
+            "• DO NOT change @staticmethod to instance method or vice versa",
+            "• DO NOT invent new function names",
+            " ",
+            "🚨 CRITICAL - NO HALLUCINATION / NO INVENTION:",
+            "• DO NOT create new attributes that don't exist in original code",
+            "• DO NOT create new methods that aren't called in original code",
+            "• DO NOT add new logic or validation that wasn't in original",
+            "• If original code uses `promotion.is_active`, you MUST use `promotion.is_active`",
+            "• DO NOT rename attributes (e.g., changing `is_active` to `status`)",
+            "• DO NOT change enum values (e.g., if original has 'PROMOTION_NOT_ACTIVE', use exactly that)",
+            "• DO NOT create new attributes that aren't in the original code",
+            "• DO NOT guess at attribute names from other similar code"
+            "• DO NOT invent new error messages or exception types",
+            "• ONLY extract and reorganize EXISTING logic from the original code",
+            ". Be sure that No duplicate queries - pass data as parameters"
+            "• Avoid duplication of defined functions and methods"
+            "",
+            "Example of FORBIDDEN changes:",
+            "❌ Original: `if not promotion.is_active:`",
+            "❌ Changed to: `if promotion.status != PromotionStatusEnum.ACTIVE:`  # WRONG - 'status' doesn't exist!",
+            "",
+            "✅ Correct approach:",
+            "✅ Keep: `if not promotion.is_active:`  # EXACT same check",
+            "",
+            "## CORE RULES:",
+            "• Return ONLY valid JSON",
+            "• Use ONLY types from original code or Built-in types ",
+            "• Make MINIMAL changes necessary to satisfy the rule",
+            "• Built-in types always OK: str, int, Optional, List, Dict",
+            "• FIXED_SELECTION = complete function with fixes applied",
+            "• NEW_HELPER_CODE = only new helper definitions (or empty string)",
+            "",
+            "🚨 REFACTORING vs REWRITING:",
+            "",
+            "✅ REFACTORING (allowed):",
+            "• Extract existing logic into helper methods",
+            "• Reduce nesting with early returns",
+            "•  No redundant checks - helpers trust their preconditions",
+            "•  Preserve correct parameters - uses user_id, not invented promotion.user_id",
+            "•  Preserved control flow - early return logic intact"  ,
+            "• Rename variables for clarity (only local variables, not attributes)",
+            "• Simplify complex conditionals by breaking them down",
+            "",
+            "❌ REWRITING (forbidden):",
+            "• Adding new validation logic not in original",
+            "• Changing data model attributes (e.g., promotion.is_active → promotion.status)",
+            "• Creating new repository method calls not in original",
+            "• Inventing new enum values or constants",
+            "• Changing exception types or messages",
+            "",
+            "🚨 CRITICAL: IMPORT MANAGEMENT 🚨",
+            "",
+            "When creating helper methods:",
+            "• SCAN NEW_HELPER_CODE for ALL modules/symbols used",
+            "• CHECK each symbol against the Import Section shown above",
+            "• If symbol NOT in Import Section → ADD to IMPORT_BLOCK",
+            "• When moving imports from inside functions:",
+            " - If original uses `datetime.now().date()` → Import BOTH `datetime` and `date`",
+            " - If helper has type hint `-> date` → Import `date` explicitly",
+            " - Type annotations require direct imports even if parent class exists",
+            "• NEVER leave 'import' or 'from' statements inside helper functions",
+            "",
+            "Examples:",
+            "❌ WRONG - Import inside helper:",
+            "```python",
+            "def __parse_date(self, date_str: str):",
+            "    from datetime import datetime  # ❌ BAD",
+            "    return datetime.strptime(date_str, '%Y-%m-%d')",
+            "```",
+            "",
+            "✅ CORRECT - Import in IMPORT_BLOCK:",
+            "```python",
+            "# In IMPORT_BLOCK:",
+            '"IMPORT_BLOCK": "from datetime import datetime\\n"',
+            "",
+            "# In NEW_HELPER_CODE:",
+            "def __parse_date(self, date_str: str):",
+            "    return datetime.strptime(date_str, '%Y-%m-%d')  # ✅ GOOD",
+            "```",
+            "",
+            "IMPORT_BLOCK Rules:",
+            "• Empty string \"\" if all imports already in Import Section",
+            "• Add ONLY missing imports (don't duplicate existing ones)",
+            "• Format: \"from module import symbol\\n\" or \"import module\\n\"",
+            "• Check Import Section (shown above) before adding",
+            "",
+        ]
         # Cognitive Complexity
         if "cognitive complexity" in msg_lower:
             # Extract numbers if available
             comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
             target = comp_info.get("target", "15")
 
-            strategies.extend(
-                [
-                    f"• REDUCE complexity to < {target}.",
-                    "• EXTRACT logic to new helper methods/functions.",
-                    "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
-                    "• If the original code snippet calls functions or methods (e.g., validate(), "
-                    "normalize(), process_data()), DO NOT create new helper definitions for them."
-                    "Assume they already exist in the project and should not be recreated."
-                    "• Only extract logic into a helper function if that logic does not already"
-                    "correspond to Any existing function call present in the snippet."
-                    "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
-                    "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
-                    "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
-                    "• NEVER put the same function definition in both sections.",
-                    "• If the original function is a class method (uses `self` or `cls`), "
-                    "then Any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
-                    "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
-                    "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
-                ]
-            )
-            if self._is_init_method(code_chunk):
-                strategies.append(
-                    "• Keep __init__ signature intact; extract validation logic to helpers."
-                )
+            strategies_list.extend([
+                    f"TARGET: Reduce complexity to <{target}",
+                    "• Extract complex logic to separate helper methods",
+                    "• ONLY extract helper methods from THIS function",
+                    "• If original code CALLS a method (e.g., self.validate(), self.normalize()), that method ALREADY EXISTS - DO NOT recreate it",
+                    "• Keep all original logic working",
+                    "• Keep all original parameteres and print or log them to be sure that they are used",
+                    "• Be sure to have same parameters and type of each parameters in the definition and implementation",
+                    "• Avoid using variable not found in the function or method",
+                    "• Use early returns to reduce nesting",
+
+                    "",
+                    "🚨 CRITICAL: HELPER METHOD CONSISTENCY RULE 🚨",
+                    "",
+                    "IF ORIGINAL METHOD USES 'self':",
+                    "•  Extract code that references variables NOT in helper's parameters → FORBIDDEN"
+                    "•  Helper method must receive ALL data it needs as parameters",
+                    "•  NO accessing parent function's local variables",
+                    "•  NO assuming variables exist in scope",
+                    "• ALL helpers MUST be instance methods (with 'self' parameter)",
+                    "• NO @staticmethod decorators on ANY helpers",
+                    "• ALL helpers use PLACEMENT: SIBLING",
+                    "• Call ALL helpers as: self._helper_name(args)",
+                    "",
+                    "Example - Original uses 'self':",
+                    "```python",
+                    "# ORIGINAL (has self):",
+                    "async def get_user_esims(self, user_id: str):",
+                    "    profiles = self._fetch_profiles(user_id)",
+                    "    return self._process(profiles)",
+                    "",
+                    "# FIXED_SELECTION (keep self):",
+                    "async def get_user_esims(self, user_id: str):",
+                    "    profiles = self._fetch_profiles(user_id)",
+                    "    sorted_profiles = self._sort_by_date(profiles)  # ✅ Using self",
+                    "    return self._process(sorted_profiles)",
+                    "",
+                    "# NEW_HELPER_CODE (ALL have self, NO @staticmethod):",
+                    "def _sort_by_date(self, profiles):  # ✅ Has self parameter",
+                    "    return sorted(profiles, key=lambda p: p.created_at)",
+                    "",
+                    "# PLACEMENT: SIBLING",
+                    "```",
+                    "",
+                    "IF ORIGINAL METHOD IS @staticmethod:",
+                    "• ALL helpers MUST be @staticmethod",
+                    "• NO 'self' parameters on ANY helpers",
+                    "• ALL helpers use PLACEMENT: SIBLING",
+                    "• Call ALL helpers as: ClassName._helper_name(args)",
+                    "",
+                    "Example - Original is @staticmethod:",
+                    "```python",
+                    "# ORIGINAL (@staticmethod):",
+                    "@staticmethod",
+                    "def calculate_total(items):",
+                    "    return sum(item.price for item in items)",
+                    "",
+                    "# FIXED_SELECTION (keep @staticmethod):",
+                    "@staticmethod",
+                    "def calculate_total(items):",
+                    "    filtered = MyClass._filter_valid(items)  # ✅ Using ClassName",
+                    "    return sum(item.price for item in filtered)",
+                    "",
+                    "# NEW_HELPER_CODE (ALL @staticmethod):",
+                    "@staticmethod",
+                    "def _filter_valid(items):  # ✅ No self",
+                    "    return [i for i in items if i.is_valid]",
+                    "",
+                    "# PLACEMENT: SIBLING",
+                    "```",
+                    "",
+                    "🚨 FORBIDDEN PATTERNS:",
+                    "❌ Mixing @staticmethod helpers with self-based original method",
+                    "❌ Mixing self-based helpers with @staticmethod original method",
+                    "❌ Calling self._helper() when helper is @staticmethod",
+                    "❌ Calling ClassName._helper() when helper has self parameter",
+                    "",
+                    "✅ CONSISTENCY RULE:",
+                    "Original has 'self' → ALL helpers have 'self' → ALL calls use 'self._helper()'",
+                    "Original is '@staticmethod' → ALL helpers are '@staticmethod' → ALL calls use 'ClassName._helper()'",
+                    ""
+                ])
+
+
+        else:
+            strategies_list.extend([
+                "PLACEMENT GUIDE:",
+                "• SIBLING = helper needs 'self' (calls self.something)",
+                "• GLOBAL_TOP = imports or constants",
+                "• GLOBAL_BOTTOM = pure utility (no 'self')",
+            ])
 
         # Unused Code
-        elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
-            strategies.append("• Remove ONLY the specific unused variable/import.")
-            strategies.append("• Do not break code that references adjacent lines.")
+        if "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
+
+                strategies_list.append("• Remove ONLY the specific unused variable/import.")
+                strategies_list.append("• Do not break code that references adjacent lines.")
 
         # Literal Duplication
         elif "duplicating this literal" in msg_lower:
@@ -689,28 +861,38 @@ class LLMFixer:
                 r'duplicating this literal "([^"]+)"', getattr(issue, "message", "")
             )
             literal = match.group(1) if match else "the repeated value"
-            strategies.append(
-                f'• Extract the literal "{literal}" to a constant/variable.'
-            )
-            strategies.append(
-                "• Place the constant at the class or module level (not inside the function)."
-            )
-            strategies.append(
-                "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
-            )
-            strategies.append(
-                "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
-            )
-            strategies.append(
-                "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
-            )
-            strategies.append("• Use the constant in [FIXED_SELECTION].")
-
+            strategies_list.extend([
+                f"LITERAL DUPLICATION (extract '{literal}'):",
+                "• Create a constant with SCREAMING_SNAKE_CASE name",
+                "• Put constant definition in NEW_HELPER_CODE",
+                "• Use constant in FIXED_SELECTION",
+                "• PLACEMENT: GLOBAL_TOP",
+                ""
+            ])
+        elif "be sure that every parameter is used" in msg_lower:
+            strategies_list.append("• As function can be already called so don't remove the parameters.")
+            strategies_list.append("• Print or Log the unused parameters values.")
+            strategies_list.append("• Check the syntax and be sure that is working code")
         # Null Checks
         elif "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower:
-            strategies.append("• Add defensive null/None checks before usage.")
+            strategies_list.extend([
+                "NULL/NONE CHECK:",
+                "• Add defensive checks before accessing attributes",
+                "• Use: if value is not None: ...",
+                ""
+            ])
 
-        return strategies
+        strategies_list.extend([
+            "PLACEMENT GUIDE:",
+            "• SIBLING = Instance methods needing 'self' (no @staticmethod!)",
+            "• GLOBAL_TOP = Imports or constants",
+            "• GLOBAL_BOTTOM = Pure utilities (no 'self', no @staticmethod)",
+            "",
+            "🚨 DO NOT USE @staticmethod DECORATOR - it causes issues!",
+        ])
+
+
+        return strategies_list
 
     def _create_fix_prompt(
         self,
@@ -737,6 +919,7 @@ class LLMFixer:
         # Cognitive Complexity
         if "cognitive complexity" in msg_lower:
             # Extract numbers if available
+
             comp_info = self._extract_complexity_info(issue.message)
             target = comp_info.get("target", "15")
 
@@ -765,6 +948,9 @@ class LLMFixer:
                     "• Keep __init__ signature intact; extract validation logic to helpers."
                 )
 
+        elif "unused function parameters" in issue.rule.lower():
+            strategies.append("• As function can be already called so don't remove the parameters.")
+            strategies.append("• Print or Log the unused parameters.")
         # Unused Code
         elif "unused" in issue.rule.lower() or "unused" in msg_lower:
             strategies.append("• Remove ONLY the specific unused variable/import.")
@@ -827,31 +1013,91 @@ class LLMFixer:
 
         # 1. Context Setup
         code_chunk = context.get("context", "")
+        class_name= context.get("class_name", "")
         base_indent = calculate_base_indentation(code_chunk)
 
-        # 2. Strategy Detection
-        strategies = [
-            f"• PRESERVE indentation ({base_indent} spaces) and existing logic flow.",
-            "• Make MINIMAL changes necessary to satisfy the rule.",
-        ]
 
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
 
             if rule_key not in rule_info_list:
                 continue
+            if rule_key=="python:S1172":
+                steps = rule_info_list.get(rule_key, {}).get('how_to_fix', {}).get('steps', [])
+                # Filter out unwanted step
+                filtered_steps = [
+                    step for step in steps
+                    if step != "Remove unused elements or implement their intended purpose"
+                ]
+                issue.message = "Be sure that every parameter is used"
+
+
+
+                # Add new strategies
+                filtered_steps.append("• As function can be already called so don't remove the parameters.")
+                filtered_steps.append("• Print or Log the unused parameters.")
+
+                rule_info_list[rule_key]['how_to_fix']['steps']= filtered_steps
+                rule_info_list[rule_key]['name'] = "Be sure that every parameter is used"
+                rule_info_list[rule_key]['root_cause']=None
+
 
             strategies = self._extend_strategies_for_issue(
-                strategies=strategies,
                 issue=issue,
                 code_chunk=code_chunk,
             )
 
             # 3. Construct Prompt
             # We join strategies with newlines for a clean list
-        strategy_text = "\n".join(strategies)
+            strategy_text = "\n".join(strategies)
 
-        template = self.jinja_env.get_template("fix_issues_multiples.j2")
+        # Detect method type from ORIGINAL code
+        original_is_static = '@staticmethod' in code_chunk
+        original_has_self = 'def ' in code_chunk and 'self' in code_chunk.split('def ')[1].split(')')[0]
+
+   
+        if original_is_static:
+            method_instruction_list = [
+            "🚨 ORIGINAL METHOD IS @staticmethod:",
+            "- Keep @staticmethod decorator in FIXED_SELECTION",
+            "- ALL helper methods MUST also be @staticmethod",
+            "- NO 'self' or 'cls' parameters in ANY helpers",
+            f"- Call ALL helpers as: {class_name or 'ClassName'}._helper_name(args)",
+            "- ALL helpers use PLACEMENT: SIBLING",
+            "",
+            "✅ CONSISTENCY: Original @staticmethod → ALL helpers @staticmethod",
+            ""
+            ]
+
+        elif original_has_self:
+            method_instruction_list = [
+           "🚨 ORIGINAL METHOD USES 'self' (INSTANCE METHOD):",
+                "- Keep 'self' as first parameter in FIXED_SELECTION",
+                "- ALL helper methods MUST have 'self' as first parameter",
+                "- NO @staticmethod decorator on ANY helpers",
+                "- Call ALL helpers as: self._helper_name(args)",
+                "- ALL helpers use PLACEMENT: SIBLING",
+                "",
+                "✅ CONSISTENCY: Original has 'self' → ALL helpers have 'self'",
+                "",
+                "❌ FORBIDDEN: Creating @staticmethod helpers for instance method",
+                ""
+                ]
+
+
+
+        else:
+            method_instruction_list = [
+                "🚨 METHOD TYPE UNCLEAR:",
+                "- Preserve the original method signature exactly",
+                "- Match helper style to original method style",
+                ""
+            ]
+
+        method_instruction = "\n".join(method_instruction_list)
+
+        template = self.jinja_env.get_template("fix_issues_new_new.j2")
+
 
         # Prepare context for template
         context_dic = {
@@ -860,6 +1106,7 @@ class LLMFixer:
             "rule_info": rule_info_list,
             "context": context,
             "code_chunk": code_chunk,
+            "method_instruction":method_instruction,
             "error_message": error_message,
             "strategy_text": strategy_text,
         }
@@ -890,7 +1137,6 @@ class LLMFixer:
         """Parse Together API response."""
         try:
             content = response.choices[0].message.content
-
             return self._extract_fix_from_response(content)
         except Exception as e:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
@@ -908,6 +1154,7 @@ class LLMFixer:
 
     def _apply_regex_patterns(self, content: str) -> Dict[str, Any]:
         patterns = {
+            "IMPORT_BLOCK":  r'"IMPORT_BLOCK"\s*:\s*"((?:[^"\\]|\\.)*)"|\'IMPORT_BLOCK\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "FIXED_SELECTION": r'"FIXED_SELECTION"\s*:\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "NEW_HELPER_CODE": r'"NEW_HELPER_CODE"\s*:\s*"((?:[^"\\]|\\.)*)"|\'NEW_HELPER_CODE\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "PLACEMENT": r'"PLACEMENT"\s*:\s*"([^"]*)"|\'PLACEMENT\'\s*:\s*\'([^\']*)\'',
@@ -951,6 +1198,7 @@ class LLMFixer:
             return None
 
         return {
+            "import_block":results["IMPORT_BLOCK"],
             "fixed_code": results["FIXED_SELECTION"],
             "helper_code": results["NEW_HELPER_CODE"],
             "placement_helper": results["PLACEMENT"].upper(),
@@ -965,8 +1213,15 @@ class LLMFixer:
 
         # Extract with type conversion and defaults
         fixed_code = str(fix_data.get("FIXED_SELECTION", "")).strip()
+        fixed_code = fixed_code.replace('\\','').replace('\\"', '"').replace("\\'", "'")
+
+        import_block = str(fix_data.get("IMPORT_BLOCK", "")).strip()
+
         helper_code = str(fix_data.get("NEW_HELPER_CODE", "")).strip()
+
+        helper_code = helper_code.replace('\\','').replace('\\"', '"').replace("\\'", "'")
         placement = str(fix_data.get("PLACEMENT", "SIBLING")).strip().upper()
+
         explanation = str(fix_data.get("EXPLANATION", "")).strip()
         confidence = fix_data.get("CONFIDENCE", 0.5)
 
@@ -991,6 +1246,7 @@ class LLMFixer:
             return None
 
         return {
+            "import_block":import_block,
             "fixed_code": fixed_code,
             "helper_code": helper_code,
             "placement_helper": placement,
@@ -1005,6 +1261,7 @@ class LLMFixer:
         try:
             # Step 1: Try direct JSON parsing first (for well-formed responses)
             cleaned_content = content.strip()
+            cleaned_content.replace("```json","").replace("```","")
             cleaned_content = cleaned_content.split("{", 1)[1]
             cleaned_content = "{" + cleaned_content
 
@@ -1016,6 +1273,7 @@ class LLMFixer:
 
             if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
                 try:
+
                     fix_data = json.loads(cleaned_content)
 
                     return self._extract_fields_from_parsed_json(fix_data)
@@ -1164,18 +1422,52 @@ class LLMFixer:
             results = []
             for fix in sorted_fixes:
                 result = apply_single_fix(lines, fix)
-                results.append(result)
+
 
                 if not result.success:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
+                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
+
+                write_file_lines(file_path_tmp, lines)
+                validate, msg = self.check_python_interpreter(file_path_tmp)
+                result.success = validate
+                result.reason = msg
+
+                results.append(result)
+
 
             write_file_lines(file_path, lines)
+
 
             return all(r.success for r in results), results
 
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False, []
+
+    def check_python_interpreter(self, file_path: Path) -> Tuple[bool, Optional[str]]:
+        """
+        Check Python syntax and formatting.
+
+        Returns:
+            (True, None) if everything is valid
+            (False, error_message) otherwise
+        """
+        try:
+            # 1. Syntax check
+            subprocess.run(
+                ["python", "-m", "py_compile", str(file_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            error_output = e.stderr or e.stdout or "Unknown error"
+            return False, error_output.strip()
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
@@ -1324,7 +1616,7 @@ class LLMFixer:
                         original_content = f.read()
 
                 # Attempt direct application
-                success, _ = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success, new_fixes = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
@@ -1346,12 +1638,18 @@ class LLMFixer:
                             try:
                                 # Get current file content (may have been modified by previous validator fixes)
                                 current_content = original_content
-                                if file_path.exists():
-                                    with open(file_path, "r", encoding="utf-8") as f:
+                                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
+                                if file_path_tmp.exists():
+                                    with open(file_path_tmp, "r", encoding="utf-8") as f:
                                         current_content = f.read()
 
+                                reason_list = []
+                                for f in new_fixes:
+                                    reason_list.append(f.reason)
+
+                                reason_msg = ", ".join(reason_list)
                                 validation_result = validator.validate_fix(
-                                    fix, issue, current_content
+                                    fix, issue, current_content, new_error_msg=reason_msg
                                 )
 
                                 # Log validation decision
@@ -1397,23 +1695,23 @@ class LLMFixer:
                                     == ValidationStatus.REJECTED
                                 ):
                                     logger.warning(
-                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.validation_notes}"
+                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.explanation}"
                                     )
                                     result.failed_fixes.append(
                                         {
                                             "fix": fix,
-                                            "error": f"Rejected by validator: {validation_result.validation_notes}",
+                                            "error": f"Rejected by validator: {validation_result.explanation}",
                                         }
                                     )
 
                                 else:  # NEEDS_REVIEW
                                     logger.warning(
-                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.validation_notes}"
+                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.explanation}"
                                     )
                                     result.failed_fixes.append(
                                         {
                                             "fix": fix,
-                                            "error": f"Needs manual review: {validation_result.validation_notes}",
+                                            "error": f"Needs manual review: {validation_result.explanation}",
                                         }
                                     )
 
@@ -1547,6 +1845,334 @@ class LLMFixer:
 
         return any(path_candidate.endswith(ext) for ext in supported_extensions)
 
+    def _prepare_context(
+            self,
+            file_path: Path,
+            line_range: Dict[str, Any],
+            modified_content: str,
+            context_lines: int,
+            language:str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Read file and prepare context for LLM.
+
+        Args:
+            file_path: Path to the file
+            line_range: Dictionary with first_line, last_line, problem_lines
+            modified_content: Optional pre-extracted content
+            context_lines: Number of context lines to include around issues
+
+        Returns:
+            Dictionary containing:
+            - context_dict: Context information for LLM
+            - file_lines: Full file content as list of lines
+            - problem_line_content: List of actual problem line strings
+
+            Returns None if file cannot be read
+        """
+        try:
+            # Read file content
+            with open(file_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+                file_lines = file_content.splitlines(keepends=True)
+
+            # Extract problem line content
+            # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
+            problem_line_content = _extract_problem_lines(
+                file_lines, line_range["problem_lines"]
+            )
+
+            first_problem_line_idx = line_range["first_line"] - 1
+            class_name = self._extract_class_name_from_file(
+                file_lines, first_problem_line_idx
+            )
+
+
+            # Log class name detection for debugging
+            if class_name:
+                logger.debug(f"Detected class name: {class_name} at line {line_range['first_line']}")
+            else:
+                logger.debug(
+                    f"No class name detected for line {line_range['first_line']} (likely module-level function)")
+
+
+            import_section = self._extract_import_section(file_lines, language)
+
+            # Build context dictionary
+            if modified_content:
+                # Use provided modified content
+                context_dict = {
+                    "context": modified_content,
+                    "start_line": line_range["first_line"],
+                    "end_line": line_range["last_line"],
+                    "problem_lines": problem_line_content,
+                    "class_name": class_name,
+                    "import_section": import_section,
+                    "language": language
+                }
+            else:
+                # Extract context from file
+                context_dict = self._extract_context(
+                    file_lines,
+                    line_range["first_line"],
+                    line_range["last_line"],
+                    context_lines
+                )
+                context_dict["language"] = language
+                if "class_name" not in context_dict or context_dict["class_name"] is None:
+                    context_dict["class_name"] = class_name
+                context_dict["import_section"] = import_section
+
+            return {
+                "context_dict": context_dict,
+                "file_lines": file_lines,
+                "problem_line_content": problem_line_content,
+            }
+
+        except UnicodeDecodeError as e:
+            logger.error(f"File encoding error for {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            return None
+
+    def _extract_import_section(
+            self,
+            file_lines: List[str],
+            language: str
+    ) -> Dict[str, Any]:
+        """
+        Extract only the import section (line range and content) from a file.
+
+        Args:
+            file_lines: All lines in the file
+            language: Programming language (python, javascript, java, etc.)
+
+        Returns:
+            Dictionary with:
+            - start_line: First line number of imports (1-indexed)
+            - end_line: Last line number of imports (1-indexed)
+            - content: String containing all import statements
+            - has_imports: Boolean indicating if imports were found
+        """
+        if language == "python":
+            return self._extract_python_import_section(file_lines)
+        else:
+            logger.debug(f"Import extraction not implemented for language: {language}")
+            return {
+                "start_line": 0,
+                "end_line": 0,
+                "content": "",
+                "has_imports": False
+            }
+
+    def _extract_python_import_section(self, file_lines: List[str]) -> Dict[str, Any]:
+        """
+        Extract Python import section (handles multi-line imports with parentheses and backslash).
+
+        Handles cases like:
+        - from module import (
+              symbol1,
+              symbol2
+          )
+        - from module import symbol1, symbol2, \
+              symbol3, symbol4
+        - import module
+
+        Returns line range and content of all import statements.
+        """
+        import_lines = []
+        start_line = None
+        end_line = None
+
+        in_multiline_import = False
+        in_parentheses_import = False
+        in_backslash_continuation = False
+
+        for idx, line in enumerate(file_lines):
+            line_num = idx + 1  # Convert to 1-indexed
+            stripped = line.strip()
+            original_line = line
+
+            # Skip empty lines and comments at the beginning (before any imports)
+            if not stripped or stripped.startswith('#'):
+                if start_line is None:
+                    # Haven't found imports yet, skip
+                    continue
+                else:
+                    # Within import section, might be spacing between imports
+                    # Don't break yet, there might be more imports
+                    continue
+
+            # Skip docstrings at module level
+            if stripped.startswith(('"""', "'''")):
+                if start_line is not None:
+                    # If we've already found imports, docstring marks end of import section
+                    break
+                # Skip docstring before imports
+                continue
+
+            # Handle multi-line import with parentheses
+            if in_parentheses_import:
+                import_lines.append(original_line)
+                if ')' in stripped:
+                    in_parentheses_import = False
+                    in_multiline_import = False
+                    end_line = line_num
+                    # Check if there's a backslash after closing parenthesis
+                    if stripped.rstrip().endswith('\\'):
+                        in_backslash_continuation = True
+                continue
+
+            # Handle backslash continuation
+            if in_backslash_continuation:
+                import_lines.append(original_line)
+                end_line = line_num
+
+                # Check if this line also ends with backslash
+                if not stripped.rstrip().endswith('\\'):
+                    in_backslash_continuation = False
+                    in_multiline_import = False
+                continue
+
+            # Detect start of import statement
+            is_import_start = stripped.startswith('from ') or stripped.startswith('import ')
+
+            if is_import_start:
+                if start_line is None:
+                    start_line = line_num
+
+                import_lines.append(original_line)
+                end_line = line_num
+
+                # Check for multi-line patterns
+                if '(' in stripped and ')' not in stripped:
+                    # Parentheses-based multi-line import
+                    in_parentheses_import = True
+                    in_multiline_import = True
+                elif stripped.rstrip().endswith('\\'):
+                    # Backslash continuation
+                    in_backslash_continuation = True
+                    in_multiline_import = True
+                else:
+                    # Single line import, reset flags
+                    in_multiline_import = False
+
+                continue
+
+            # Decorator (might be before class/function, not an import)
+            if stripped.startswith('@'):
+                # Decorators indicate we're past imports
+                if start_line is not None:
+                    break
+                continue
+
+            # If we've found imports and hit non-import, non-decorator, non-comment code, stop
+            if start_line is not None and stripped and not in_multiline_import:
+                # Check if it's a special case like __all__ or __version__
+                if stripped.startswith(('__all__', '__version__', '__author__', '__')):
+                    # Module-level dunder variables are OK after imports
+                    continue
+
+                # This is actual code, stop collecting imports
+                break
+
+        if start_line is None:
+            return {
+                "start_line": 0,
+                "end_line": 0,
+                "content": "",
+                "has_imports": False
+            }
+
+        return {
+            "start_line": start_line,
+            "end_line": end_line or start_line,
+            "content": "".join(import_lines),
+            "has_imports": True
+        }
+
+    def _extract_class_name_from_file(
+            self,
+            file_lines: List[str],
+            target_line_idx: int
+    ) -> Optional[str]:
+        """
+        Extract the class name that contains the target line.
+
+        Args:
+            file_lines: All lines in the file
+            target_line_idx: Line index (0-based) to find the containing class
+
+        Returns:
+            Class name if found, None otherwise
+        """
+        # Search backwards from target line to find class definition
+        for i in range(target_line_idx, -1, -1):
+            line = file_lines[i].strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith('#') or line.startswith('//'):
+                continue
+
+            # Check for class definition
+            match = re.search(r'class\s+(\w+)\s*(?:\(|:)', line)
+            if match:
+                class_name = match.group(1)
+
+                # Verify target line is actually inside this class
+                if self._is_line_inside_class(file_lines, target_line_idx, i):
+                    return class_name
+
+        return None
+
+    def _is_line_inside_class(
+            self,
+            file_lines: List[str],
+            target_idx: int,
+            class_start_idx: int
+    ) -> bool:
+        """
+        Check if target line is inside the class starting at class_start_idx.
+
+        Args:
+            file_lines: All lines in the file
+            target_idx: Target line index (0-based)
+            class_start_idx: Class definition line index (0-based)
+
+        Returns:
+            True if target is inside the class
+        """
+        if target_idx <= class_start_idx:
+            return False
+
+        class_line = file_lines[class_start_idx]
+        class_indent = len(class_line) - len(class_line.lstrip())
+
+        # Check lines between class definition and target
+        for i in range(class_start_idx + 1, target_idx + 1):
+            line = file_lines[i]
+
+            # Skip empty lines and comments
+            if not line.strip() or line.strip().startswith('#'):
+                continue
+
+            current_indent = len(line) - len(line.lstrip())
+
+            # If we find a line with same or less indentation as class
+            # and it's not our target line, target is outside class
+            if current_indent <= class_indent and i != target_idx:
+                # Check if this is another class definition
+                if re.search(r'class\s+\w+\s*(?:\(|:)', line):
+                    return False
+
+        # Target line should have greater indentation than class
+        target_line = file_lines[target_idx]
+        if not target_line.strip():
+            return True
+
+        target_indent = len(target_line) - len(target_line.lstrip())
+        return target_indent > class_indent
 
 class ContextExtractor:
     """Handles context extraction logic"""
@@ -1889,6 +2515,7 @@ class ContextExtractor:
             if decorator_line:  # Skip empty lines
                 decorators.append(decorator_line)
         problem_line = lines[problem_line_idx].rstrip()
+
         return {
             "context": context_text,
             "function_definition_line": function_def_line,
@@ -1902,7 +2529,7 @@ class ContextExtractor:
             "has_decorators": len(decorators) > 0,
             "decorator_count": len(decorators),
             "start_line": function_start + 1,
-            "problem_line": problem_line,
+            "problem_lines": [problem_line]
         }
 
     def _find_function_start_with_decorators(
@@ -2085,7 +2712,7 @@ class ContextExtractor:
 
         return {
             "context": "".join(self.lines[start_idx:end_idx]),
-            "problem_line": self.lines[first_idx].rstrip(),
+            "problem_lines": [self.lines[first_idx].rstrip()],
             "line_number": first_idx + 1,
             "start_line": start_idx + 1,
             "end_line": end_idx,
@@ -2098,7 +2725,7 @@ class ContextExtractor:
         """
         return {
             "context": "",
-            "problem_line": "",
+            "problem_lines": [],
             "line_number": line_number,
             "start_line": line_number,
             "end_line": line_number,
@@ -2147,6 +2774,7 @@ def _build_fix_suggestion(
         issue_key=_generate_fix_key(problem_lines),
         original_code=context_dict["context"],
         fixed_code=fix_response["fixed_code"],
+        import_block_code = fix_response.get("import_block",""),
         helper_code=fix_response.get("helper_code"),
         placement_helper=fix_response.get("placement_helper"),
         explanation=fix_response["explanation"],
@@ -2156,6 +2784,7 @@ def _build_fix_suggestion(
         file_path=str(file_path.relative_to(project_path)),
         line_number=context_dict.get("start_line"),
         sonar_line_number=line_range["first_line"],
+        end_import_block_code=context_dict.get("import_section", {}).get("end_line",0),
         last_line_number=end_line,
     )
 
@@ -2181,72 +2810,7 @@ def _generate_fix_key(problem_lines: List[int]) -> str:
     return f"fix_L{min_line}-L{max_line}"
 
 
-def _prepare_context(
-    file_path: Path,
-    line_range: Dict[str, Any],
-    modified_content: str,
-    context_lines: int,
-) -> Optional[Dict[str, Any]]:
-    """
-    Read file and prepare context for LLM.
 
-    Args:
-        file_path: Path to the file
-        line_range: Dictionary with first_line, last_line, problem_lines
-        modified_content: Optional pre-extracted content
-        context_lines: Number of context lines to include around issues
-
-    Returns:
-        Dictionary containing:
-        - context_dict: Context information for LLM
-        - file_lines: Full file content as list of lines
-        - problem_line_content: List of actual problem line strings
-
-        Returns None if file cannot be read
-    """
-    try:
-        # Read file content
-        with open(file_path, "r", encoding="utf-8") as f:
-            file_content = f.read()
-            file_lines = file_content.splitlines(keepends=True)
-
-        # Extract problem line content
-        # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
-        problem_line_content = _extract_problem_lines(
-            file_lines, line_range["problem_lines"]
-        )
-
-        # Build context dictionary
-        if modified_content:
-            # Use provided modified content
-            context_dict = {
-                "context": modified_content,
-                "start_line": line_range["first_line"],
-                "end_line": line_range["last_line"],
-                "problem_lines": problem_line_content,
-            }
-        else:
-            # Extract context from file
-            context_dict = _extract_context_with_lines(
-                file_lines,
-                line_range["first_line"],
-                line_range["last_line"],
-                context_lines,
-                problem_line_content,
-            )
-
-        return {
-            "context_dict": context_dict,
-            "file_lines": file_lines,
-            "problem_line_content": problem_line_content,
-        }
-
-    except UnicodeDecodeError as e:
-        logger.error(f"File encoding error for {file_path}: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
-        return None
 
 
 def get_content_range(
@@ -2290,7 +2854,6 @@ def get_content_range(
         raise ValueError(f"Line range {first_line_tmp}-{last_line_tmp} out of bounds for temp file")
 
     target_content = tmp_lines[start_idx:end_idx]
-    print("target_content ", target_content)
 
     if not target_content:
         return None
@@ -2355,7 +2918,7 @@ def get_content_range(
             'problem_lines': [],
             'confidence': 0.0,
             'match_type': 'not_found',
-            'error': f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file"
+            'error': f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file {file_path}"
         }
 
 
@@ -2416,7 +2979,6 @@ def _find_fuzzy_match(
 def _find_exact_match(target_content: List[str], actual_lines: List[str]) -> Optional[Dict[str, int]]:
     """Find exact match of target content in actual file."""
     target_len = len(target_content)
-    print("target_len ", target_len)
     for i in range(len(actual_lines) - target_len + 1):
         if actual_lines[i:i + target_len] == target_content:
             return {'start': i, 'end': i + target_len}
@@ -2588,3 +3150,109 @@ def _extract_context_with_lines(
         "end_line": context_end,
         "problem_lines": problem_line_content,
     }
+
+
+def get_placement_examples() -> str:
+    """Get concrete placement examples"""
+
+    return """
+PLACEMENT EXAMPLES:
+
+Example 1 - SIBLING (needs self):
+```python
+# Original
+def validate(self, user_id):
+    exists = self.user_repo.exists(user_id)  # Uses self.user_repo
+    if not exists:
+        raise Error()
+
+# Fixed
+FIXED_SELECTION:
+def validate(self, user_id):
+    if not self._user_exists(user_id):
+        raise Error()
+
+NEW_HELPER_CODE:
+def _user_exists(self, user_id):
+    return self.user_repo.exists(user_id)  # ← Needs self
+
+PLACEMENT: SIBLING
+```
+
+Example 2 - GLOBAL_BOTTOM (no self):
+```python
+# Original  
+def process(self, date_str):
+    def parse_date(s):  # ← Nested function
+        return datetime.strptime(s, "%Y-%m-%d")
+    return parse_date(date_str)
+
+# Fixed
+FIXED_SELECTION:
+def process(self, date_str):
+    return _parse_date(date_str)
+
+NEW_HELPER_CODE:
+def _parse_date(date_str):  # ← No self, pure utility
+    from datetime import datetime
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+PLACEMENT: GLOBAL_BOTTOM
+```
+
+Example 3 - GLOBAL_TOP (constant):
+```python
+# Original
+def log_error(self):
+    color = "red"  # ← Duplicated literal
+    print(color)
+
+def highlight(self):
+    color = "red"  # ← Duplicated literal
+    print(color)
+
+# Fixed
+FIXED_SELECTION:
+def log_error(self):
+    print(ERROR_COLOR)
+
+def highlight(self):
+    print(ERROR_COLOR)
+
+NEW_HELPER_CODE:
+ERROR_COLOR = "red"
+
+PLACEMENT: GLOBAL_TOP
+```
+"""
+
+def _is_constant(code: str) -> bool:
+    """Check if code defines a constant"""
+    lines = code.strip().split('\n')
+    if not lines:
+        return False
+    first_line = lines[0].strip()
+    return bool(re.match(r'^[A-Z_][A-Z0-9_]*\s*=', first_line))
+
+def auto_fix_placement(response: Dict) -> Dict:
+    """Automatically fix incorrect placement"""
+
+    helper_code = response.get("NEW_HELPER_CODE", "")
+
+    if not helper_code:
+        return response
+
+    # Detect correct placement
+    if helper_code.strip().startswith(('import ', 'from ')) or _is_constant(helper_code):
+        correct_placement = "GLOBAL_TOP"
+    elif 'self.' in helper_code or ('def ' in helper_code and 'self)' in helper_code):
+        correct_placement = "SIBLING"
+    else:
+        correct_placement = "GLOBAL_BOTTOM"
+
+    # Update if wrong
+    if response["PLACEMENT"] != correct_placement:
+        print(f"⚠️ Auto-fixing placement: {response['PLACEMENT']} → {correct_placement}")
+        response["PLACEMENT"] = correct_placement
+
+    return response

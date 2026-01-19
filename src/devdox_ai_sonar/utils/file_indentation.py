@@ -2,6 +2,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import os
+import re
 from git import Repo
 from typing import List, Tuple
 import logging
@@ -82,7 +83,11 @@ def _apply_simple_replacement(lines: List[str], fix: FixSuggestion) -> None:
     base_indent = calculate_base_indentation(lines[target_line])
     indent_spaces = " " * base_indent
     indented_code = apply_indentation_to_fix(fix.fixed_code, indent_spaces)
+    if fix.import_block_code and fix.import_block_code!="":
+        lines[fix.end_import_block_code] = fix.import_block_code + "\n"
     lines[target_line] = indented_code + "\n"
+
+    return lines
 
 
 def calculate_base_indentation(code: str) -> int:
@@ -145,17 +150,36 @@ def replace_lines_simple(
 
 
 def apply_sibling_helper(
-    lines: List[str],
-    line_range: LineRange,
-    indented_code: str,
-    helper_code: str,
-    base_indent: str,
+        lines: List[str],
+        line_range: LineRange,
+        indented_code: str,
+        helper_code: str,
+        base_indent: str,  # This is currently BODY indent (4 spaces)
 ) -> List[str]:
-    """Apply fix with sibling helper code."""
-    indented_helper = apply_indentation_to_fix(helper_code, base_indent)
-    replacement = [indented_code, "\n", indented_helper, "\n"]
-    lines[line_range.start : line_range.end + 1] = replacement
+    """Apply fix with sibling helper code at the same indentation level."""
+    # For SIBLING helpers, we need METHOD definition indent, not body indent
+    # Extract the original method to find its definition indent
+    original_method_lines = lines[line_range.start: line_range.end + 1]
+
+    original_method_code = '\n'.join(original_method_lines)
+
+    method_def_indent = get_method_definition_indent(original_method_code)
+
+    # Apply method definition indent to helper (not body indent!)
+    indented_helper = apply_indentation_to_fix(helper_code, method_def_indent)
+
+    replacement = [
+        indented_code,  # The fixed original method
+        "\n",
+        "\n",
+        indented_helper,  # Helper at same level as original method
+        "\n"
+    ]
+
+
+    lines[line_range.start: line_range.end + 1] = replacement
     return lines
+
 
 
 def apply_global_bottom_helper(
@@ -329,53 +353,66 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
     """
     Apply base indentation to fixed code while preserving relative indentation.
 
-    Args:
-        fixed_code: The fixed code to indent
-        base_indent: Base indentation to apply
-
-    Returns:
-        Properly indented fixed code
+    This function assumes the fixed_code has CORRECT RELATIVE indentation,
+    and we just need to shift the entire block to start at base_indent.
     """
-    if not fixed_code.strip():
+
+    no_whitespace = ''.join(fixed_code.split())
+    if not no_whitespace:
+
         return fixed_code
 
     lines = fixed_code.split("\n")
+
     if not lines:
+
         return fixed_code
 
+    # Find the minimum indentation in the fixed code (excluding empty lines)
+    non_empty_lines = [line for line in lines if ''.join(line.split())]
+    if not non_empty_lines:
 
+        return fixed_code
 
-    # Apply base indentation to all non-empty lines
+    min_indent = min(len(line) - len(line.lstrip()) for line in non_empty_lines)
+
+    # Remove the minimum indentation from all lines, then add base_indent
     indented_lines = []
     for line in lines:
-        if not line.strip():  # Empty line
-            indented_lines.append("")
-            continue
+        no_whitespace_line = ''.join(line)
+        if no_whitespace_line:  # Non-empty line
+            # Remove min_indent, then add base_indent
+            dedented = line[min_indent:] if len(line) > min_indent else line.lstrip()
+            base_indent_line = len(line)  - len(line.lstrip())
+            if base_indent_line < len(base_indent):
 
-        # Get current indentation of this line
-        current_indent = len(line) - len(line.lstrip())
-
-        if current_indent == 0:
-            # Line has NO indentation - add base_indent
-            indented_lines.append(base_indent + line)
-        else:
-            # Line already has indentation - keep it as-is
+                indented_lines.append(base_indent + dedented)
+            else:
+                indented_lines.append(dedented)
+        else:  # Empty line
             indented_lines.append(line)
 
     return "\n".join(indented_lines)
-
 
 def apply_complex_fix(
     lines: List[str], fix: FixSuggestion, line_range: LineRange
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
     base_indent = calculate_base_indentation_based_on_line(lines, line_range.start)
-    indented_code = apply_indentation_to_fix(fix.fixed_code, base_indent)
+    fixed_code = fix.fixed_code.replace("\\n", "\n") if fix.fixed_code else ""
+
+    indented_code = apply_indentation_to_fix(fixed_code, base_indent)
+
 
     # Normalize helper code
     helper_code = fix.helper_code.replace("\\n", "\n") if fix.helper_code else ""
 
+
+    if fix.end_import_block_code and fix.end_import_block_code !="":
+        lines[fix.end_import_block_code] = fix.import_block_code + "\n"
+
     if not helper_code:
+
         lines = replace_lines_simple(lines, line_range, indented_code)
     elif fix.placement_helper == "SIBLING":
         lines = apply_sibling_helper(
@@ -443,9 +480,28 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
 
     # Handle special single-line replacement case
     if is_simple_replacement(fix):
-        _apply_simple_replacement(lines, fix)
+        _ = _apply_simple_replacement(lines, fix)
         return FixApplication(fix, True)
 
     # Handle complex fix with helper code
-    lines = apply_complex_fix(lines, fix, line_range)
+    _ = apply_complex_fix(lines, fix, line_range)
     return FixApplication(fix, True)
+
+
+def get_method_definition_indent(code_chunk: str) -> str:
+    """
+    Get the indentation level where the method DEFINITION starts.
+
+    For example:
+        async def _fetch_user_profiles(self):  # <- This line's indent (0 spaces for class methods)
+            pass  # <- Body indent (4 spaces)
+    """
+    lines = code_chunk.split('\n')
+
+    for line in lines:
+        # Match 'def' or 'async def'
+        match = re.match(r'^(\s*)(?:async\s+)?def\s+', line)
+        if match:
+            return match.group(1)  # Return leading whitespace before 'def'
+
+    return ""  # Fallback: no indentation

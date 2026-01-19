@@ -231,6 +231,8 @@ class FixSuggestion(BaseModel):
     original_code: str = Field(..., description="Original problematic code")
     fixed_code: str = Field(..., description="Suggested fix")
     helper_code: Optional[str] = Field("", description="Additional helper code")
+    import_block_code: Optional[str] = Field("", description="Import block code")
+    end_import_block_code: Optional[int] = Field(None, description="End import block code")
     placement_helper: Optional[str] = Field(
         "", description="Additional helper code for placing the fix"
     )

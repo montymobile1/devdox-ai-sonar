@@ -1247,17 +1247,18 @@ def _process_and_fix_issues(
 
     services = _initialize_fix_services(auth_config, llm_config)
 
-
+    branch_downloaded = branch
     if int(pull_request) > 0:
-        branch = services["analyzer"].get_branch_from_pr(
+        branch_downloaded = services["analyzer"].get_branch_from_pr(
             project_key=auth_config.project,
             pull_request=str(pull_request))
+
 
 
     tmp_path = generate_tmp_path()
 
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
-    downloaded = download_latest_version(auth_config.git_url,tmp_path,branch)
+    downloaded = download_latest_version(auth_config.git_url,tmp_path,branch_downloaded)
     if not downloaded:
         console.print("Not able to download latest version")
         return  click.Abort()

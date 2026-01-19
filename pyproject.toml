@@ -92,7 +92,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","templates/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88
