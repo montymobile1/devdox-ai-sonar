@@ -413,27 +413,27 @@ class LLMFixer:
         extractor = ContextExtractor(lines)
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
-        last_line_idx = last_line_number - 1
+        last_line_idx = last_line_number -1
 
-        if first_line_idx >= len(lines):
+        if first_line_idx >= len(lines) or last_line_idx >= len(lines):
+            logger.error(f"Line range {first_line_number}-{last_line_number} exceeds file length {len(lines)}")
             return extractor._get_empty_context(first_line_number)
 
         problem_line = lines[first_line_idx].rstrip()
-        # Check if first line contains function/method definition
-        if extractor._is_function_definition(problem_line):
-            function_context = extractor._extract_complete_function(
-                first_line_idx, first_line_idx
-            )
-            if function_context:
-                return function_context
 
-        context = extractor._try_function_extraction_strategies(
+
+        functions_context = extractor._extract_all_functions_in_range(
             first_line_idx,
-            last_line_idx,
+            last_line_idx
         )
 
-        if context:
-            return context
+        if functions_context:
+            logger.debug(f"Found {len(functions_context.get('functions', []))} function(s) in range")
+
+            return functions_context
+
+            # Fallback: No functions found, use normal context
+        logger.debug("No functions found in range, using normal context extraction")
         return extractor._extract_normal_context(
             first_line_idx, last_line_idx, context_lines
         )
@@ -469,7 +469,8 @@ class LLMFixer:
         prompt = self._create_fix_prompt_list(
             issues, context, rule_info_dict, language, error_message
         )
-        template = self.jinja_env.get_template("fix_issues_new_2026_01_18.j2")
+
+        template = self.jinja_env.get_template("system_fix_issues.j2")
         prompt_system = template.render()
         try:
 
@@ -1096,7 +1097,7 @@ class LLMFixer:
 
         method_instruction = "\n".join(method_instruction_list)
 
-        template = self.jinja_env.get_template("fix_issues_new_new.j2")
+        template = self.jinja_env.get_template("fix_issues_multiples.j2")
 
 
         # Prepare context for template
@@ -1240,10 +1241,10 @@ class LLMFixer:
         if not explanation:
             explanation = "Code fix applied"
 
-        # Require fixed_code
-        if not fixed_code:
-            logger.error("❌ FIXED_SELECTION is empty")
-            return None
+        # # Require fixed_code
+        # if not fixed_code:
+        #     logger.error("❌ FIXED_SELECTION is empty")
+        #     return None
 
         return {
             "import_block":import_block,
@@ -2180,6 +2181,277 @@ class ContextExtractor:
     def __init__(self, lines: List[str]):
         self.lines = lines
 
+    def _extract_all_functions_in_range(
+            self,
+            first_idx: int,
+            last_idx: int
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extract ALL complete functions that intersect with the given line range.
+
+        This handles cases where the issue:
+        - Starts inside function A and ends inside function A (single function)
+        - Starts inside function A and ends inside function B (multiple functions)
+        - Spans multiple complete functions
+
+        Args:
+            first_idx: Starting line index (0-based)
+            last_idx: Ending line index (0-based)
+
+        Returns:
+            Dictionary with:
+            - context: Combined code from all functions
+            - start_line: First line of first function (1-indexed)
+            - end_line: Last line of last function (1-indexed)
+            - functions: List of function metadata
+            - is_multi_function: True if multiple functions found
+
+            Returns None if no functions found in range
+        """
+        functions_found = []
+
+        check_before = True
+        # Strategy 1: Find all function definitions within the range
+        for line_idx in range(first_idx, last_idx + 1):
+            if line_idx >= len(self.lines):
+                break
+
+            line = self.lines[line_idx].rstrip()
+            if self._is_function_definition(line):
+                function_info = self._get_function_info(line_idx)
+                if function_info:
+                    if line_idx == first_idx:
+                        check_before = False
+                    functions_found.append(function_info)
+
+        if check_before:
+            logger.debug("Checking if first_idx is inside a function that starts before the range")
+            containing_func_idx = self._find_containing_function(first_idx)
+
+            if containing_func_idx is not None and containing_func_idx < first_idx:
+                logger.debug(f"Found containing function starting at line {containing_func_idx + 1}")
+                function_info = self._get_function_info(containing_func_idx)
+
+                if function_info:
+                    # Check if we already have this function (shouldn't happen, but be safe)
+                    if not any(f['start_idx'] == containing_func_idx for f in functions_found):
+                        logger.debug(f"Adding containing function: {function_info['name']}")
+                        functions_found.append(function_info)
+                    else:
+                        logger.debug("Containing function already in list, skipping")
+
+
+
+        # Strategy 2: If no definitions found IN range, check if range is INSIDE a function
+        if not functions_found:
+
+            containing_func_idx = self._find_containing_function(first_idx)
+            if containing_func_idx is not None:
+                function_info = self._get_function_info(containing_func_idx)
+                if function_info:
+                    functions_found.append(function_info)
+
+        # Strategy 3: Check if we missed any functions that the range intersects
+        # (e.g., range starts in middle of function A, ends in middle of function B)
+        if functions_found:
+            # Find the earliest and latest function boundaries
+            earliest_start = min(f['start_idx'] for f in functions_found)
+
+            latest_end = max(f['end_idx'] for f in functions_found)
+
+
+            # Check for any functions we might have missed between these boundaries
+            for line_idx in range(earliest_start, latest_end + 1):
+                if line_idx >= len(self.lines):
+
+                    break
+
+                line = self.lines[line_idx].rstrip()
+
+                if self._is_function_definition(line):
+
+                    # Check if this function is not already in our list
+                    if not any(f['start_idx'] == line_idx for f in functions_found):
+                        function_info = self._get_function_info(line_idx)
+                        if function_info:
+                            functions_found.append(function_info)
+
+            # Sort by start line to maintain file order
+            functions_found.sort(key=lambda f: f['start_idx'])
+
+        if not functions_found:
+            return None
+
+        # Build combined context from all functions
+        return self._build_multi_function_context(
+            functions_found,
+            first_idx,
+            last_idx
+        )
+
+    def _build_multi_function_context(
+            self,
+            functions: List[Dict[str, Any]],
+            original_first_idx: int,
+            original_last_idx: int
+    ) -> Dict[str, Any]:
+        """
+        Build context dictionary from multiple functions.
+
+        Args:
+            functions: List of function info dictionaries (sorted by start_idx)
+            original_first_idx: Original problematic range start (0-based)
+            original_last_idx: Original problematic range end (0-based)
+        """
+        if not functions:
+            return None
+
+        # Determine overall range
+        overall_start = functions[0]['start_idx']
+        overall_end = functions[-1]['end_idx']
+
+        # Combine all function code
+        combined_lines = []
+        function_metadata = []
+
+        for i, func in enumerate(functions):
+            # Add separator between functions (except for first)
+            if i > 0:
+                # Check if there's code between previous function and this one
+                prev_end = functions[i - 1]['end_idx']
+                gap_start = prev_end + 1
+                gap_end = func['start_idx']
+
+                if gap_start < gap_end:
+                    # Include code between functions (module-level code, other functions, etc.)
+                    gap_lines = self.lines[gap_start:gap_end]
+                    combined_lines.extend(gap_lines)
+
+            # Add function code
+            combined_lines.extend(func['lines'])
+
+            # Track metadata
+            function_metadata.append({
+                'name': func['name'],
+                'start_line': func['start_idx'] + 1,  # Convert to 1-indexed
+                'end_line': func['end_idx'] + 1,
+                'contains_issue_start': func['start_idx'] <= original_first_idx <= func['end_idx'],
+                'contains_issue_end': func['start_idx'] <= original_last_idx <= func['end_idx']
+            })
+
+        context_code = ''.join(combined_lines)
+
+        # Build problem lines list
+        problem_lines = []
+        # problem_lines.append(self.lines[original_first_idx])
+        # problem_lines.append(self.lines[original_last_idx])
+        for line_idx in range(original_first_idx, original_last_idx + 1):
+            if line_idx < len(self.lines):
+                problem_lines.append(self.lines[line_idx].rstrip())
+
+        return {
+            'context': context_code,
+            'start_line': overall_start + 1,  # Convert to 1-indexed
+            'end_line': overall_end + 1,
+            'problem_lines': problem_lines,
+            'is_multi_function': len(functions) > 1,
+            'function_count': len(functions),
+            'functions': function_metadata,
+            'is_complete_function': True
+        }
+
+
+    def _get_function_info(self, func_start_idx: int) -> Optional[Dict[str, Any]]:
+        """
+        Get complete information about a function starting at given index.
+
+        Returns:
+            Dictionary with:
+            - start_idx: Function start (0-based)
+            - end_idx: Function end (0-based)
+            - name: Function name
+            - lines: List of code lines
+            - indentation: Base indentation level
+        """
+
+        if func_start_idx >= len(self.lines):
+            return None
+
+        func_line = self.lines[func_start_idx].rstrip()
+        if not self._is_function_definition(func_line):
+            return None
+
+        # Extract function name
+        func_name = self._extract_function_name(func_line)
+
+        decorator_start_idx = self._find_decorator_start(func_start_idx)
+
+        # Find function end
+        func_end_idx = self._find_function_end(func_start_idx)
+        if func_end_idx is None:
+            return None
+
+        # Get base indentation
+        base_indent = len(func_line) - len(func_line.lstrip())
+
+        decorators = []
+        if decorator_start_idx < func_start_idx:
+            decorators = self.lines[decorator_start_idx:func_start_idx]
+
+        return {
+            'start_idx': decorator_start_idx,
+            'end_idx': func_end_idx,
+            'name': func_name,
+            'lines': self.lines[func_start_idx:func_end_idx + 1],
+            'indentation': base_indent,
+            'decorators': decorators
+        }
+
+    def _find_decorator_start(self, func_def_idx: int) -> int:
+        """
+        Find the starting index of decorators above a function definition.
+
+        Args:
+            func_def_idx: Index of the function definition line
+
+        Returns:
+            Index of first decorator, or func_def_idx if no decorators found
+        """
+        if func_def_idx == 0:
+            return func_def_idx
+
+        # Get function's indentation level
+        func_line = self.lines[func_def_idx].rstrip()
+        func_indent = len(func_line) - len(func_line.lstrip())
+
+        # Walk backwards to find decorators
+        current_idx = func_def_idx - 1
+        decorator_start = func_def_idx
+
+        while current_idx >= 0:
+            line = self.lines[current_idx].rstrip()
+
+            # Skip empty lines and comments immediately above function
+            if not line or line.lstrip().startswith('#'):
+                current_idx -= 1
+                continue
+
+            # Check if line is a decorator
+            stripped = line.lstrip()
+            line_indent = len(line) - len(stripped)
+
+            # Decorator must:
+            # 1. Start with @
+            # 2. Have same indentation as function
+            if stripped.startswith('@') and line_indent == func_indent:
+                decorator_start = current_idx
+                current_idx -= 1
+            else:
+                # Not a decorator, stop searching
+                break
+
+        return decorator_start
+
     def _is_line_inside_function(
         self, lines: List[str], line_idx: int, function_start_idx: int
     ) -> bool:
@@ -2459,7 +2731,7 @@ class ContextExtractor:
         return False
 
     def _extract_complete_function(
-        self, start_idx: int, problem_line_idx: int
+        self, start_idx: int, problem_line_idx: int, last_line_idx: int
     ) -> Optional[Dict[str, Any]]:
         """
         Extract complete function/method from start to end, including decorators.
@@ -2502,7 +2774,9 @@ class ContextExtractor:
             )  # Max 50 lines
 
         # Extract function lines (including decorators)
-        function_lines = lines[function_start : function_end + 1]
+        function_lines = lines[function_start : last_line_idx + 1]
+        if function_end>last_line_idx:
+            function_lines = lines[function_start : function_end + 1]
         context_text = "".join(function_lines)
 
         # Get the actual function definition line
@@ -2627,13 +2901,9 @@ class ContextExtractor:
         Returns:
             Context dict if successful, None if no function context found
         """
-        # Strategy 1: Issue starts on function definition
-        context = self._try_extract_from_definition_line(first_idx)
-        if context:
-            return context
 
-        # Strategy 2: Issue is inside a function
-        context = self._try_extract_containing_function(first_idx)
+        # Strategy 1: Issue is inside a function
+        context = self._try_extract_containing_function(first_idx,last_idx)
         if context:
             return context
 
@@ -2684,14 +2954,10 @@ class ContextExtractor:
         return self._extract_complete_function(function_start_idx, first_idx)
 
     def _try_extract_containing_function(
-        self, first_idx: int
+        self, first_idx: int, last_idx: int
     ) -> Optional[Dict[str, Any]]:
         """
         Try to extract the complete function that contains the issue.
-
-        Args:
-            extractor: Context extractor instance
-            line_range: Range of problematic lines
 
         Returns:
             Function context if issue is inside a function, None otherwise
@@ -2701,7 +2967,7 @@ class ContextExtractor:
         if function_start_idx is None:
             return None
 
-        return self._extract_complete_function(function_start_idx, first_idx)
+        return self._extract_complete_function(function_start_idx, first_idx,last_idx)
 
     def _extract_normal_context(
         self, first_idx: int, last_idx: int, context_lines: int
@@ -2709,7 +2975,6 @@ class ContextExtractor:
         """Extract normal context window"""
         start_idx = max(0, first_idx - context_lines)
         end_idx = min(len(self.lines), last_idx + context_lines + 1)
-
         return {
             "context": "".join(self.lines[start_idx:end_idx]),
             "problem_lines": [self.lines[first_idx].rstrip()],

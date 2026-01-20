@@ -313,10 +313,10 @@ class FixValidator:
             "severity":severity,
             "issue_type":issue_type,
             "context": context,
-            "new_error": new_error,
+            "error_message": new_error,
 
         }
-        template = self.jinja_env.get_template("python/validator_today_2026_01_19.j2")
+        template = self.jinja_env.get_template("python/validator.j2")
         # Render enhanced content
         prompt = template.render(**context_dic)
 
@@ -425,10 +425,10 @@ class FixValidator:
         if not improved_explanation:
             improved_explanation = "Code fix applied"
 
-        # Require fixed_code
-        if not improved_fix:
-            logger.error("❌ FIXED_SELECTION is empty")
-            return None
+        # # Require fixed_code
+        # if not improved_fix:
+        #     logger.error("❌ FIXED_SELECTION is empty")
+        #     return {}
 
         return {
             "improved_fix": improved_fix,
@@ -465,9 +465,20 @@ class FixValidator:
                   response = {}
 
 
+            if not response:
+                return ValidationResult(
+                    status=ValidationStatus.NEEDS_REVIEW,
+                    original_fix=original_fix,
+                    modified_fix=original_fix,
+                    explanation=f"Failed to improve fix ",
+                    confidence=0.0,
+                )
+
             modified_fix= original_fix
             modified_fix.fixed_code = response.get("improved_fix")
-            helper_code = response.get("helper_code")
+
+            helper_code = response.get("helper_code","")
+
             no_whitespace = ''.join(helper_code.split())
             if isinstance(helper_code, str) and no_whitespace:
 

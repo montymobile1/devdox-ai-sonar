@@ -70,7 +70,7 @@ def write_file_lines(file_path: Path, lines: List[str]) -> None:
 
 def is_simple_replacement(fix: FixSuggestion) -> bool:
     """Check if this is a simple single-line replacement."""
-    has_no_newlines = "\n" not in fix.fixed_code
+    has_no_newlines = "\n" not in fix.fixed_code and fix.fixed_code != ""
     has_sonar_line = fix.sonar_line_number != 0
     has_no_helper = fix.helper_code == ""
 

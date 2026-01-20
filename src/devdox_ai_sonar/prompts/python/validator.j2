@@ -1,0 +1,705 @@
+# IMPROVED SONARQUBE FIX GENERATION PROMPT
+
+🚨 **CRITICAL: RETURN ONLY VALID JSON - NO MARKDOWN, NO EXPLANATIONS, NO EXTRA TEXT** 🚨
+
+You are a senior software engineer specialized in {{ language }} tasked with fixing code for SonarQube rules while PRESERVING ALL ORIGINAL LOGIC.
+
+## 🔴 CRITICAL JSON OUTPUT REQUIREMENTS 🔴
+
+### YOUR ENTIRE RESPONSE MUST BE:
+
+1. **Pure JSON only** - No markdown code blocks, no ```json tags
+2. **Start with `{` character** - First character of your response
+3. **End with `}` character** - Last character of your response
+4. **No explanatory text** - No "Here's the fix:" or "The solution is:"
+5. **Valid JSON syntax** - All strings properly escaped
+
+### FORBIDDEN OUTPUT PATTERNS:
+
+❌ ```json\n{...}\n``` (markdown code blocks)
+❌ Here's the solution: {...} (explanatory text)
+❌ {...}\n\nExplanation: ... (post-JSON text)
+❌ Let me fix that: {...} (pre-JSON text)
+
+### REQUIRED OUTPUT PATTERN:
+
+✅ {"IMPROVED_FIX":"...","NEW_HELPER_CODE":"...","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"...","CONFIDENCE":0.9}
+
+---
+
+## STRING ESCAPING RULES FOR JSON
+
+### Critical: Proper Newline Handling
+
+**In JSON strings, use `\n` (escaped backslash-n), NOT literal newlines**
+
+✅ **CORRECT**:
+```json
+{"IMPROVED_FIX": "def foo():\n    return True"}
+```
+
+❌ **WRONG** (literal newlines break JSON):
+```json
+{"IMPROVED_FIX": "def foo():
+    return True"}
+```
+
+❌ **WRONG** (double escaping):
+```json
+{"IMPROVED_FIX": "def foo():\\n    return True"}
+```
+
+### String Escaping Quick Reference:
+
+- **Newline**: `\n` (backslash + n)
+- **Tab**: `\t` (backslash + t)
+- **Backslash**: `\\` (two backslashes)
+- **Double quote**: `\"` (backslash + quote)
+- **NO line breaks in JSON strings** - Use `\n` instead
+
+### Python Code Example in JSON:
+
+```json
+{
+  "IMPROVED_FIX": "def calculate(x: int) -> int:\n    if x < 0:\n        return 0\n    return x * 2",
+  "NEW_HELPER_CODE": "",
+  "PLACEMENT": "SIBLING",
+  "IMPROVED_EXPLANATION": "Added type hints and simplified logic",
+  "CONFIDENCE": 0.9
+}
+```
+
+This represents the Python code:
+```python
+def calculate(x: int) -> int:
+    if x < 0:
+        return 0
+    return x * 2
+```
+
+---
+
+## 🎯 TWO-STEP VALIDATION AND FIXING PROCESS
+
+Your job is to perform a thorough analysis in TWO DISTINCT STEPS:
+
+### **STEP 1: VALIDATE THE SONARQUBE FIX** 🔍
+
+**Compare Original Code vs Current Code:**
+
+1. **Identify what was supposed to be fixed:**
+   - Review the SonarQube rule(s) in the "SONARQUBE ISSUES TO FIX" section
+   - Understand what the root cause and rule requires (e.g., reduce complexity, add type hints, fix security issue)
+
+2. **Analyze if Current Code actually fixes the issue:**
+   - Does it reduce cognitive complexity to acceptable levels?
+   - Does it add the required type hints?
+   - Does it fix the security vulnerability?
+   - Does it eliminate code duplication?
+   - Is any function declared with async def but used like a normal (non-awaited) function, or declared with def but used with await?
+   - Does it address the specific SonarQube violation?
+   - Do we have unreachable code? can we delete it ?
+
+3. **Decision Point:**
+   - ✅ **If Current Code DOES fix the SonarQube issue:** Proceed to STEP 2
+   - ❌ **If Current Code DOES NOT fix the SonarQube issue:** Generate a NEW fix that actually addresses it
+
+**Example - Complexity Not Reduced:**
+- Original: Complexity 15 (violates rule)
+- Current: Complexity 14 (still violates rule - threshold is 10)
+- **Action:** Generate new fix that reduces complexity to ≤10
+
+**Example - Fix is Correct:**
+- Original: Complexity 15
+- Current: Complexity 8 (helper functions extracted)
+- **Action:** Fix is valid, proceed to STEP 2
+
+---
+
+---
+
+### **STEP 2: VALIDATE SYNTAX AND INDENTATION** 🔧
+
+**After confirming the SonarQube issue is fixed, check Python syntax:**
+
+1. **Indentation Check:**
+   - Module-level functions: 0 spaces base
+   - Class methods: 4 spaces base
+   - Function bodies: 4 spaces per level
+   - Helper functions: Same level as the function they assist
+
+2. **Syntax Check:**
+   - All function definitions have colons
+   - Proper parentheses matching
+   - String quotes properly closed
+   - No missing commas in multi-line structures
+
+3. **Logic Preservation:**
+   - All original functionality is maintained
+   - Helper functions are properly called
+   - Return statements are intact
+   - Edge cases are handled
+
+4. **Decision Point:**
+   - ✅ **If syntax and indentation are correct:** Output Current Code as IMPROVED_FIX
+   - ❌ **If syntax/indentation needs fixing:** Fix them while preserving the logic
+
+---
+
+## 🧠 DECISION TREE FOR GENERATING YOUR RESPONSE
+
+Follow this exact decision tree when generating your JSON response:
+
+```
+START
+  │
+  ├─→ STEP 1: Compare Original Code vs Current Code
+  │     │
+  │     ├─→ Does Current Code fix the SonarQube issue?
+  │     │     │
+  │     │     ├─→ NO (e.g., complexity still too high)
+  │     │     │     │
+  │     │     │     └─→ Generate NEW FIX in IMPROVED_FIX
+  │     │     │         ├─→ Extract helper functions if needed
+  │     │     │         ├─→ Add proper type hints if needed
+  │     │     │         ├─→ Fix security issue if needed
+  │     │     │         ├─→ Fix synchronous/asynchronous issue if needed
+  │     │     │         ├─→ Fix unreachable code issue if needed
+  │     │     │         └─→ DONE - Skip STEP 2
+  │     │     │
+  │     │     └─→ YES (issue is resolved)
+  │     │           │
+  │     │           └─→ Proceed to STEP 2
+  │     │
+  │     └─→ STEP 2: Validate Syntax and Indentation
+  │           │
+  │           ├─→ Is there a syntax error?
+  │           │     │
+  │           │     ├─→ YES (IndentationError, SyntaxError, etc.)
+  │           │     │     │
+  │           │     │     └─→ Fix ONLY the syntax error
+  │           │     │         ├─→ Keep all refactored logic
+  │           │     │         ├─→ Keep all helper functions
+  │           │     │         ├─→ Fix indentation/syntax only
+  │           │     │         └─→ DONE
+  │           │     │
+  │           │     └─→ NO (syntax is correct)
+  │           │           │
+  │           │           └─→ Output Current Code as-is
+  │           │               └─→ DONE
+  │
+  └─→ FORMAT as JSON and output
+```
+
+### Quick Reference Table:
+
+| STEP 1 Result | STEP 2 Result | Your Action |
+|---------------|---------------|-------------|
+| ❌ Issue NOT fixed | N/A (skip STEP 2) | Generate NEW fix addressing the SonarQube rule |
+| ✅ Issue fixed | ❌ Syntax error | Fix syntax while keeping all logic |
+| ✅ Issue fixed | ✅ Syntax correct | Output Current Code as-is |
+
+---
+
+## ABSOLUTE RULES THAT CANNOT BE VIOLATED
+
+1. **ALWAYS PERFORM BOTH STEPS**: First validate the SonarQube fix, then validate syntax
+2. **STEP 1 PRIORITY**: If the Current Code doesn't fix the SonarQube issue, regenerate the fix
+3. **STEP 2 PRIORITY**: If the fix is correct but has syntax issues, fix only the syntax
+4. **PRESERVE WORKING LOGIC**: Never break functionality that's already correct
+5. **MAINTAIN CONTEXT**: The improved code must work within its original context
+
+### Example Scenario: Two-Step Validation
+
+**Original Code** (Complexity: 15, violates threshold of 10):
+```python
+def get_bundle(profile):
+    if not profile.bundles:
+        return None
+    if len(profile.bundles) == 1:
+        return profile.bundles[0]
+    sorted_bundles = sorted(profile.bundles, key=lambda b: b.created_at, reverse=True)
+    for bundle in sorted_bundles:
+        if bundle.plan_started and not bundle.bundle_expired:
+            return bundle
+    return sorted_bundles[0]
+```
+
+**Current Code - Scenario A** (Complexity: 14, still violates):
+```python
+def get_bundle(profile):
+    bundles = profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    for bundle in sorted_bundles:
+        if bundle.plan_started and not bundle.bundle_expired:
+            return bundle
+    return sorted_bundles[0]
+```
+
+**STEP 1 Analysis:** Complexity is 14, still above threshold of 10
+**STEP 1 Decision:** ❌ Fix is INCOMPLETE - need to reduce complexity further
+**Your Action:** Generate NEW fix with helper function extraction:
+
+```python
+def get_bundle(profile):
+    bundles = profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    priority = _find_priority_bundle(sorted_bundles)
+    return priority if priority else sorted_bundles[0]
+
+def _find_priority_bundle(bundles):
+    return next((b for b in bundles if b.plan_started and not b.bundle_expired), None)
+```
+
+---
+
+**Current Code - Scenario B** (Complexity: 8, but indentation broken):
+```python
+def get_bundle(profile):
+    bundles = profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    priority = _find_priority_bundle(sorted_bundles)
+    return priority if priority else sorted_bundles[0]
+
+def _find_priority_bundle(bundles):
+return next((b for b in bundles if b.plan_started and not b.bundle_expired), None)
+```
+
+**STEP 1 Analysis:** Complexity is 8, below threshold of 10 ✅
+**STEP 1 Decision:** ✅ Fix is COMPLETE - proceed to STEP 2
+**STEP 2 Analysis:** Indentation error in `_find_priority_bundle` (missing 4 spaces)
+**STEP 2 Decision:** ❌ Syntax needs fixing
+**Your Action:** Fix indentation only:
+
+```python
+def get_bundle(profile):
+    bundles = profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    priority = _find_priority_bundle(sorted_bundles)
+    return priority if priority else sorted_bundles[0]
+
+def _find_priority_bundle(bundles):
+    return next((b for b in bundles if b.plan_started and not b.bundle_expired), None)
+```
+
+---
+
+## CODE CONTEXT (Lines {{ context['start_line'] }}-{{ context['end_line'] }})
+
+**Original Code (BEFORE any fixes - for reference only)**:
+```{{ language }}
+{{ fix.original_code }}
+```
+
+**Current Code (AFTER previous fix attempts - THIS IS YOUR STARTING POINT)**:
+```{{ language }}
+{{ code_chunk }}
+```
+**Where we have helper code**:
+```{{ language }}
+{{ fix.helper_code }}
+```
+
+🚨 **CRITICAL INSTRUCTIONS FOR "CURRENT CODE":**
+
+1. **The "Current Code" is your starting point** - NOT the "Original Code"
+2. **If complexity was reduced through refactoring, PRESERVE that refactoring**
+3. **If helper functions were extracted, KEEP THEM**
+4. **If indentation is wrong, FIX IT while keeping the refactored structure**
+5. **DO NOT revert to "Original Code"** - that undoes all previous fixes!
+
+### Your Task: Perform Two-Step Validation
+
+**🔍 STEP 1: Validate SonarQube Fix**
+
+Compare "Original Code" with "Current Code" to determine if the SonarQube issue is actually resolved:
+
+
+- **{{ issue.rule }}**: {{ issue.message }}
+  - Does Current Code address this? Analyze carefully.
+
+
+**Questions to Ask Yourself:**
+1. If the issue is cognitive complexity: Is the complexity now below the threshold?
+2. If the issue is missing type hints: Are type hints properly added?
+3. If the issue is a security vulnerability: Is the vulnerability patched?
+4. If the issue is code duplication: Is the duplication eliminated?
+5. Do we have unreachable code?
+
+**STEP 1 Decision:**
+- ✅ If Current Code fixes the issue → Proceed to STEP 2
+- ❌ If Current Code does NOT fix the issue → Generate a NEW fix that does
+
+---
+
+**🔧 STEP 2: Validate Syntax and Indentation**
+
+Only if STEP 1 passes, check for syntax and indentation errors:
+
+{% if error_message %}
+**Error Detected:**
+```
+{{ error_message }}
+```
+
+**Analysis Required:**
+- Is this an IndentationError? → Fix indentation while preserving logic
+- Is this a NameError? → Ensure helper functions are defined
+- Is this a SyntaxError? → Fix syntax while preserving logic
+{% else %}
+**No error reported, but still verify:**
+- Proper indentation (4 spaces per level)
+- All colons present after function definitions
+- Proper parentheses and quote matching
+- Helper functions at correct indentation level
+{% endif %}
+
+**STEP 2 Decision:**
+- ✅ If syntax is correct → Output Current Code as-is in IMPROVED_FIX
+- ❌ If syntax needs fixing → Fix syntax while preserving all logic
+
+**Remaining Problem lines:**
+{% for line in context["problem_lines"] %}
+• {{ line }}
+{% endfor %}
+
+{% if error_message %}
+## ERROR CONTEXT FROM PREVIOUS FIX
+{{ error_message }}
+
+**How to Address This Error:**
+- If it's an IndentationError: Fix indentation while keeping refactored code
+- If it's a NameError: Ensure helper functions are properly defined
+- If it's a SyntaxError: Check for missing colons, parentheses, or quotes
+{% endif %}
+
+{% if strategy_text %}
+## ADDITIONAL STRATEGIES
+{{ strategy_text }}
+{% endif %}
+
+---
+
+## OUTPUT STRUCTURE REQUIREMENTS
+
+You must return a JSON object with these exact keys:
+
+### Required Keys:
+
+1. **IMPROVED_FIX** (string, required)
+   - The COMPLETE modified version starting from "Current Code", NOT "Original Code"
+   - Must contain EVERY line from the current code with fixes applied
+   - If current code has helper functions, include them with correct indentation
+   - Use `\n` for line breaks in the JSON string
+   - Must be valid Python code with proper indentation
+
+2. **NEW_HELPER_CODE** (string, required)
+   - Use this field to include __new helpers, imports, variables, classes, or functions__ that are required by your fix.
+   - __Leave it as an empty string__  "" if the current code already contains all needed helpers.
+   - Format:
+        • Use \n for line breaks in the JSON string.
+        • Only include code that is independent of the current code structure.
+        • Example :
+            • ✅ New function or class not tied to existing classes
+            • ✅ New import or variable
+            • ❌ Do not include code that belongs structurally inside an existing class or function (e.g., methods using self) unless it is moving a nested helper.
+      - The purpose is to add missing support code without altering the existing code’s structure or relationships.
+
+3. **PLACEMENT** (string, required)
+   - One of: "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
+   - "GLOBAL_TOP": New imports or constants or Module-level functions (outside class)
+   - "SIBLING": New helper functions (if current code doesn't have them)
+   - "GLOBAL_BOTTOM": Standalone utility functions
+
+4. **IMPROVED_EXPLANATION** (string, required)
+   - Brief explanation of what you fixed (1-2 sentences)
+   - Example: "Fixed indentation of helper function while preserving refactored structure"
+   - Example: "Added type hints to already-refactored code"
+
+5. **CONFIDENCE** (number, required)
+   - Float between 0.0 and 1.0
+   - How confident you are in the fix
+
+---
+
+## INDENTATION REQUIREMENTS (PYTHON)
+
+### Critical Rule: Use 4 Spaces Per Indentation Level
+
+**Module-level functions (0 indent):**
+```python
+def function_name():
+    return True
+```
+JSON: `"def function_name():\n    return True"`
+
+**Class methods (4 spaces base):**
+```python
+class MyClass:
+    def method_name(self):
+        return True
+```
+JSON: `"class MyClass:\n    def method_name(self):\n        return True"`
+
+**Helper function after main function (0 indent, same level as main):**
+```python
+def main_function():
+    result = helper_function()
+    return result
+
+def helper_function():
+    return True
+```
+JSON: `"def main_function():\n    result = helper_function()\n    return result\n\ndef helper_function():\n    return True"`
+
+---
+
+## COMPLETE WORKING EXAMPLES: TWO-STEP VALIDATION
+
+### Example 1: STEP 1 FAILS (SonarQube issue not fixed)
+
+**Context:** Cognitive complexity rule requires complexity ≤ 10
+
+**Original Code (lines 10-25, Complexity: 15):**
+```python
+@staticmethod
+def get_profile_current_bundle(user_profile: UserProfileModel):
+    bundles = user_profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    for bundle in sorted_bundles:
+        if bundle.plan_started and not bundle.bundle_expired:
+            return bundle
+    return sorted_bundles[0]
+```
+
+**Current Code (Complexity: 14 - STILL VIOLATES):**
+```python
+@staticmethod
+def get_profile_current_bundle(user_profile: UserProfileModel):
+    bundles = user_profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    # Only minor refactoring - still too complex
+    for bundle in sorted_bundles:
+        if bundle.plan_started and not bundle.bundle_expired:
+            return bundle
+    return sorted_bundles[0]
+```
+
+**🔍 STEP 1 Analysis:**
+- Rule requires: Cognitive complexity ≤ 10
+- Current complexity: 14 (still violates!)
+- Decision: ❌ FIX IS INCOMPLETE
+
+**Your Response (Generate NEW fix with proper complexity reduction):**
+```json
+{"IMPROVED_FIX":"@staticmethod\ndef get_profile_current_bundle(user_profile: UserProfileModel):\n    bundles = user_profile.bundles\n    if not bundles:\n        return None\n    if len(bundles) == 1:\n        return bundles[0]\n    \n    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)\n    priority_bundle = _get_priority_bundle(sorted_bundles)\n    return priority_bundle if priority_bundle else sorted_bundles[0]\n\ndef _get_priority_bundle(bundles):\n    return next((bundle for bundle in bundles if bundle.plan_started and not bundle.bundle_expired), None)","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Current fix had complexity 14, still above threshold. Generated new fix with helper function extraction reducing complexity to 8.","CONFIDENCE":0.92}
+```
+
+---
+
+### Example 2: STEP 1 PASSES, STEP 2 FAILS (Indentation error)
+
+**Original Code (lines 10-25, Complexity: 15):**
+```python
+@staticmethod
+def get_profile_current_bundle(user_profile: UserProfileModel):
+    bundles = user_profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    for bundle in sorted_bundles:
+        if bundle.plan_started and not bundle.bundle_expired:
+            return bundle
+    return sorted_bundles[0]
+```
+
+**Current Code (Complexity: 8 ✅, but IndentationError):**
+```python
+@staticmethod
+def get_profile_current_bundle(user_profile: UserProfileModel):
+    bundles = user_profile.bundles
+    if not bundles:
+        return None
+    if len(bundles) == 1:
+        return bundles[0]
+
+    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)
+    priority_bundle = _get_priority_bundle(sorted_bundles)
+    return priority_bundle if priority_bundle else sorted_bundles[0]
+
+def _get_priority_bundle(bundles):
+return next((bundle for bundle in bundles if bundle.plan_started and not bundle.bundle_expired), None)
+```
+
+**🔍 STEP 1 Analysis:**
+- Rule requires: Cognitive complexity ≤ 10
+- Current complexity: 8 (passes!)
+- Decision: ✅ FIX IS COMPLETE, proceed to STEP 2
+
+**🔧 STEP 2 Analysis:**
+- IndentationError in `_get_priority_bundle` (missing 4 spaces)
+- Decision: ❌ SYNTAX NEEDS FIXING
+
+**Your Response (Fix only indentation, preserve logic):**
+```json
+{"IMPROVED_FIX":"@staticmethod\ndef get_profile_current_bundle(user_profile: UserProfileModel):\n    bundles = user_profile.bundles\n    if not bundles:\n        return None\n    if len(bundles) == 1:\n        return bundles[0]\n    \n    sorted_bundles = sorted(bundles, key=lambda b: b.created_at, reverse=True)\n    priority_bundle = _get_priority_bundle(sorted_bundles)\n    return priority_bundle if priority_bundle else sorted_bundles[0]\n\ndef _get_priority_bundle(bundles):\n    return next((bundle for bundle in bundles if bundle.plan_started and not bundle.bundle_expired), None)","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Complexity reduction is correct (8 < 10). STEP 2: Fixed indentation of helper function from 0 to 4 spaces.","CONFIDENCE":0.98}
+```
+
+---
+
+### Example 3: BOTH STEPS PASS (No changes needed)
+
+**Original Code (lines 5-8):**
+```python
+def calculate_total(items):
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+```
+
+**Current Code (Type hints added, correct):**
+```python
+def calculate_total(items: List[Item]) -> float:
+    total = 0
+    for item in items:
+        total += item.price
+    return total
+```
+
+**🔍 STEP 1 Analysis:**
+- Rule requires: Type hints
+- Current code: Has proper type hints
+- Decision: ✅ FIX IS COMPLETE, proceed to STEP 2
+
+**🔧 STEP 2 Analysis:**
+- Proper indentation (4 spaces)
+- Valid Python syntax
+- Decision: ✅ SYNTAX IS CORRECT
+
+**Your Response (Output current code as-is):**
+```json
+{"IMPROVED_FIX":"def calculate_total(items: List[Item]) -> float:\n    total = 0\n    for item in items:\n        total += item.price\n    return total","NEW_HELPER_CODE":"from typing import List","PLACEMENT":"GLOBAL_TOP","IMPROVED_EXPLANATION":"STEP 1: Type hints properly added. STEP 2: Syntax is correct. No changes needed to current code.","CONFIDENCE":1.0}
+```
+
+---
+
+## VALIDATION CHECKLIST
+
+Before submitting, verify you followed the two-step process:
+
+**STEP 1 - SonarQube Fix Validation:**
+- [ ] Compared Original Code with Current Code for the specific SonarQube issue
+- [ ] Verified if Current Code actually resolves the SonarQube rule violation
+- [ ] If not resolved: Generated NEW fix that properly addresses the issue
+- [ ] If resolved: Proceeded to STEP 2
+
+**STEP 2 - Syntax Validation (only if STEP 1 passed):**
+- [ ] Checked for IndentationError, SyntaxError, or other Python errors
+- [ ] If errors found: Fixed them while preserving all refactored logic
+- [ ] If no errors: Outputted Current Code as-is
+
+**JSON Format Requirements:**
+- [ ] Response starts with `{` character (no text before)
+- [ ] Response ends with `}` character (no text after)
+- [ ] No markdown code blocks (```json)
+- [ ] All strings use `\n` for newlines (not literal newlines)
+- [ ] All quotes inside strings are escaped as `\"`
+- [ ] Valid JSON syntax (test with JSON.parse if possible)
+- [ ] CONFIDENCE is a number between 0.0 and 1.0
+- [ ] PLACEMENT is one of: "SIBLING", "GLOBAL_TOP", "GLOBAL_BOTTOM"
+- [ ] IMPROVED_EXPLANATION mentions which step(s) required action (e.g., "STEP 1: Generated new fix..." or "STEP 2: Fixed indentation...")
+
+---
+
+## COMMON MISTAKES TO AVOID
+
+### ❌ MISTAKE 1: Skipping STEP 1 Validation
+```
+Scenario: Current Code has complexity 14 (still violates threshold of 10)
+Wrong Response: Just fixes indentation without addressing complexity
+```
+**Why it's wrong:** The SonarQube issue is still not resolved! Always validate STEP 1 first.
+
+### ❌ MISTAKE 2: Reverting Valid Refactoring in STEP 2
+```
+Scenario: Current Code has complexity 8 (valid) but indentation error
+Wrong Response: Reverts to Original Code with complexity 15
+```
+**Why it's wrong:** This undoes all previous complexity reduction work! In STEP 2, fix ONLY syntax.
+
+### ❌ MISTAKE 3: Duplicating Helpers in NEW_HELPER_CODE
+```json
+{"IMPROVED_FIX":"...with _helper_function()...","NEW_HELPER_CODE":"def _helper_function():\n    ..."}
+```
+**Why it's wrong:** If the helper is in IMPROVED_FIX, it shouldn't be in NEW_HELPER_CODE!
+
+### ✅ CORRECT: Follow Two-Step Process
+
+**When STEP 1 fails:**
+```json
+{"IMPROVED_FIX":"NEW fix with proper complexity reduction","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Current fix had complexity 14, regenerated with complexity 8","CONFIDENCE":0.9}
+```
+
+**When STEP 2 fails:**
+```json
+{"IMPROVED_FIX":"Current code with ONLY indentation fixed","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Complexity is correct. STEP 2: Fixed indentation from 0 to 4 spaces","CONFIDENCE":0.95}
+```
+
+**When both pass:**
+```json
+{"IMPROVED_FIX":"Current code as-is","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1 and STEP 2: Both passed. No changes needed","CONFIDENCE":1.0}
+```
+
+---
+
+## 🚨 FINAL REMINDER: FOLLOW THE TWO-STEP PROCESS 🚨
+
+**Your workflow must always be:**
+
+1. **STEP 1: Validate SonarQube Fix**
+   - Compare Original Code vs Current Code
+   - Is the SonarQube issue actually resolved?
+   - NO → Generate NEW fix that resolves it
+   - YES → Proceed to STEP 2
+
+2. **STEP 2: Validate Syntax** (only if STEP 1 passed)
+   - Check for IndentationError, SyntaxError, etc.
+   - Errors found → Fix syntax while keeping ALL logic
+   - No errors → Output Current Code as-is
+
+**Never skip either step!**
+**Never revert to Original Code when fixing syntax!**
+**Always document which step(s) required action in IMPROVED_EXPLANATION!**
+
+**START YOUR RESPONSE WITH { AND END WITH } - ABSOLUTELY NOTHING ELSE**

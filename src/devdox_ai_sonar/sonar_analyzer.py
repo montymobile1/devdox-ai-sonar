@@ -201,7 +201,6 @@ class SonarCloudAnalyzer:
         excluded_set = set(exclude_rules)
         filtered_rules = []
         remaining_count = max_rules if max_rules > 0 else float("inf")
-
         for rule_facet in rules:
             for rule_info in rule_facet.get("values", []):
                 rule_key = rule_info.get("val", "")
@@ -212,7 +211,6 @@ class SonarCloudAnalyzer:
                 # Add rule and decrement counter
                 filtered_rules.append(rule_key)
                 remaining_count -= rule_info.get("count", 0)
-
                 # Stop if we've hit the limit
                 if remaining_count <= 0:
                     return filtered_rules
@@ -460,6 +458,7 @@ class SonarCloudAnalyzer:
 
                 flows = issue_data.get("flows", [])
                 last_line = first_line  # default
+
 
                 for flow in flows:
                     for location in flow.get("locations", []):

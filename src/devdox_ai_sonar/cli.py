@@ -1345,7 +1345,6 @@ def _process_regular_issues(
     Regular issues are processed individually within each rule.
     """
     total_rules = len(issues_by_rule)
-
     for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
         issues_list = rule_data["issue"]
 
@@ -1353,10 +1352,12 @@ def _process_regular_issues(
             f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]"
         )
 
-        if not _process_issues_for_rule(
-            rule_key, issues_list, services, auth_config, fix_params, md_file_path, tmp_path
-        ):
-            break
+        success = _process_issues_for_rule(
+            rule_key, issues_list, services, auth_config, fix_params, md_file_path, tmp_path)
+
+        if not success:
+                console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
+                continue
 
 
 def _process_issues_for_rule(
