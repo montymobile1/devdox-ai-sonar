@@ -2155,7 +2155,7 @@ class LLMFixer:
             # and it's not our target line, target is outside class
             if current_indent <= class_indent and i != target_idx:
                 # Check if this is another class definition
-                if re.search(r'class\s+\w+\s*(?:\(|:)', line):
+                if re.search(r'class\s+\w+\s*[:(]', line):
                     return False
 
         # Target line should have greater indentation than class
