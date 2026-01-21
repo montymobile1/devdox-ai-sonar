@@ -653,7 +653,7 @@ class SonarCloudAnalyzer:
         return fixable_by_file
 
 
-    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str:
+    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str|None:
         """Get branch name from pull request number."""
 
         url = urljoin(self.base_url, "/api/project_pull_requests/list")

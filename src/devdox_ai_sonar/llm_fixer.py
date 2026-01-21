@@ -57,9 +57,15 @@ except ImportError as e:
 
 java_extension = ".java"
 scala_extension = ".scala"
+
 prompt_system_message = "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
 
 FUNCTION_ALREADY_CALLED="• As function can be already called so don't remove the parameters."
+STATICMETHOD_DECORATOR = "@staticmethod"
+PYTHON_CODE_BLOCK = "```python"
+CODE_BLOCK_END = "```"
+
+
 
 class LLMFixer:
     """LLM-powered code fixer for SonarCloud issues."""
@@ -662,7 +668,7 @@ class LLMFixer:
             "• Keep EXACT same function name from original code",
             "• Keep EXACT same function signature (name, parameters, types)",
             "• DO NOT rename the function",
-            "• DO NOT change @staticmethod to instance method or vice versa",
+            f"• DO NOT change {STATICMETHOD_DECORATOR} to instance method or vice versa",
             "• DO NOT invent new function names",
             " ",
             "🚨 CRITICAL - NO HALLUCINATION / NO INVENTION:",
@@ -775,7 +781,7 @@ class LLMFixer:
                     "•  NO accessing parent function's local variables",
                     "•  NO assuming variables exist in scope",
                     "• ALL helpers MUST be instance methods (with 'self' parameter)",
-                    "• NO @staticmethod decorators on ANY helpers",
+                    f"• NO {STATICMETHOD_DECORATOR} decorators on ANY helpers",
                     "• ALL helpers use PLACEMENT: SIBLING",
                     "• Call ALL helpers as: self._helper_name(args)",
                     "",
@@ -792,34 +798,34 @@ class LLMFixer:
                     "    sorted_profiles = self._sort_by_date(profiles)  # ✅ Using self",
                     "    return self._process(sorted_profiles)",
                     "",
-                    "# NEW_HELPER_CODE (ALL have self, NO @staticmethod):",
+                    f"# NEW_HELPER_CODE (ALL have self, NO {STATICMETHOD_DECORATOR}):",
                     "def _sort_by_date(self, profiles):  # ✅ Has self parameter",
                     "    return sorted(profiles, key=lambda p: p.created_at)",
                     "",
                     "# PLACEMENT: SIBLING",
                     "```",
                     "",
-                    "IF ORIGINAL METHOD IS @staticmethod:",
-                    "• ALL helpers MUST be @staticmethod",
+                    f"IF ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
+                    f"• ALL helpers MUST be {STATICMETHOD_DECORATOR}",
                     "• NO 'self' parameters on ANY helpers",
                     "• ALL helpers use PLACEMENT: SIBLING",
                     "• Call ALL helpers as: ClassName._helper_name(args)",
                     "",
-                    "Example - Original is @staticmethod:",
+                    f"Example - Original is {STATICMETHOD_DECORATOR}:",
                     "```python",
-                    "# ORIGINAL (@staticmethod):",
-                    "@staticmethod",
+                    f"# ORIGINAL ({STATICMETHOD_DECORATOR}):",
+                    f"{STATICMETHOD_DECORATOR}",
                     "def calculate_total(items):",
                     "    return sum(item.price for item in items)",
                     "",
-                    "# FIXED_SELECTION (keep @staticmethod):",
-                    "@staticmethod",
+                    f"# FIXED_SELECTION (keep {STATICMETHOD_DECORATOR}):",
+                    f"{STATICMETHOD_DECORATOR}",
                     "def calculate_total(items):",
                     "    filtered = MyClass._filter_valid(items)  # ✅ Using ClassName",
                     "    return sum(item.price for item in filtered)",
                     "",
-                    "# NEW_HELPER_CODE (ALL @staticmethod):",
-                    "@staticmethod",
+                    f"# NEW_HELPER_CODE (ALL {STATICMETHOD_DECORATOR}):",
+                    f"{STATICMETHOD_DECORATOR}",
                     "def _filter_valid(items):  # ✅ No self",
                     "    return [i for i in items if i.is_valid]",
                     "",
@@ -827,14 +833,14 @@ class LLMFixer:
                     "```",
                     "",
                     "🚨 FORBIDDEN PATTERNS:",
-                    "❌ Mixing @staticmethod helpers with self-based original method",
-                    "❌ Mixing self-based helpers with @staticmethod original method",
-                    "❌ Calling self._helper() when helper is @staticmethod",
+                    f"❌ Mixing {STATICMETHOD_DECORATOR} helpers with self-based original method",
+                    f"❌ Mixing self-based helpers with {STATICMETHOD_DECORATOR} original method",
+                    f"❌ Calling self._helper() when helper is {STATICMETHOD_DECORATOR}",
                     "❌ Calling ClassName._helper() when helper has self parameter",
                     "",
                     "✅ CONSISTENCY RULE:",
                     "Original has 'self' → ALL helpers have 'self' → ALL calls use 'self._helper()'",
-                    "Original is '@staticmethod' → ALL helpers are '@staticmethod' → ALL calls use 'ClassName._helper()'",
+                    f"Original is '{STATICMETHOD_DECORATOR}' → ALL helpers are '{STATICMETHOD_DECORATOR}' → ALL calls use 'ClassName._helper()'",
                     ""
                 ])
 
@@ -882,11 +888,11 @@ class LLMFixer:
 
         strategies_list.extend([
             "PLACEMENT GUIDE:",
-            "• SIBLING = Instance methods needing 'self' (no @staticmethod!)",
+            f"• SIBLING = Instance methods needing 'self' (no {STATICMETHOD_DECORATOR})",
             "• GLOBAL_TOP = Imports or constants",
-            "• GLOBAL_BOTTOM = Pure utilities (no 'self', no @staticmethod)",
+            f"• GLOBAL_BOTTOM = Pure utilities (no 'self', no {STATICMETHOD_DECORATOR})",
             "",
-            "🚨 DO NOT USE @staticmethod DECORATOR - it causes issues!",
+            f"🚨 DO NOT USE {STATICMETHOD_DECORATOR} DECORATOR - it causes issues!",
         ])
 
 
@@ -1045,20 +1051,20 @@ class LLMFixer:
 
 
         # Detect method type from ORIGINAL code
-        original_is_static = '@staticmethod' in code_chunk
+        original_is_static = STATICMETHOD_DECORATOR in code_chunk
         original_has_self = 'def ' in code_chunk and 'self' in code_chunk.split('def ')[1].split(')')[0]
 
    
         if original_is_static:
             method_instruction_list = [
-            "🚨 ORIGINAL METHOD IS @staticmethod:",
-            "- Keep @staticmethod decorator in FIXED_SELECTION",
-            "- ALL helper methods MUST also be @staticmethod",
+            f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
+            f"- Keep {STATICMETHOD_DECORATOR} decorator in FIXED_SELECTION",
+            f"- ALL helper methods MUST also be {STATICMETHOD_DECORATOR}",
             "- NO 'self' or 'cls' parameters in ANY helpers",
             f"- Call ALL helpers as: {class_name or 'ClassName'}._helper_name(args)",
             "- ALL helpers use PLACEMENT: SIBLING",
             "",
-            "✅ CONSISTENCY: Original @staticmethod → ALL helpers @staticmethod",
+            f"✅ CONSISTENCY: Original {STATICMETHOD_DECORATOR} → ALL helpers {STATICMETHOD_DECORATOR}",
             ""
             ]
 
@@ -1067,13 +1073,13 @@ class LLMFixer:
            "🚨 ORIGINAL METHOD USES 'self' (INSTANCE METHOD):",
                 "- Keep 'self' as first parameter in FIXED_SELECTION",
                 "- ALL helper methods MUST have 'self' as first parameter",
-                "- NO @staticmethod decorator on ANY helpers",
+                f"- NO {STATICMETHOD_DECORATOR} decorator on ANY helpers",
                 "- Call ALL helpers as: self._helper_name(args)",
                 "- ALL helpers use PLACEMENT: SIBLING",
                 "",
                 "✅ CONSISTENCY: Original has 'self' → ALL helpers have 'self'",
                 "",
-                "❌ FORBIDDEN: Creating @staticmethod helpers for instance method",
+                f"❌ FORBIDDEN: Creating {STATICMETHOD_DECORATOR} helpers for instance method",
                 ""
                 ]
 
@@ -3391,12 +3397,11 @@ def _extract_context_with_lines(
 
 def get_placement_examples() -> str:
     """Get concrete placement examples"""
-
-    return """
+    return f"""
 PLACEMENT EXAMPLES:
 
 Example 1 - SIBLING (needs self):
-```python
+{PYTHON_CODE_BLOCK}
 # Original
 def validate(self, user_id):
     exists = self.user_repo.exists(user_id)  # Uses self.user_repo
@@ -3414,10 +3419,10 @@ def _user_exists(self, user_id):
     return self.user_repo.exists(user_id)  # ← Needs self
 
 PLACEMENT: SIBLING
-```
+{CODE_BLOCK_END}
 
 Example 2 - GLOBAL_BOTTOM (no self):
-```python
+{PYTHON_CODE_BLOCK}
 # Original  
 def process(self, date_str):
     def parse_date(s):  # ← Nested function
@@ -3435,10 +3440,10 @@ def _parse_date(date_str):  # ← No self, pure utility
     return datetime.strptime(date_str, "%Y-%m-%d")
 
 PLACEMENT: GLOBAL_BOTTOM
-```
+{CODE_BLOCK_END}
 
 Example 3 - GLOBAL_TOP (constant):
-```python
+{PYTHON_CODE_BLOCK}
 # Original
 def log_error(self):
     color = "red"  # ← Duplicated literal
@@ -3460,7 +3465,7 @@ NEW_HELPER_CODE:
 ERROR_COLOR = "red"
 
 PLACEMENT: GLOBAL_TOP
-```
+{CODE_BLOCK_END}
 """
 
 def _is_constant(code: str) -> bool:
