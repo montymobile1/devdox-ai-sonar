@@ -479,11 +479,11 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
 
     # Handle special single-line replacement case
     if is_simple_replacement(fix):
-        _ = _apply_simple_replacement(lines, fix)
+        _apply_simple_replacement(lines, fix)
         return FixApplication(fix, True)
 
     # Handle complex fix with helper code
-    _ = apply_complex_fix(lines, fix, line_range)
+    apply_complex_fix(lines, fix, line_range)
     return FixApplication(fix, True)
 
 
