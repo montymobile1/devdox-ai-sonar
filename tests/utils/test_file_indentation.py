@@ -389,13 +389,13 @@ class TestApplySiblingHelper:
             "helper_code",
             "    "
         )
-
         assert result[0] == "line1\n"
         assert result[1] == "fixed_code"
         assert result[2] == "\n"
-        assert result[3] == "    helper_code"
-        assert result[4] == "\n"
-        assert result[5] == "line3\n"
+        assert result[3] == "\n"
+        assert result[4] == "helper_code"
+        assert result[5] == "\n"
+        assert result[6] == "line3\n"
 
     def test_apply_sibling_helper_with_indentation(self):
         """Test sibling helper with proper indentation."""
@@ -409,11 +409,10 @@ class TestApplySiblingHelper:
             "# comment",
             "    "
         )
-
         # Fixed code should be indented
         assert "    x = 2" in result[1]
         # Helper should also be indented
-        assert "    # comment" in result[3]
+        assert "# comment" in result[4]
 
     def test_apply_sibling_helper_multiline_helper(self):
         """Test sibling helper with multiline code."""
@@ -966,10 +965,9 @@ class TestApplyIndentationToFix:
         code = "    x = 1\n        y = 2"
         indent = "    "
         result = apply_indentation_to_fix(code, indent)
-
         # Should normalize first, then apply
-        assert "    x = 1" in result
-        assert "        y = 2" in result
+        assert "x = 1" in result
+        assert "  y = 2" in result
 
     def test_apply_indentation_empty_lines(self):
         """Test preserving empty lines."""

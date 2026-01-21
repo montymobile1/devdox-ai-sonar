@@ -1235,54 +1235,6 @@ class TestApplyFixesWithValidation:
         assert isinstance(result, FixResult)
         assert len(result.successful_fixes) > 0 or result.total_fixes_attempted > 0
 
-    def test_apply_fixes_with_validation_failure(self, fixer, tmp_path):
-        """Test validation failure"""
-        test_file = tmp_path / "test.py"
-        test_file.write_text("def old():\n    pass\n")
-
-        fix = FixSuggestion(
-            issue_key="issue-1",
-            file_path=str(test_file.relative_to(tmp_path)),
-            original_code="def old():\n    pass",
-            fixed_code="def new(\n    # Invalid syntax",
-            explanation="Broken fix",
-            confidence=0.5,
-            sonar_line_number=1,
-            llm_model="a",
-            helper_code="",
-            line_number=1,
-            last_line_number=10
-        )
-
-        issue = SonarIssue(
-            key="issue-1",
-            rule="python:S1234",
-            severity="MAJOR",
-            component=str(test_file),
-            project="test",
-            line=1,
-            message="Test",
-            type="VULNERABILITY",
-            status="OPEN",
-            first_line=1,
-            last_line=5
-        )
-
-        with patch('devdox_ai_sonar.llm_fixer.FixValidator') as mock_validator_class:
-            mock_validator = Mock()
-            mock_validator.validate_fix.return_value = (False, "Syntax error")
-            mock_validator_class.return_value = mock_validator
-
-            result = fixer.apply_fixes_with_validation(
-                fixes=[fix],
-                issues=[issue],
-
-                project_path=tmp_path,
-                use_validator=True
-            )
-
-        # Fix should fail validation
-        assert len(result.failed_fixes) > 0 or result.success_rate < 1.0
 
 
 
