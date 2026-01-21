@@ -732,14 +732,14 @@ class LLMFixer:
             "",
             "Examples:",
             "❌ WRONG - Import inside helper:",
-            "```python",
+            f"{PYTHON_CODE_BLOCK}",
             "def __parse_date(self, date_str: str):",
             "    from datetime import datetime  # ❌ BAD",
             "    return datetime.strptime(date_str, '%Y-%m-%d')",
             "```",
             "",
             "✅ CORRECT - Import in IMPORT_BLOCK:",
-            "```python",
+            f"{PYTHON_CODE_BLOCK}",
             "# In IMPORT_BLOCK:",
             '"IMPORT_BLOCK": "from datetime import datetime\\n"',
             "",
@@ -786,7 +786,7 @@ class LLMFixer:
                     "• Call ALL helpers as: self._helper_name(args)",
                     "",
                     "Example - Original uses 'self':",
-                    "```python",
+                    f"{PYTHON_CODE_BLOCK}",
                     "# ORIGINAL (has self):",
                     "async def get_user_esims(self, user_id: str):",
                     "    profiles = self._fetch_profiles(user_id)",
@@ -812,7 +812,7 @@ class LLMFixer:
                     "• Call ALL helpers as: ClassName._helper_name(args)",
                     "",
                     f"Example - Original is {STATICMETHOD_DECORATOR}:",
-                    "```python",
+                    f"{PYTHON_CODE_BLOCK}",
                     f"# ORIGINAL ({STATICMETHOD_DECORATOR}):",
                     f"{STATICMETHOD_DECORATOR}",
                     "def calculate_total(items):",
@@ -1995,15 +1995,6 @@ class LLMFixer:
             stripped = line.strip()
             original_line = line
 
-            # Skip empty lines and comments at the beginning (before any imports)
-            if not stripped or stripped.startswith('#'):
-                if start_line is None:
-                    # Haven't found imports yet, skip
-                    continue
-                else:
-                    # Within import section, might be spacing between imports
-                    # Don't break yet, there might be more imports
-                    continue
 
             # Skip docstrings at module level
             if stripped.startswith(('"""', "'''")):
