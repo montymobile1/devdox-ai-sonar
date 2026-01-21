@@ -312,7 +312,7 @@ def _find_priority_bundle(bundles):
 
 **Current Code (AFTER previous fix attempts - THIS IS YOUR STARTING POINT)**:
 ```{{ language }}
-{{ code_chunk }}
+{{ context['full_context'] }}
 ```
 **Where we have helper code**:
 ```{{ language }}
@@ -335,7 +335,8 @@ Compare "Original Code" with "Current Code" to determine if the SonarQube issue 
 
 
 - **{{ issue.rule }}**: {{ issue.message }}
-  - Does Current Code address this? Analyze carefully.
+
+- Does Current Code address this? Analyze carefully.
 
 
 **Questions to Ask Yourself:**

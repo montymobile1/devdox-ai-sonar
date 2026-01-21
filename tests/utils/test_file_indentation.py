@@ -85,6 +85,8 @@ def mock_fix():
     fix.line_number = 10
     fix.last_line_number = 10
     fix.sonar_line_number = 10
+    fix.end_import_block_code = 2
+    fix.import_block_code=""
     fix.fixed_code = "x = 2"
     fix.helper_code = ""
     fix.placement_helper = None
@@ -1061,6 +1063,7 @@ class TestApplyComplexFix:
         lines = ["def func():\n", "    x = 1\n", "    y = 2\n"]
         mock_fix.fixed_code = "x = 2"
         mock_fix.helper_code = ""
+
         line_range = LineRange(start=1, end=1)
 
         result = apply_complex_fix(lines, mock_fix, line_range)
@@ -1285,6 +1288,8 @@ class TestIntegration:
             fix = Mock(spec=FixSuggestion)
             fix.issue_key = f"TEST-{i}"
             fix.line_number = i
+            fix.import_block_code=""
+            fix.end_import_block_code = 2
             fix.last_line_number = i
             fix.sonar_line_number = i
             fix.fixed_code = f"new_line{i}"
@@ -1515,6 +1520,8 @@ class TestPerformance:
         for i in range(50, 100):
             fix = Mock(spec=FixSuggestion)
             fix.issue_key = f"TEST-{i}"
+            fix.end_import_block_code = 10
+            fix.import_block_code=""
             fix.line_number = i
             fix.last_line_number = i
             fix.sonar_line_number = i

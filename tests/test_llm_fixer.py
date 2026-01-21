@@ -12,7 +12,7 @@ import shutil
 import re
 
 from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_suggestion,
-                                       _prepare_context,
+
                                        _validate_and_extract_issue_info,
                                        _generate_fix_key,
                                        _extract_problem_lines,
@@ -716,11 +716,14 @@ class TestLLMAPICalls:
             first_line=1,
             last_line=5
         )
-        context_dict = {"context": "code", "start_line": 1, "end_line": 5,"strategy_text":"Replace"}
+        context_dict = {"context_dict":{"context": "code", "start_line": 1, "end_line": 5,"strategy_text":"Replace"},
+                        "file_lines": [],
+                        "problem_line_content": [],
+                        }
 
         result = fixer_openai._call_llm_list(
             [issue],
-            context_dict,
+            context_dict['context_dict'],
             ".py",
             {},
             ""
@@ -950,6 +953,7 @@ Confidence: 0.85
     def test_validate_results_complete(self, fixer):
         """Test validation of complete results"""
         results = {
+            "IMPORT_BLOCK":"",
             "FIXED_SELECTION": "code",
             "EXPLANATION": "Done",
             "CONFIDENCE": 0.9,
@@ -2145,7 +2149,7 @@ class TestContextExtractorComprehensive:
         ]
         extractor = ContextExtractor(lines)
 
-        result = extractor._extract_complete_function(0, 0)
+        result = extractor._extract_complete_function(0, 0,0)
 
         assert result is not None
         assert result["is_complete_function"]
@@ -2163,7 +2167,7 @@ class TestContextExtractorComprehensive:
         ]
         extractor = ContextExtractor(lines)
 
-        result = extractor._extract_complete_function(2, 2)
+        result = extractor._extract_complete_function(2, 2,3)
 
         assert result is not None
         assert result["has_decorators"]
@@ -2171,29 +2175,6 @@ class TestContextExtractorComprehensive:
         assert "@decorator1" in result["context"]
         assert "@decorator2" in result["context"]
 
-    def test_try_extract_from_definition_line_success(self):
-        """Test extracting from definition line - success"""
-        lines = [
-            "def my_func():\n",
-            "    return 1\n",
-        ]
-        extractor = ContextExtractor(lines)
-
-        result = extractor._try_extract_from_definition_line(0)
-
-        assert result is not None
-        assert result["is_complete_function"]
-
-    def test_try_extract_from_definition_line_not_definition(self):
-        """Test extracting from definition line - not a definition"""
-        lines = [
-            "x = 1\n",
-            "y = 2\n",
-        ]
-        extractor = ContextExtractor(lines)
-
-        result = extractor._try_extract_from_definition_line(0)
-        assert result is None
 
     def test_try_extract_containing_function_success(self):
         """Test extracting containing function - success"""
@@ -2205,7 +2186,7 @@ class TestContextExtractorComprehensive:
         ]
         extractor = ContextExtractor(lines)
 
-        result = extractor._try_extract_containing_function(2)
+        result = extractor._try_extract_containing_function(2,5)
 
         assert result is not None
         assert result["is_complete_function"]
@@ -2244,9 +2225,9 @@ class TestContextExtractorComprehensive:
         extractor = ContextExtractor([])
 
         result = extractor._get_empty_context(100)
-
+        print("result ", result)
         assert result["context"] == ""
-        assert result["problem_line"] == ""
+        assert result["problem_lines"] ==[]
         assert result["line_number"] == 100
 
 
@@ -2256,6 +2237,10 @@ class TestContextExtractorComprehensive:
 
 class TestModuleLevelFunctions:
     """Test module-level helper functions"""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
 
     def test_generate_fix_key_single_line(self):
         """Test generating fix key for single line"""
@@ -2455,7 +2440,7 @@ class TestModuleLevelFunctions:
         with pytest.raises(FileNotFoundError):
             _validate_and_extract_issue_info([issue], tmp_path)
 
-    def test_prepare_context_success(self, tmp_path):
+    def test_prepare_context_success(self, tmp_path,fixer):
         """Test preparing context successfully"""
         test_file = tmp_path / "test.py"
         test_file.write_text("line 1\nline 2\nline 3\n")
@@ -2466,13 +2451,13 @@ class TestModuleLevelFunctions:
             "problem_lines": [1, 2]
         }
 
-        result = _prepare_context(test_file, line_range, "", context_lines=1)
+        result = fixer._prepare_context(test_file, line_range, "", context_lines=1, language="python")
 
         assert result is not None
         assert "context_dict" in result
         assert "file_lines" in result
 
-    def test_prepare_context_with_modified_content(self, tmp_path):
+    def test_prepare_context_with_modified_content(self, tmp_path,fixer):
         """Test preparing context with modified content"""
         test_file = tmp_path / "test.py"
         test_file.write_text("original\n")
@@ -2483,16 +2468,17 @@ class TestModuleLevelFunctions:
             "problem_lines": [1]
         }
 
-        result = _prepare_context(
+        result = fixer._prepare_context(
             test_file,
             line_range,
             modified_content="modified content",
-            context_lines=1
+            context_lines=1,
+            language="python"
         )
 
         assert result["context_dict"]["context"] == "modified content"
 
-    def test_prepare_context_unicode_error(self, tmp_path):
+    def test_prepare_context_unicode_error(self, tmp_path, fixer):
         """Test handling unicode decode error"""
         test_file = tmp_path / "binary.bin"
         test_file.write_bytes(b'\x80\x81\x82')  # Invalid UTF-8
@@ -2503,7 +2489,7 @@ class TestModuleLevelFunctions:
             "problem_lines": [1]
         }
 
-        result = _prepare_context(test_file, line_range, "", context_lines=1)
+        result =fixer. _prepare_context(test_file, line_range, "", context_lines=1, language="python")
         assert result is None
 
     def test_build_fix_suggestion_complete(self, tmp_path):
@@ -2991,15 +2977,7 @@ def duplicate():
 
         assert result["placement_helper"] == "SIBLING"  # Default
 
-    def test_extract_fields_from_parsed_json_missing_fixed_code(self, fixer):
-        """Test extracting fields when FIXED_SELECTION is missing"""
-        fix_data = {
-            "EXPLANATION": "Some explanation"
-        }
 
-        result = fixer._extract_fields_from_parsed_json(fix_data)
-
-        assert result is None
 
     def test_apply_regex_patterns_all_patterns(self, fixer):
         """Test applying all regex patterns"""
@@ -3062,6 +3040,7 @@ def duplicate():
     def test_validate_results_confidence_bounds(self, fixer):
         """Test confidence is bounded between 0 and 1"""
         results = {
+            "IMPORT_BLOCK":"",
             "FIXED_SELECTION": "code",
             "CONFIDENCE": 1.5,  # Over 1
             "NEW_HELPER_CODE": "",

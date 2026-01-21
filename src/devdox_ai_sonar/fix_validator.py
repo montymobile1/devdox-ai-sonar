@@ -210,7 +210,7 @@ class FixValidator:
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=fix,
 
-                    validation_notes="Validation failed - manual review required",
+                    explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
 
@@ -226,7 +226,7 @@ class FixValidator:
             return ValidationResult(
                 status=ValidationStatus.NEEDS_REVIEW,
                 original_fix=fix,
-                validation_notes=f"Validation error: {str(e)}",
+                explanation=f"Validation error: {str(e)}",
                 confidence=0.0,
             )
 
@@ -464,8 +464,7 @@ class FixValidator:
                 except json.JSONDecodeError:
                   response = {}
 
-
-            if not response:
+            if not response or response.get("confidence", 0.0) < self.min_confidence_threshold:
                 return ValidationResult(
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=original_fix,
@@ -547,7 +546,7 @@ class FixValidator:
                     ValidationResult(
                         status=ValidationStatus.NEEDS_REVIEW,
                         original_fix=fix,
-                        validation_notes="File not found for validation",
+                        explanation="File not found for validation",
                         confidence=0.0,
                     )
                 )
@@ -566,7 +565,7 @@ class FixValidator:
                     ValidationResult(
                         status=ValidationStatus.NEEDS_REVIEW,
                         original_fix=fix,
-                        validation_notes=f"Error reading file: {str(e)}",
+                        explanation=f"Error reading file: {str(e)}",
                         confidence=0.0,
                     )
                 )

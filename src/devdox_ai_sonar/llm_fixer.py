@@ -984,10 +984,10 @@ class LLMFixer:
 
         # 3. Construct Prompt
         # We join strategies with newlines for a clean list
-        strategy_text = "\n".join(strategies)
+
 
         template = self.jinja_env.get_template("fix_issues.j2")
-
+        strategy_text = "\n".join(strategies)
         # Prepare context for template
         context_dic = {
             "language": language,
@@ -1015,8 +1015,7 @@ class LLMFixer:
         # 1. Context Setup
         code_chunk = context.get("context", "")
         class_name= context.get("class_name", "")
-        base_indent = calculate_base_indentation(code_chunk)
-
+        strategies =[]
 
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
@@ -1048,9 +1047,6 @@ class LLMFixer:
                 code_chunk=code_chunk,
             )
 
-            # 3. Construct Prompt
-            # We join strategies with newlines for a clean list
-            strategy_text = "\n".join(strategies)
 
         # Detect method type from ORIGINAL code
         original_is_static = '@staticmethod' in code_chunk
@@ -1098,7 +1094,9 @@ class LLMFixer:
         method_instruction = "\n".join(method_instruction_list)
 
         template = self.jinja_env.get_template("fix_issues_multiples.j2")
-
+        # 3. Construct Prompt
+        # We join strategies with newlines for a clean list
+        strategy_text = "\n".join(strategies)
 
         # Prepare context for template
         context_dic = {
@@ -2861,29 +2859,7 @@ class ContextExtractor:
 
         return False
 
-    def _try_extract_from_definition_line(
-        self, first_idx: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Try to extract complete function if first line is a function definition.
 
-        Args:
-            extractor: Context extractor instance
-            lines: All file lines
-            line_range: Range of problematic lines
-
-        Returns:
-            Function context if first line is a definition, None otherwise
-        """
-        if first_idx >= len(self.lines):
-            return None
-
-        first_line = self.lines[first_idx].rstrip()
-
-        if not self._is_function_definition(first_line):
-            return None
-
-        return self._extract_complete_function(first_idx, first_idx)
 
     def _try_function_extraction_strategies(
         self,
@@ -2951,7 +2927,7 @@ class ContextExtractor:
             return None
 
         # Extract the complete function
-        return self._extract_complete_function(function_start_idx, first_idx)
+        return self._extract_complete_function(function_start_idx, first_idx,last_idx)
 
     def _try_extract_containing_function(
         self, first_idx: int, last_idx: int

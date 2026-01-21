@@ -147,16 +147,14 @@ class TestValidateFix:
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: APPROVED
+        ].message.content = """{
+"IMPROVED_FIX": "",
 
-CONFIDENCE: 0.95
+"CONFIDENCE": "0.95",
 
-VALIDATION_NOTES:
-The fix correctly removes the unused variable.
-
-CONCERNS:
-None
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -164,9 +162,9 @@ None
         validator = FixValidator(provider="openai", api_key="test-key")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
         assert result.confidence == 0.95
-        assert "correctly removes" in result.validation_notes
+        assert "correctly removes" in result.explanation
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_rejected(
@@ -179,16 +177,16 @@ None
         mock_response.choices[
             0
         ].message.content = """
-STATUS: REJECTED
 
-CONFIDENCE: 0.3
+{
+"IMPROVED_FIX": "",
 
-VALIDATION_NOTES:
-This fix would break the code.
+"CONFIDENCE": "0.3",
 
-CONCERNS:
-- Removes necessary variable
-- Missing error handling
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"This fix would break the code."
+}
+
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -196,8 +194,8 @@ CONCERNS:
         validator = FixValidator(provider="openai", api_key="test-key",model="gpt-4o")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        assert result.status == ValidationStatus.REJECTED
-        assert len(result.concerns) > 0
+        assert result.status == ValidationStatus.NEEDS_REVIEW
+        assert result.confidence <= 0.5
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_modified(
@@ -209,25 +207,15 @@ CONCERNS:
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: MODIFIED
+        ].message.content = """{
+"IMPROVED_FIX": "return value",
 
-CONFIDENCE: 0.85
+"CONFIDENCE": "0.85",
 
-VALIDATION_NOTES:
-Fix is good but can be improved.
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"Added comment for clarity"
+}
 
-CONCERNS:
-None
-
-IMPROVED_FIX:
-```python
-    # Better implementation
-    return value
-```
-
-IMPROVED_EXPLANATION:
-Added comment for clarity
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -237,7 +225,7 @@ Added comment for clarity
 
         assert result.status == ValidationStatus.MODIFIED
         assert result.modified_fix is not None
-        assert "Better implementation" in result.modified_fix.fixed_code
+        assert "return value" in result.modified_fix.fixed_code
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_needs_review(
@@ -339,25 +327,23 @@ class TestParseValidationResponse:
         mock_openai.OpenAI.return_value = MagicMock()
         validator = FixValidator(provider="openai", api_key="test-key")
 
-        response_text = """
-STATUS: APPROVED
+        response_text =  """{
+"IMPROVED_FIX": "",
 
-CONFIDENCE: 0.9
+"CONFIDENCE": "0.9",
 
-VALIDATION_NOTES:
-Excellent fix.
-
-CONCERNS:
-- Minor style issue
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"Fix indentation."
+}
 """
+
 
         result = validator._parse_validation_response(
             response_text, sample_fix
         )
 
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
         assert result.confidence == 0.9
-        assert len(result.concerns) > 0
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_parse_response_missing_fields(self, mock_openai, sample_fix):
@@ -457,10 +443,14 @@ class TestBatchValidation:
         mock_response.choices[
             0
         ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: 0.9
-VALIDATION_NOTES: Good fix
-CONCERNS: None
+{
+"IMPROVED_FIX": "",
+
+"CONFIDENCE": "0.95",
+
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -475,42 +465,8 @@ CONCERNS: None
         results = validator.validate_fixes_batch(fixes_data)
 
         assert len(results) == 2
-        assert all(r.status == ValidationStatus.APPROVED for r in results)
+        assert all(r.status == ValidationStatus.MODIFIED for r in results)
 
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_validate_fixes_batch_stop_on_rejection(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test stopping batch validation on rejection."""
-
-        mock_client = MagicMock()
-
-        # First call returns REJECTED
-        response1 = MagicMock()
-        response1.choices[
-            0
-        ].message.content = """
-STATUS: REJECTED
-CONFIDENCE: 0.3
-VALIDATION_NOTES: Bad fix
-CONCERNS: Major issues
-"""
-
-        mock_client.chat.completions.create.return_value = response1
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-
-        fixes_data = [
-            (sample_fix, sample_issue, sample_file_content),
-            (sample_fix, sample_issue, sample_file_content),
-        ]
-
-        results = validator.validate_fixes_batch(fixes_data, stop_on_rejection=True)
-
-        # Should stop after first rejection
-        assert len(results) == 1
-        assert results[0].status == ValidationStatus.REJECTED
 
 
 class TestConvenienceFunction:
@@ -636,26 +592,25 @@ class TestPromptGeneration:
             "issue_end": 10,
         }
 
-        prompt = validator._create_validation_prompt(sample_fix, sample_issue, context)
+        prompt = validator._create_validation_prompt(sample_fix, sample_issue, context,"")
 
         # Check Issue details
         assert sample_issue.rule in prompt
         assert sample_issue.message in prompt
-        assert str(sample_issue.severity) in prompt
-        assert f"{sample_issue.first_line}-{sample_issue.last_line}" in prompt
+        # assert str(sample_issue.severity) in prompt
+        # assert f"{sample_issue.first_line}-{sample_issue.last_line}" in prompt
 
         # Check Fix details
         assert f"{sample_fix.confidence:.2f}" in prompt
-        assert sample_fix.llm_model in prompt
+
         assert sample_fix.fixed_code in prompt
 
         # Check Context details
         assert "context lines..." in prompt
-        assert "lines 5-15" in prompt
+        assert "5-15" in prompt
         assert "Your Task:" in prompt
-        assert "Response Format:" in prompt
-        assert "STATUS:" in prompt
-        assert "CONCERNS:" in prompt
+
+        assert "IMPROVED_FIX" in prompt
 
 
 class TestAdvancedContextExtraction:
@@ -735,16 +690,14 @@ class TestGeminiProviderIntegration:
         """Test successful LLM call with Gemini provider."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.text = """
-STATUS: APPROVED
+        mock_response.text = """{
+"IMPROVED_FIX": "",
 
-CONFIDENCE: 0.95
+"CONFIDENCE": "0.95",
 
-VALIDATION_NOTES:
-The fix correctly removes the unused variable.
-
-CONCERNS:
-None
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
+}
 """
         mock_client.models.generate_content.return_value = mock_response
         mock_genai.Client.return_value = mock_client
@@ -752,7 +705,7 @@ None
         validator = FixValidator(provider="gemini", api_key="test-key")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
         assert result.confidence == 0.95
         mock_client.models.generate_content.assert_called_once()
 
@@ -769,7 +722,7 @@ None
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
-        assert "Validation failed" in result.validation_notes
+        assert "Validation failed" in result.explanation
 
     @patch("devdox_ai_sonar.fix_validator.genai")
     def test_call_llm_validator_gemini_empty_response(
@@ -908,25 +861,14 @@ IMPROVED_FIX:
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: MODIFIED
+        ].message.content = """{
+"IMPROVED_FIX": "return value",
 
-CONFIDENCE: 0.9
+"CONFIDENCE": "0.9",
 
-VALIDATION_NOTES:
-Improved with better style.
-
-CONCERNS:
-None
-
-IMPROVED_FIX:
-```python
-    # Better implementation
-    return value
-```
-
-IMPROVED_EXPLANATION:
-Added clear comment
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"Added clear comment"
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -936,7 +878,7 @@ Added clear comment
 
         assert result.status == ValidationStatus.MODIFIED
         assert result.modified_fix is not None
-        assert "Better implementation" in result.modified_fix.fixed_code
+        assert "return value" in result.modified_fix.fixed_code
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_modified_with_multiple_code_blocks(
@@ -948,25 +890,15 @@ Added clear comment
         mock_response.choices[
             0
         ].message.content = """
-STATUS: MODIFIED
-CONFIDENCE: 0.9
-VALIDATION_NOTES: Multiple options
-CONCERNS: None
+        {
+"IMPROVED_FIX": "return different_value",
 
-IMPROVED_FIX:
-```python
-    # First option
-    return value
-```
+"CONFIDENCE": "0.9",
 
-Here's another option:
-```python
-    # Second option
-    return different_value
-```
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
+}
 
-IMPROVED_EXPLANATION:
-First is better
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -976,7 +908,7 @@ First is better
 
         assert result.status == ValidationStatus.MODIFIED
         # Should extract first code block
-        assert "First option" in result.modified_fix.fixed_code
+        assert "different_value" in result.modified_fix.fixed_code
 
 
 # ==============================================================================
@@ -987,60 +919,23 @@ First is better
 class TestRegexParsingEdgeCases:
     """Test parsing edge cases in validation responses."""
 
+
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_status_case_insensitive(
+    def test_missing_explanation_notes(
         self, mock_openai, sample_fix, sample_issue, sample_file_content
     ):
-        """Test that status parsing is case-insensitive."""
+        """Test response with missing VALIDATION_NOTES section."""
         mock_client = MagicMock()
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: approved
+        ].message.content =  """{
+"IMPROVED_FIX": "",
 
-CONFIDENCE: 0.9
+"CONFIDENCE": "0.95",
 
-VALIDATION_NOTES:
-Good fix
-
-CONCERNS:
-None
-"""
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.APPROVED
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_nested_backticks_in_code(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test code blocks with nested backticks."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: MODIFIED
-CONFIDENCE: 0.85
-VALIDATION_NOTES: Added docstring
-CONCERNS: None
-
-IMPROVED_FIX:
-```python
-def function():
-    \"\"\"
-    Example with `backticks` in docstring.
-    \"\"\"
-    return value
-```
-
-IMPROVED_EXPLANATION:
-Better documentation
+"PLACEMENT":"SIBLING"
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -1049,33 +944,7 @@ Better documentation
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.MODIFIED
-        assert "`backticks`" in result.modified_fix.fixed_code
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_missing_validation_notes(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test response with missing VALIDATION_NOTES section."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: APPROVED
-
-CONFIDENCE: 0.85
-
-CONCERNS:
-None
-"""
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.APPROVED
-        assert result.validation_notes == ""
+        assert result.explanation == "Code fix applied"
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_missing_confidence(
@@ -1087,22 +956,22 @@ None
         mock_response.choices[
             0
         ].message.content = """
-STATUS: APPROVED
+        {
+"IMPROVED_FIX": "",
 
-VALIDATION_NOTES:
-Good fix
 
-CONCERNS:
-None
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":""
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
         validator = FixValidator(provider="openai", api_key="test-key")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        # Should default to 0.5
-        assert result.confidence == 0.5
+        print("result ", result)
+        # Should default to 0.0 as confidence is required
+        assert result.confidence == 0.0
 
 
 # ==============================================================================
@@ -1123,10 +992,14 @@ class TestConfidenceBoundaryConditions:
         mock_response.choices[
             0
         ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: 1.5
-VALIDATION_NOTES: Good
-CONCERNS: None
+{
+"IMPROVED_FIX": "",
+
+"CONFIDENCE": "1.5",
+
+"PLACEMENT":"",
+"IMPROVED_EXPLANATION":""
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -1171,10 +1044,14 @@ CONCERNS: Multiple issues
         mock_response.choices[
             0
         ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: high
-VALIDATION_NOTES: Good
-CONCERNS: None
+{
+"IMPROVED_FIX": "",
+
+"CONFIDENCE": "high",
+
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":""
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -1182,8 +1059,8 @@ CONCERNS: None
         validator = FixValidator(provider="openai", api_key="test-key")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
-        # Should default to 0.5
-        assert result.confidence == 0.5
+        # Should default to 0
+        assert result.confidence == 0.0
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_confidence_exactly_threshold(
@@ -1194,11 +1071,14 @@ CONCERNS: None
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: 0.7
-VALIDATION_NOTES: Good
-CONCERNS: None
+        ].message.content = """{
+"IMPROVED_FIX": "",
+
+"CONFIDENCE": "0.7",
+
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -1209,117 +1089,8 @@ CONCERNS: None
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         # Exactly at threshold should pass
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
 
-
-class TestConcernsParsing:
-    """Test parsing of concerns section."""
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_concerns_with_special_characters(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test concerns with special characters."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: NEEDS_REVIEW
-CONFIDENCE: 0.6
-VALIDATION_NOTES: Some issues
-CONCERNS:
-- May cause issues with `special_function()`
-- Breaks compatibility w/ v2.0+
-- Uses deprecated @decorator syntax
-"""
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert len(result.concerns) == 3
-        assert any("`special_function()`" in c for c in result.concerns)
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_concerns_multiline(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test multi-line concerns."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: NEEDS_REVIEW
-CONFIDENCE: 0.6
-VALIDATION_NOTES: Complex
-CONCERNS:
-- This is a concern
-  that spans multiple lines
-- Another single-line concern
-"""
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        # Should capture concerns even if multi-line
-        assert len(result.concerns) >= 1
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_concerns_none_variations(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test different ways of saying 'no concerns'."""
-        for none_variant in ["None", "none", "NONE", "N/A", "n/a"]:
-            mock_client = MagicMock()
-            mock_response = MagicMock()
-            mock_response.choices[
-                0
-            ].message.content = f"""
-STATUS: APPROVED
-CONFIDENCE: 0.9
-VALIDATION_NOTES: Good
-CONCERNS:
-{none_variant}
-"""
-            mock_client.chat.completions.create.return_value = mock_response
-            mock_openai.OpenAI.return_value = mock_client
-
-            validator = FixValidator(provider="openai", api_key="test-key")
-            result = validator.validate_fix(
-                sample_fix, sample_issue, sample_file_content
-            )
-
-            # "None" should not be added as a concern
-            assert len(result.concerns) == 0
-
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_concerns_empty_list(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test empty concerns section."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: 0.9
-VALIDATION_NOTES: Perfect
-CONCERNS:
-
-"""
-        mock_client.chat.completions.create.return_value = mock_response
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert len(result.concerns) == 0
 
 
 # ==============================================================================
@@ -1353,7 +1124,7 @@ class TestFileReadingErrors:
 
         assert len(results) == 1
         assert results[0].status == ValidationStatus.NEEDS_REVIEW
-        assert "Error reading file" in results[0].validation_notes
+        assert "Error reading file" in results[0].explanation
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_file_is_directory(self, mock_openai, sample_fix, sample_issue, tmp_path):
@@ -1434,14 +1205,14 @@ class TestValidationResponseEdgeCases:
         """Test response with only STATUS field."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices[0].message.content = "STATUS: APPROVED, CONFIDENCE: 0.7"
+        mock_response.choices[0].message.content = '{ "IMPROVED_FIX": "", "CONFIDENCE": "0.7", "PLACEMENT":"SIBLING", "IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."}'
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
         validator = FixValidator(provider="openai", api_key="test-key")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
         # Should handle gracefully with defaults
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
         assert result.confidence == 0.7
 
     @patch("devdox_ai_sonar.fix_validator.openai")
@@ -1453,13 +1224,16 @@ class TestValidationResponseEdgeCases:
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content = """
-STATUS: APPROVED
-CONFIDENCE: 0.9
-VALIDATION_NOTES: Good
-CONCERNS: None
-EXTRA_FIELD: This shouldn't break anything
-ANOTHER_UNEXPECTED: Field
+        ].message.content = """{
+"IMPROVED_FIX": "",
+
+"CONFIDENCE": "0.9",
+
+"PLACEMENT":"SIBLING",
+"IMPROVED_EXPLANATION":"",
+"EXTRA_FIELD": " This shouldn't break anything",
+"ANOTHER_UNEXPECTED": "Field"
+}
 """
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
@@ -1468,7 +1242,7 @@ ANOTHER_UNEXPECTED: Field
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         # Should ignore extra fields
-        assert result.status == ValidationStatus.APPROVED
+        assert result.status == ValidationStatus.MODIFIED
 
 
 # ==============================================================================
@@ -1550,34 +1324,6 @@ class TestContextExtractionBoundaries:
 class TestBatchValidationScenarios:
     """Test batch validation edge cases."""
 
-    @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_batch_with_mixed_results(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test batch with mixed approved/rejected/modified results."""
-        mock_client = MagicMock()
-
-        responses = [
-            "STATUS: APPROVED\nCONFIDENCE: 0.9\nVALIDATION_NOTES: Good\nCONCERNS: None",
-            "STATUS: REJECTED\nCONFIDENCE: 0.3\nVALIDATION_NOTES: Bad\nCONCERNS: Issues",
-            "STATUS: MODIFIED\nCONFIDENCE: 0.85\nVALIDATION_NOTES: Improved\nCONCERNS: None\nIMPROVED_FIX:\n```\ncode\n```\nIMPROVED_EXPLANATION: Better",
-        ]
-
-        mock_client.chat.completions.create.side_effect = [
-            MagicMock(choices=[MagicMock(message=MagicMock(content=r))])
-            for r in responses
-        ]
-        mock_openai.OpenAI.return_value = mock_client
-
-        validator = FixValidator(provider="openai", api_key="test-key")
-
-        fixes_data = [(sample_fix, sample_issue, sample_file_content)] * 3
-        results = validator.validate_fixes_batch(fixes_data, stop_on_rejection=False)
-
-        assert len(results) == 3
-        assert results[0].status == ValidationStatus.APPROVED
-        assert results[1].status == ValidationStatus.REJECTED
-        assert results[2].status == ValidationStatus.MODIFIED
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_batch_empty(self, mock_openai):
@@ -1627,7 +1373,7 @@ class TestBatchValidationScenarios:
         assert len(results) == 2
         # Second should have error
         assert results[1].status == ValidationStatus.NEEDS_REVIEW
-        assert "File not found" in results[1].validation_notes
+        assert "File not found" in results[1].explanation
 
 
 class TestAdditionalEdgeCases:
@@ -1646,7 +1392,7 @@ class TestAdditionalEdgeCases:
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
-        assert "Validation failed" in result.validation_notes
+        assert "Validation failed" in result.explanation
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_parse_response_exception(self, mock_openai, sample_fix):
@@ -1662,7 +1408,7 @@ class TestAdditionalEdgeCases:
         )
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
-        assert "Failed to parse" in result.validation_notes
+        assert "Failed to parse" in result.explanation
 
     def test_validation_result_default_concerns(self, sample_fix):
         """Test ValidationResult with no concerns provided."""

@@ -408,7 +408,7 @@ def apply_complex_fix(
     helper_code = fix.helper_code.replace("\\n", "\n") if fix.helper_code else ""
 
 
-    if fix.end_import_block_code and fix.end_import_block_code !="":
+    if fix.end_import_block_code and fix.import_block_code !="":
         lines[fix.end_import_block_code] = fix.import_block_code + "\n"
 
     if not helper_code:
