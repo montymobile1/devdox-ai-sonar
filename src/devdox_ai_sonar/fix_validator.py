@@ -387,7 +387,6 @@ class FixValidator:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            # max_tokens=2000,
         )
 
         return self._extract_openai_content(response)
@@ -469,7 +468,7 @@ class FixValidator:
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=original_fix,
                     modified_fix=original_fix,
-                    explanation=f"Failed to improve fix ",
+                    explanation="Failed to improve fix ",
                     confidence=0.0,
                 )
 

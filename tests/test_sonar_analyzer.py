@@ -2459,17 +2459,16 @@ class TestGetBranchFromPR:
     def test_get_branch_from_pr_null_branch(self, analyzer, mock_response):
         """Test 19: Handle null branch value."""
         project_key = "test-project"
-        pull_request = "123"
+        pull_request = "1234"
 
         mock_response.json.return_value = {
             "pullRequests": [
-                {"key": "123", "branch": None}
+                {"key": "1234", "branch": None}
             ]
         }
 
         with patch.object(analyzer.session, 'get', return_value=mock_response):
             branch = analyzer.get_branch_from_pr(project_key, pull_request)
-
             assert branch is None
 
     def test_get_branch_from_pr_empty_branch_string(self, analyzer, mock_response):

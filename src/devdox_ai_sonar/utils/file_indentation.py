@@ -154,7 +154,6 @@ def apply_sibling_helper(
         line_range: LineRange,
         indented_code: str,
         helper_code: str,
-        base_indent: str,  # This is currently BODY indent (4 spaces)
 ) -> List[str]:
     """Apply fix with sibling helper code at the same indentation level."""
     # For SIBLING helpers, we need METHOD definition indent, not body indent
@@ -416,7 +415,7 @@ def apply_complex_fix(
         lines = replace_lines_simple(lines, line_range, indented_code)
     elif fix.placement_helper == "SIBLING":
         lines = apply_sibling_helper(
-            lines, line_range, indented_code, helper_code, base_indent
+            lines, line_range, indented_code, helper_code
         )
     elif fix.placement_helper == "GLOBAL_BOTTOM":
         lines = apply_global_bottom_helper(

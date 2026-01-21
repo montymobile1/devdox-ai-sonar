@@ -387,7 +387,6 @@ class TestApplySiblingHelper:
             line_range,
             "fixed_code",
             "helper_code",
-            "    "
         )
         assert result[0] == "line1\n"
         assert result[1] == "fixed_code"
@@ -407,7 +406,6 @@ class TestApplySiblingHelper:
             line_range,
             "    x = 2",
             "# comment",
-            "    "
         )
         # Fixed code should be indented
         assert "    x = 2" in result[1]
@@ -424,8 +422,7 @@ class TestApplySiblingHelper:
             lines,
             line_range,
             "fixed",
-            helper_code,
-            ""
+            helper_code
         )
 
         assert "helper()" in ''.join(result)

@@ -667,7 +667,10 @@ class SonarCloudAnalyzer:
         # Find PR by key (PR number)
         for pr in data.get("pullRequests", []):
             if pr.get("key") == pull_request:
-                return pr.get("branch")
+                branch = pr.get("branch")
+                if isinstance(branch, str):
+                    return branch.split(":")[-1] if ":" in branch else branch
+                return None
 
         raise ValueError(f"Pull request {pull_request} not found in project {project_key}")
 

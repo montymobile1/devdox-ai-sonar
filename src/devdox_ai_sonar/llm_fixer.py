@@ -59,7 +59,7 @@ java_extension = ".java"
 scala_extension = ".scala"
 prompt_system_message = "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
 
-
+FUNCTION_ALREADY_CALLED="• As function can be already called so don't remove the parameters."
 
 class LLMFixer:
     """LLM-powered code fixer for SonarCloud issues."""
@@ -419,8 +419,6 @@ class LLMFixer:
             logger.error(f"Line range {first_line_number}-{last_line_number} exceeds file length {len(lines)}")
             return extractor._get_empty_context(first_line_number)
 
-        problem_line = lines[first_line_idx].rstrip()
-
 
         functions_context = extractor._extract_all_functions_in_range(
             first_line_idx,
@@ -653,7 +651,6 @@ class LLMFixer:
     def _extend_strategies_for_issue(
         self,
         issue: Any,
-        code_chunk: str,
     ) -> List[str]:
         msg_lower = getattr(issue, "message", "").lower()
 
@@ -871,7 +868,7 @@ class LLMFixer:
                 ""
             ])
         elif "be sure that every parameter is used" in msg_lower:
-            strategies_list.append("• As function can be already called so don't remove the parameters.")
+            strategies_list.append(FUNCTION_ALREADY_CALLED)
             strategies_list.append("• Print or Log the unused parameters values.")
             strategies_list.append("• Check the syntax and be sure that is working code")
         # Null Checks
@@ -950,7 +947,7 @@ class LLMFixer:
                 )
 
         elif "unused function parameters" in issue.rule.lower():
-            strategies.append("• As function can be already called so don't remove the parameters.")
+            strategies.append(FUNCTION_ALREADY_CALLED)
             strategies.append("• Print or Log the unused parameters.")
         # Unused Code
         elif "unused" in issue.rule.lower() or "unused" in msg_lower:
@@ -1034,7 +1031,7 @@ class LLMFixer:
 
 
                 # Add new strategies
-                filtered_steps.append("• As function can be already called so don't remove the parameters.")
+                filtered_steps.append(FUNCTION_ALREADY_CALLED)
                 filtered_steps.append("• Print or Log the unused parameters.")
 
                 rule_info_list[rule_key]['how_to_fix']['steps']= filtered_steps
@@ -1044,7 +1041,6 @@ class LLMFixer:
 
             strategies = self._extend_strategies_for_issue(
                 issue=issue,
-                code_chunk=code_chunk,
             )
 
 

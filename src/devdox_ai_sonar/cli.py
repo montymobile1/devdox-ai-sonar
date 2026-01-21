@@ -1254,7 +1254,6 @@ def _process_and_fix_issues(
             pull_request=str(pull_request))
 
 
-
     tmp_path = generate_tmp_path()
 
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
@@ -1357,7 +1356,7 @@ def _process_regular_issues(
 
         if not success:
                 console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
-                continue
+
 
 
 def _process_issues_for_rule(
