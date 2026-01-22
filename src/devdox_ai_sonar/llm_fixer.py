@@ -2108,7 +2108,7 @@ class LLMFixer:
                 continue
 
             # Check for class definition
-            match = re.search(r'class\s+(\w+)\s*(?:\(|:)', line)
+            match = re.search(r'class\s+(\w+)\s*[:(]', line)
             if match:
                 class_name = match.group(1)
 
@@ -2172,6 +2172,108 @@ class ContextExtractor:
     def __init__(self, lines: List[str]):
         self.lines = lines
 
+    def _find_functions_in_range(
+            self,
+            first_idx: int,
+            last_idx: int,
+            functions_found: List[Dict[str, Any]]
+    ) -> bool:
+        """
+        Find all function definitions within the given range.
+
+        Args:
+            first_idx: Starting line index
+            last_idx: Ending line index
+            functions_found: List to populate with found functions
+
+        Returns:
+            True if we should check before range, False otherwise
+        """
+        check_before = True
+
+        for line_idx in range(first_idx, last_idx + 1):
+            if line_idx >= len(self.lines):
+                break
+
+            line = self.lines[line_idx].rstrip()
+            if self._is_function_definition(line):
+                function_info = self._get_function_info(line_idx)
+                if function_info:
+                    if line_idx == first_idx:
+                        check_before = False
+                    functions_found.append(function_info)
+
+        return check_before
+
+    def _get_containing_function_before_range(
+            self,
+            first_idx: int,
+            functions_found: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        logger.debug("Checking if first_idx is inside a function that starts before the range")
+        containing_func_idx = self._find_containing_function(first_idx)
+
+        if containing_func_idx is not None and containing_func_idx < first_idx:
+            logger.debug(f"Found containing function starting at line {containing_func_idx + 1}")
+            function_info = self._get_function_info(containing_func_idx)
+
+            if function_info:
+                # Check if we already have this function (shouldn't happen, but be safe)
+                if not any(f['start_idx'] == containing_func_idx for f in functions_found):
+                    logger.debug(f"Adding containing function: {function_info['name']}")
+                    functions_found.append(function_info)
+                else:
+                    logger.debug("Containing function already in list, skipping")
+        return functions_found
+
+    def _find_containing_function_for_empty_range(
+            self,
+            first_idx: int,
+            functions_found: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """
+        If no functions found in range, check if range is inside a function.
+
+        Args:
+            first_idx: Starting line index
+            functions_found: List to add function to if found
+        """
+        containing_func_idx = self._find_containing_function(first_idx)
+        if containing_func_idx is not None:
+            function_info = self._get_function_info(containing_func_idx)
+            if function_info:
+                functions_found.append(function_info)
+
+        return functions_found
+
+    def _find_and_add_missed_functions(
+    self,
+    functions_found: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+
+        # Find the earliest and latest function boundaries
+        earliest_start = min(f['start_idx'] for f in functions_found)
+
+        latest_end = max(f['end_idx'] for f in functions_found)
+
+        # Check for any functions we might have missed between these boundaries
+        for line_idx in range(earliest_start, latest_end + 1):
+            if line_idx >= len(self.lines):
+                break
+
+            line = self.lines[line_idx].rstrip()
+
+            if self._is_function_definition(line):
+
+                # Check if this function is not already in our list
+                if not any(f['start_idx'] == line_idx for f in functions_found):
+                    function_info = self._get_function_info(line_idx)
+                    if function_info:
+                        functions_found.append(function_info)
+
+        # Sort by start line to maintain file order
+        functions_found.sort(key=lambda f: f['start_idx'])
+        return functions_found
+
     def _extract_all_functions_in_range(
             self,
             first_idx: int,
@@ -2201,74 +2303,25 @@ class ContextExtractor:
         """
         functions_found = []
 
-        check_before = True
-        # Strategy 1: Find all function definitions within the range
-        for line_idx in range(first_idx, last_idx + 1):
-            if line_idx >= len(self.lines):
-                break
-
-            line = self.lines[line_idx].rstrip()
-            if self._is_function_definition(line):
-                function_info = self._get_function_info(line_idx)
-                if function_info:
-                    if line_idx == first_idx:
-                        check_before = False
-                    functions_found.append(function_info)
+        check_before = self._find_functions_in_range(first_idx, last_idx, functions_found)
 
         if check_before:
-            logger.debug("Checking if first_idx is inside a function that starts before the range")
-            containing_func_idx = self._find_containing_function(first_idx)
+            functions_found = self._get_containing_function_before_range(first_idx, functions_found)
 
-            if containing_func_idx is not None and containing_func_idx < first_idx:
-                logger.debug(f"Found containing function starting at line {containing_func_idx + 1}")
-                function_info = self._get_function_info(containing_func_idx)
-
-                if function_info:
-                    # Check if we already have this function (shouldn't happen, but be safe)
-                    if not any(f['start_idx'] == containing_func_idx for f in functions_found):
-                        logger.debug(f"Adding containing function: {function_info['name']}")
-                        functions_found.append(function_info)
-                    else:
-                        logger.debug("Containing function already in list, skipping")
 
 
 
         # Strategy 2: If no definitions found IN range, check if range is INSIDE a function
         if not functions_found:
+            functions_found = self._find_containing_function_for_empty_range(first_idx, functions_found)
 
-            containing_func_idx = self._find_containing_function(first_idx)
-            if containing_func_idx is not None:
-                function_info = self._get_function_info(containing_func_idx)
-                if function_info:
-                    functions_found.append(function_info)
 
         # Strategy 3: Check if we missed any functions that the range intersects
         # (e.g., range starts in middle of function A, ends in middle of function B)
         if functions_found:
-            # Find the earliest and latest function boundaries
-            earliest_start = min(f['start_idx'] for f in functions_found)
 
-            latest_end = max(f['end_idx'] for f in functions_found)
+                self._find_and_add_missed_functions(functions_found)
 
-
-            # Check for any functions we might have missed between these boundaries
-            for line_idx in range(earliest_start, latest_end + 1):
-                if line_idx >= len(self.lines):
-
-                    break
-
-                line = self.lines[line_idx].rstrip()
-
-                if self._is_function_definition(line):
-
-                    # Check if this function is not already in our list
-                    if not any(f['start_idx'] == line_idx for f in functions_found):
-                        function_info = self._get_function_info(line_idx)
-                        if function_info:
-                            functions_found.append(function_info)
-
-            # Sort by start line to maintain file order
-            functions_found.sort(key=lambda f: f['start_idx'])
 
         if not functions_found:
             return None
