@@ -434,7 +434,7 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
     else:
 
         # Unknown placement - default to GLOBAL_TOP
-        return apply_global_top_helper(lines, line_range,"",helper_code)
+        return apply_global_top_helper(lines, line_range,"",helper_code,0)
 
 
 def normalize_code(code: str) -> str:
