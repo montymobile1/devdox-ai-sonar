@@ -7,18 +7,32 @@ from devdox_ai_sonar.models.file_structures import (
     LineRange,
     ImportState
 )
-from devdox_ai_sonar.models.sonar import FixSuggestion
+from devdox_ai_sonar.models.sonar import (FixSuggestion,
+    ChangeType,
+    BlockType,
+    CodeBlock)
 
 
 # ============================================================================
 # TEST CLASS: FixApplication
 # ============================================================================
 
+@pytest.fixture
+def sample_code_block():
+    return CodeBlock(block_name="test",
+                     start_line="1",
+                     end_line="10",
+                     has_changes=True,
+                     change_type=ChangeType.FULL_CODE,
+                     block_type=BlockType.MODULE,
+                     context="new_code"
+                     )
+
 class TestFixApplication:
     """Test FixApplication dataclass"""
 
     @pytest.fixture
-    def sample_fix(self):
+    def sample_fix(self, sample_code_block):
         """Create sample fix suggestion"""
         return FixSuggestion(
             issue_key="issue-1",
@@ -28,7 +42,8 @@ class TestFixApplication:
             explanation="Fixed it",
             confidence=0.95,
             sonar_line_number=10,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
     def test_fix_application_creation_success(self, sample_fix):
@@ -120,7 +135,7 @@ class TestLineRange:
 
         assert line_range.start == 0
 
-    def test_from_fix_with_valid_line_numbers(self):
+    def test_from_fix_with_valid_line_numbers(self, sample_code_block):
         """Test creating LineRange from fix with valid line numbers"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -133,7 +148,9 @@ class TestLineRange:
             sonar_line_number=10,
             line_number=10,  # 1-indexed
             last_line_number=15,  # 1-indexed,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
+
         )
 
         line_range = LineRange.from_fix(fix)
@@ -142,7 +159,7 @@ class TestLineRange:
         assert line_range.start == 9  # Converted to 0-indexed
         assert line_range.end == 14  # Converted to 0-indexed
 
-    def test_from_fix_with_missing_line_number(self):
+    def test_from_fix_with_missing_line_number(self,sample_code_block):
         """Test from_fix returns None when line_number is missing"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -154,7 +171,8 @@ class TestLineRange:
             sonar_line_number=10,
             line_number=None,
             last_line_number=15,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
 
         )
 
@@ -162,7 +180,7 @@ class TestLineRange:
 
         assert line_range is None
 
-    def test_from_fix_with_missing_last_line_number(self):
+    def test_from_fix_with_missing_last_line_number(self, sample_code_block):
         """Test from_fix returns None when last_line_number is missing"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -174,14 +192,15 @@ class TestLineRange:
             sonar_line_number=10,
             line_number=10,
             last_line_number=None,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
         line_range = LineRange.from_fix(fix)
 
         assert line_range is None
 
-    def test_from_fix_with_both_missing(self):
+    def test_from_fix_with_both_missing(self, sample_code_block):
         """Test from_fix returns None when both line numbers missing"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -191,7 +210,8 @@ class TestLineRange:
             explanation="Done",
             confidence=0.9,
             sonar_line_number=10,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
         line_range = LineRange.from_fix(fix)
@@ -421,7 +441,7 @@ class TestImportState:
 class TestIntegration:
     """Test integration between components"""
 
-    def test_line_range_from_fix_and_validate(self):
+    def test_line_range_from_fix_and_validate(self, sample_code_block):
         """Test creating LineRange from fix and validating"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -433,7 +453,8 @@ class TestIntegration:
             sonar_line_number=10,
             line_number=10,
             last_line_number=15,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
         line_range = LineRange.from_fix(fix)
@@ -442,7 +463,7 @@ class TestIntegration:
         # Validate against a file with 100 lines
         assert line_range.is_valid(total_lines=100) is True
 
-    def test_fix_application_with_line_range(self):
+    def test_fix_application_with_line_range(self, sample_code_block):
         """Test using FixApplication with LineRange"""
         fix = FixSuggestion(
             issue_key="issue-1",
@@ -454,7 +475,8 @@ class TestIntegration:
             sonar_line_number=10,
             line_number=10,
             last_line_number=15,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
         line_range = LineRange.from_fix(fix)
@@ -476,7 +498,7 @@ class TestIntegration:
 
         assert app.success is True
 
-    def test_workflow_fix_to_application(self):
+    def test_workflow_fix_to_application(self, sample_code_block):
         """Test complete workflow from fix to application"""
         # Create fix
         fix = FixSuggestion(
@@ -489,7 +511,8 @@ class TestIntegration:
             sonar_line_number=25,
             line_number=25,
             last_line_number=30,
-            llm_model="openapi"
+            llm_model="openapi",
+            fixed_code_blocks=[sample_code_block]
         )
 
         # Extract line range

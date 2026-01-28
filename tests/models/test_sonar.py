@@ -17,8 +17,23 @@ from devdox_ai_sonar.models.sonar import (
         ProcessedRules,
         FixSuggestion,
         FixResult,
+        ChangeType,
+        BlockType,
+        CodeBlock
     )
 
+
+
+@pytest.fixture
+def sample_code_block():
+    return CodeBlock(block_name="test",
+                     start_line="1",
+                     end_line="10",
+                     has_changes=True,
+                     change_type=ChangeType.FULL_CODE,
+                     block_type=BlockType.MODULE,
+                     context="new_code"
+                     )
 
 # ============================================================================
 # Test Enums
@@ -882,7 +897,7 @@ class TestAnalysisResult:
 class TestFixSuggestion:
     """Test FixSuggestion model."""
 
-    def test_fix_suggestion_creation(self):
+    def test_fix_suggestion_creation(self,sample_code_block):
         """Test creating a FixSuggestion."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -890,13 +905,14 @@ class TestFixSuggestion:
             fixed_code="x = 1\ny = 2  # noqa",
             explanation="Added noqa comment",
             confidence=0.95,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert suggestion.issue_key == "issue-123"
         assert suggestion.confidence == 0.95
         assert suggestion.llm_model == "claude-sonnet-4"
 
-    def test_fix_suggestion_with_all_fields(self):
+    def test_fix_suggestion_with_all_fields(self,sample_code_block):
         """Test FixSuggestion with all optional fields."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -911,7 +927,8 @@ class TestFixSuggestion:
             file_path="src/main.py",
             sonar_line_number=10,
             line_number=10,
-            last_line_number=12
+            last_line_number=12,
+            fixed_code_blocks=[sample_code_block],
         )
         assert suggestion.helper_code == "# Helper comment"
         assert suggestion.placement_helper == "# Place at line 10"
@@ -920,7 +937,7 @@ class TestFixSuggestion:
         assert suggestion.line_number == 10
         assert suggestion.last_line_number == 12
 
-    def test_is_high_confidence_true(self):
+    def test_is_high_confidence_true(self,sample_code_block):
         """Test is_high_confidence returns True for confidence >= 0.8."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -928,11 +945,12 @@ class TestFixSuggestion:
             fixed_code="x = 1  # noqa",
             explanation="Added noqa",
             confidence=0.85,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert suggestion.is_high_confidence is True
 
-    def test_is_high_confidence_false(self):
+    def test_is_high_confidence_false(self,sample_code_block):
         """Test is_high_confidence returns False for confidence < 0.8."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -940,11 +958,12 @@ class TestFixSuggestion:
             fixed_code="x = 1  # noqa",
             explanation="Added noqa",
             confidence=0.75,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert suggestion.is_high_confidence is False
 
-    def test_is_high_confidence_boundary(self):
+    def test_is_high_confidence_boundary(self,sample_code_block):
         """Test is_high_confidence at boundary (0.8)."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -952,11 +971,12 @@ class TestFixSuggestion:
             fixed_code="x = 1  # noqa",
             explanation="Added noqa",
             confidence=0.8,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert suggestion.is_high_confidence is True
 
-    def test_fix_suggestion_confidence_validation(self):
+    def test_fix_suggestion_confidence_validation(self,sample_code_block):
         """Test confidence validation (0.0 to 1.0)."""
         # Valid confidence values
         for conf in [0.0, 0.5, 1.0]:
@@ -966,11 +986,12 @@ class TestFixSuggestion:
                 fixed_code="x = 2",
                 explanation="Changed value",
                 confidence=conf,
-                llm_model="claude-sonnet-4"
+                llm_model="claude-sonnet-4",
+                fixed_code_blocks=[sample_code_block],
             )
             assert suggestion.confidence == conf
 
-    def test_fix_suggestion_with_empty_helper_fields(self):
+    def test_fix_suggestion_with_empty_helper_fields(self,sample_code_block):
         """Test FixSuggestion with empty helper fields."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -978,7 +999,8 @@ class TestFixSuggestion:
             fixed_code="x = 2",
             explanation="Changed value",
             confidence=0.9,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert suggestion.helper_code == ""
         assert suggestion.placement_helper == ""
@@ -1002,7 +1024,7 @@ class TestFixResult:
         assert len(result.successful_fixes) == 0
         assert len(result.failed_fixes) == 0
 
-    def test_fix_result_with_successful_fixes(self):
+    def test_fix_result_with_successful_fixes(self,sample_code_block):
         """Test FixResult with successful fixes."""
         suggestion = FixSuggestion(
             issue_key="issue-123",
@@ -1010,7 +1032,8 @@ class TestFixResult:
             fixed_code="x = 2",
             explanation="Changed value",
             confidence=0.9,
-            llm_model="claude-sonnet-4"
+            llm_model="claude-sonnet-4",
+            fixed_code_blocks=[sample_code_block],
         )
 
         result = FixResult(
@@ -1068,7 +1091,7 @@ class TestFixResult:
         assert result.backup_created is True
         assert result.backup_path == Path("/path/to/backup")
 
-    def test_success_rate_all_successful(self):
+    def test_success_rate_all_successful(self,sample_code_block):
         """Test success_rate with all fixes successful."""
         suggestions = [
             FixSuggestion(
@@ -1077,7 +1100,8 @@ class TestFixResult:
                 fixed_code="x = 2",
                 explanation="Changed value",
                 confidence=0.9,
-                llm_model="claude-sonnet-4"
+                llm_model="claude-sonnet-4",
+                fixed_code_blocks=[sample_code_block],
             )
             for i in range(5)
         ]
@@ -1089,7 +1113,7 @@ class TestFixResult:
         )
         assert result.success_rate == 1.0
 
-    def test_success_rate_partial_success(self):
+    def test_success_rate_partial_success(self,sample_code_block):
         """Test success_rate with partial success."""
         suggestions = [
             FixSuggestion(
@@ -1098,7 +1122,8 @@ class TestFixResult:
                 fixed_code="x = 2",
                 explanation="Changed value",
                 confidence=0.9,
-                llm_model="claude-sonnet-4"
+                llm_model="claude-sonnet-4",
+                fixed_code_blocks=[sample_code_block],
             )
             for i in range(3)
         ]
@@ -1132,7 +1157,7 @@ class TestFixResult:
         )
         assert result.success_rate == 0.0
 
-    def test_fix_result_complete_scenario(self):
+    def test_fix_result_complete_scenario(self,sample_code_block):
         """Test FixResult with a complete scenario."""
         successful = [
             FixSuggestion(
@@ -1141,7 +1166,8 @@ class TestFixResult:
                 fixed_code="x = 2",
                 explanation="Fixed",
                 confidence=0.9,
-                llm_model="claude-sonnet-4"
+                llm_model="claude-sonnet-4",
+                fixed_code_blocks=[sample_code_block],
             )
         ]
 
