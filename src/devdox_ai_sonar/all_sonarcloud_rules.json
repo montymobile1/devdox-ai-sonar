@@ -25756,7 +25756,9 @@
       "category": "CODE_SMELL",
       "severity": "MAJOR",
       "status": "READY",
-      "description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, removing function parameters that are not being utilized is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+      //"description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, removing function parameters that are not being utilized is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+        "description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, add print or log this  parameter to inform you later  is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+
       "tags": [],
       "system_tags": [
         "unused"
@@ -25766,10 +25768,11 @@
       "root_cause": "Unused code creates clutter and indicates incomplete implementation or copy-paste errors",
       "how_to_fix": {
         "description": "Remove unused code or implement its intended functionality",
-        "steps": [
+         "steps": [
           "Identify all unused elements (variables, methods, imports, etc.)",
           "Verify they are truly not needed by checking references",
-          "Remove unused elements or implement their intended purpose",
+          //"Remove unused elements or implement their intended purpose",
+          "Add print or logger for this variable"
           "Run tests to ensure no functionality is broken"
         ],
         "priority": "Medium",
@@ -26048,7 +26051,9 @@
       "category": "CODE_SMELL",
       "severity": "MAJOR",
       "status": "READY",
-      "description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, removing function parameters that are not being utilized is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+      //"description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, removing function parameters that are not being utilized is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+      "description": "Why is this an issue? A typical code smell known as unused function parameters refers to parameters declared in a function but not used anywhere within the function’s body. While this might seem harmless at first glance, it can lead to confusion and potential errors in your code. Disregarding the values passed to such parameters, the function’s behavior will be the same, but the programmer’s intention won’t be clearly expressed anymore. Therefore, add print or log this  parameter to inform you later  is considered best practice. Exceptions This rule ignores overriding methods. class C(B): def do_something(self, a, b): # no issue reported on b return self.compute(a) This rule also ignores variables named with a single underscore _ . Such naming is a common practice for indicating that the variable is insignificant. def do_something(a, _): # no issue reported on _ return compute(a) The rule also won’t raise an issue if the parameter is referenced in a docstring or a comment: class MyC...",
+
       "tags": [],
       "system_tags": [
         "unused"
@@ -26061,7 +26066,8 @@
         "steps": [
           "Identify all unused elements (variables, methods, imports, etc.)",
           "Verify they are truly not needed by checking references",
-          "Remove unused elements or implement their intended purpose",
+          //"Remove unused elements or implement their intended purpose",
+          "Add print or logger for this variable"
           "Run tests to ensure no functionality is broken"
         ],
         "priority": "Medium",

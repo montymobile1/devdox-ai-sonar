@@ -2,12 +2,19 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple, Union
+from typing import List, Optional, Dict, Any, Union
 from enum import Enum
-import re
-
+import json
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
-from devdox_ai_sonar.models.sonar import SonarIssue, SonarSecurityIssue, FixSuggestion
+from pydantic import ValidationError
+from devdox_ai_sonar.models.sonar import (SonarIssue,
+                                          SonarSecurityIssue,
+                                          FixSuggestion,
+                                          CodeBlock,
+                                          ChangeType,
+                                          ChangeAction,
+                                          SonarFixResponse)
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +35,7 @@ except ImportError:
 
 try:
     from google import genai
-
+    from google.genai import types
     HAS_GEMINI = True
 except ImportError as e:
     logger.warning(f"Failed to import Gemini library: {e}")
@@ -52,14 +59,15 @@ class ValidationResult:
         status: ValidationStatus,
         original_fix: FixSuggestion,
         modified_fix: Optional[FixSuggestion] = None,
-        validation_notes: str = "",
+        explanation: str = "",
         concerns: Optional[List[str]] = None,
         confidence: float = 0.0,
     ):
         self.status = status
         self.original_fix = original_fix
         self.modified_fix = modified_fix or original_fix
-        self.validation_notes = validation_notes
+
+        self.explanation = explanation
         self.concerns = concerns or []
         self.confidence = confidence
 
@@ -104,6 +112,13 @@ class FixValidator:
         self.api_key: Optional[str] = None
 
         self.client: Any = None
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(str( Path(__file__).parent / "prompts")),
+            trim_blocks=True,
+            lstrip_blocks=True,
+            keep_trailing_newline=True,
+            autoescape=select_autoescape(["html", "xml"]),
+        )
         self._setup_provider(model, api_key)
 
     def _setup_provider(self, model: Optional[str], api_key: Optional[str]) -> None:
@@ -163,6 +178,7 @@ class FixValidator:
         issue: Union[SonarIssue, SonarSecurityIssue],
         file_content: str,
         context_lines: int = 20,
+        new_error_msg:str=""
     ) -> ValidationResult:
         """
         Validate a fix suggestion using a senior code reviewer persona.
@@ -187,25 +203,43 @@ class FixValidator:
                 file_content, first_line, last_line, context_lines
             )
 
+            formatted_fix = self._format_code_blocks_for_validation(fix.fixed_code_blocks)
+
+
             # Generate validation prompt
-            prompt = self._create_validation_prompt(fix, issue, context)
+            prompt = self._create_validation_prompt(fix, issue, context, new_error_msg, formatted_fix)
 
             # Call LLM for validation
             validation_response = self._call_llm_validator(prompt)
+
 
             if not validation_response:
                 logger.warning(f"Failed to validate fix for issue {issue.key}")
                 return ValidationResult(
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=fix,
-                    validation_notes="Validation failed - manual review required",
+
+                    explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
+            modified_fix = fix
+            modified_fix.fixed_code_blocks = validation_response.FIXED_CODE_BLOCKS
+            helper_code = validation_response.NEW_HELPER_CODE
 
-            # Parse validation response
-            result = self._parse_validation_response(validation_response, fix)
+            no_whitespace = ''.join(helper_code.split())
+            if isinstance(helper_code, str) and no_whitespace:
+                modified_fix.helper_code = helper_code
+                modified_fix.placement_helper = validation_response.PLACEMENT.value
 
-            return result
+
+            return   ValidationResult(
+                status=ValidationStatus.MODIFIED,
+                original_fix=fix,
+                modified_fix=modified_fix,
+                explanation= validation_response.EXPLANATION,
+                confidence=validation_response.CONFIDENCE
+            )
+
 
         except Exception as e:
             logger.error(
@@ -214,38 +248,71 @@ class FixValidator:
             return ValidationResult(
                 status=ValidationStatus.NEEDS_REVIEW,
                 original_fix=fix,
-                validation_notes=f"Validation error: {str(e)}",
+                explanation=f"Validation error: {str(e)}",
                 confidence=0.0,
             )
 
-    def validate_fixes_batch(
-        self,
-        fixes: List[Tuple[FixSuggestion, SonarIssue, str]],
-        stop_on_rejection: bool = False,
-    ) -> List[ValidationResult]:
+
+    def _format_code_blocks_for_validation(
+            self,
+            code_blocks: List[CodeBlock]
+    ) -> str:
         """
-        Validate multiple fixes in batch.
+        Format code blocks into a readable string for validation.
 
         Args:
-            fixes: List of tuples (fix, issue, file_content)
-            stop_on_rejection: Stop validation if a fix is rejected
+            code_blocks: List of CodeBlock objects
 
         Returns:
-            List of ValidationResult objects
+            Formatted string representation of all fixes
         """
-        results = []
+        formatted_parts = []
 
-        for fix, issue, file_content in fixes:
-            result = self.validate_fix(fix, issue, file_content)
-            results.append(result)
+        for idx, block in enumerate(code_blocks, 1):
+            header = f"\n{'=' * 60}\nBlock {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
+            header += f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
+            header += f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
 
-            if stop_on_rejection and result.status == ValidationStatus.REJECTED:
-                logger.warning(
-                    f"Stopping batch validation due to rejection of {issue.key}"
-                )
-                break
+            formatted_parts.append(header)
 
-        return results
+            if block.change_type == ChangeType.FULL_CODE and block.context:
+                # Full code replacement
+                formatted_parts.append("```python\n")
+                formatted_parts.append(block.context)
+                formatted_parts.append("\n```\n")
+
+            elif block.change_type == ChangeType.DIFF and block.changes:
+                # Line-by-line changes
+                formatted_parts.append("Changes:\n")
+                for change in block.changes:
+                    if change.action == ChangeAction.REPLACE:
+                        formatted_parts.append(f"  Line {change.line} (REPLACE):\n")
+                        formatted_parts.append(f"    - Old: {change.old}\n")
+                        formatted_parts.append(f"    + New: {change.new}\n")
+                    elif change.action == ChangeAction.INSERT:
+                        formatted_parts.append(f"  Line {change.line} (INSERT):\n")
+                        formatted_parts.append(f"    + New: {change.new}\n")
+                    elif change.action == ChangeAction.DELETE:
+                        formatted_parts.append(f"  Line {change.line} (DELETE):\n")
+                        formatted_parts.append(f"    - Old: {change.old}\n")
+                formatted_parts.append("\n")
+
+            elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
+                # Search/replace patterns
+                formatted_parts.append("Search/Replace Operations:\n")
+                for idx, repl in enumerate(block.replacements, 1):
+                    regex_marker = " (REGEX)" if repl.is_regex else ""
+                    count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
+                    formatted_parts.append(f"\n  Operation {idx}{regex_marker}{count_info}:\n")
+                    formatted_parts.append(f"    Search:  {repr(repl.search)}\n")
+                    formatted_parts.append(f"    Replace: {repr(repl.replace)}\n")
+                formatted_parts.append("\n")
+
+            # Add separator between blocks
+            if idx < len(code_blocks):
+                formatted_parts.append("\n" + "-" * 60 + "\n")
+
+        return "".join(formatted_parts)
 
     def _extract_validation_context(
         self, file_content: str, first_line: int, last_line: int, context_lines: int
@@ -262,6 +329,7 @@ class FixValidator:
         Returns:
             Dictionary with context information
         """
+
         lines = file_content.split("\n")
 
         # Convert to 0-indexed
@@ -289,80 +357,29 @@ class FixValidator:
         fix: FixSuggestion,
         issue: Union[SonarIssue, SonarSecurityIssue],
         context: Dict[str, Any],
+        new_error: str,
+        formatted_fix: str
     ) -> str:
         """Create a prompt for fix validation."""
         severity = getattr(issue, "severity", "N/A")
         issue_type = getattr(issue, "type", "N/A")
-        prompt = f"""You are a senior software engineer conducting a critical code review of an AI-generated fix.
-Your job is to validate this fix with extreme scrutiny, checking for:
+        context_dic = {
+            "fix": fix,
+            "issue": issue,
+            "severity":severity,
+            "issue_type":issue_type,
+            "context": context,
+            "error_message": new_error,
+            "formatted_fix":formatted_fix
 
-1. **Correctness**: Does the fix actually solve the issue without introducing bugs?
-2. **Security**: Are there any security implications?
-3. **Edge Cases**: Does it handle all edge cases?
-4. **Best Practices**: Does it follow language-specific best practices?
-5. **Breaking Changes**: Will this break existing functionality?
-6. **Side Effects**: Are there unintended consequences?
+        }
+        template = self.jinja_env.get_template("python/validator.j2")
+        # Render enhanced content
+        prompt = template.render(**context_dic)
 
-**Original SonarCloud Issue:**
-- Rule: {issue.rule}
-- Message: {issue.message}
-- Severity: {severity}
-- Type: {issue_type}
-- Lines: {issue.first_line}-{issue.last_line}
+        return prompt.strip()
 
-**Proposed Fix Details:**
-- Confidence: {fix.confidence:.2f}
-- Model: {fix.llm_model}
-- Explanation: {fix.explanation}
 
-**Original Code:**
-```
-{fix.original_code}
-```
-
-**Proposed Fixed Code:**
-```
-{fix.fixed_code}
-```
-
-**Broader Code Context (lines {context["start_line"]}-{context["end_line"]}):**
-```
-{context["full_context"]}
-```
-
-**Your Task:**
-Critically review this fix and provide your assessment.
-
-**Response Format:**
-STATUS: [APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW]
-
-CONFIDENCE: [0.0-1.0]
-
-VALIDATION_NOTES:
-[Your detailed analysis of the fix]
-
-CONCERNS:
-- [List any concerns, one per line, or "None" if no concerns]
-- [Use this format even if approving]
-
-IMPROVED_FIX: (only if STATUS is MODIFIED)
-```
-[Your improved version of the fix]
-```
-
-IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
-[Explanation of what you improved and why]
-
-**Critical Guidelines:**
-- Be skeptical - catching one bug is worth rejecting ten mediocre fixes
-- Consider the broader codebase context
-- Think about maintainability and readability
-- If uncertain, mark as NEEDS_REVIEW
-- MODIFIED status requires an improved fix that's demonstrably better
-- APPROVED status requires high confidence (≥0.8) that the fix is correct
-"""
-
-        return prompt
 
     def _call_llm_validator(self, prompt: str) -> Optional[str]:
         """Call LLM for validation."""
@@ -390,13 +407,19 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
+        config=types.GenerateContentConfig(
+                        response_mime_type='application/json',
+                        response_schema=SonarFixResponse,
+                    ),
+
         )
-        return str(response.text) if hasattr(response, "text") else None
+        return  response.parsed
 
     def _call_openai_validator(self, prompt: str) -> Optional[str]:
-        response = self.client.chat.completions.create(
+
+        response = self.client.responses.parse(
             model=self.model,
-            messages=[
+            input=[
                 {
                     "role": "system",
                     "content": (
@@ -407,11 +430,12 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,
-            max_tokens=2000,
+            text_format=SonarFixResponse,
         )
 
-        return self._extract_openai_content(response)
+        return response.output_parsed
+
+
 
     def _call_togetherai_validator(self, prompt: str) -> Optional[str]:
         response = self.client.chat.completions.create(
@@ -427,197 +451,26 @@ IMPROVED_EXPLANATION: (only if STATUS is MODIFIED)
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
-            max_tokens=2000,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "sonar_fix_response",
+                    "schema": SonarFixResponse.model_json_schema(),
+                    "strict": True
+                }
+            }
         )
-
-        return self._extract_openai_content(response)
-
-    def _extract_openai_content(self, response: Any) -> Optional[str]:
-        if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content
-            return str(content) if content else None
-        return None
-
-    def _parse_validation_response(
-        self, response_text: str, original_fix: FixSuggestion
-    ) -> ValidationResult:
-        """Parse the validation response from LLM."""
+        response_json = response.choices[0].message.content
 
         try:
-            # Extract status
+            # Parse JSON
+            data = json.loads(response_json)
 
-            status_match = re.search(
-                r"STATUS:\s*(APPROVED|MODIFIED|REJECTED|NEEDS_REVIEW)",
-                response_text,
-                re.IGNORECASE,
-            )
-            status_str = (
-                status_match.group(1).upper() if status_match else "NEEDS_REVIEW"
-            )
-            status = ValidationStatus(status_str)
+            # Validate with Pydantic
+            return SonarFixResponse(**data)
 
-            # Extract confidence
-            confidence_match = re.search(
-                r"CONFIDENCE:\s*(-?\d{1,3}.?\d*)", response_text
-            )
-            confidence = float(confidence_match.group(1)) if confidence_match else 0.5
-            confidence = max(0.0, min(1.0, confidence))
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
 
-            # Extract validation notes
-            notes_match = re.search(
-                r"VALIDATION_NOTES:\s*((?:(?!CONCERNS:|IMPROVED_FIX:).)*)",
-                response_text,
-                re.DOTALL,
-            )
-            validation_notes = notes_match.group(1).strip() if notes_match else ""
-
-            # Extract concerns
-            concerns_match = re.search(
-                r"CONCERNS:\s*((?:(?!IMPROVED_FIX:|IMPROVED_EXPLANATION:).)*)",
-                response_text,
-                re.DOTALL,
-            )
-            concerns_text = concerns_match.group(1).strip() if concerns_match else ""
-            concerns = [
-                line.strip("- ").strip()
-                for line in concerns_text.split("\n")
-                if line.strip()
-                and line.lower().strip() != "none"
-                and line.lower().strip() != "n/a"
-            ]
-
-            # Handle MODIFIED status - extract improved fix
-            modified_fix = None
-            if status == ValidationStatus.MODIFIED:
-                improved_code_pattern = (
-                    r"IMPROVED_FIX:\s*```[a-zA-Z]{0,20}\s*((?:[^`]|`(?!``))*?)\s*```"
-                )
-                improved_code_match = re.search(
-                    improved_code_pattern, response_text, re.DOTALL
-                )
-
-                improved_explanation_match = re.search(
-                    r"IMPROVED_EXPLANATION:\s*(.*)", response_text, re.DOTALL
-                )
-
-                if improved_code_match:
-                    improved_code = improved_code_match.group(1).strip()
-                    improved_explanation = (
-                        improved_explanation_match.group(1).strip()
-                        if improved_explanation_match
-                        else validation_notes
-                    )
-
-                    # Create modified fix suggestion
-                    modified_fix = FixSuggestion(
-                        issue_key=original_fix.issue_key,
-                        original_code=original_fix.original_code,
-                        fixed_code=improved_code,
-                        explanation=f"{original_fix.explanation}\n\nValidator Improvement: {improved_explanation}",
-                        confidence=confidence,
-                        llm_model=f"{original_fix.llm_model} + {self.model} (validated)",
-                        rule_description=original_fix.rule_description,
-                        file_path=original_fix.file_path,
-                        line_number=original_fix.line_number,
-                        last_line_number=original_fix.last_line_number,
-                    )
-                else:
-                    # If no improved fix provided, treat as NEEDS_REVIEW
-                    logger.warning("MODIFIED status but no improved fix found")
-                    status = ValidationStatus.NEEDS_REVIEW
-
-            # Apply confidence threshold
-            if (
-                status == ValidationStatus.APPROVED
-                and confidence < self.min_confidence_threshold
-            ):
-                status = ValidationStatus.NEEDS_REVIEW
-                validation_notes += f"\n\nNote: Confidence {confidence:.2f} is below required threshold {self.min_confidence_threshold}"
-
-            return ValidationResult(
-                status=status,
-                original_fix=original_fix,
-                modified_fix=modified_fix,
-                validation_notes=validation_notes,
-                concerns=concerns,
-                confidence=confidence,
-            )
-
-        except Exception as e:
-            logger.error(f"Error parsing validation response: {e}", exc_info=True)
-            return ValidationResult(
-                status=ValidationStatus.NEEDS_REVIEW,
-                original_fix=original_fix,
-                validation_notes=f"Failed to parse validation response: {str(e)}",
-                confidence=0.0,
-            )
-
-    def validate_fixes_with_agent(
-        self,
-        fixes: List[FixSuggestion],
-        issues: List[SonarIssue],
-        project_path: Path,
-        provider: str = "openai",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        min_confidence: float = 0.7,
-    ) -> List[ValidationResult]:
-        """
-        Convenience function to validate a list of fixes.
-
-        Args:
-            fixes: List of fix suggestions
-            issues: List of corresponding SonarCloud issues
-            project_path: Path to the project
-            provider: LLM provider
-            model: LLM model name
-            api_key: API key
-            min_confidence: Minimum confidence threshold
-
-        Returns:
-            List of validation results
-        """
-        validator = FixValidator(
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            min_confidence_threshold=min_confidence,
-        )
-
-        results = []
-
-        for fix, issue in zip(fixes, issues):
-            # Read file content
-            file_path = project_path / fix.file_path if fix.file_path else None
-
-            if not file_path or not file_path.exists():
-                logger.warning(f"File not found for fix {fix.issue_key}: {file_path}")
-                results.append(
-                    ValidationResult(
-                        status=ValidationStatus.NEEDS_REVIEW,
-                        original_fix=fix,
-                        validation_notes="File not found for validation",
-                        confidence=0.0,
-                    )
-                )
-                continue
-
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    file_content = f.read()
-
-                result = validator.validate_fix(fix, issue, file_content)
-                results.append(result)
-
-            except Exception as e:
-                logger.error(f"Error reading file for validation: {e}", exc_info=True)
-                results.append(
-                    ValidationResult(
-                        status=ValidationStatus.NEEDS_REVIEW,
-                        original_fix=fix,
-                        validation_notes=f"Error reading file: {str(e)}",
-                        confidence=0.0,
-                    )
-                )
-
-        return results
+        except ValidationError as e:
+            raise ValueError(f"Schema validation failed: {e}")

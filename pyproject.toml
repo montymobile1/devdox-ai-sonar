@@ -33,23 +33,20 @@ classifiers = [
 # Core dependencies
 dependencies = [
     "click==8.1.7",
-    #"rich==13.8.1",
     "rich-click==1.9.4",
     "requests>=2.32",
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
     "pydantic-settings==2.12.0",
     "python-dotenv==1.0.0",
-    "openai==2.8.1",
-    "google-genai==1.51.0",
+    "openai==2.15.0",
+    "google-genai==1.60.0",
     "sonar-tools==3.16.2",
     "pycodestyle==2.14.0",
     "autopep8==2.3.2",
-    "gitpython==3.1.0",
     "pathlib2==2.3.0",
-    "langchain-together==0.3.0",
-    #"together==1.5.32",
-     "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
+    "GitPython==3.1.46",
+    "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
     "Jinja2==3.1.6",
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
@@ -58,8 +55,8 @@ dependencies = [
     "questionary==2.1.1",
     "tomlkit==0.13.3",
     "inquirer==3.4.1",
-    "inquirer3==0.6.1",
-    "aiofiles==25.1.0"
+    "aiofiles==25.1.0",
+    "langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements
 ]
 
 [project.optional-dependencies]
@@ -94,7 +91,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","templates/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88

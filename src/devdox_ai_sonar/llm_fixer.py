@@ -3,9 +3,13 @@
 import os
 import re
 import shutil
+import difflib
+import subprocess
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from pathlib import Path
 import json
+from pydantic import ValidationError
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 import logging
@@ -18,13 +22,14 @@ from devdox_ai_sonar.models.sonar import (
     SonarSecurityIssue,
     FixSuggestion,
     FixResult,
+    SonarFixResponse
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
     write_file_lines,
     read_file_lines,
-    calculate_base_indentation,
     normalize_indentation,
+    remove_tmp_files
 )
 
 logger = logging.getLogger(__name__)
@@ -46,6 +51,7 @@ except ImportError:
 
 try:
     from google import genai
+    from google.genai import types
 
     HAS_GEMINI = True
 except ImportError as e:
@@ -54,7 +60,14 @@ except ImportError as e:
 
 java_extension = ".java"
 scala_extension = ".scala"
+
 prompt_system_message = "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
+
+FUNCTION_ALREADY_CALLED="• As function can be already called so don't remove the parameters."
+STATICMETHOD_DECORATOR = "@staticmethod"
+PYTHON_CODE_BLOCK = "```python"
+CODE_BLOCK_END = "```"
+
 
 
 class LLMFixer:
@@ -187,10 +200,9 @@ class LLMFixer:
                 file_path = getattr(issue, "file_path", "Unknown file")
                 line = getattr(issue, "line", "N/A")
 
-                explanation = fix_response.get(
-                    "explanation", "No explanation provided."
-                )
-                suggestion = fix_response.get("fixed_code", "No suggestion provided.")
+                explanation = fix_response.EXPLANATION
+
+                suggestion = fix_response.FIXED_CODE_BLOCKS
 
                 template = self.jinja_env_templates.get_template("md.j2")
 
@@ -213,6 +225,7 @@ class LLMFixer:
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         project_path: Path,
+        tmp_path:Path,
         rule_info: Dict[str, Dict[str, str]],
         modified_content: str = "",
         error_message: str = "",
@@ -242,19 +255,36 @@ class LLMFixer:
             return None
 
         try:
+
             # Step 1: Validate issues and calculate ranges
+            file_path_tmp, line_range_tmp = _validate_and_extract_issue_info(
+                issues, tmp_path
+            )
+
             file_path, line_range = _validate_and_extract_issue_info(
                 issues, project_path
             )
 
+            line_range = get_content_range(file_path_tmp,line_range_tmp,file_path)
+
+            if line_range is None:
+                None
+
+            if line_range.get("error", "")!="":
+                logger.error(
+                    f"Error checking error  fix for issue {issues[0].key}: {line_range.get("error", "")}", exc_info=True
+                )
+                return None
+            language = self._get_language_from_extension(file_path.suffix)
+
             # Step 2: Read file and extract context
-            context_info = _prepare_context(
-                file_path, line_range, modified_content, self.context_lines
+            context_info = self._prepare_context(
+                file_path, line_range, modified_content, self.context_lines, language
             )
             if not context_info:
                 return None
 
-            # Step 3: Generate fix using LLM
+            #Step 3: Generate fix using LLM
             fix_response = self._call_llm_list(
                 issues,
                 context_info["context_dict"],
@@ -264,6 +294,120 @@ class LLMFixer:
             )
             if not fix_response:
                 return None
+            # refresh_token_code = '''def refresh_token(refreshTokenRequest: RefreshTokenRequest = None) -> RefreshTokenResponse:
+            #     """
+            #     Refreshes the access token using a valid refresh token and validates
+            #     the status of the associated Reseller and Branch
+            #
+            #     Args:
+            #         refreshTokenRequest (RefreshTokenRequest): Object containing the refresh_token string.
+            #
+            #     Returns:
+            #         RefreshTokenResponse: Object containing new tokens and account status flags.
+            #     """
+            #
+            #     logger.debug("Token refresh process initiated")
+            #     if not refreshTokenRequest or not refreshTokenRequest.refresh_token:
+            #         raise ProblemException(status=400, title="invalid_request", detail="Missing refresh token")
+            #
+            #     try:
+            #         refresh_token_str = refreshTokenRequest.refresh_token
+            #         logger.debug("Processing refresh token request with token: %s...",
+            #                    refresh_token_str[:10] if refresh_token_str and len(refresh_token_str) > 10 else "<none>")
+            #
+            #         keycloak = keyCloak.KeycloakHelper()
+            #         logger.debug("Calling Keycloak to refresh token")
+            #         keycloakResponse = keycloak.refresh_token(refresh_token_str)
+            #
+            #         access_token = keycloakResponse["access_token"]
+            #         logger.debug("Access token received, validating token")
+            #         claims = keycloak.validate_token(access_token)
+            #
+            #         expires_in = claims["exp"]
+            #         refresh_token = keycloakResponse["refresh_token"]
+            #         refresh_expires_in = keycloakResponse["refresh_expires_in"]
+            #         reseller_id = claims.get("reseller_id", "")
+            #         branch_id = claims.get("branch_id", "")
+            #
+            #         logger.debug("Token validated successfully. Reseller ID: %s, Branch ID: %s", reseller_id, branch_id)
+            #
+            #         supports_promo = True
+            #         supports_vouchers = True
+            #         reseller_currency_code = "USD"
+            #         if reseller_id != "000000000000000000000000":
+            #             logger.debug("Retrieving reseller information for reseller_id: %s", reseller_id)
+            #             reseller = get_reseller_by_id(reseller_id)[0]
+            #             reseller = helpers.DataHelpers.to_good_dict(reseller)
+            #
+            #             if reseller:
+            #                 supports_promo = reseller.get("supports_promo", False)
+            #                 supports_vouchers = reseller.get("supports_vouchers", False)
+            #                 reseller_currency_code = reseller.get("default_currency_code", "USD")
+            #                 is_active = reseller.get("is_active")
+            #
+            #                 logger.debug("Reseller details - supports_promo: %s, supports_vouchers: %s, currency: %s, is_active: %s",
+            #                            supports_promo, supports_vouchers, reseller_currency_code, is_active)
+            #
+            #                 if not is_active:
+            #                     logger.warning("Token refresh attempt for disabled reseller: %s", reseller_id)
+            #                     raise ProblemException(status=401, title="invalid_grant", detail="Reseller is disabled, Contact administration!")
+            #
+            #             if branch_id:
+            #                 logger.debug("Checking branch status for branch_id: %s", branch_id)
+            #                 getQuery = {"_id": ObjectId(branch_id)}
+            #
+            #                 branch = mongodb.find_one("branch", getQuery, apply_Tenancy=0)
+            #                 if branch:
+            #                     is_active = branch.get("is_active")
+            #                     logger.debug("Branch status - is_active: %s", is_active)
+            #
+            #                     if not is_active:
+            #                         logger.warning("Token refresh attempt for disabled branch: %s", branch_id)
+            #                         raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
+            #                 else:
+            #                     logger.warning("Token refresh attempt for non-existent branch: %s", branch_id)
+            #                     raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
+            #
+            #         logger.info("Token refresh successful for reseller_id: %s", reseller_id)
+            #
+            #         return RefreshTokenResponse(
+            #             message="Credentials Valid, Access Token Refreshed",
+            #             access_token=access_token,
+            #             token_type="ApiKey",
+            #             expires_in=expires_in,
+            #             refresh_expires_in=refresh_expires_in,
+            #             refresh_token=refresh_token,
+            #             supports_promo=supports_promo,
+            #             supports_vouchers=supports_vouchers,
+            #             reseller_currency_code=reseller_currency_code,
+            #         )
+            #     except (KeycloakPostError, KeycloakGetError) as e:
+            #         logger.warning("Keycloak refresh token failed : %s", str(e))
+            #         raise ProblemException(status=401, title="invalid_grant", detail="Refresh token is invalid or expired")
+            #     except Exception as e:
+            #         logger.error("Unexpected error during token refresh: %s", str(e))
+            #         raise ProblemException(status=500, title="server_error", detail="An internal error occurred.")'''
+            #
+            # fix_response = SonarFixResponse(IMPORT_BLOCK='',
+            #                                 FIXED_CODE_BLOCKS=[
+            #                                     CodeBlock(block_name='refresh_token', start_line=16, end_line=108,
+            #                                               has_changes=True,
+            #                                               change_type= ChangeType.FULL_CODE.value,
+            #                                               block_type=BlockType.FUNCTION,
+            #                                               context=refresh_token_code,
+            #                                               changes=None,
+            #                                               replacements=None
+            #                                               )],
+            #                                     NEW_HELPER_CODE ="",
+            #                                 PLACEMENT=PlacementType.SIBLING.value,
+            #                                 EXPLANATION="### Issue: python:S1066 - Merge this if statement with the  enclosing one. Nested if statements can be merged to reduce complexity and improve readability.### Fix: Merged the nested if statements on lines 113-114 into a single if statement.### Validation: Syntax OK,  logic preserved, 1 block modified",
+            # CONFIDENCE = 0.95
+            #                                 )
+            #
+
+            print("fix_response ")
+            print(fix_response)
+            print("end of fix_response")
             file_name = project_path / file_md
             self.write_explaination(
                 file_name,
@@ -271,6 +415,7 @@ class LLMFixer:
                 issues,
                 context_info.get("context_dict", {}).get("context", ""),
             )
+
             # Step 4: Build fix suggestion
             return _build_fix_suggestion(
                 fix_response,
@@ -282,9 +427,11 @@ class LLMFixer:
             )
 
         except FileNotFoundError as e:
+            print(f"File not found for issue {issues[0].key}: {e}")
             logger.warning(f"File not found for issue {issues[0].key}: {e}")
             return None
         except Exception as e:
+            print( f"Error generating fix for issue {issues[0].key}: {e}",)
             logger.error(
                 f"Error generating fix for issue {issues[0].key}: {e}", exc_info=True
             )
@@ -333,9 +480,7 @@ class LLMFixer:
         for file_path_str, file_fixes in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
-
                 success, _ = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
-
                 if success:
                     result.successful_fixes.extend(file_fixes)
 
@@ -365,6 +510,7 @@ class LLMFixer:
         lines: List[str],
         first_line_number: int,
         last_line_number: int,
+        problem_lines: List[int],
         context_lines: int,
     ) -> Dict[str, Any]:
         """
@@ -392,27 +538,26 @@ class LLMFixer:
         extractor = ContextExtractor(lines)
         # Convert to 0-indexed
         first_line_idx = first_line_number - 1
-        last_line_idx = last_line_number - 1
+        last_line_idx = last_line_number -1
 
-        if first_line_idx >= len(lines):
+        if first_line_idx >= len(lines) or last_line_idx >= len(lines):
+            logger.error(f"Line range {first_line_number}-{last_line_number} exceeds file length {len(lines)}")
             return extractor._get_empty_context(first_line_number)
 
-        problem_line = lines[first_line_idx].rstrip()
-        # Check if first line contains function/method definition
-        if extractor._is_function_definition(problem_line):
-            function_context = extractor._extract_complete_function(
-                first_line_idx, first_line_idx
-            )
-            if function_context:
-                return function_context
 
-        context = extractor._try_function_extraction_strategies(
+        functions_context = extractor._extract_all_functions_in_range(
             first_line_idx,
             last_line_idx,
+            problem_lines
         )
 
-        if context:
-            return context
+        if functions_context:
+            logger.debug(f"Found {len(functions_context.get('functions', []))} function(s) in range")
+
+            return functions_context
+
+            # Fallback: No functions found, use normal context
+        logger.debug("No functions found in range, using normal context extraction")
         return extractor._extract_normal_context(
             first_line_idx, last_line_idx, context_lines
         )
@@ -445,40 +590,63 @@ class LLMFixer:
         language = self._get_language_from_extension(file_extension)
 
         # Prepare prompt
-        prompt = self._create_fix_prompt_list(
+        prompt,system_template = self._create_fix_prompt_list(
             issues, context, rule_info_dict, language, error_message
         )
 
+
+        prompt_system = system_template.render()
+        print("prompt_system line 604")
+        print(prompt_system)
+        print("end of prompt_system")
         try:
+
+
             if self.provider == "openai":
-                response = self.client.chat.completions.create(
+
+                response = self.client.responses.parse(
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system_message},
+                    input=[
+                        {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=0.1,
-                    max_tokens=4000,
+                    text_format=SonarFixResponse,
                 )
                 return self._parse_openai_response(response)
 
             elif self.provider == "gemini":
-                model_instance = self.client.models.generate_content(
-                    model=self.model, contents=prompt
+                response = self.client.models.generate_content(
+                    model=self.model, contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type='application/json',
+                        response_schema=SonarFixResponse,
+                    ),
+
+
                 )
-                return self._parse_gemini_response(model_instance)
+                print("response.parsed ")
+                print(response.parsed)
+                return  response.parsed
+
 
             elif self.provider == "togetherai":
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
-                        {"role": "system", "content": prompt_system_message},
+                        {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=4000,
-                    top_p=0.9,
-                    top_k=40,
-                    repetition_penalty=1.1,
+                    #max_tokens=4000,
+
+                    temperature=0.08,
+                    response_format={
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": "sonar_fix_response",
+                        "schema": SonarFixResponse.model_json_schema(),
+                        "strict": True
+                    }
+                    }
                 )
 
                 return self._parse_togetherai_response(response)
@@ -530,7 +698,7 @@ class LLMFixer:
                         {"role": "user", "content": prompt},
                     ],
                     temperature=0.1,
-                    max_tokens=4000,
+
                 )
                 return self._parse_openai_response(response)
 
@@ -624,49 +792,240 @@ class LLMFixer:
         # Default fallback
         return {"current": "Unknown", "target": "15"}
 
+
     def _extend_strategies_for_issue(
         self,
-        strategies: List[str],
         issue: Any,
-        code_chunk: str,
     ) -> List[str]:
         msg_lower = getattr(issue, "message", "").lower()
 
-        # Cognitive Complexity
+        # Start with core rules (always included)
+
+        strategies_list = [
+            "🚨 CRITICAL - PRESERVE ORIGINAL FUNCTION:",
+            ". Take care of syntax , logic and structure",
+            "• Keep EXACT same function name from original code",
+            "• Keep EXACT same function signature (name, parameters, types)",
+            "• DO NOT rename the function",
+            f"• DO NOT change {STATICMETHOD_DECORATOR} to instance method or vice versa",
+            "• DO NOT invent new function names",
+            " ",
+            "🚨 CRITICAL - NO HALLUCINATION / NO INVENTION:",
+            "• DO NOT create new attributes that don't exist in original code",
+            "• DO NOT create new methods that aren't called in original code",
+            "• DO NOT add new logic or validation that wasn't in original",
+            "• If original code uses `promotion.is_active`, you MUST use `promotion.is_active`",
+            "• DO NOT rename attributes (e.g., changing `is_active` to `status`)",
+            "• DO NOT change enum values (e.g., if original has 'PROMOTION_NOT_ACTIVE', use exactly that)",
+            "• DO NOT create new attributes that aren't in the original code",
+            "• DO NOT guess at attribute names from other similar code"
+            "• DO NOT invent new error messages or exception types",
+            "• ONLY extract and reorganize EXISTING logic from the original code",
+            ". Be sure that No duplicate queries - pass data as parameters"
+            "• Avoid duplication of defined functions and methods"
+            "",
+            "Example of FORBIDDEN changes:",
+            "❌ Original: `if not promotion.is_active:`",
+            "❌ Changed to: `if promotion.status != PromotionStatusEnum.ACTIVE:`  # WRONG - 'status' doesn't exist!",
+            "",
+            "✅ Correct approach:",
+            "✅ Keep: `if not promotion.is_active:`  # EXACT same check",
+            "",
+            "## CORE RULES:",
+            "• Return ONLY valid JSON",
+            "• Use ONLY types from original code or Built-in types ",
+            "• Make MINIMAL changes necessary to satisfy the rule",
+            "• Built-in types always OK: str, int, Optional, List, Dict",
+            "• FIXED_SELECTION = complete function with fixes applied",
+            "• NEW_HELPER_CODE = only new helper definitions (or empty string)",
+            "",
+            "🚨 REFACTORING vs REWRITING:",
+
+             "✅ ALLOWED:",
+            "- Extract logic into helpers with early returns",
+            "- Remove redundant checks (helpers trust preconditions)",
+            "- Rename local variables only",
+            "- Simplify conditionals",
+            " ",
+            "❌ FORBIDDEN:",
+            "- New validation logic",
+            "- Changing attributes/data models",
+            "- New repository calls",
+            "- New enums/constants",
+            "- Changing exceptions/messages",
+            " ",
+            "🚨 IMPORTS:",
+            "- Scan helper code for ALL used symbols",
+            "- Check against existing imports",
+            "- Add missing symbols to IMPORT_BLOCK",
+            "- Move function-internal imports to top",
+            "- Type hints need direct imports (e.g., `date` not just `datetime`)",
+            "- NO imports inside helpers",
+            # "🚨 REFACTORING vs REWRITING:",
+            # "",
+            # "✅ REFACTORING (allowed):",
+            # "• Extract existing logic into helper methods",
+            # "• Reduce nesting with early returns",
+            # "•  No redundant checks - helpers trust their preconditions",
+            # "•  Preserve correct parameters - uses user_id, not invented promotion.user_id",
+            # "•  Preserved control flow - early return logic intact"  ,
+            # "• Rename variables for clarity (only local variables, not attributes)",
+            # "• Simplify complex conditionals by breaking them down",
+            # "",
+            # "❌ REWRITING (forbidden):",
+            # "• Adding new validation logic not in original",
+            # "• Changing data model attributes (e.g., promotion.is_active → promotion.status)",
+            # "• Creating new repository method calls not in original",
+            # "• Inventing new enum values or constants",
+            # "• Changing exception types or messages",
+            # "",
+            # "🚨 CRITICAL: IMPORT MANAGEMENT 🚨",
+            # "",
+            # "When creating helper methods:",
+            # "• SCAN NEW_HELPER_CODE for ALL modules/symbols used",
+            # "• CHECK each symbol against the Import Section shown above",
+            # "• If symbol NOT in Import Section → ADD to IMPORT_BLOCK",
+            # "• When moving imports from inside functions:",
+            # " - If original uses `datetime.now().date()` → Import BOTH `datetime` and `date`",
+            # " - If helper has type hint `-> date` → Import `date` explicitly",
+            # " - Type annotations require direct imports even if parent class exists",
+            # "• NEVER leave 'import' or 'from' statements inside helper functions",
+            "",
+            "Examples:",
+            "❌ WRONG - Import inside helper:",
+            f"{PYTHON_CODE_BLOCK}",
+            "def __parse_date(self, date_str: str):",
+            "    from datetime import datetime  # ❌ BAD",
+            "    return datetime.strptime(date_str, '%Y-%m-%d')",
+            "```",
+            "",
+            "✅ CORRECT - Import in IMPORT_BLOCK:",
+            f"{PYTHON_CODE_BLOCK}",
+            "# In IMPORT_BLOCK:",
+            '"IMPORT_BLOCK": "from datetime import datetime \n"',
+            "",
+            "# In NEW_HELPER_CODE:",
+            "def __parse_date(self, date_str: str):",
+            "    return datetime.strptime(date_str, '%Y-%m-%d')  # ✅ GOOD",
+            "```",
+            "",
+            "IMPORT_BLOCK Rules:",
+            "• Empty string \"\" if all imports already in Import Section",
+            "• Add ONLY missing imports (don't duplicate existing ones)",
+            "• Format: \"from module import symbol \n\" or \"import module \n\"",
+            "• Check Import Section (shown above) before adding",
+            "",
+        ]
         if "cognitive complexity" in msg_lower:
-            # Extract numbers if available
             comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
             target = comp_info.get("target", "15")
+            min_helpers =max(3, int(target) // 6),
+            strategies_list.extend([ f"TARGET: Reduce complexity to <{target}",
+                                     f"- Create at least {min_helpers} helpers in NEW_HELPER_CODE",
+            f"- Update original function to call them all"])
+        # # Cognitive Complexity
+        # if "cognitive complexity" in msg_lower:
+        #     # Extract numbers if available
+        #     comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
+        #     target = comp_info.get("target", "15")
+        #
+        #     strategies_list.extend([
+        #             f"TARGET: Reduce complexity to <{target}",
+        #             "• Extract complex logic to separate helper methods",
+        #             "• ONLY extract helper methods from THIS function",
+        #             "• If original code CALLS a method (e.g., self.validate(), self.normalize()), that method ALREADY EXISTS - DO NOT recreate it",
+        #             "• Keep all original logic working",
+        #             "• Keep all original parameteres and print or log them to be sure that they are used",
+        #             "• Be sure to have same parameters and type of each parameters in the definition and implementation",
+        #             "• Avoid using variable not found in the function or method",
+        #             "• Use early returns to reduce nesting",
+        #
+        #             "",
+        #             "🚨 CRITICAL: HELPER METHOD CONSISTENCY RULE 🚨",
+        #             "",
+        #             "IF ORIGINAL METHOD USES 'self':",
+        #             "•  Extract code that references variables NOT in helper's parameters → FORBIDDEN"
+        #             "•  Helper method must receive ALL data it needs as parameters",
+        #             "•  NO accessing parent function's local variables",
+        #             "•  NO assuming variables exist in scope",
+        #             "• ALL helpers MUST be instance methods (with 'self' parameter)",
+        #             f"• NO {STATICMETHOD_DECORATOR} decorators on ANY helpers",
+        #             "• ALL helpers use PLACEMENT: SIBLING",
+        #             "• Call ALL helpers as: self._helper_name(args)",
+        #             "",
+        #             "Example - Original uses 'self':",
+        #             f"{PYTHON_CODE_BLOCK}",
+        #             "# ORIGINAL (has self):",
+        #             "async def get_user_esims(self, user_id: str):",
+        #             "    profiles = self._fetch_profiles(user_id)",
+        #             "    return self._process(profiles)",
+        #             "",
+        #             "# FIXED_SELECTION (keep self):",
+        #             "async def get_user_esims(self, user_id: str):",
+        #             "    profiles = self._fetch_profiles(user_id)",
+        #             "    sorted_profiles = self._sort_by_date(profiles)  # ✅ Using self",
+        #             "    return self._process(sorted_profiles)",
+        #             "",
+        #             f"# NEW_HELPER_CODE (ALL have self, NO {STATICMETHOD_DECORATOR}):",
+        #             "def _sort_by_date(self, profiles):  # ✅ Has self parameter",
+        #             "    return sorted(profiles, key=lambda p: p.created_at)",
+        #             "",
+        #             "# PLACEMENT: SIBLING",
+        #             "```",
+        #             "",
+        #             f"IF ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
+        #             f"• ALL helpers MUST be {STATICMETHOD_DECORATOR}",
+        #             "• NO 'self' parameters on ANY helpers",
+        #             "• ALL helpers use PLACEMENT: SIBLING",
+        #             "• Call ALL helpers as: ClassName._helper_name(args)",
+        #             "",
+        #             f"Example - Original is {STATICMETHOD_DECORATOR}:",
+        #             f"{PYTHON_CODE_BLOCK}",
+        #             f"# ORIGINAL ({STATICMETHOD_DECORATOR}):",
+        #             f"{STATICMETHOD_DECORATOR}",
+        #             "def calculate_total(items):",
+        #             "    return sum(item.price for item in items)",
+        #             "",
+        #             f"# FIXED_SELECTION (keep {STATICMETHOD_DECORATOR}):",
+        #             f"{STATICMETHOD_DECORATOR}",
+        #             "def calculate_total(items):",
+        #             "    filtered = MyClass._filter_valid(items)  # ✅ Using ClassName",
+        #             "    return sum(item.price for item in filtered)",
+        #             "",
+        #             f"# NEW_HELPER_CODE (ALL {STATICMETHOD_DECORATOR}):",
+        #             f"{STATICMETHOD_DECORATOR}",
+        #             "def _filter_valid(items):  # ✅ No self",
+        #             "    return [i for i in items if i.is_valid]",
+        #             "",
+        #             "# PLACEMENT: SIBLING",
+        #             "```",
+        #             "",
+        #             "🚨 FORBIDDEN PATTERNS:",
+        #             f"❌ Mixing {STATICMETHOD_DECORATOR} helpers with self-based original method",
+        #             f"❌ Mixing self-based helpers with {STATICMETHOD_DECORATOR} original method",
+        #             f"❌ Calling self._helper() when helper is {STATICMETHOD_DECORATOR}",
+        #             "❌ Calling ClassName._helper() when helper has self parameter",
+        #             "",
+        #             "✅ CONSISTENCY RULE:",
+        #             "Original has 'self' → ALL helpers have 'self' → ALL calls use 'self._helper()'",
+        #             f"Original is '{STATICMETHOD_DECORATOR}' → ALL helpers are '{STATICMETHOD_DECORATOR}' → ALL calls use 'ClassName._helper()'",
+        #             ""
+        #         ])
+        #
 
-            strategies.extend(
-                [
-                    f"• REDUCE complexity to < {target}.",
-                    "• EXTRACT logic to new helper methods/functions.",
-                    "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
-                    "• If the original code snippet calls functions or methods (e.g., validate(), "
-                    "normalize(), process_data()), DO NOT create new helper definitions for them."
-                    "Assume they already exist in the project and should not be recreated."
-                    "• Only extract logic into a helper function if that logic does not already"
-                    "correspond to Any existing function call present in the snippet."
-                    "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
-                    "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
-                    "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
-                    "• NEVER put the same function definition in both sections.",
-                    "• If the original function is a class method (uses `self` or `cls`), "
-                    "then Any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
-                    "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
-                    "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
-                ]
-            )
-            if self._is_init_method(code_chunk):
-                strategies.append(
-                    "• Keep __init__ signature intact; extract validation logic to helpers."
-                )
+        # else:
+        #     strategies_list.extend([
+        #         "PLACEMENT GUIDE:",
+        #         "• SIBLING = helper needs 'self' (calls self.something)",
+        #         "• GLOBAL_TOP = imports or constants",
+        #         "• GLOBAL_BOTTOM = pure utility (no 'self')",
+        #     ])
 
         # Unused Code
         elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
-            strategies.append("• Remove ONLY the specific unused variable/import.")
-            strategies.append("• Do not break code that references adjacent lines.")
+
+                strategies_list.append("• Remove ONLY the specific unused variable/import.")
+                strategies_list.append("• Do not break code that references adjacent lines.")
 
         # Literal Duplication
         elif "duplicating this literal" in msg_lower:
@@ -674,131 +1033,39 @@ class LLMFixer:
                 r'duplicating this literal "([^"]+)"', getattr(issue, "message", "")
             )
             literal = match.group(1) if match else "the repeated value"
-            strategies.append(
-                f'• Extract the literal "{literal}" to a constant/variable.'
-            )
-            strategies.append(
-                "• Place the constant at the class or module level (not inside the function)."
-            )
-            strategies.append(
-                "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
-            )
-            strategies.append(
-                "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
-            )
-            strategies.append(
-                "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
-            )
-            strategies.append("• Use the constant in [FIXED_SELECTION].")
-
+            strategies_list.extend([
+                f"LITERAL DUPLICATION (extract '{literal}'):",
+                "• Create a constant with SCREAMING_SNAKE_CASE name",
+                "• Put constant definition in NEW_HELPER_CODE",
+                "• Use constant in FIXED_SELECTION",
+                "• PLACEMENT: GLOBAL_TOP",
+                ""
+            ])
+        elif "be sure that every parameter is used" in msg_lower:
+            strategies_list.append(FUNCTION_ALREADY_CALLED)
+            strategies_list.append("• Print or Log the unused parameters values.")
+            strategies_list.append("• Check the syntax and be sure that is working code")
         # Null Checks
         elif "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower:
-            strategies.append("• Add defensive null/None checks before usage.")
+            strategies_list.extend([
+                "NULL/NONE CHECK:",
+                "• Add defensive checks before accessing attributes",
+                "• Use: if value is not None: ...",
+                ""
+            ])
 
-        return strategies
+        strategies_list.extend([
+            "PLACEMENT GUIDE:",
+            f"• SIBLING = Instance methods needing 'self' (no {STATICMETHOD_DECORATOR})",
+            "• GLOBAL_TOP = Imports or constants",
+            f"• GLOBAL_BOTTOM = Pure utilities (no 'self', no {STATICMETHOD_DECORATOR})",
+            "",
+            f"🚨 DO NOT USE {STATICMETHOD_DECORATOR} DECORATOR - it causes issues!",
+        ])
 
-    def _create_fix_prompt(
-        self,
-        issue: Union[SonarIssue, SonarSecurityIssue],
-        context: Dict[str, Any],
-        rule_info: Optional[Dict[str, Any]] = None,
-        language: str = "python",
-        error_message: str = "",
-    ) -> str:
-        """Create a concise, focused prompt for the LLM to generate a fix."""
 
-        # 1. Context Setup
-        code_chunk = context.get("context", "")
-        base_indent = calculate_base_indentation(code_chunk)
+        return strategies_list
 
-        # 2. Strategy Detection
-        strategies = [
-            f"• PRESERVE indentation ({base_indent} spaces) and existing logic flow.",
-            "• Make MINIMAL changes necessary to satisfy the rule.",
-        ]
-
-        msg_lower = issue.message.lower()
-
-        # Cognitive Complexity
-        if "cognitive complexity" in msg_lower:
-            # Extract numbers if available
-            comp_info = self._extract_complexity_info(issue.message)
-            target = comp_info.get("target", "15")
-
-            strategies.extend(
-                [
-                    f"• REDUCE complexity to < {target}.",
-                    "• EXTRACT logic to new helper methods/functions.",
-                    "• CRITICAL: Do NOT define helper functions inside the existing function (No nesting).",
-                    "• If the original code snippet calls functions or methods (e.g., validate(), "
-                    "normalize(), process_data()), DO NOT create new helper definitions for them."
-                    "Assume they already exist in the project and should not be recreated."
-                    "• Only extract logic into a helper function if that logic does not already"
-                    "correspond to Any existing function call present in the snippet."
-                    "• Helper functions must be SIMPLE and ATOMIC (do not move complexity, remove it).",
-                    "• CRITICAL: Put only the CALL to helper functions in FIXED_SELECTION.",
-                    "• CRITICAL: Put only the DEFINITION of helper functions in NEW_HELPER_CODE.",
-                    "• NEVER put the same function definition in both sections.",
-                    "• If the original function is a class method (uses `self` or `cls`), "
-                    "then Any helper function placed as a SIBLING MUST also accept `self` or `cls`.",
-                    "• If the helper function does NOT use `self` or `cls`, it MUST NOT be placed as a SIBLING.",
-                    "• In that case, place NEW_HELPER_CODE in GLOBAL_BOTTOM (utility function), unless it is a constant/import → GLOBAL_TOP.",
-                ]
-            )
-            if self._is_init_method(code_chunk):
-                strategies.append(
-                    "• Keep __init__ signature intact; extract validation logic to helpers."
-                )
-
-        # Unused Code
-        elif "unused" in issue.rule.lower() or "unused" in msg_lower:
-            strategies.append("• Remove ONLY the specific unused variable/import.")
-            strategies.append("• Do not break code that references adjacent lines.")
-
-        # Literal Duplication
-        elif "duplicating this literal" in msg_lower:
-            match = re.search(r'duplicating this literal "([^"]+)"', issue.message)
-            literal = match.group(1) if match else "the repeated value"
-            strategies.append(
-                f'• Extract the literal "{literal}" to a constant/variable.'
-            )
-            strategies.append(
-                "• Place the constant at the class or module level (not inside the function)."
-            )
-            strategies.append(
-                "• CRITICAL: Put the constant DEFINITION in NEW_HELPER_CODE."
-            )
-            strategies.append(
-                "• CRITICAL: Put the code that USES the constant in FIXED_SELECTION."
-            )
-            strategies.append(
-                "• Define the constant in [NEW_HELPER_CODE] (likely GLOBAL_TOP)."
-            )
-            strategies.append("• Use the constant in [FIXED_SELECTION].")
-
-        # Null Checks
-        elif "null" in issue.rule.lower() or "nullable" in msg_lower:
-            strategies.append("• Add defensive null/None checks before usage.")
-
-        # 3. Construct Prompt
-        # We join strategies with newlines for a clean list
-        strategy_text = "\n".join(strategies)
-
-        template = self.jinja_env.get_template("fix_issues.j2")
-
-        # Prepare context for template
-        context_dic = {
-            "language": language,
-            "issue": issue,
-            "rule_info": rule_info,
-            "context": context,
-            "code_chunk": code_chunk,
-            "error_message": error_message,
-            "strategy_text": strategy_text,
-        }
-        # Render enhanced content
-        prompt = template.render(**context_dic)
-        return prompt.strip()
 
     def _create_fix_prompt_list(
         self,
@@ -807,36 +1074,102 @@ class LLMFixer:
         rule_info_list: Dict[str, Dict[str, str]],
         language: str = "python",
         error_message: str = "",
-    ) -> str:
+    ) -> Tuple[str, str]:
         """Create a concise, focused prompt for the LLM to generate a fix."""
 
         # 1. Context Setup
         code_chunk = context.get("context", "")
-        base_indent = calculate_base_indentation(code_chunk)
-
-        # 2. Strategy Detection
-        strategies = [
-            f"• PRESERVE indentation ({base_indent} spaces) and existing logic flow.",
-            "• Make MINIMAL changes necessary to satisfy the rule.",
-        ]
-
+        class_name= context.get("class_name", "")
+        strategies =[]
+        template = self.jinja_env.get_template("python/user_prompt.j2")
+        system_template = self.jinja_env.get_template("python/system_fix_issues.j2")
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
+            print(rule_key)
+            print(rule_key.lower())
+            if rule_key in ['python:S3776']:
+
+                context ['import_section']['has_imports']=True
+                template = self.jinja_env.get_template("python/refactoring/user_prompt.j2")
+                system_template = self.jinja_env.get_template("python/refactoring/system_fix_issues.j2")
 
             if rule_key not in rule_info_list:
                 continue
+            if rule_key=="python:S1172":
+                steps = rule_info_list.get(rule_key, {}).get('how_to_fix', {}).get('steps', [])
+                # Filter out unwanted step
+                filtered_steps = [
+                    step for step in steps
+                    if step != "Remove unused elements or implement their intended purpose"
+                ]
+                issue.message = "Be sure that every parameter is used"
+
+
+
+                # Add new strategies
+                filtered_steps.append(FUNCTION_ALREADY_CALLED)
+                filtered_steps.append("• Print or Log the unused parameters.")
+
+                rule_info_list[rule_key]['how_to_fix']['steps']= filtered_steps
+                rule_info_list[rule_key]['name'] = "Be sure that every parameter is used"
+                rule_info_list[rule_key]['root_cause']=None
+
 
             strategies = self._extend_strategies_for_issue(
-                strategies=strategies,
                 issue=issue,
-                code_chunk=code_chunk,
             )
 
-            # 3. Construct Prompt
-            # We join strategies with newlines for a clean list
-        strategy_text = "\n".join(strategies)
 
-        template = self.jinja_env.get_template("fix_issues_multiples.j2")
+        # Detect method type from ORIGINAL code
+        original_is_static = STATICMETHOD_DECORATOR in code_chunk
+        original_has_self = 'def ' in code_chunk and 'self' in code_chunk.split('def ')[1].split(')')[0]
+
+   
+        if original_is_static:
+            method_instruction_list = [
+            f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
+            f"- Keep {STATICMETHOD_DECORATOR} decorator in FIXED_SELECTION",
+            f"- ALL helper methods MUST also be {STATICMETHOD_DECORATOR}",
+            "- NO 'self' or 'cls' parameters in ANY helpers",
+            f"- Call ALL helpers as: {class_name or 'ClassName'}._helper_name(args)",
+            "- ALL helpers use PLACEMENT: SIBLING",
+            "",
+            f"✅ CONSISTENCY: Original {STATICMETHOD_DECORATOR} → ALL helpers {STATICMETHOD_DECORATOR}",
+            ""
+            ]
+
+        elif original_has_self:
+            method_instruction_list = [
+           "🚨 ORIGINAL METHOD USES 'self' (INSTANCE METHOD):",
+                "- Keep 'self' as first parameter in FIXED_SELECTION",
+                "- ALL helper methods MUST have 'self' as first parameter",
+                f"- NO {STATICMETHOD_DECORATOR} decorator on ANY helpers",
+                "- Call ALL helpers as: self._helper_name(args)",
+                "- ALL helpers use PLACEMENT: SIBLING",
+                "",
+                "✅ CONSISTENCY: Original has 'self' → ALL helpers have 'self'",
+                "",
+                f"❌ FORBIDDEN: Creating {STATICMETHOD_DECORATOR} helpers for instance method",
+                ""
+                ]
+
+
+
+        else:
+            method_instruction_list = [
+                "🚨 METHOD TYPE UNCLEAR:",
+                "- Preserve the original method signature exactly",
+                "- Match helper style to original method style",
+                ""
+            ]
+
+        method_instruction = "\n".join(method_instruction_list)
+
+
+
+        # 3. Construct Prompt
+        # We join strategies with newlines for a clean list
+        strategy_text = "\n".join(strategies)
 
         # Prepare context for template
         context_dic = {
@@ -845,19 +1178,22 @@ class LLMFixer:
             "rule_info": rule_info_list,
             "context": context,
             "code_chunk": code_chunk,
+            "method_instruction":method_instruction,
             "error_message": error_message,
             "strategy_text": strategy_text,
         }
         # Render enhanced content
         prompt = template.render(**context_dic)
-
-        return prompt.strip()
+        print("user template ")
+        print(prompt)
+        print("end of user template")
+        return prompt.strip(), system_template
 
     def _parse_openai_response(self, response: Any) -> Optional[Dict[str, Any]]:
         """Parse OpenAI API response."""
         try:
-            content = response.choices[0].message.content
-            return self._extract_fix_from_response(content)
+            return response.output_parsed
+            #return self._extract_fix_from_response(content)
         except Exception as e:
             logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
             return None
@@ -875,10 +1211,9 @@ class LLMFixer:
         """Parse Together API response."""
         try:
             content = response.choices[0].message.content
-
-            return self._extract_fix_from_response(content)
+            return self.parse_llm_response(content)
         except Exception as e:
-            logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
+            logger.error(f"Error parsing Together response: {e}", exc_info=True)
             return None
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
@@ -893,6 +1228,7 @@ class LLMFixer:
 
     def _apply_regex_patterns(self, content: str) -> Dict[str, Any]:
         patterns = {
+            "IMPORT_BLOCK":  r'"IMPORT_BLOCK"\s*:\s*"((?:[^"\\]|\\.)*)"|\'IMPORT_BLOCK\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "FIXED_SELECTION": r'"FIXED_SELECTION"\s*:\s*"((?:[^"\\]|\\.)*)"|\'FIXED_SELECTION\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "NEW_HELPER_CODE": r'"NEW_HELPER_CODE"\s*:\s*"((?:[^"\\]|\\.)*)"|\'NEW_HELPER_CODE\'\s*:\s*\'((?:[^\'\\]|\\.)*)\'',
             "PLACEMENT": r'"PLACEMENT"\s*:\s*"([^"]*)"|\'PLACEMENT\'\s*:\s*\'([^\']*)\'',
@@ -928,6 +1264,7 @@ class LLMFixer:
         value = value.replace('"', '"').replace(  # escaped quotes
             "\\\\", "\\"
         )  # escaped backslashes
+        value = value.replace('\\n', '\n').replace('\\"', '"').replace("\\'", "'")
         return value.strip()
 
     def _validate_results(self, results: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -936,6 +1273,7 @@ class LLMFixer:
             return None
 
         return {
+            "import_block":results["IMPORT_BLOCK"],
             "fixed_code": results["FIXED_SELECTION"],
             "helper_code": results["NEW_HELPER_CODE"],
             "placement_helper": results["PLACEMENT"].upper(),
@@ -950,8 +1288,16 @@ class LLMFixer:
 
         # Extract with type conversion and defaults
         fixed_code = str(fix_data.get("FIXED_SELECTION", "")).strip()
+
+        fixed_code = fixed_code.replace('\\"', '"').replace('\\','').replace("\\'", "'")
+
+        import_block = str(fix_data.get("IMPORT_BLOCK", "")).strip()
+
         helper_code = str(fix_data.get("NEW_HELPER_CODE", "")).strip()
+
+        helper_code = helper_code.replace('\\','').replace('\\"', '"').replace("\\'", "'")
         placement = str(fix_data.get("PLACEMENT", "SIBLING")).strip().upper()
+
         explanation = str(fix_data.get("EXPLANATION", "")).strip()
         confidence = fix_data.get("CONFIDENCE", 0.5)
 
@@ -970,18 +1316,47 @@ class LLMFixer:
         if not explanation:
             explanation = "Code fix applied"
 
-        # Require fixed_code
-        if not fixed_code:
-            logger.error("❌ FIXED_SELECTION is empty")
-            return None
+        # # Require fixed_code
+        # if not fixed_code:
+        #     logger.error("❌ FIXED_SELECTION is empty")
+        #     return None
 
         return {
+            "import_block":import_block,
             "fixed_code": fixed_code,
             "helper_code": helper_code,
             "placement_helper": placement,
             "explanation": explanation,
             "confidence": confidence,
         }
+
+    def parse_llm_response(self,response_json: str) -> SonarFixResponse:
+        """
+        Parse and validate LLM response.
+
+        Args:
+            response_json: Raw JSON string from LLM
+
+        Returns:
+            Validated SonarFixResponse object
+
+        Raises:
+            ValidationError: If response doesn't match schema
+        """
+
+
+        try:
+            # Parse JSON
+            data = json.loads(response_json)
+
+            # Validate with Pydantic
+            return SonarFixResponse(**data)
+
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e} for response {response_json}")
+
+        except ValidationError as e:
+            raise ValueError(f"Schema validation failed: {e}")
 
     def _extract_fix_from_response(self, content: str) -> Optional[Dict[str, Any]]:
         """
@@ -990,6 +1365,8 @@ class LLMFixer:
         try:
             # Step 1: Try direct JSON parsing first (for well-formed responses)
             cleaned_content = content.strip()
+
+            cleaned_content.replace("```json","").replace("```","")
             cleaned_content = cleaned_content.split("{", 1)[1]
             cleaned_content = "{" + cleaned_content
 
@@ -1001,6 +1378,7 @@ class LLMFixer:
 
             if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
                 try:
+
                     fix_data = json.loads(cleaned_content)
 
                     return self._extract_fields_from_parsed_json(fix_data)
@@ -1008,11 +1386,11 @@ class LLMFixer:
                     pass  # Continue to cleaning steps
 
             # Step 2: Last resort - regex extraction
-
             return self._extract_using_regex_fallback(content)
 
         except Exception as e:
             logger.error(f"Error in extraction: {e}", exc_info=True)
+            print(f"Error in extraction: {e}")
             return None
 
     def _get_language_from_extension(self, extension: str) -> str:
@@ -1144,23 +1522,60 @@ class LLMFixer:
 
         try:
             lines = read_file_lines(file_path)
-            sorted_fixes = sorted(fixes, key=lambda f: f.line_number or 0, reverse=True)
-
             results = []
-            for fix in sorted_fixes:
-                result = apply_single_fix(lines, fix)
-                results.append(result)
+            for fix in fixes:
+
+                result, lines = apply_single_fix(lines, fix)
+
 
                 if not result.success:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
+                    print((f"Fix {fix.issue_key} skipped: {result.reason}"))
+                    continue
+                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
 
-            write_file_lines(file_path, lines)
+                write_file_lines(file_path_tmp, lines)
+                validate, msg = self.check_python_interpreter(file_path_tmp)
+                result.success = validate
+                result.reason = msg
+
+                results.append(result)
+                if result.success:
+
+                    write_file_lines(file_path, lines)
+                    remove_tmp_files(file_path_tmp)
+
+
 
             return all(r.success for r in results), results
 
         except Exception as e:
             logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
             return False, []
+
+    def check_python_interpreter(self, file_path: Path) -> Tuple[bool, Optional[str]]:
+        """
+        Check Python syntax and formatting.
+
+        Returns:
+            (True, None) if everything is valid
+            (False, error_message) otherwise
+        """
+        try:
+            # 1. Syntax check
+            subprocess.run(
+                ["python", "-m", "py_compile", str(file_path)],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+
+
+            return True, None
+
+        except subprocess.CalledProcessError as e:
+            error_output = e.stderr or e.stdout or "Unknown error"
+            return False, error_output.strip()
 
     def _check_bracket_balance(self, content: str) -> bool:
         """
@@ -1309,7 +1724,8 @@ class LLMFixer:
                         original_content = f.read()
 
                 # Attempt direct application
-                success, _ = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success, new_fixes = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+
                 if success:
                     # Direct application succeeded
                     result.successful_fixes.extend(file_fixes)
@@ -1331,12 +1747,21 @@ class LLMFixer:
                             try:
                                 # Get current file content (may have been modified by previous validator fixes)
                                 current_content = original_content
-                                if file_path.exists():
-                                    with open(file_path, "r", encoding="utf-8") as f:
+                                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
+                                if file_path_tmp.exists():
+                                    print("lsss")
+                                    with open(file_path_tmp, "r", encoding="utf-8") as f:
                                         current_content = f.read()
+                                        remove_tmp_files(file_path_tmp)
 
+                                reason_list = []
+                                for f in new_fixes:
+                                    if f.reason is not None:
+                                        reason_list.append(f.reason)
+
+                                reason_msg = ", ".join(reason_list)
                                 validation_result = validator.validate_fix(
-                                    fix, issue, current_content
+                                    fix, issue, current_content, new_error_msg=reason_msg
                                 )
 
                                 # Log validation decision
@@ -1382,23 +1807,23 @@ class LLMFixer:
                                     == ValidationStatus.REJECTED
                                 ):
                                     logger.warning(
-                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.validation_notes}"
+                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.explanation}"
                                     )
                                     result.failed_fixes.append(
                                         {
                                             "fix": fix,
-                                            "error": f"Rejected by validator: {validation_result.validation_notes}",
+                                            "error": f"Rejected by validator: {validation_result.explanation}",
                                         }
                                     )
 
                                 else:  # NEEDS_REVIEW
                                     logger.warning(
-                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.validation_notes}"
+                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.explanation}"
                                     )
                                     result.failed_fixes.append(
                                         {
                                             "fix": fix,
-                                            "error": f"Needs manual review: {validation_result.validation_notes}",
+                                            "error": f"Needs manual review: {validation_result.explanation}",
                                         }
                                     )
 
@@ -1412,6 +1837,7 @@ class LLMFixer:
                                 )
 
                     else:
+
                         # No validator available, mark all as failed
                         result.failed_fixes.extend(
                             [
@@ -1532,12 +1958,815 @@ class LLMFixer:
 
         return any(path_candidate.endswith(ext) for ext in supported_extensions)
 
+    def _prepare_context(
+            self,
+            file_path: Path,
+            line_range: Dict[str, Any],
+            modified_content: str,
+            context_lines: int,
+            language:str
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Read file and prepare context for LLM.
+
+        Args:
+            file_path: Path to the file
+            line_range: Dictionary with first_line, last_line, problem_lines
+            modified_content: Optional pre-extracted content
+            context_lines: Number of context lines to include around issues
+
+        Returns:
+            Dictionary containing:
+            - context_dict: Context information for LLM
+            - file_lines: Full file content as list of lines
+            - problem_line_content: List of actual problem line strings
+
+            Returns None if file cannot be read
+        """
+        try:
+            # Read file content
+            with open(file_path, "r", encoding="utf-8") as f:
+                file_content = f.read()
+                file_lines = file_content.splitlines(keepends=True)
+
+            # Extract problem line content
+            # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
+            problem_line_content = _extract_problem_lines(
+                file_lines, line_range["problem_lines"]
+            )
+
+            first_problem_line_idx = line_range["first_line"] - 1
+            class_name = self._extract_class_name_from_file(
+                file_lines, first_problem_line_idx
+            )
+
+
+            # Log class name detection for debugging
+            if class_name:
+                logger.debug(f"Detected class name: {class_name} at line {line_range['first_line']}")
+            else:
+                logger.debug(
+                    f"No class name detected for line {line_range['first_line']} (likely module-level function)")
+
+
+            import_section = self._extract_import_section(file_lines, language)
+            # as no need for imports
+            # import_section = {
+            #     "start_line": 0,
+            #     "end_line": 0,
+            #     "content": "",
+            #     "has_imports": False
+            # }
+            import_section['has_imports']=False
+            # Build context dictionary
+            if modified_content:
+                # Use provided modified content
+                context_dict = {
+                    "context": modified_content,
+                    "start_line": line_range["first_line"],
+                    "end_line": line_range["last_line"],
+                    "problem_line_content": problem_line_content,
+                    "class_name": class_name,
+                    "import_section": import_section,
+                    "language": language
+                }
+            else:
+                # Extract context from file
+                context_dict = self._extract_context(
+                    file_lines,
+                    line_range["first_line"],
+                    line_range["last_line"],
+                    line_range["problem_lines"],
+                    context_lines
+                )
+                context_dict["language"] = language
+                if "class_name" not in context_dict or context_dict["class_name"] is None:
+                    context_dict["class_name"] = class_name
+                context_dict["import_section"] = import_section
+            context_dict["problem_line_content"]=problem_line_content
+            return {
+                "context_dict": context_dict,
+                "file_lines": file_lines,
+                "problem_line_content": problem_line_content,
+            }
+
+        except UnicodeDecodeError as e:
+            logger.error(f"File encoding error for {file_path}: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Error reading file {file_path}: {e}")
+            return None
+
+    def _extract_import_section(
+            self,
+            file_lines: List[str],
+            language: str
+    ) -> Dict[str, Any]:
+        """
+        Extract only the import section (line range and content) from a file.
+
+        Args:
+            file_lines: All lines in the file
+            language: Programming language (python, javascript, java, etc.)
+
+        Returns:
+            Dictionary with:
+            - start_line: First line number of imports (1-indexed)
+            - end_line: Last line number of imports (1-indexed)
+            - content: String containing all import statements
+            - has_imports: Boolean indicating if imports were found
+        """
+        if language == "python":
+            return self._extract_python_import_section(file_lines)
+        else:
+            logger.debug(f"Import extraction not implemented for language: {language}")
+            return {
+                "start_line": 0,
+                "end_line": 0,
+                "content": "",
+                "has_imports": False
+            }
+
+    def _should_skip_docstring(self, stripped: str, start_line: Optional[int]) -> bool:
+        """
+        Check if line is a docstring that should be skipped.
+
+        Args:
+            stripped: Stripped line content
+            start_line: Current start line (None if not found yet)
+
+        Returns:
+            True if line is a docstring to skip
+        """
+        return stripped.startswith(('"""', "'''"))
+
+    def _handle_backslash_continuation_line(
+            self,
+            original_line: str,
+            stripped: str,
+            line_num: int,
+            import_lines: List[str],
+            state: Dict[str, bool]
+    ) -> int:
+        """
+        Process a line that's part of a backslash continuation.
+
+        Args:
+            original_line: Original line with indentation
+            stripped: Stripped line content
+            line_num: Current line number (1-indexed)
+            import_lines: List to append line to
+            state: Dictionary with import state flags
+
+        Returns:
+            Updated end_line value
+        """
+        import_lines.append(original_line)
+
+        # Check if this line also ends with backslash
+        if not stripped.rstrip().endswith('\\'):
+            state['in_backslash_continuation'] = False
+            state['in_multiline_import'] = False
+
+        return line_num
+
+
+    def _handle_parentheses_import_line(
+            self,
+            original_line: str,
+            stripped: str,
+            line_num: int,
+            import_lines: List[str],
+            state: Dict[str, bool]
+    ) -> int:
+        """
+        Process a line that's part of a parentheses-based multi-line import.
+
+        Args:
+            original_line: Original line with indentation
+            stripped: Stripped line content
+            line_num: Current line number (1-indexed)
+            import_lines: List to append line to
+            state: Dictionary with import state flags
+
+        Returns:
+            Updated end_line value
+        """
+        import_lines.append(original_line)
+
+        if ')' in stripped:
+            state['in_parentheses_import'] = False
+            state['in_multiline_import'] = False
+
+            # Check if there's a backslash after closing parenthesis
+            if stripped.rstrip().endswith('\\'):
+                state['in_backslash_continuation'] = True
+                state['in_multiline_import'] = True
+
+        return line_num
+
+    def _extract_python_import_section(self, file_lines: List[str]) -> Dict[str, Any]:
+        """
+        Extract Python import section (handles multi-line imports with parentheses and backslash).
+
+        Handles cases like:
+        - from module import (
+              symbol1,
+              symbol2
+          )
+        - from module import symbol1, symbol2, \
+              symbol3, symbol4
+        - import module
+
+        Returns line range and content of all import statements.
+        """
+        import_lines = []
+        start_line = None
+        end_line = None
+
+        state = {
+            'in_multiline_import': False,
+            'in_parentheses_import': False,
+            'in_backslash_continuation': False
+        }
+
+
+
+
+        for idx, line in enumerate(file_lines):
+            line_num = idx + 1  # Convert to 1-indexed
+            stripped = line.strip()
+            original_line = line
+
+            if self._should_skip_docstring(stripped, start_line):
+                if start_line is not None:
+                    break
+                continue
+
+            # Handle multi-line import with parentheses
+            if state['in_parentheses_import']:
+                end_line = self._handle_parentheses_import_line(
+                    original_line, stripped, line_num, import_lines, state
+                )
+                continue
+
+            # Handle backslash continuation
+            if state['in_backslash_continuation']:
+                end_line = self._handle_backslash_continuation_line(
+                    original_line, stripped, line_num, import_lines, state
+                )
+                continue
+            # Detect start of import statement
+            if self._is_import_statement_start(stripped):
+                    if start_line is None:
+                        start_line = line_num
+
+                    import_lines.append(original_line)
+                    end_line = line_num
+
+                    state = self._detect_multiline_import_pattern(stripped, state)
+                    continue
+
+            # Check if we should stop at decorator
+            if self._should_stop_at_decorator(stripped, start_line):
+                break
+
+            # Check if we should stop at code
+            if self._should_stop_at_code(stripped, start_line, state):
+                 break
+
+        return self._build_import_section_result(start_line, end_line, import_lines)
+
+    def _should_stop_at_code(
+            self,
+            stripped: str,
+            start_line: Optional[int],
+            state: Dict[str, bool]
+    ) -> bool:
+        """
+        Check if code line indicates end of import section.
+
+        Args:
+            stripped: Stripped line content
+            start_line: Current start line (None if not found yet)
+            state: Dictionary with import state flags
+
+        Returns:
+            True if we should stop at this code line
+        """
+        # If we're in a multi-line import, don't stop
+        if state['in_multiline_import']:
+            return False
+
+        # If we haven't found any imports yet, don't stop
+        if start_line is None:
+            return False
+
+        # If line is empty, don't stop (allow blank lines between imports)
+        if not stripped:
+            return False
+
+        # Check if it's a special case like __all__ or __version__
+        if self._is_module_level_dunder(stripped):
+            # Module-level dunder variables are OK after imports
+            return False
+
+        # If we get here, it's actual code - stop collecting imports
+        return True
+
+    def _is_module_level_dunder(self, stripped: str) -> bool:
+        """
+        Check if line is a module-level dunder variable.
+
+        Args:
+            stripped: Stripped line content
+
+        Returns:
+            True if line starts with __all__, __version__, etc.
+        """
+        return stripped.startswith(('__all__', '__version__', '__author__', '__'))
+
+
+    def _should_stop_at_decorator(
+            self,
+            stripped: str,
+            start_line: Optional[int]
+    ) -> bool:
+        """
+        Check if decorator indicates end of import section.
+
+        Args:
+            stripped: Stripped line content
+            start_line: Current start line (None if not found yet)
+
+        Returns:
+            True if we should stop at this decorator
+        """
+        if stripped.startswith('@'):
+            # Decorators indicate we're past imports
+            return start_line is not None
+        return False
+
+
+    def _detect_multiline_import_pattern(
+            self,
+            stripped: str,
+            state: Dict[str, bool]
+    ) -> Dict[str, bool]:
+        """
+        Detect and set flags for multi-line import patterns.
+
+        Args:
+            stripped: Stripped line content
+            state: Dictionary with import state flags to update
+        """
+        if '(' in stripped and ')' not in stripped:
+            # Parentheses-based multi-line import
+            state['in_parentheses_import'] = True
+            state['in_multiline_import'] = True
+        elif stripped.rstrip().endswith('\\'):
+            # Backslash continuation
+            state['in_backslash_continuation'] = True
+            state['in_multiline_import'] = True
+        else:
+            # Single line import, reset flags
+            # Single line import, reset flags
+            state['in_multiline_import'] = False
+            state['in_parentheses_import'] = False
+            state['in_backslash_continuation'] = False
+        return state
+
+    def _is_import_statement_start(self, stripped: str) -> bool:
+        """
+        Check if line starts an import statement.
+
+        Args:
+            stripped: Stripped line content
+
+        Returns:
+            True if line starts with 'from ' or 'import '
+        """
+        return stripped.startswith('from ') or stripped.startswith('import ')
+
+    def _build_import_section_result(
+            self,
+            start_line: Optional[int],
+            end_line: Optional[int],
+            import_lines: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Build the final import section result dictionary.
+
+        Args:
+            start_line: First line of import section (1-indexed)
+            end_line: Last line of import section (1-indexed)
+            import_lines: List of import line contents
+
+        Returns:
+            Dictionary with start_line, end_line, content, has_imports
+        """
+        if start_line is None:
+            return {
+                "start_line": 0,
+                "end_line": 0,
+                "content": "",
+                "has_imports": False
+            }
+
+        return {
+            "start_line": start_line,
+            "end_line": end_line or start_line,
+            "content": "".join(import_lines),
+            "has_imports": True
+        }
+
+    def _extract_class_name_from_file(
+            self,
+            file_lines: List[str],
+            target_line_idx: int
+    ) -> Optional[str]:
+        """
+        Extract the class name that contains the target line.
+
+        Args:
+            file_lines: All lines in the file
+            target_line_idx: Line index (0-based) to find the containing class
+
+        Returns:
+            Class name if found, None otherwise
+        """
+        # Search backwards from target line to find class definition
+        for i in range(target_line_idx, -1, -1):
+            line = file_lines[i].strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith('#') or line.startswith('//'):
+                continue
+
+            # Check for class definition
+            match = re.search(r'class\s+(\w+)\s*[:(]', line)
+            if match:
+                class_name = match.group(1)
+
+                # Verify target line is actually inside this class
+                if self._is_line_inside_class(file_lines, target_line_idx, i):
+                    return class_name
+
+        return None
+
+    def _is_line_inside_class(
+            self,
+            file_lines: List[str],
+            target_idx: int,
+            class_start_idx: int
+    ) -> bool:
+        """
+        Check if target line is inside the class starting at class_start_idx.
+
+        Args:
+            file_lines: All lines in the file
+            target_idx: Target line index (0-based)
+            class_start_idx: Class definition line index (0-based)
+
+        Returns:
+            True if target is inside the class
+        """
+        if target_idx <= class_start_idx:
+            return False
+
+        class_line = file_lines[class_start_idx]
+        class_indent = len(class_line) - len(class_line.lstrip())
+
+        # Check lines between class definition and target
+        for i in range(class_start_idx + 1, target_idx + 1):
+            line = file_lines[i]
+
+            # Skip empty lines and comments
+            if not line.strip() or line.strip().startswith('#'):
+                continue
+
+            current_indent = len(line) - len(line.lstrip())
+
+            # If we find a line with same or less indentation as class
+            # and it's not our target line, target is outside class
+            if current_indent <= class_indent and i != target_idx:
+                # Check if this is another class definition
+                if re.search(r'class\s+\w+\s*[:(]', line):
+                    return False
+
+        # Target line should have greater indentation than class
+        target_line = file_lines[target_idx]
+        if not target_line.strip():
+            return True
+
+        target_indent = len(target_line) - len(target_line.lstrip())
+        return target_indent > class_indent
 
 class ContextExtractor:
     """Handles context extraction logic"""
 
     def __init__(self, lines: List[str]):
         self.lines = lines
+
+    def _find_functions_containing_problems(
+            self,
+            problem_indices: List[int],
+            range_start: int,
+            range_end: int
+    ) -> List[Dict[str, Any]]:
+        """
+        Find all functions that contain at least one problem line.
+
+        This is the KEY optimization - we only process functions with actual issues.
+        """
+        functions_with_issues = []
+        processed_function_starts = set()  # Avoid duplicates
+
+        for problem_idx in problem_indices:
+            # Skip if problem line is outside the specified range
+            if problem_idx < range_start or problem_idx > range_end:
+                logger.debug(f"Skipping problem line {problem_idx + 1} - outside range")
+                continue
+
+            # Find which function contains this problem line
+            containing_func_idx = self._find_containing_function(problem_idx)
+
+            if containing_func_idx is None:
+                logger.warning(
+                    f"Problem line {problem_idx + 1} is not inside any function"
+                )
+                continue
+
+            # Skip if we already processed this function
+            if containing_func_idx in processed_function_starts:
+                continue
+
+            # Get function info
+            function_info = self._get_function_info(containing_func_idx)
+            if not function_info:
+                logger.error(
+                    f"Failed to get function info for line {containing_func_idx + 1}"
+                )
+                continue
+
+            # Track which problem lines are in this function
+            function_problem_lines = [
+                idx + 1  # Convert back to 1-based
+                for idx in problem_indices
+                if function_info['start_idx'] <= idx <= function_info['end_idx']
+            ]
+
+            function_info['problem_lines_in_function'] = function_problem_lines
+            functions_with_issues.append(function_info)
+            processed_function_starts.add(containing_func_idx)
+
+        # Sort by start line to maintain file order
+        functions_with_issues.sort(key=lambda f: f['start_idx'])
+
+        logger.info(
+            f"Found {len(functions_with_issues)} functions containing "
+            f"{len(problem_indices)} problem lines"
+        )
+
+        return functions_with_issues
+
+    def _build_optimized_context(
+            self,
+            functions: List[Dict[str, Any]],
+            problem_lines: List[int]
+    ) -> Dict[str, Any]:
+        """
+        Build the new context format with individual function entries.
+
+        Returns both:
+        - new_context: List of individual function contexts
+        - context: Combined context (for backward compatibility)
+        """
+        if not functions:
+            return None
+
+        new_context = []
+        combined_lines = []
+        function_metadata = []
+
+        for func in functions:
+            # Build individual function context entry
+            function_context = {
+                "context": ''.join(func['lines']),
+                "line_number": func['start_idx'] + 1,
+                "start_line": func['start_idx'] + 1,
+                "end_line": func['end_idx'] + 1,
+                "is_complete_function": True,
+                "function_name": func['name'],
+                "problem_lines_in_function": func.get('problem_lines_in_function', []),
+                "line_count": len(func['lines'])
+            }
+            new_context.append(function_context)
+
+            # Add to combined context
+            combined_lines.extend(func['lines'])
+
+            # Build metadata
+            function_metadata.append({
+                'name': func['name'],
+                'start_line': func['start_idx'] + 1,
+                'end_line': func['end_idx'] + 1,
+                'problem_lines': func.get('problem_lines_in_function', []),
+                'line_count': len(func['lines'])
+            })
+
+        overall_start = functions[0]['start_idx']
+        overall_end = functions[-1]['end_idx']
+
+        return {
+            # NEW: Individual function contexts
+            "new_context": new_context,
+
+            # LEGACY: Combined context for backward compatibility
+            "context": ''.join(combined_lines),
+            "start_line": overall_start + 1,
+            "end_line": overall_end + 1,
+            "is_multi_function": len(functions) > 1,
+            "function_count": len(functions),
+            "functions": function_metadata,
+            "is_complete_function": True,
+
+            # METADATA: Additional tracking
+            "total_problem_lines": len(problem_lines),
+            "functions_with_issues": len(functions),
+            "coverage_percentage": round(
+                (len(functions) / self._count_functions_in_range(overall_start, overall_end)) * 100,
+                2
+            ) if self._count_functions_in_range(overall_start, overall_end) > 0 else 100
+        }
+
+    def _count_functions_in_range(self, start_idx: int, end_idx: int) -> int:
+        """Helper to count total functions in range for metrics."""
+        count = 0
+        for line_idx in range(start_idx, end_idx + 1):
+            if line_idx >= len(self.lines):
+                break
+            if self._is_function_definition(self.lines[line_idx].rstrip()):
+                count += 1
+        return count
+
+
+    def _extract_all_functions_in_range(
+            self,
+            first_idx: int,
+            last_idx: int,
+            problem_lines: List[int],
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Extract ONLY functions that contain problem lines.
+
+        Example:
+            Range: 400-1700
+            Problem lines: [402, 600, 1200, 1250, 1600]
+
+            If functions are:
+            - func_a: lines 380-450 (contains 402) ✓ INCLUDE
+            - func_b: lines 500-650 (contains 600) ✓ INCLUDE
+            - func_c: lines 700-800 (no issues) ✗ EXCLUDE
+            - func_d: lines 1150-1300 (contains 1200, 1250) ✓ INCLUDE
+            - func_e: lines 1550-1650 (contains 1600) ✓ INCLUDE
+
+        Returns:
+            {
+                "new_context": [
+                    {
+                        "context": <func_a_code>,
+                        "line_number": 380,
+                        "start_line": 380,
+                        "end_line": 450,
+                        "is_complete_function": True,
+                        "function_name": "func_a",
+                        "problem_lines_in_function": [402]
+                    },
+                    # ... func_b, func_d, func_e
+                ],
+                "context": <combined_code_of_all_functions>,
+                "start_line": 380,  # First function start
+                "end_line": 1650,   # Last function end
+                "is_multi_function": True,
+                "function_count": 4,
+                "functions": [<metadata>],
+                "is_complete_function": True,
+                "total_problem_lines": 5,
+                "functions_with_issues": 4
+            }
+        """
+        # Convert problem_lines to 0-based indices for internal consistency
+        problem_indices = [line - 1 for line in problem_lines]
+        # Step 1: Find all functions that contain at least one problem line
+        functions_with_issues = self._find_functions_containing_problems(
+            problem_indices,
+            first_idx,
+            last_idx
+        )
+
+        if not functions_with_issues:
+            logger.warning(
+                f"No functions found containing problem lines {problem_lines} "
+                f"in range {first_idx + 1}-{last_idx + 1}"
+            )
+            return None
+
+        # Step 2: Build the response structure
+        return self._build_optimized_context(functions_with_issues, problem_lines)
+
+
+
+    def _get_function_info(self, func_start_idx: int) -> Optional[Dict[str, Any]]:
+        """
+        Get complete information about a function starting at given index.
+
+        Returns:
+            Dictionary with:
+            - start_idx: Function start (0-based)
+            - end_idx: Function end (0-based)
+            - name: Function name
+            - lines: List of code lines
+            - indentation: Base indentation level
+        """
+
+        if func_start_idx >= len(self.lines):
+            return None
+
+        func_line = self.lines[func_start_idx].rstrip()
+        if not self._is_function_definition(func_line):
+            return None
+
+        # Extract function name
+        func_name = self._extract_function_name(func_line)
+
+        decorator_start_idx = self._find_decorator_start(func_start_idx)
+
+        # Find function end
+        func_end_idx = self._find_function_end(func_start_idx)
+        if func_end_idx is None:
+            return None
+
+        # Get base indentation
+        base_indent = len(func_line) - len(func_line.lstrip())
+
+        decorators = []
+        if decorator_start_idx < func_start_idx:
+            decorators = self.lines[decorator_start_idx:func_start_idx]
+
+        return {
+            'start_idx': decorator_start_idx,
+            'end_idx': func_end_idx,
+            'name': func_name,
+            'lines': self.lines[func_start_idx:func_end_idx + 1],
+            'indentation': base_indent,
+            'decorators': decorators
+        }
+
+    def _find_decorator_start(self, func_def_idx: int) -> int:
+        """
+        Find the starting index of decorators above a function definition.
+
+        Args:
+            func_def_idx: Index of the function definition line
+
+        Returns:
+            Index of first decorator, or func_def_idx if no decorators found
+        """
+        if func_def_idx == 0:
+            return func_def_idx
+
+        # Get function's indentation level
+        func_line = self.lines[func_def_idx].rstrip()
+        func_indent = len(func_line) - len(func_line.lstrip())
+
+        # Walk backwards to find decorators
+        current_idx = func_def_idx - 1
+        decorator_start = func_def_idx
+
+        while current_idx >= 0:
+            line = self.lines[current_idx].rstrip()
+
+            # Skip empty lines and comments immediately above function
+            if not line or line.lstrip().startswith('#'):
+                current_idx -= 1
+                continue
+
+            # Check if line is a decorator
+            stripped = line.lstrip()
+            line_indent = len(line) - len(stripped)
+
+            # Decorator must:
+            # 1. Start with @
+            # 2. Have same indentation as function
+            if stripped.startswith('@') and line_indent == func_indent:
+                decorator_start = current_idx
+                current_idx -= 1
+            else:
+                # Not a decorator, stop searching
+                break
+
+        return decorator_start
 
     def _is_line_inside_function(
         self, lines: List[str], line_idx: int, function_start_idx: int
@@ -1818,7 +3047,7 @@ class ContextExtractor:
         return False
 
     def _extract_complete_function(
-        self, start_idx: int, problem_line_idx: int
+        self, start_idx: int, problem_line_idx: int, last_line_idx: int
     ) -> Optional[Dict[str, Any]]:
         """
         Extract complete function/method from start to end, including decorators.
@@ -1861,7 +3090,9 @@ class ContextExtractor:
             )  # Max 50 lines
 
         # Extract function lines (including decorators)
-        function_lines = lines[function_start : function_end + 1]
+        function_lines = lines[function_start : last_line_idx + 1]
+        if function_end>last_line_idx:
+            function_lines = lines[function_start : function_end + 1]
         context_text = "".join(function_lines)
 
         # Get the actual function definition line
@@ -1874,6 +3105,7 @@ class ContextExtractor:
             if decorator_line:  # Skip empty lines
                 decorators.append(decorator_line)
         problem_line = lines[problem_line_idx].rstrip()
+
         return {
             "context": context_text,
             "function_definition_line": function_def_line,
@@ -1887,7 +3119,7 @@ class ContextExtractor:
             "has_decorators": len(decorators) > 0,
             "decorator_count": len(decorators),
             "start_line": function_start + 1,
-            "problem_line": problem_line,
+            "problem_lines": [problem_line]
         }
 
     def _find_function_start_with_decorators(
@@ -1945,29 +3177,7 @@ class ContextExtractor:
 
         return False
 
-    def _try_extract_from_definition_line(
-        self, first_idx: int
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Try to extract complete function if first line is a function definition.
 
-        Args:
-            extractor: Context extractor instance
-            lines: All file lines
-            line_range: Range of problematic lines
-
-        Returns:
-            Function context if first line is a definition, None otherwise
-        """
-        if first_idx >= len(self.lines):
-            return None
-
-        first_line = self.lines[first_idx].rstrip()
-
-        if not self._is_function_definition(first_line):
-            return None
-
-        return self._extract_complete_function(first_idx, first_idx)
 
     def _try_function_extraction_strategies(
         self,
@@ -1985,13 +3195,9 @@ class ContextExtractor:
         Returns:
             Context dict if successful, None if no function context found
         """
-        # Strategy 1: Issue starts on function definition
-        context = self._try_extract_from_definition_line(first_idx)
-        if context:
-            return context
 
-        # Strategy 2: Issue is inside a function
-        context = self._try_extract_containing_function(first_idx)
+        # Strategy 1: Issue is inside a function
+        context = self._try_extract_containing_function(first_idx,last_idx)
         if context:
             return context
 
@@ -2039,17 +3245,13 @@ class ContextExtractor:
             return None
 
         # Extract the complete function
-        return self._extract_complete_function(function_start_idx, first_idx)
+        return self._extract_complete_function(function_start_idx, first_idx,last_idx)
 
     def _try_extract_containing_function(
-        self, first_idx: int
+        self, first_idx: int, last_idx: int
     ) -> Optional[Dict[str, Any]]:
         """
         Try to extract the complete function that contains the issue.
-
-        Args:
-            extractor: Context extractor instance
-            line_range: Range of problematic lines
 
         Returns:
             Function context if issue is inside a function, None otherwise
@@ -2059,7 +3261,7 @@ class ContextExtractor:
         if function_start_idx is None:
             return None
 
-        return self._extract_complete_function(function_start_idx, first_idx)
+        return self._extract_complete_function(function_start_idx, first_idx,last_idx)
 
     def _extract_normal_context(
         self, first_idx: int, last_idx: int, context_lines: int
@@ -2067,10 +3269,14 @@ class ContextExtractor:
         """Extract normal context window"""
         start_idx = max(0, first_idx - context_lines)
         end_idx = min(len(self.lines), last_idx + context_lines + 1)
-
-        return {
+        return {"new_context":[
+            {  "context": "".join(self.lines[start_idx:end_idx]),
+            "line_number": first_idx + 1,
+            "start_line": start_idx + 1,
+            "end_line": end_idx,
+            "is_complete_function": False,}
+        ],
             "context": "".join(self.lines[start_idx:end_idx]),
-            "problem_line": self.lines[first_idx].rstrip(),
             "line_number": first_idx + 1,
             "start_line": start_idx + 1,
             "end_line": end_idx,
@@ -2082,8 +3288,14 @@ class ContextExtractor:
         Return empty context when line number is out of range.
         """
         return {
+            "new_context":[
+            {  "context": "",
+            "line_number": line_number,
+            "start_line":line_number,
+            "end_line": line_number,
+            "is_complete_function": False,}
+        ],
             "context": "",
-            "problem_line": "",
             "line_number": line_number,
             "start_line": line_number,
             "end_line": line_number,
@@ -2131,16 +3343,19 @@ def _build_fix_suggestion(
     return FixSuggestion(
         issue_key=_generate_fix_key(problem_lines),
         original_code=context_dict["context"],
-        fixed_code=fix_response["fixed_code"],
-        helper_code=fix_response.get("helper_code"),
-        placement_helper=fix_response.get("placement_helper"),
-        explanation=fix_response["explanation"],
-        confidence=fix_response["confidence"],
+        fixed_code_blocks=fix_response.FIXED_CODE_BLOCKS,
+        fixed_code="",
+        import_block_code = fix_response.IMPORT_BLOCK,
+        helper_code=fix_response.NEW_HELPER_CODE,
+        placement_helper=fix_response.PLACEMENT.value,
+        explanation=fix_response.EXPLANATION,
+        confidence=fix_response.CONFIDENCE,
         llm_model=model_name,
-        rule_description=fix_response.get("rule_description"),
+        rule_description="",
         file_path=str(file_path.relative_to(project_path)),
         line_number=context_dict.get("start_line"),
         sonar_line_number=line_range["first_line"],
+        end_import_block_code=context_dict.get("import_section", {}).get("end_line",0),
         last_line_number=end_line,
     )
 
@@ -2166,72 +3381,217 @@ def _generate_fix_key(problem_lines: List[int]) -> str:
     return f"fix_L{min_line}-L{max_line}"
 
 
-def _prepare_context(
-    file_path: Path,
-    line_range: Dict[str, Any],
-    modified_content: str,
-    context_lines: int,
+
+
+
+def get_content_range(
+    file_path_tmp: Path,
+    line_range_tmp: Dict[str, Any],
+    file_path: Path
 ) -> Optional[Dict[str, Any]]:
-    """
-    Read file and prepare context for LLM.
 
-    Args:
-        file_path: Path to the file
-        line_range: Dictionary with first_line, last_line, problem_lines
-        modified_content: Optional pre-extracted content
-        context_lines: Number of context lines to include around issues
+    if not file_path_tmp.exists():
+        raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
+    if not file_path.exists():
+        raise FileNotFoundError(f"Actual file not found: {file_path}")
 
-    Returns:
-        Dictionary containing:
-        - context_dict: Context information for LLM
-        - file_lines: Full file content as list of lines
-        - problem_line_content: List of actual problem line strings
+        # Extract line range info
+    first_line_tmp = line_range_tmp.get('first_line')
+    last_line_tmp = line_range_tmp.get('last_line')
+    problem_lines_tmp = line_range_tmp.get('problem_lines', [])
 
-        Returns None if file cannot be read
-    """
+
+    if first_line_tmp is None or last_line_tmp is None:
+        raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
+
+    # Read files
     try:
-        # Read file content
-        with open(file_path, "r", encoding="utf-8") as f:
-            file_content = f.read()
-            file_lines = file_content.splitlines(keepends=True)
+        with open(file_path_tmp, 'r', encoding='utf-8') as f:
+            tmp_lines = f.readlines()
+        with open(file_path, 'r', encoding='utf-8') as f:
+            actual_lines = f.readlines()
+    except UnicodeDecodeError:
+        # Try with different encoding
+        with open(file_path_tmp, 'r', encoding='latin-1') as f:
+            tmp_lines = f.readlines()
+        with open(file_path, 'r', encoding='latin-1') as f:
+            actual_lines = f.readlines()
 
-        # Extract problem line content
-        # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
-        problem_line_content = _extract_problem_lines(
-            file_lines, line_range["problem_lines"]
-        )
+    # Extract target content from temp file (1-indexed to 0-indexed)
+    start_idx = first_line_tmp - 1
+    end_idx = last_line_tmp  # last_line is inclusive, so we don't subtract 1 for slice
 
-        # Build context dictionary
-        if modified_content:
-            # Use provided modified content
-            context_dict = {
-                "context": modified_content,
-                "start_line": line_range["first_line"],
-                "end_line": line_range["last_line"],
-                "problem_lines": problem_line_content,
-            }
-        else:
-            # Extract context from file
-            context_dict = _extract_context_with_lines(
-                file_lines,
-                line_range["first_line"],
-                line_range["last_line"],
-                context_lines,
-                problem_line_content,
-            )
+    if start_idx < 0 or end_idx > len(tmp_lines):
+        raise ValueError(f"Line range {first_line_tmp}-{last_line_tmp} out of bounds for temp file")
+
+    target_content = tmp_lines[start_idx:end_idx]
+
+
+    if not target_content:
+        return None
+
+    actual_content = actual_lines[start_idx:end_idx]
+    if actual_content == target_content:
 
         return {
-            "context_dict": context_dict,
-            "file_lines": file_lines,
-            "problem_line_content": problem_line_content,
+            'first_line': first_line_tmp,
+            'last_line': last_line_tmp,
+            'problem_lines': problem_lines_tmp,
+            'confidence': 1,
+            'match_type': 'exact',
+            'error': ""
         }
 
-    except UnicodeDecodeError as e:
-        logger.error(f"File encoding error for {file_path}: {e}")
-        return None
-    except Exception as e:
-        logger.error(f"Error reading file {file_path}: {e}")
-        return None
+
+    exact_match = _find_exact_match(target_content, actual_lines)
+    if exact_match:
+        return _create_result(
+            exact_match,
+            problem_lines_tmp,
+            first_line_tmp,
+            confidence=1.0,
+            match_type='exact'
+        )
+
+    # Strategy 3: Fuzzy matching for similar content
+    fuzzy_match = _find_fuzzy_match(target_content, actual_lines, threshold=0.65)
+    if fuzzy_match:
+
+            return _create_result(
+                fuzzy_match,
+                problem_lines_tmp,
+                first_line_tmp,
+                confidence=fuzzy_match['confidence'],
+                match_type='fuzzy'
+            )
+
+    # Strategy 4: If single line, try to find all occurrences and use heuristics
+
+    if len(target_content) == 1:
+
+            all_matches = _find_all_single_line_matches(
+                target_content[0],
+                actual_lines,
+                first_line_tmp
+            )
+
+            if all_matches:
+                best_match = all_matches[0]  # Closest to original line number
+
+                return _create_result(
+                    {'start': best_match, 'end': best_match + 1},
+                    problem_lines_tmp,
+                    first_line_tmp,
+                    confidence=0.7,
+                    match_type='fuzzy'
+                )
+
+    # Content not found
+    return {
+            'first_line': None,
+            'last_line': None,
+            'problem_lines': [],
+            'confidence': 0.0,
+            'match_type': 'not_found',
+            'error': f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file {file_path}"
+        }
+
+
+def _find_all_single_line_matches(
+        target_line: str,
+        actual_lines: List[str],
+        original_line_num: int
+) -> List[int]:
+    """
+    Find all occurrences of a single line.
+    Returns sorted by proximity to original line number.
+    """
+    matches = []
+    target_stripped = target_line.strip()
+
+    for i, line in enumerate(actual_lines):
+        if line.strip() == target_stripped:
+            matches.append(i)
+
+    if not matches:
+        return []
+
+    # Sort by distance from original line number (0-indexed vs 1-indexed)
+    original_idx = original_line_num - 1
+    matches.sort(key=lambda x: abs(x - original_idx))
+
+    return matches
+
+def _find_fuzzy_match(
+        target_content: List[str],
+        actual_lines: List[str],
+        threshold: float = 0.85
+) -> Optional[Dict[str, Any]]:
+    """
+    Find fuzzy match allowing for minor modifications.
+    Returns match with confidence score.
+    """
+    target_len = len(target_content)
+    best_match = None
+    best_ratio = 0.0
+
+    for i in range(len(actual_lines) - target_len + 1):
+        candidate = actual_lines[i:i + target_len]
+
+        # Calculate similarity ratio
+        ratio = difflib.SequenceMatcher(None, target_content, candidate).ratio()
+
+        if ratio > best_ratio and ratio >= threshold:
+            best_ratio = ratio
+            best_match = {'start': i, 'end': i + target_len}
+
+    if best_match:
+        best_match['confidence'] = best_ratio
+        return best_match
+
+    return None
+
+def _find_exact_match(target_content: List[str], actual_lines: List[str]) -> Optional[Dict[str, int]]:
+    """Find exact match of target content in actual file."""
+    target_len = len(target_content)
+    for i in range(len(actual_lines) - target_len + 1):
+        if actual_lines[i:i + target_len] == target_content:
+            return {'start': i, 'end': i + target_len}
+
+    return None
+
+
+def _create_result(
+        match: Dict[str, int],
+        problem_lines_tmp: List[int],
+        first_line_tmp: int,
+        confidence: float,
+        match_type: str
+) -> Dict[str, Any]:
+    """
+    Create standardized result dictionary with adjusted problem lines.
+    """
+    start_line = match['start'] + 1  # Convert to 1-indexed
+    end_line = match['end']  # Already correct for 1-indexed inclusive range
+
+    # Adjust problem lines based on offset
+    offset = start_line - first_line_tmp
+    adjusted_problem_lines = [line + offset for line in problem_lines_tmp]
+
+    # Ensure problem lines are within the found range
+    adjusted_problem_lines = [
+        line for line in adjusted_problem_lines
+        if start_line <= line <= end_line
+    ]
+
+    return {
+        'first_line': start_line,
+        'last_line': end_line,
+        'problem_lines': adjusted_problem_lines,
+        'confidence': confidence,
+        'match_type': match_type
+    }
+
 
 
 def _validate_and_extract_issue_info(
@@ -2281,7 +3641,7 @@ def _validate_and_extract_issue_info(
         # Expand range to encompass all issues
         first_line = min(first_line, issue.first_line or 0)
         last_line = max(last_line, issue.last_line or 0)
-        problem_line_numbers.append(issue.first_line)
+        problem_line_numbers.extend(issue.problem_lines)
 
     return file_path, {
         "first_line": first_line,
@@ -2316,11 +3676,13 @@ def _extract_problem_lines(
         # Bounds check
         if 0 <= line_index < len(file_lines):
             problem_lines.append(file_lines[line_index])
+
         else:
             logger.warning(
                 f"Line number {line_number} out of bounds "
                 f"(file has {len(file_lines)} lines)"
             )
+
             # Include placeholder to maintain alignment
             problem_lines.append(f"<line {line_number} not found>")
 
@@ -2365,3 +3727,108 @@ def _extract_context_with_lines(
         "end_line": context_end,
         "problem_lines": problem_line_content,
     }
+
+
+def get_placement_examples() -> str:
+    """Get concrete placement examples"""
+    return f"""
+PLACEMENT EXAMPLES:
+
+Example 1 - SIBLING (needs self):
+{PYTHON_CODE_BLOCK}
+# Original
+def validate(self, user_id):
+    exists = self.user_repo.exists(user_id)  # Uses self.user_repo
+    if not exists:
+        raise Error()
+
+# Fixed
+FIXED_SELECTION:
+def validate(self, user_id):
+    if not self._user_exists(user_id):
+        raise Error()
+
+NEW_HELPER_CODE:
+def _user_exists(self, user_id):
+    return self.user_repo.exists(user_id)  # ← Needs self
+
+PLACEMENT: SIBLING
+{CODE_BLOCK_END}
+
+Example 2 - GLOBAL_BOTTOM (no self):
+{PYTHON_CODE_BLOCK}
+# Original  
+def process(self, date_str):
+    def parse_date(s):  # ← Nested function
+        return datetime.strptime(s, "%Y-%m-%d")
+    return parse_date(date_str)
+
+# Fixed
+FIXED_SELECTION:
+def process(self, date_str):
+    return _parse_date(date_str)
+
+NEW_HELPER_CODE:
+def _parse_date(date_str):  # ← No self, pure utility
+    from datetime import datetime
+    return datetime.strptime(date_str, "%Y-%m-%d")
+
+PLACEMENT: GLOBAL_BOTTOM
+{CODE_BLOCK_END}
+
+Example 3 - GLOBAL_TOP (constant):
+{PYTHON_CODE_BLOCK}
+# Original
+def log_error(self):
+    color = "red"  # ← Duplicated literal
+    print(color)
+
+def highlight(self):
+    color = "red"  # ← Duplicated literal
+    print(color)
+
+# Fixed
+FIXED_SELECTION:
+def log_error(self):
+    print(ERROR_COLOR)
+
+def highlight(self):
+    print(ERROR_COLOR)
+
+NEW_HELPER_CODE:
+ERROR_COLOR = "red"
+
+PLACEMENT: GLOBAL_TOP
+{CODE_BLOCK_END}
+"""
+
+def _is_constant(code: str) -> bool:
+    """Check if code defines a constant"""
+    lines = code.strip().split('\n')
+    if not lines:
+        return False
+    first_line = lines[0].strip()
+    return bool(re.match(r'^[A-Z_][A-Z0-9_]*\s*=', first_line))
+
+def auto_fix_placement(response: Dict) -> Dict:
+    """Automatically fix incorrect placement"""
+
+    helper_code = response.get("NEW_HELPER_CODE", "")
+
+    if not helper_code:
+        return response
+
+    # Detect correct placement
+    if helper_code.strip().startswith(('import ', 'from ')) or _is_constant(helper_code):
+        correct_placement = "GLOBAL_TOP"
+    elif 'self.' in helper_code or ('def ' in helper_code and 'self)' in helper_code):
+        correct_placement = "SIBLING"
+    else:
+        correct_placement = "GLOBAL_BOTTOM"
+
+    # Update if wrong
+    if response["PLACEMENT"] != correct_placement:
+        print(f"⚠️ Auto-fixing placement: {response['PLACEMENT']} → {correct_placement}")
+        response["PLACEMENT"] = correct_placement
+
+    return response

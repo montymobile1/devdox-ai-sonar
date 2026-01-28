@@ -201,7 +201,6 @@ class SonarCloudAnalyzer:
         excluded_set = set(exclude_rules)
         filtered_rules = []
         remaining_count = max_rules if max_rules > 0 else float("inf")
-
         for rule_facet in rules:
             for rule_info in rule_facet.get("values", []):
                 rule_key = rule_info.get("val", "")
@@ -212,7 +211,6 @@ class SonarCloudAnalyzer:
                 # Add rule and decrement counter
                 filtered_rules.append(rule_key)
                 remaining_count -= rule_info.get("count", 0)
-
                 # Stop if we've hit the limit
                 if remaining_count <= 0:
                     return filtered_rules
@@ -424,6 +422,7 @@ class SonarCloudAnalyzer:
         issues = []
 
         for issue_data in issues_data:
+            problem_lines = []
             try:
                 # Map severity enum
                 severity_str = issue_data.get("severity", "").upper()
@@ -455,16 +454,19 @@ class SonarCloudAnalyzer:
                 file_path = self._extract_file_path(component)
 
                 first_line = issue_data.get("line")
+                problem_lines.append(int(first_line))
                 if first_line:
                     first_line = int(first_line)
 
                 flows = issue_data.get("flows", [])
                 last_line = first_line  # default
 
+
                 for flow in flows:
                     for location in flow.get("locations", []):
                         text_range = location.get("textRange", {})
                         end_line = text_range.get("endLine")
+                        problem_lines.append(int(end_line))
 
                         if end_line:
                             end_line = int(end_line)
@@ -475,6 +477,7 @@ class SonarCloudAnalyzer:
                     key=issue_data.get("key", ""),
                     rule=issue_data.get("rule", ""),
                     severity=severity.value,
+                    problem_lines = problem_lines,
                     component=component,
                     project=issue_data.get("project", ""),
                     first_line=first_line,
@@ -513,12 +516,16 @@ class SonarCloudAnalyzer:
                 # Extract file path from component
                 component = issue_data.get("component", "")
                 file_path = self._extract_file_path(component)
+                problem_lines = []
 
                 first_line = issue_data.get("line")
                 if first_line:
                     first_line = int(first_line)
+                    problem_lines.append(first_line)
 
                 last_line = issue_data.get("textRange", {}).get("endLine", first_line)
+                if last_line != first_line:
+                    problem_lines.append(last_line)
 
                 issue = SonarSecurityIssue(
                     key=issue_data.get("key", ""),
@@ -532,6 +539,7 @@ class SonarCloudAnalyzer:
                     status=issue_data.get("status", "OPEN"),
                     first_line=first_line,
                     last_line=last_line,
+                    problem_lines=problem_lines,
                     message=issue_data.get("message", ""),
                     file=file_path,
                     creation_date=issue_data.get("creationDate"),
@@ -652,6 +660,28 @@ class SonarCloudAnalyzer:
 
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
+
+
+    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str|None:
+        """Get branch name from pull request number."""
+
+        url = urljoin(self.base_url, "/api/project_pull_requests/list")
+        params = {"project": project_key}
+
+        response = self.session.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
+        data = response.json()
+
+
+        # Find PR by key (PR number)
+        for pr in data.get("pullRequests", []):
+            if pr.get("key") == pull_request:
+                branch = pr.get("branch")
+                if isinstance(branch, str):
+                    return branch.split(":")[-1] if ":" in branch else branch
+                return None
+
+        raise ValueError(f"Pull request {pull_request} not found in project {project_key}")
 
     def get_fixable_issues_by_types(
         self,

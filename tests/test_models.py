@@ -23,6 +23,9 @@ from devdox_ai_sonar.models.sonar import (
     SecurityAnalysisResult,
     AnalysisResult,
     FixResult,
+    ChangeType,
+    BlockType,
+    CodeBlock
 )
 
 
@@ -81,9 +84,18 @@ def complete_sonar_issue():
         debt="1h",
     )
 
-
 @pytest.fixture
-def high_confidence_fix():
+def sample_code_block():
+    return CodeBlock(block_name="test",
+                     start_line="1",
+                     end_line="10",
+                     has_changes=True,
+                     change_type=ChangeType.FULL_CODE,
+                     block_type=BlockType.MODULE,
+                     context="new_code"
+                     )
+@pytest.fixture
+def high_confidence_fix(sample_code_block):
     """Create a high confidence fix suggestion."""
     return FixSuggestion(
         issue_key="test-key-001",
@@ -96,6 +108,7 @@ def high_confidence_fix():
         sonar_line_number=10,
         line_number=10,
         last_line_number=10,
+        fixed_code_blocks=[sample_code_block]
     )
 
 
@@ -623,7 +636,7 @@ class TestSonarSecurityIssue:
 class TestFixSuggestionCreation:
     """Tests for FixSuggestion model creation."""
 
-    def test_create_minimal_fix(self):
+    def test_create_minimal_fix(self, sample_code_block):
         """Test creating fix with only required fields."""
         fix = FixSuggestion(
             issue_key="test-key",
@@ -632,17 +645,18 @@ class TestFixSuggestionCreation:
             explanation="Fixed the issue",
             confidence=0.85,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert fix.issue_key == "test-key"
         assert fix.confidence == 0.85
         assert fix.helper_code == ""  # Default value
 
-    def test_create_complete_fix(self):
+    def test_create_complete_fix(self, sample_code_block):
         """Test creating fix with all fields."""
         fix = FixSuggestion(
             issue_key="test-key",
             original_code="x = 1\nprint(x)",
-            fixed_code="print(1)",
+            fixed_code="",
             helper_code="# Helper imports\nimport logging",
             placement_helper="Insert after imports",
             explanation="Inlined variable",
@@ -653,6 +667,7 @@ class TestFixSuggestionCreation:
             sonar_line_number=42,
             line_number=42,
             last_line_number=43,
+            fixed_code_blocks=[sample_code_block]
         )
         assert fix.helper_code == "# Helper imports\nimport logging"
         assert fix.placement_helper == "Insert after imports"
@@ -662,7 +677,7 @@ class TestFixSuggestionCreation:
 class TestFixSuggestionIsHighConfidence:
     """Tests for FixSuggestion.is_high_confidence property."""
 
-    def test_high_confidence_at_threshold(self):
+    def test_high_confidence_at_threshold(self, sample_code_block):
         """Test is_high_confidence exactly at 0.8 threshold."""
         fix = FixSuggestion(
             issue_key="test",
@@ -671,6 +686,7 @@ class TestFixSuggestionIsHighConfidence:
             explanation="Fixed",
             confidence=0.8,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert fix.is_high_confidence is True
 
@@ -679,7 +695,7 @@ class TestFixSuggestionIsHighConfidence:
         assert high_confidence_fix.confidence == 0.95
         assert high_confidence_fix.is_high_confidence is True
 
-    def test_low_confidence_below_threshold(self):
+    def test_low_confidence_below_threshold(self, sample_code_block):
         """Test is_high_confidence below 0.8 threshold."""
         fix = FixSuggestion(
             issue_key="test",
@@ -688,10 +704,11 @@ class TestFixSuggestionIsHighConfidence:
             explanation="Fixed",
             confidence=0.79,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert fix.is_high_confidence is False
 
-    def test_very_low_confidence(self):
+    def test_very_low_confidence(self, sample_code_block):
         """Test is_high_confidence with very low confidence."""
         fix = FixSuggestion(
             issue_key="test",
@@ -700,10 +717,11 @@ class TestFixSuggestionIsHighConfidence:
             explanation="Uncertain fix",
             confidence=0.3,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert fix.is_high_confidence is False
 
-    def test_perfect_confidence(self):
+    def test_perfect_confidence(self, sample_code_block):
         """Test is_high_confidence with perfect confidence."""
         fix = FixSuggestion(
             issue_key="test",
@@ -712,6 +730,7 @@ class TestFixSuggestionIsHighConfidence:
             explanation="Certain fix",
             confidence=1.0,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block],
         )
         assert fix.is_high_confidence is True
 
@@ -745,7 +764,7 @@ class TestFixSuggestionValidation:
             )
         assert "confidence" in str(exc_info.value).lower()
 
-    def test_zero_confidence_is_valid(self):
+    def test_zero_confidence_is_valid(self, sample_code_block):
         """Test that confidence=0.0 is valid."""
         fix = FixSuggestion(
             issue_key="test",
@@ -754,6 +773,7 @@ class TestFixSuggestionValidation:
             explanation="No confidence",
             confidence=0.0,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert fix.confidence == 0.0
         assert not fix.is_high_confidence
@@ -1074,7 +1094,7 @@ class TestFixResultSuccessRate:
         result = FixResult(project_path=Path("/test"), total_fixes_attempted=0)
         assert result.success_rate == 0.0
 
-    def test_success_rate_with_perfect_success(self):
+    def test_success_rate_with_perfect_success(self, sample_code_block):
         """Test success_rate returns 1.0 when all fixes succeed."""
         fixes = [
             FixSuggestion(
@@ -1084,6 +1104,7 @@ class TestFixResultSuccessRate:
                 explanation="Fixed",
                 confidence=0.9,
                 llm_model="gpt-4",
+                fixed_code_blocks=[sample_code_block]
             )
             for i in range(5)
         ]
@@ -1093,7 +1114,7 @@ class TestFixResultSuccessRate:
         )
         assert result.success_rate == 1.0
 
-    def test_success_rate_with_partial_success(self):
+    def test_success_rate_with_partial_success(self, sample_code_block):
         """Test success_rate calculation with partial success."""
         fixes = [
             FixSuggestion(
@@ -1103,6 +1124,7 @@ class TestFixResultSuccessRate:
                 explanation="Fixed",
                 confidence=0.9,
                 llm_model="gpt-4",
+                fixed_code_blocks=[sample_code_block]
             )
             for i in range(7)
         ]
@@ -1121,7 +1143,7 @@ class TestFixResultSuccessRate:
         )
         assert result.success_rate == 0.0
 
-    def test_success_rate_with_single_success(self):
+    def test_success_rate_with_single_success(self, sample_code_block):
         """Test success_rate with single success."""
         fix = FixSuggestion(
             issue_key="key-1",
@@ -1130,6 +1152,7 @@ class TestFixResultSuccessRate:
             explanation="Fixed",
             confidence=0.9,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
 
         result = FixResult(
@@ -1247,7 +1270,7 @@ class TestEdgeCases:
         )
         assert issue.key == ""
 
-    def test_fix_suggestion_with_multiline_code(self):
+    def test_fix_suggestion_with_multiline_code(self, sample_code_block):
         """Test FixSuggestion with complex multiline code."""
         code = """
 def complex_function():
@@ -1265,6 +1288,7 @@ def complex_function():
             explanation="Improved operation",
             confidence=0.85,
             llm_model="gpt-4",
+            fixed_code_blocks=[sample_code_block]
         )
         assert "\n" in fix.original_code
 

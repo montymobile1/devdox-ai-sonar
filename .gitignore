@@ -1,3 +1,5 @@
 .env
 
+src/devdox_ai_sonar/sonar_fetcher.py
+
 .venv/*
