@@ -1,0 +1,66 @@
+Fix {{ language }} SonarQube issue. Preserve original logic.
+
+## ISSUE
+{% for issue in issues %}**{{ issue.rule }}** ({{ issue.severity }}): {{ issue.message }}
+{% set root = rule_info.get(issue.rule, {}).get('root_cause', '') %}{% if root %}
+↳ {{ root }}{% endif %}{% endfor %}
+
+
+## 🚨 COMPLEXITY REFACTORING
+
+Current: {{ issues[0].message.split('from ')[1].split(' to')[0] if 'from' in issues[0].message else '?' }} → Target: <15
+
+MANDATORY:
+1. Create helpers in NEW_HELPER_CODE
+2. Original function MUST call ALL helpers
+3. Set has_changes: true
+
+
+## CODE
+{% for func in context['new_context'] %}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
+`````{{ language }}
+{% for line in func['context'].split('\n') %}{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
+{% endfor %}```
+{% endfor %}
+
+{% if context.import_section and context.import_section.has_imports %}## IMPORTS
+````{{ language }}
+{{ context.import_section.content }}```
+{% endif %}
+
+{% if error_message %}## ⚠️ RETRY as ERROR MESSAGE: {{ error_message }}
+{% endif %}
+
+## RULES
+- Keep exact function name and signature
+- Extract helpers, use early returns
+- NO new attributes/methods/exceptions
+- Scan NEW_HELPER_CODE for imports → add to IMPORT_BLOCK
+- NO imports inside functions
+
+## OUTPUT FORMAT
+```json
+{
+  "IMPORT_BLOCK": "",
+  "FIXED_CODE_BLOCKS": [{
+    "block_name": "name",
+    "start_line": N,
+    "end_line": N,
+    "has_changes": true,
+    "change_type": "FULL_CODE",
+    "context": "simplified function with \\n"
+  }],
+  "NEW_HELPER_CODE": "helper definitions",
+  "PLACEMENT": "SIBLING",
+  "EXPLANATION": "### Issue: X\\n### Fix: Y\\n### Validation: Z",
+  "CONFIDENCE": 0.95
+}
+```
+
+VALIDATION:
+- [ ] NEW_HELPER_CODE has helpers?
+- [ ] All helper names appear in FIXED_CODE_BLOCKS.context?
+- [ ] has_changes: true?
+- [ ] Line numbers match NNNN| format?
+
+{{ method_instruction }}

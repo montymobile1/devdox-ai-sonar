@@ -1,0 +1,110 @@
+Fix {{ language }} SonarQube issue. Preserve all original logic.
+
+## ISSUE
+{% for issue in issues %}
+**{{ issue.rule }}** ({{ issue.severity }}): {{ issue.message }}
+{% set root = rule_info.get(issue.rule, {}).get('root_cause', '') %}
+{% if root %}↳ Root: {{ root }}{% endif %}
+{% endfor %}
+
+
+## FIX APPROACH
+{% for issue in issues %}
+{% set steps = rule_info.get(issue.rule, {}).get('how_to_fix', {}).get('steps', []) %}
+{% if steps %}{% for step in steps %}• {{ step }}
+{% endfor %}{% endif %}
+{% endfor %}
+
+## STRATEGY PER FUNCTION
+{% for func in context['new_context'] %}
+{% set lines = func['end_line'] - func['start_line'] + 1 %}
+{% if lines <= 50 %}
+- `{{ func['function_name'] }}` ({{ lines }}L): **FULL_CODE** → return complete function
+{% elif lines <= 150 %}
+- `{{ func['function_name'] }}` ({{ lines }}L): **DIFF** → return only changed lines with exact line numbers
+{% else %}
+- `{{ func['function_name'] }}` ({{ lines }}L): **SEARCH_REPLACE** → return search/replace patterns only
+{% endif %}
+{% endfor %}
+
+
+## CODE (Lines numbered as NNNN| content)
+{% for func in context['new_context'] %}
+### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
+```{{ language }}
+{% set code_lines = func['context'].split('\n') %}
+{% for line in code_lines %}
+{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
+{% endfor %}
+```
+{% endfor %}
+
+{% if context.import_section and context.import_section.has_imports %}
+## AVAILABLE IMPORTS
+```{{ language }}
+{{ context.import_section.content }}
+```
+{% endif %}
+
+## PROBLEM LINES
+{% for line in context["problem_line_content"] %}• {{ line }}
+{% endfor %}
+
+{% if strategy_text %}
+## STRATEGY
+{{ strategy_text }}
+{% endif %}
+
+{% if error_message %}
+## ⚠️ RETRY - Previous Error
+{{ error_message }}
+{% endif %}
+
+
+## RESPONSE FORMAT
+```json
+{
+  "IMPORT_BLOCK": "",
+  "FIXED_CODE_BLOCKS": [
+    {
+      "block_name": "function_name",
+      "start_line": 123,
+      "end_line": 456,
+      "has_changes": true,
+      "change_type": "FULL_CODE|DIFF|SEARCH_REPLACE",
+
+      "context": "for FULL_CODE only",
+
+      "changes": [
+        {"line": 130, "action": "replace", "old": "...", "new": "..."}
+      ],
+
+      "replacements": [
+        {"search": "string", "replace": "CONSTANT"}
+      ]
+    }
+  ],
+  "NEW_HELPER_CODE": "CONSTANT = \"value\"",
+  "PLACEMENT": "GLOBAL_TOP",
+  "EXPLANATION": "brief",
+  "CONFIDENCE": 0.95
+}
+```
+
+
+## OUTPUT REQUIREMENTS FOR DIFF MODE
+
+When returning changes, each change object MUST:
+1. `line`: Match the 4-digit number shown before `|` in the code
+2. `old`: Be the EXACT text after `|` on that line
+3. `new`: Be DIFFERENT from `old` (no identical replacements)
+4. Only include lines that contain for {% for issue in issues %}{{  issue.rule }}{% endfor %} issues
+
+
+## VALIDATION CHECKLIST
+Before returning, verify each change:
+- [ ] `old` ≠ `new` (must be different)
+- [ ] Line number matches the NNNN prefix in the code
+- [ ] The line actually contains the issue being fixed
+
+{{ method_instruction }}

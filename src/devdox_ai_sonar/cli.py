@@ -1028,7 +1028,7 @@ def display_configuration(
         "apply": apply_value,
         "dry_run": dry_run,
         "exclude_rules": parameters.get("exclude_rules", None),
-        "create_backup": parameters.get("create_backup", 0),
+        "create_backup": 0
     }
 
     return fix_params
@@ -1275,8 +1275,9 @@ def _process_and_fix_issues(
         console.print(f"[yellow]{msg}[/yellow]")
         remove_tmp_files(tmp_path)
         return
+    total_issues = sum(len(issue_list) for issue_list in issues.values())
 
-    console.print(f"\n[green]✓ Found {len(issues)} fixable issues[/green]\n")
+    console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
     _process_files_with_issues(issues, services, auth_config, fix_params, issue_type,Path(tmp_path))
     remove_tmp_files(tmp_path)
 
@@ -1379,19 +1380,19 @@ def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-        _process_single_fix(
-            issues=[issue],
-            services=services,
-            auth_config=auth_config,
-            fix_params=fix_params,
-            issue_type=IssueType.REGULAR,
-            rule_key=rule_key,
-            md_file_path=md_file_path,
-            tmp_path=tmp_path
-        )
+            _process_single_fix(
+                issues=[issue],
+                services=services,
+                auth_config=auth_config,
+                fix_params=fix_params,
+                issue_type=IssueType.REGULAR,
+                rule_key=rule_key,
+                md_file_path=md_file_path,
+                tmp_path=tmp_path
+            )
 
-        if not _should_continue_to_next_file(idx, total_issues):
-            return False  # Stop processing
+            if not _should_continue_to_next_issue(idx, total_issues):
+                return False  # Stop processing
 
     return True  # Continue to next rule
 
@@ -1438,20 +1439,20 @@ def _process_security_issues(
 
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
+        for idx_new, issue in enumerate(issues, 1):
+            _process_single_fix(
+                issues=[issue],
+                services=services,
+                auth_config=auth_config,
+                fix_params=fix_params,
+                issue_type=IssueType.SECURITY,
+                rule_key=file_key,
+                md_file_path=md_file_path,
+                tmp_path=tmp_path
+            )
 
-        _process_single_fix(
-            issues=issues,
-            services=services,
-            auth_config=auth_config,
-            fix_params=fix_params,
-            issue_type=IssueType.SECURITY,
-            rule_key=file_key,
-            md_file_path=md_file_path,
-            tmp_path=tmp_path
-        )
-
-        if not _should_continue_to_next_file(idx, total_files):
-            break
+            if not _should_continue_to_next_issue(idx, total_files):
+                break
 
 
 def handle_fix(
@@ -1472,7 +1473,7 @@ def handle_fix(
             fixes=[fix],
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
-            create_backup=fix_params.get("create_backup", True),
+            create_backup=fix_params.get("create_backup", False),
             dry_run=fix_params["dry_run"],
             use_validator=True,
             validator_provider=fixer.provider,
@@ -1530,12 +1531,12 @@ def _collect_rule_information(
     return rule_info_list
 
 
-def _should_continue_to_next_file(current_idx: int, total_files: int) -> bool:
+def _should_continue_to_next_issue(current_idx: int, total_files: int) -> bool:
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
 
-    if not smart_confirm("Continue to next file?", default=True):
+    if not smart_confirm("Continue to next issue?", default=True):
         console.print("[yellow]Stopped processing remaining files[/yellow]")
         return False
 
@@ -1549,13 +1550,14 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
     console.print(f"Confidence: [cyan]{fix.confidence:.2f}[/cyan]")
     console.print(f"Issues fixed: [cyan]{len(issues)}[/cyan]")
 
-    console.print("\n[bold]Code Changes:[/bold]")
+    console.print("\n[bold]Changes:[/bold]")
+
     console.print(
-        Panel(
-            fix.fixed_code[:500] + ("..." if len(fix.fixed_code) > 500 else ""),
-            title="Fixed Code Preview",
-            border_style="green",
-        )
+            Panel(
+                fix.explanation,
+                title="Explanation of changed",
+                border_style="green",
+            )
     )
 
 
@@ -1620,8 +1622,6 @@ def _display_fix_results(result: FixResult) -> None:
     console.print(f"Failed: [red]{len(result.failed_fixes)}[/red]")
     console.print(f"Success Rate: {result.success_rate:.1%}")
 
-    if result.backup_created:
-        console.print(f"\n[blue]Backup: {result.backup_path}[/blue]")
 
 
 def _fetch_issues_by_type(

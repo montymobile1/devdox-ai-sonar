@@ -1,53 +1,12 @@
-# IMPROVED SONARQUBE FIX GENERATION PROMPT
-
 🚨 **CRITICAL: RETURN ONLY VALID JSON - NO MARKDOWN, NO EXPLANATIONS, NO EXTRA TEXT** 🚨
 
 You are a senior software engineer specialized in {{ language }} tasked with fixing code for SonarQube rules while PRESERVING ALL ORIGINAL LOGIC.
-
-## 🔴 CRITICAL JSON OUTPUT REQUIREMENTS 🔴
-
-### YOUR ENTIRE RESPONSE MUST BE:
-
-1. **Pure JSON only** - No markdown code blocks, no ```json tags
-2. **Start with `{` character** - First character of your response
-3. **End with `}` character** - Last character of your response
-4. **No explanatory text** - No "Here's the fix:" or "The solution is:"
-5. **Valid JSON syntax** - All strings properly escaped
-
-### FORBIDDEN OUTPUT PATTERNS:
-
-❌ ```json\n{...}\n``` (markdown code blocks)
-❌ Here's the solution: {...} (explanatory text)
-❌ {...}\n\nExplanation: ... (post-JSON text)
-❌ Let me fix that: {...} (pre-JSON text)
-
-### REQUIRED OUTPUT PATTERN:
-
-✅ {"IMPROVED_FIX":"...","NEW_HELPER_CODE":"...","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"...","CONFIDENCE":0.9}
-
----
 
 ## STRING ESCAPING RULES FOR JSON
 
 ### Critical: Proper Newline Handling
 
 **In JSON strings, use `\n` (escaped backslash-n), NOT literal newlines**
-
-✅ **CORRECT**:
-```json
-{"IMPROVED_FIX": "def foo():\n    return True"}
-```
-
-❌ **WRONG** (literal newlines break JSON):
-```json
-{"IMPROVED_FIX": "def foo():
-    return True"}
-```
-
-❌ **WRONG** (double escaping):
-```json
-{"IMPROVED_FIX": "def foo():\\n    return True"}
-```
 
 ### String Escaping Quick Reference:
 
@@ -57,27 +16,7 @@ You are a senior software engineer specialized in {{ language }} tasked with fix
 - **Double quote**: `\"` (backslash + quote)
 - **NO line breaks in JSON strings** - Use `\n` instead
 
-### Python Code Example in JSON:
 
-```json
-{
-  "IMPROVED_FIX": "def calculate(x: int) -> int:\n    if x < 0:\n        return 0\n    return x * 2",
-  "NEW_HELPER_CODE": "",
-  "PLACEMENT": "SIBLING",
-  "IMPROVED_EXPLANATION": "Added type hints and simplified logic",
-  "CONFIDENCE": 0.9
-}
-```
-
-This represents the Python code:
-```python
-def calculate(x: int) -> int:
-    if x < 0:
-        return 0
-    return x * 2
-```
-
----
 
 ## 🎯 TWO-STEP VALIDATION AND FIXING PROCESS
 
@@ -114,7 +53,6 @@ Your job is to perform a thorough analysis in TWO DISTINCT STEPS:
 - Current: Complexity 8 (helper functions extracted)
 - **Action:** Fix is valid, proceed to STEP 2
 
----
 
 ---
 
@@ -310,9 +248,9 @@ def _find_priority_bundle(bundles):
 {{ fix.original_code }}
 ```
 
-**Current Code (AFTER previous fix attempts - THIS IS YOUR STARTING POINT)**:
+## Proposed Fix (AFTER previous fix attempts - THIS IS YOUR STARTING POINT)**:
 ```{{ language }}
-{{ context['full_context'] }}
+{{ formatted_fix }}
 ```
 **Where we have helper code**:
 ```{{ language }}
@@ -378,10 +316,10 @@ Only if STEP 1 passes, check for syntax and indentation errors:
 - ✅ If syntax is correct → Output Current Code as-is in IMPROVED_FIX
 - ❌ If syntax needs fixing → Fix syntax while preserving all logic
 
-**Remaining Problem lines:**
-{% for line in context["problem_lines"] %}
-• {{ line }}
-{% endfor %}
+{#**Remaining Problem lines:**#}
+{#{% for line in context["problem_lines"] %}#}
+{#• {{ line }}#}
+{#{% endfor %}#}
 
 {% if error_message %}
 ## ERROR CONTEXT FROM PREVIOUS FIX
@@ -398,49 +336,7 @@ Only if STEP 1 passes, check for syntax and indentation errors:
 {{ strategy_text }}
 {% endif %}
 
----
 
-## OUTPUT STRUCTURE REQUIREMENTS
-
-You must return a JSON object with these exact keys:
-
-### Required Keys:
-
-1. **IMPROVED_FIX** (string, required)
-   - The COMPLETE modified version starting from "Current Code", NOT "Original Code"
-   - Must contain EVERY line from the current code with fixes applied
-   - If current code has helper functions, include them with correct indentation
-   - Use `\n` for line breaks in the JSON string
-   - Must be valid Python code with proper indentation
-
-2. **NEW_HELPER_CODE** (string, required)
-   - Use this field to include __new helpers, imports, variables, classes, or functions__ that are required by your fix.
-   - __Leave it as an empty string__  "" if the current code already contains all needed helpers.
-   - Format:
-        • Use \n for line breaks in the JSON string.
-        • Only include code that is independent of the current code structure.
-        • Example :
-            • ✅ New function or class not tied to existing classes
-            • ✅ New import or variable
-            • ❌ Do not include code that belongs structurally inside an existing class or function (e.g., methods using self) unless it is moving a nested helper.
-      - The purpose is to add missing support code without altering the existing code’s structure or relationships.
-
-3. **PLACEMENT** (string, required)
-   - One of: "SIBLING" | "GLOBAL_TOP" | "GLOBAL_BOTTOM"
-   - "GLOBAL_TOP": New imports or constants or Module-level functions (outside class)
-   - "SIBLING": New helper functions (if current code doesn't have them)
-   - "GLOBAL_BOTTOM": Standalone utility functions
-
-4. **IMPROVED_EXPLANATION** (string, required)
-   - Brief explanation of what you fixed (1-2 sentences)
-   - Example: "Fixed indentation of helper function while preserving refactored structure"
-   - Example: "Added type hints to already-refactored code"
-
-5. **CONFIDENCE** (number, required)
-   - Float between 0.0 and 1.0
-   - How confident you are in the fix
-
----
 
 ## INDENTATION REQUIREMENTS (PYTHON)
 
@@ -608,12 +504,8 @@ def calculate_total(items: List[Item]) -> float:
 - Valid Python syntax
 - Decision: ✅ SYNTAX IS CORRECT
 
-**Your Response (Output current code as-is):**
-```json
-{"IMPROVED_FIX":"def calculate_total(items: List[Item]) -> float:\n    total = 0\n    for item in items:\n        total += item.price\n    return total","NEW_HELPER_CODE":"from typing import List","PLACEMENT":"GLOBAL_TOP","IMPROVED_EXPLANATION":"STEP 1: Type hints properly added. STEP 2: Syntax is correct. No changes needed to current code.","CONFIDENCE":1.0}
-```
 
----
+
 
 ## VALIDATION CHECKLIST
 
@@ -665,25 +557,6 @@ Wrong Response: Reverts to Original Code with complexity 15
 ```
 **Why it's wrong:** If the helper is in IMPROVED_FIX, it shouldn't be in NEW_HELPER_CODE!
 
-### ✅ CORRECT: Follow Two-Step Process
-
-**When STEP 1 fails:**
-```json
-{"IMPROVED_FIX":"NEW fix with proper complexity reduction","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Current fix had complexity 14, regenerated with complexity 8","CONFIDENCE":0.9}
-```
-
-**When STEP 2 fails:**
-```json
-{"IMPROVED_FIX":"Current code with ONLY indentation fixed","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1: Complexity is correct. STEP 2: Fixed indentation from 0 to 4 spaces","CONFIDENCE":0.95}
-```
-
-**When both pass:**
-```json
-{"IMPROVED_FIX":"Current code as-is","NEW_HELPER_CODE":"","PLACEMENT":"SIBLING","IMPROVED_EXPLANATION":"STEP 1 and STEP 2: Both passed. No changes needed","CONFIDENCE":1.0}
-```
-
----
-
 ## 🚨 FINAL REMINDER: FOLLOW THE TWO-STEP PROCESS 🚨
 
 **Your workflow must always be:**
@@ -702,5 +575,3 @@ Wrong Response: Reverts to Original Code with complexity 15
 **Never skip either step!**
 **Never revert to Original Code when fixing syntax!**
 **Always document which step(s) required action in IMPROVED_EXPLANATION!**
-
-**START YOUR RESPONSE WITH { AND END WITH } - ABSOLUTELY NOTHING ELSE**

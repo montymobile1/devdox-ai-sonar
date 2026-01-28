@@ -2,14 +2,19 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple, Union
+from typing import List, Optional, Dict, Any, Union
 from enum import Enum
-import re
 import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
-
-from devdox_ai_sonar.models.sonar import SonarIssue, SonarSecurityIssue, FixSuggestion
+from pydantic import ValidationError
+from devdox_ai_sonar.models.sonar import (SonarIssue,
+                                          SonarSecurityIssue,
+                                          FixSuggestion,
+                                          CodeBlock,
+                                          ChangeType,
+                                          ChangeAction,
+                                          SonarFixResponse)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +35,7 @@ except ImportError:
 
 try:
     from google import genai
-
+    from google.genai import types
     HAS_GEMINI = True
 except ImportError as e:
     logger.warning(f"Failed to import Gemini library: {e}")
@@ -198,12 +203,16 @@ class FixValidator:
                 file_content, first_line, last_line, context_lines
             )
 
+            formatted_fix = self._format_code_blocks_for_validation(fix.fixed_code_blocks)
+
 
             # Generate validation prompt
-            prompt = self._create_validation_prompt(fix, issue, context, new_error_msg)
+            prompt = self._create_validation_prompt(fix, issue, context, new_error_msg, formatted_fix)
 
             # Call LLM for validation
             validation_response = self._call_llm_validator(prompt)
+
+
             if not validation_response:
                 logger.warning(f"Failed to validate fix for issue {issue.key}")
                 return ValidationResult(
@@ -213,11 +222,24 @@ class FixValidator:
                     explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
+            modified_fix = fix
+            modified_fix.fixed_code_blocks = validation_response.FIXED_CODE_BLOCKS
+            helper_code = validation_response.NEW_HELPER_CODE
 
-            # Parse validation response
-            result = self._parse_validation_response(validation_response, fix)
+            no_whitespace = ''.join(helper_code.split())
+            if isinstance(helper_code, str) and no_whitespace:
+                modified_fix.helper_code = helper_code
+                modified_fix.placement_helper = validation_response.PLACEMENT.value
 
-            return result
+
+            return   ValidationResult(
+                status=ValidationStatus.MODIFIED,
+                original_fix=fix,
+                modified_fix=modified_fix,
+                explanation= validation_response.EXPLANATION,
+                confidence=validation_response.CONFIDENCE
+            )
+
 
         except Exception as e:
             logger.error(
@@ -230,34 +252,67 @@ class FixValidator:
                 confidence=0.0,
             )
 
-    def validate_fixes_batch(
-        self,
-        fixes: List[Tuple[FixSuggestion, SonarIssue, str]],
-        stop_on_rejection: bool = False,
-    ) -> List[ValidationResult]:
+
+    def _format_code_blocks_for_validation(
+            self,
+            code_blocks: List[CodeBlock]
+    ) -> str:
         """
-        Validate multiple fixes in batch.
+        Format code blocks into a readable string for validation.
 
         Args:
-            fixes: List of tuples (fix, issue, file_content)
-            stop_on_rejection: Stop validation if a fix is rejected
+            code_blocks: List of CodeBlock objects
 
         Returns:
-            List of ValidationResult objects
+            Formatted string representation of all fixes
         """
-        results = []
+        formatted_parts = []
 
-        for fix, issue, file_content in fixes:
-            result = self.validate_fix(fix, issue, file_content)
-            results.append(result)
+        for idx, block in enumerate(code_blocks, 1):
+            header = f"\n{'=' * 60}\nBlock {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
+            header += f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
+            header += f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
 
-            if stop_on_rejection and result.status == ValidationStatus.REJECTED:
-                logger.warning(
-                    f"Stopping batch validation due to rejection of {issue.key}"
-                )
-                break
+            formatted_parts.append(header)
 
-        return results
+            if block.change_type == ChangeType.FULL_CODE and block.context:
+                # Full code replacement
+                formatted_parts.append("```python\n")
+                formatted_parts.append(block.context)
+                formatted_parts.append("\n```\n")
+
+            elif block.change_type == ChangeType.DIFF and block.changes:
+                # Line-by-line changes
+                formatted_parts.append("Changes:\n")
+                for change in block.changes:
+                    if change.action == ChangeAction.REPLACE:
+                        formatted_parts.append(f"  Line {change.line} (REPLACE):\n")
+                        formatted_parts.append(f"    - Old: {change.old}\n")
+                        formatted_parts.append(f"    + New: {change.new}\n")
+                    elif change.action == ChangeAction.INSERT:
+                        formatted_parts.append(f"  Line {change.line} (INSERT):\n")
+                        formatted_parts.append(f"    + New: {change.new}\n")
+                    elif change.action == ChangeAction.DELETE:
+                        formatted_parts.append(f"  Line {change.line} (DELETE):\n")
+                        formatted_parts.append(f"    - Old: {change.old}\n")
+                formatted_parts.append("\n")
+
+            elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
+                # Search/replace patterns
+                formatted_parts.append("Search/Replace Operations:\n")
+                for idx, repl in enumerate(block.replacements, 1):
+                    regex_marker = " (REGEX)" if repl.is_regex else ""
+                    count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
+                    formatted_parts.append(f"\n  Operation {idx}{regex_marker}{count_info}:\n")
+                    formatted_parts.append(f"    Search:  {repr(repl.search)}\n")
+                    formatted_parts.append(f"    Replace: {repr(repl.replace)}\n")
+                formatted_parts.append("\n")
+
+            # Add separator between blocks
+            if idx < len(code_blocks):
+                formatted_parts.append("\n" + "-" * 60 + "\n")
+
+        return "".join(formatted_parts)
 
     def _extract_validation_context(
         self, file_content: str, first_line: int, last_line: int, context_lines: int
@@ -302,7 +357,8 @@ class FixValidator:
         fix: FixSuggestion,
         issue: Union[SonarIssue, SonarSecurityIssue],
         context: Dict[str, Any],
-        new_error: str
+        new_error: str,
+        formatted_fix: str
     ) -> str:
         """Create a prompt for fix validation."""
         severity = getattr(issue, "severity", "N/A")
@@ -314,6 +370,7 @@ class FixValidator:
             "issue_type":issue_type,
             "context": context,
             "error_message": new_error,
+            "formatted_fix":formatted_fix
 
         }
         template = self.jinja_env.get_template("python/validator.j2")
@@ -350,13 +407,19 @@ class FixValidator:
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
+        config=types.GenerateContentConfig(
+                        response_mime_type='application/json',
+                        response_schema=SonarFixResponse,
+                    ),
+
         )
-        return str(response.text) if hasattr(response, "text") else None
+        return  response.parsed
 
     def _call_openai_validator(self, prompt: str) -> Optional[str]:
-        response = self.client.chat.completions.create(
+
+        response = self.client.responses.parse(
             model=self.model,
-            messages=[
+            input=[
                 {
                     "role": "system",
                     "content": (
@@ -367,11 +430,12 @@ class FixValidator:
                 },
                 {"role": "user", "content": prompt},
             ],
-            temperature=0.1,
-            max_tokens=2000,
+            text_format=SonarFixResponse,
         )
 
-        return self._extract_openai_content(response)
+        return response.output_parsed
+
+
 
     def _call_togetherai_validator(self, prompt: str) -> Optional[str]:
         response = self.client.chat.completions.create(
@@ -387,186 +451,26 @@ class FixValidator:
                 {"role": "user", "content": prompt},
             ],
             temperature=0.1,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "sonar_fix_response",
+                    "schema": SonarFixResponse.model_json_schema(),
+                    "strict": True
+                }
+            }
         )
-
-        return self._extract_openai_content(response)
-
-    def _extract_openai_content(self, response: Any) -> Optional[str]:
-        if response.choices and response.choices[0].message:
-            content = response.choices[0].message.content
-
-            return str(content) if content else None
-        return None
-
-    def _extract_fields_from_parsed_json(
-        self, fix_data: dict
-    ) -> Optional[Dict[str, Any]]:
-        """Extract and validate fields from parsed JSON."""
-
-        # Extract with type conversion and defaults
-        improved_fix = str(fix_data.get("IMPROVED_FIX", "")).strip()
-        improved_helper_code = str(fix_data.get("NEW_HELPER_CODE", "")).strip()
-        placement_helper = str(fix_data.get("PLACEMENT", "")).strip()
-        improved_explanation = str(fix_data.get("IMPROVED_EXPLANATION", "")).strip()
-
-        confidence = fix_data.get("CONFIDENCE", 0.5)
-
-        # Convert confidence to float
-        try:
-            confidence = float(confidence)
-        except (ValueError, TypeError):
-            confidence = 0.5
-        confidence = max(0.0, min(1.0, confidence))
-
-        # Validate placement
-
-        # Provide default explanation
-        if not improved_explanation:
-            improved_explanation = "Code fix applied"
-
-        # # Require fixed_code
-        # if not improved_fix:
-        #     logger.error("❌ FIXED_SELECTION is empty")
-        #     return {}
-
-        return {
-            "improved_fix": improved_fix,
-            "helper_code": improved_helper_code,
-            "placement_helper":placement_helper,
-            "improved_explanation": improved_explanation,
-            "confidence": confidence,
-        }
-
-    def _parse_validation_response(
-        self, response_text: str, original_fix: FixSuggestion
-    ) -> ValidationResult:
-        """Parse the validation response from LLM."""
+        response_json = response.choices[0].message.content
 
         try:
-            # Extract status
-            cleaned_content = response_text.strip()
+            # Parse JSON
+            data = json.loads(response_json)
 
-            cleaned_content = cleaned_content.split("{", 1)[1]
-            cleaned_content = "{" + cleaned_content
+            # Validate with Pydantic
+            return SonarFixResponse(**data)
 
-            # 2. Trim after last }
-            end = cleaned_content.rfind("}")
-            cleaned_content = (
-                cleaned_content[: end + 1] if end != -1 else cleaned_content
-            )
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON: {e}")
 
-            if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
-                try:
-                    fix_data = json.loads(cleaned_content)
-
-                    response =  self._extract_fields_from_parsed_json(fix_data)
-                except json.JSONDecodeError:
-                  response = {}
-
-            if not response or response.get("confidence", 0.0) < self.min_confidence_threshold:
-                return ValidationResult(
-                    status=ValidationStatus.NEEDS_REVIEW,
-                    original_fix=original_fix,
-                    modified_fix=original_fix,
-                    explanation="Failed to improve fix ",
-                    confidence=0.0,
-                )
-
-            modified_fix= original_fix
-            modified_fix.fixed_code = response.get("improved_fix")
-
-            helper_code = response.get("helper_code","")
-
-            no_whitespace = ''.join(helper_code.split())
-            if isinstance(helper_code, str) and no_whitespace:
-
-                modified_fix.helper_code= response.get("helper_code")
-                modified_fix.placement_helper= response.get("placement_helper")
-
-            return ValidationResult(
-                status=ValidationStatus.MODIFIED,
-                original_fix=original_fix,
-                modified_fix=modified_fix,
-                explanation= response.get("improved_explanation",""),
-                confidence=response.get("confidence", 0.0)
-            )
-
-        except Exception as e:
-            logger.error(f"Error parsing validation response: {e}", exc_info=True)
-            return ValidationResult(
-                status=ValidationStatus.NEEDS_REVIEW,
-                original_fix=original_fix,
-                modified_fix=original_fix,
-                explanation=f"Failed to parse validation response: {str(e)}",
-                confidence=0.0,
-            )
-
-    def validate_fixes_with_agent(
-        self,
-        fixes: List[FixSuggestion],
-        issues: List[SonarIssue],
-        project_path: Path,
-        provider: str = "openai",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
-        min_confidence: float = 0.7,
-    ) -> List[ValidationResult]:
-        """
-        Convenience function to validate a list of fixes.
-
-        Args:
-            fixes: List of fix suggestions
-            issues: List of corresponding SonarCloud issues
-            project_path: Path to the project
-            provider: LLM provider
-            model: LLM model name
-            api_key: API key
-            min_confidence: Minimum confidence threshold
-
-        Returns:
-            List of validation results
-        """
-        validator = FixValidator(
-            provider=provider,
-            model=model,
-            api_key=api_key,
-            min_confidence_threshold=min_confidence,
-        )
-
-        results = []
-
-        for fix, issue in zip(fixes, issues):
-            # Read file content
-            file_path = project_path / fix.file_path if fix.file_path else None
-
-            if not file_path or not file_path.exists():
-                logger.warning(f"File not found for fix {fix.issue_key}: {file_path}")
-                results.append(
-                    ValidationResult(
-                        status=ValidationStatus.NEEDS_REVIEW,
-                        original_fix=fix,
-                        explanation="File not found for validation",
-                        confidence=0.0,
-                    )
-                )
-                continue
-
-            try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    file_content = f.read()
-
-                result = validator.validate_fix(fix, issue, file_content)
-                results.append(result)
-
-            except Exception as e:
-                logger.error(f"Error reading file for validation: {e}", exc_info=True)
-                results.append(
-                    ValidationResult(
-                        status=ValidationStatus.NEEDS_REVIEW,
-                        original_fix=fix,
-                        explanation=f"Error reading file: {str(e)}",
-                        confidence=0.0,
-                    )
-                )
-
-        return results
+        except ValidationError as e:
+            raise ValueError(f"Schema validation failed: {e}")

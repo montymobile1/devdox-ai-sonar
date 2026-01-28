@@ -14,9 +14,27 @@
 {{message}}
 
 ### 🧠 Explanation
-{{explanation}}
+{{ explanation | replace('###', '\n###') }}
 
 ### 🛠 Suggested Fix
-{{suggestion}}
 
+{%- for code_block in suggestion -%}
 
+    Block Changes on {{ code_block.block_name }} ({{ code_block.start_line }} - {{ code_block.end_line }})
+    {%- if code_block.context %}
+        ````{{ code_block.context }}```
+    {%- elif code_block.changes %}
+        {%- for change_code in code_block.changes %}
+
+        Replace: {{ change_code.old }} by {{ change_code.new }}
+        {%- endfor %}
+    {%- elif code_block.replacements %}
+        {%- for change_code in code_block.replacements %}
+
+        Replace: {{ change_code.search }} by {{ change_code.replace }}
+        {%- endfor %}
+    {%- else %}
+        {# No changes specified for this block #}
+    {%- endif %}
+{%- endfor %}
+````

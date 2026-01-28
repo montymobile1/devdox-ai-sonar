@@ -422,6 +422,7 @@ class SonarCloudAnalyzer:
         issues = []
 
         for issue_data in issues_data:
+            problem_lines = []
             try:
                 # Map severity enum
                 severity_str = issue_data.get("severity", "").upper()
@@ -453,6 +454,7 @@ class SonarCloudAnalyzer:
                 file_path = self._extract_file_path(component)
 
                 first_line = issue_data.get("line")
+                problem_lines.append(int(first_line))
                 if first_line:
                     first_line = int(first_line)
 
@@ -464,6 +466,7 @@ class SonarCloudAnalyzer:
                     for location in flow.get("locations", []):
                         text_range = location.get("textRange", {})
                         end_line = text_range.get("endLine")
+                        problem_lines.append(int(end_line))
 
                         if end_line:
                             end_line = int(end_line)
@@ -474,6 +477,7 @@ class SonarCloudAnalyzer:
                     key=issue_data.get("key", ""),
                     rule=issue_data.get("rule", ""),
                     severity=severity.value,
+                    problem_lines = problem_lines,
                     component=component,
                     project=issue_data.get("project", ""),
                     first_line=first_line,
@@ -512,12 +516,16 @@ class SonarCloudAnalyzer:
                 # Extract file path from component
                 component = issue_data.get("component", "")
                 file_path = self._extract_file_path(component)
+                problem_lines = []
 
                 first_line = issue_data.get("line")
                 if first_line:
                     first_line = int(first_line)
+                    problem_lines.append(first_line)
 
                 last_line = issue_data.get("textRange", {}).get("endLine", first_line)
+                if last_line != first_line:
+                    problem_lines.append(last_line)
 
                 issue = SonarSecurityIssue(
                     key=issue_data.get("key", ""),
@@ -531,6 +539,7 @@ class SonarCloudAnalyzer:
                     status=issue_data.get("status", "OPEN"),
                     first_line=first_line,
                     last_line=last_line,
+                    problem_lines=problem_lines,
                     message=issue_data.get("message", ""),
                     file=file_path,
                     creation_date=issue_data.get("creationDate"),
