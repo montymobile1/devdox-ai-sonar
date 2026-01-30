@@ -223,10 +223,29 @@ class FixValidator:
                     confidence=0.0,
                 )
             modified_fix = fix
-            modified_fix.fixed_code_blocks = validation_response.FIXED_CODE_BLOCKS
+            blocks = validation_response.FIXED_CODE_BLOCKS
+            for each_block in blocks:
+                if each_block.has_changes and each_block.context is None and each_block.change_type== ChangeType.FULL_CODE:
+
+                    matching_block = next(
+                        (block for block in fix.fixed_code_blocks
+                         if block.start_line == each_block.start_line ),
+                        None
+                    )
+
+                    if matching_block:
+                        each_block.context = matching_block.context
+
+                    else:
+                        # Fallback or error handling
+                        print(
+                            f"⚠️ Warning: No matching block found for lines {each_block.start_line}-{each_block.end_line}")
+
+            modified_fix.fixed_code_blocks = blocks
             helper_code = validation_response.NEW_HELPER_CODE
 
             no_whitespace = ''.join(helper_code.split())
+
             if isinstance(helper_code, str) and no_whitespace:
                 modified_fix.helper_code = helper_code
                 modified_fix.placement_helper = validation_response.PLACEMENT.value
@@ -376,7 +395,6 @@ class FixValidator:
         template = self.jinja_env.get_template("python/validator.j2")
         # Render enhanced content
         prompt = template.render(**context_dic)
-
         return prompt.strip()
 
 
@@ -450,6 +468,7 @@ class FixValidator:
                 },
                 {"role": "user", "content": prompt},
             ],
+            max_tokens=8000,
             temperature=0.1,
             response_format={
                 "type": "json_schema",

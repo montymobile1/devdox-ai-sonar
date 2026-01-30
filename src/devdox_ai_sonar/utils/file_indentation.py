@@ -185,11 +185,10 @@ def apply_sibling_helper(
 
 
 def apply_global_bottom_helper(
-        lines: List[str], line_range: LineRange, indented_code: str, helper_code: str
+        lines: List[str], helper_code: str
 ) -> List[str]:
-    """Apply fix with global bottom helper code."""
-    # Replace the target lines
-    lines[line_range.start: line_range.end + 1] = [indented_code, "\n"]
+
+
     # Append helper at bottom
     lines.extend(["\n", helper_code, "\n"])
     return lines
@@ -385,15 +384,12 @@ def apply_complex_fix(
         lines: List[str], fix: FixSuggestion, line_range: LineRange
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
-
     modified_blocks = fix.fixed_code_blocks
     for block in modified_blocks:
-
         lines , end_line= apply_single_code_block(lines, block)
         if end_line ==0:
             end_line = block.end_line
         line_range = LineRange(block.start_line, end_line)
-
 
     if fix.import_block_code:
         lines = apply_import_block(lines, fix.import_block_code, fix.end_import_block_code)
@@ -425,7 +421,7 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
         return apply_global_top_helper(lines,line_range ,"",helper_code,fix.end_import_block_code)
 
     elif placement == "GLOBAL_BOTTOM":
-        return apply_global_bottom_helper(lines,line_range,"", helper_code)
+        return apply_global_bottom_helper(lines,helper_code)
 
     elif placement == "SIBLING":
         return apply_sibling_helper(lines, line_range,"", helper_code)
@@ -438,11 +434,60 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
 
 
 def normalize_code(code: str) -> str:
-    """Normalize code by handling escaped newlines."""
+    """
+    Normalize code by:
+    1. Converting escaped newlines to actual newlines
+    2. Converting escaped tabs to spaces
+    3. Fixing broken docstrings (single quotes → triple quotes)
+    """
     if not code:
         return code
-    return code.replace("\\n", "\n").replace("\\t", "    ")
 
+    # Step 1: Handle escaped characters
+    code = code.replace("\\n", "\n").replace("\\t", "    ")
+
+    # Step 2: Fix broken docstrings
+    lines = code.split("\n")
+    fixed_lines = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Check if this is a standalone quote (potential broken docstring)
+        if stripped in ('"', "'"):
+            quote_char = stripped
+            indent = line[:len(line) - len(line.lstrip())]
+
+            # Look for closing quote
+            closing_found = False
+            docstring_content = []
+
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip() == quote_char:
+                    # Found closing quote
+                    closing_found = True
+
+                    # Add triple-quoted docstring
+                    fixed_lines.append(f'{indent}{quote_char * 3}')
+                    fixed_lines.extend(docstring_content)
+                    fixed_lines.append(f'{indent}{quote_char * 3}')
+
+                    i = j + 1
+                    break
+                else:
+                    docstring_content.append(lines[j])
+
+            if not closing_found:
+                # No closing quote found, keep original line
+                fixed_lines.append(line)
+                i += 1
+        else:
+            fixed_lines.append(line)
+            i += 1
+
+    return "\n".join(fixed_lines)
 
 def apply_search_replace_change(
         lines: List[str],
@@ -532,7 +577,7 @@ def apply_full_code_change(
 
     # Convert to 0-indexed
     start_idx = block.start_line - 1
-    end_idx = block.end_line -1   # end_line is inclusive
+    end_idx = block.end_line
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
@@ -550,10 +595,6 @@ def apply_full_code_change(
     new_lines = indented_code.split("\n")
 
     new_lines = [line + "\n" for line in new_lines]
-
-    # Remove trailing empty line if present
-    if new_lines and new_lines[-1].strip() == "":
-        new_lines = new_lines[:-1]
 
     # Replace the lines
     lines[start_idx:end_idx] = new_lines
