@@ -294,120 +294,7 @@ class LLMFixer:
             )
             if not fix_response:
                 return None
-            # refresh_token_code = '''def refresh_token(refreshTokenRequest: RefreshTokenRequest = None) -> RefreshTokenResponse:
-            #     """
-            #     Refreshes the access token using a valid refresh token and validates
-            #     the status of the associated Reseller and Branch
-            #
-            #     Args:
-            #         refreshTokenRequest (RefreshTokenRequest): Object containing the refresh_token string.
-            #
-            #     Returns:
-            #         RefreshTokenResponse: Object containing new tokens and account status flags.
-            #     """
-            #
-            #     logger.debug("Token refresh process initiated")
-            #     if not refreshTokenRequest or not refreshTokenRequest.refresh_token:
-            #         raise ProblemException(status=400, title="invalid_request", detail="Missing refresh token")
-            #
-            #     try:
-            #         refresh_token_str = refreshTokenRequest.refresh_token
-            #         logger.debug("Processing refresh token request with token: %s...",
-            #                    refresh_token_str[:10] if refresh_token_str and len(refresh_token_str) > 10 else "<none>")
-            #
-            #         keycloak = keyCloak.KeycloakHelper()
-            #         logger.debug("Calling Keycloak to refresh token")
-            #         keycloakResponse = keycloak.refresh_token(refresh_token_str)
-            #
-            #         access_token = keycloakResponse["access_token"]
-            #         logger.debug("Access token received, validating token")
-            #         claims = keycloak.validate_token(access_token)
-            #
-            #         expires_in = claims["exp"]
-            #         refresh_token = keycloakResponse["refresh_token"]
-            #         refresh_expires_in = keycloakResponse["refresh_expires_in"]
-            #         reseller_id = claims.get("reseller_id", "")
-            #         branch_id = claims.get("branch_id", "")
-            #
-            #         logger.debug("Token validated successfully. Reseller ID: %s, Branch ID: %s", reseller_id, branch_id)
-            #
-            #         supports_promo = True
-            #         supports_vouchers = True
-            #         reseller_currency_code = "USD"
-            #         if reseller_id != "000000000000000000000000":
-            #             logger.debug("Retrieving reseller information for reseller_id: %s", reseller_id)
-            #             reseller = get_reseller_by_id(reseller_id)[0]
-            #             reseller = helpers.DataHelpers.to_good_dict(reseller)
-            #
-            #             if reseller:
-            #                 supports_promo = reseller.get("supports_promo", False)
-            #                 supports_vouchers = reseller.get("supports_vouchers", False)
-            #                 reseller_currency_code = reseller.get("default_currency_code", "USD")
-            #                 is_active = reseller.get("is_active")
-            #
-            #                 logger.debug("Reseller details - supports_promo: %s, supports_vouchers: %s, currency: %s, is_active: %s",
-            #                            supports_promo, supports_vouchers, reseller_currency_code, is_active)
-            #
-            #                 if not is_active:
-            #                     logger.warning("Token refresh attempt for disabled reseller: %s", reseller_id)
-            #                     raise ProblemException(status=401, title="invalid_grant", detail="Reseller is disabled, Contact administration!")
-            #
-            #             if branch_id:
-            #                 logger.debug("Checking branch status for branch_id: %s", branch_id)
-            #                 getQuery = {"_id": ObjectId(branch_id)}
-            #
-            #                 branch = mongodb.find_one("branch", getQuery, apply_Tenancy=0)
-            #                 if branch:
-            #                     is_active = branch.get("is_active")
-            #                     logger.debug("Branch status - is_active: %s", is_active)
-            #
-            #                     if not is_active:
-            #                         logger.warning("Token refresh attempt for disabled branch: %s", branch_id)
-            #                         raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
-            #                 else:
-            #                     logger.warning("Token refresh attempt for non-existent branch: %s", branch_id)
-            #                     raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
-            #
-            #         logger.info("Token refresh successful for reseller_id: %s", reseller_id)
-            #
-            #         return RefreshTokenResponse(
-            #             message="Credentials Valid, Access Token Refreshed",
-            #             access_token=access_token,
-            #             token_type="ApiKey",
-            #             expires_in=expires_in,
-            #             refresh_expires_in=refresh_expires_in,
-            #             refresh_token=refresh_token,
-            #             supports_promo=supports_promo,
-            #             supports_vouchers=supports_vouchers,
-            #             reseller_currency_code=reseller_currency_code,
-            #         )
-            #     except (KeycloakPostError, KeycloakGetError) as e:
-            #         logger.warning("Keycloak refresh token failed : %s", str(e))
-            #         raise ProblemException(status=401, title="invalid_grant", detail="Refresh token is invalid or expired")
-            #     except Exception as e:
-            #         logger.error("Unexpected error during token refresh: %s", str(e))
-            #         raise ProblemException(status=500, title="server_error", detail="An internal error occurred.")'''
-            #
-            # fix_response = SonarFixResponse(IMPORT_BLOCK='',
-            #                                 FIXED_CODE_BLOCKS=[
-            #                                     CodeBlock(block_name='refresh_token', start_line=16, end_line=108,
-            #                                               has_changes=True,
-            #                                               change_type= ChangeType.FULL_CODE.value,
-            #                                               block_type=BlockType.FUNCTION,
-            #                                               context=refresh_token_code,
-            #                                               changes=None,
-            #                                               replacements=None
-            #                                               )],
-            #                                     NEW_HELPER_CODE ="",
-            #                                 PLACEMENT=PlacementType.SIBLING.value,
-            #                                 EXPLANATION="### Issue: python:S1066 - Merge this if statement with the  enclosing one. Nested if statements can be merged to reduce complexity and improve readability.### Fix: Merged the nested if statements on lines 113-114 into a single if statement.### Validation: Syntax OK,  logic preserved, 1 block modified",
-            # CONFIDENCE = 0.95
-            #                                 )
-            #
 
-            print("fix_response ")
-            print(fix_response)
-            print("end of fix_response")
             file_name = project_path / file_md
             self.write_explaination(
                 file_name,
@@ -596,9 +483,7 @@ class LLMFixer:
 
 
         prompt_system = system_template.render()
-        print("prompt_system line 604")
-        print(prompt_system)
-        print("end of prompt_system")
+
         try:
 
 
@@ -624,8 +509,7 @@ class LLMFixer:
 
 
                 )
-                print("response.parsed ")
-                print(response.parsed)
+
                 return  response.parsed
 
 
@@ -1085,8 +969,7 @@ class LLMFixer:
         system_template = self.jinja_env.get_template("python/system_fix_issues.j2")
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
-            print(rule_key)
-            print(rule_key.lower())
+
             if rule_key in ['python:S3776']:
 
                 context ['import_section']['has_imports']=True
@@ -1184,9 +1067,7 @@ class LLMFixer:
         }
         # Render enhanced content
         prompt = template.render(**context_dic)
-        print("user template ")
-        print(prompt)
-        print("end of user template")
+
         return prompt.strip(), system_template
 
     def _parse_openai_response(self, response: Any) -> Optional[Dict[str, Any]]:
@@ -1733,8 +1614,15 @@ class LLMFixer:
                 else:
                     # STEP 2: Direct application failed, try AI validator fallback
                     if use_validator and validator:
+                        reason_list = []
+                        for f in new_fixes:
+                            if f.reason is not None:
+                                reason_list.append(f.reason)
+
+                        reason_msg = ", ".join(reason_list)
+
                         logger.warning(
-                            f"Direct fix application failed for {file_path}. Trying AI validator fallback..."
+                            f"Direct fix application failed for {file_path}. Trying AI validator fallback to fix {reason_msg}..."
                         )
 
                         # Restore original content
@@ -1749,17 +1637,12 @@ class LLMFixer:
                                 current_content = original_content
                                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
                                 if file_path_tmp.exists():
-                                    print("lsss")
+
                                     with open(file_path_tmp, "r", encoding="utf-8") as f:
                                         current_content = f.read()
                                         remove_tmp_files(file_path_tmp)
 
-                                reason_list = []
-                                for f in new_fixes:
-                                    if f.reason is not None:
-                                        reason_list.append(f.reason)
 
-                                reason_msg = ", ".join(reason_list)
                                 validation_result = validator.validate_fix(
                                     fix, issue, current_content, new_error_msg=reason_msg
                                 )
@@ -2010,13 +1893,7 @@ class LLMFixer:
 
 
             import_section = self._extract_import_section(file_lines, language)
-            # as no need for imports
-            # import_section = {
-            #     "start_line": 0,
-            #     "end_line": 0,
-            #     "content": "",
-            #     "has_imports": False
-            # }
+
             import_section['has_imports']=False
             # Build context dictionary
             if modified_content:
@@ -3400,6 +3277,9 @@ def get_content_range(
     last_line_tmp = line_range_tmp.get('last_line')
     problem_lines_tmp = line_range_tmp.get('problem_lines', [])
 
+    min_problem_line = min(problem_lines_tmp)
+    if min_problem_line <= first_line_tmp:
+        first_line_tmp = min_problem_line
 
     if first_line_tmp is None or last_line_tmp is None:
         raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
@@ -3652,7 +3532,7 @@ def _validate_and_extract_issue_info(
 
 def _extract_problem_lines(
     file_lines: List[str], problem_line_numbers: List[int]
-) -> List[str]:
+) -> Dict[str,Any]:
     """
     Extract actual line content for problem lines.
 
@@ -3660,14 +3540,12 @@ def _extract_problem_lines(
         file_lines: All lines in the file
         problem_line_numbers: List of 1-based line numbers to extract
 
-    Returns:
-        List of line content strings
 
     Note:
         Handles off-by-one conversion from SonarCloud's 1-based line numbers
         to Python's 0-based list indexing.
     """
-    problem_lines = []
+    problem_lines = {}
 
     for line_number in problem_line_numbers:
         # Convert 1-based line number to 0-based index
@@ -3675,7 +3553,8 @@ def _extract_problem_lines(
 
         # Bounds check
         if 0 <= line_index < len(file_lines):
-            problem_lines.append(file_lines[line_index])
+            problem_lines[line_number] = file_lines[line_index]
+
 
         else:
             logger.warning(
@@ -3683,8 +3562,6 @@ def _extract_problem_lines(
                 f"(file has {len(file_lines)} lines)"
             )
 
-            # Include placeholder to maintain alignment
-            problem_lines.append(f"<line {line_number} not found>")
 
     return problem_lines
 
