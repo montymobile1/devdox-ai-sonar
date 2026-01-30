@@ -483,7 +483,6 @@ class LLMFixer:
 
 
         prompt_system = system_template.render()
-
         try:
 
 
@@ -520,8 +519,7 @@ class LLMFixer:
                         {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
-                    #max_tokens=4000,
-
+                    max_tokens=8000,
                     temperature=0.08,
                     response_format={
                     "type": "json_schema",
@@ -532,6 +530,13 @@ class LLMFixer:
                     }
                     }
                 )
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
+                total_tokens = response.usage.total_tokens
+
+                print(f"Input tokens: {input_tokens}")
+                print(f"Output tokens: {output_tokens}")
+                print(f"Total tokens: {total_tokens}")
 
                 return self._parse_togetherai_response(response)
             else:
@@ -541,77 +546,6 @@ class LLMFixer:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
 
-    def _call_llm(
-        self,
-        issue: Union[SonarIssue, SonarSecurityIssue],
-        context: Dict[str, Any],
-        file_extension: str,
-        rule_info: Optional[Dict[str, Any]] = None,
-        error_message: str = "",
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Call the LLM to generate a fix.
-
-        Args:
-            issue: SonarCloud issue
-            context: Code context around the issue
-            rule_info: Rule info from sonar cloud
-            file_extension: File extension to determine language
-
-        Returns:
-            Dictionary with fix information or None
-        """
-        if not self.model:
-            logger.error("Model not configured")
-            return None
-
-        # Determine programming language
-        language = self._get_language_from_extension(file_extension)
-
-        # Prepare prompt
-        prompt = self._create_fix_prompt(
-            issue, context, rule_info, language, error_message
-        )
-
-        try:
-            if self.provider == "openai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system_message},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-
-                )
-                return self._parse_openai_response(response)
-
-            elif self.provider == "gemini":
-                response = self.client.models.generate_content(
-                    model=self.model, contents=prompt
-                )
-
-                return self._parse_gemini_response(response)
-            elif self.provider == "togetherai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system_message},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=4000,
-                    top_p=0.9,
-                    top_k=40,
-                    repetition_penalty=1.1,
-                )
-
-                return self._parse_togetherai_response(response)
-            else:
-                logger.error(f"Unknown provider: {self.provider}")
-                return None
-        except Exception as e:
-            logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
-            return None
 
     def _is_init_method(self, context: str) -> bool:
         """
@@ -972,9 +906,16 @@ class LLMFixer:
 
             if rule_key in ['python:S3776']:
 
-                context ['import_section']['has_imports']=True
+                complexity_issues = issues[0].message.split('from ')[1].split(' to')[0] if 'from' in issues[0].message else '0'
+                # if int(complexity_issues) > 17:
+                #     template = self.jinja_env.get_template("python/refactoring/user_mini.j2")
+                #     system_template = self.jinja_env.get_template("python/refactoring/system_mini.j2")
+                # else:
                 template = self.jinja_env.get_template("python/refactoring/user_prompt.j2")
                 system_template = self.jinja_env.get_template("python/refactoring/system_fix_issues.j2")
+
+                context ['import_section']['has_imports']=True
+
 
             if rule_key not in rule_info_list:
                 continue
@@ -1007,7 +948,7 @@ class LLMFixer:
         original_is_static = STATICMETHOD_DECORATOR in code_chunk
         original_has_self = 'def ' in code_chunk and 'self' in code_chunk.split('def ')[1].split(')')[0]
 
-   
+
         if original_is_static:
             method_instruction_list = [
             f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
@@ -1074,7 +1015,7 @@ class LLMFixer:
         """Parse OpenAI API response."""
         try:
             return response.output_parsed
-            #return self._extract_fix_from_response(content)
+
         except Exception as e:
             logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
             return None
@@ -1407,7 +1348,6 @@ class LLMFixer:
             for fix in fixes:
 
                 result, lines = apply_single_fix(lines, fix)
-
 
                 if not result.success:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
@@ -3564,148 +3504,3 @@ def _extract_problem_lines(
 
 
     return problem_lines
-
-
-def _extract_context_with_lines(
-    file_lines: List[str],
-    first_line: int,
-    last_line: int,
-    context_lines: int,
-    problem_line_content: List[str],
-) -> Dict[str, Any]:
-    """
-    Extract context around the issue with specified number of surrounding lines.
-
-    Args:
-        file_lines: All lines in the file
-        first_line: First line of issue range (1-based)
-        last_line: Last line of issue range (1-based)
-        context_lines: Number of lines to include before/after
-        problem_line_content: Content of problem lines
-
-    Returns:
-        Dictionary with context, start_line, end_line, problem_lines
-    """
-    # Calculate context range with bounds checking
-    total_lines = len(file_lines)
-    context_start = max(1, first_line - context_lines)
-    context_end = min(total_lines, last_line + context_lines)
-
-    # Extract context (convert to 0-based indexing)
-    start_index = context_start - 1
-    end_index = context_end  # end_index is exclusive in slicing
-
-    context_lines_list = file_lines[start_index:end_index]
-    context_text = "".join(context_lines_list)
-
-    return {
-        "context": context_text,
-        "start_line": context_start,
-        "end_line": context_end,
-        "problem_lines": problem_line_content,
-    }
-
-
-def get_placement_examples() -> str:
-    """Get concrete placement examples"""
-    return f"""
-PLACEMENT EXAMPLES:
-
-Example 1 - SIBLING (needs self):
-{PYTHON_CODE_BLOCK}
-# Original
-def validate(self, user_id):
-    exists = self.user_repo.exists(user_id)  # Uses self.user_repo
-    if not exists:
-        raise Error()
-
-# Fixed
-FIXED_SELECTION:
-def validate(self, user_id):
-    if not self._user_exists(user_id):
-        raise Error()
-
-NEW_HELPER_CODE:
-def _user_exists(self, user_id):
-    return self.user_repo.exists(user_id)  # ← Needs self
-
-PLACEMENT: SIBLING
-{CODE_BLOCK_END}
-
-Example 2 - GLOBAL_BOTTOM (no self):
-{PYTHON_CODE_BLOCK}
-# Original  
-def process(self, date_str):
-    def parse_date(s):  # ← Nested function
-        return datetime.strptime(s, "%Y-%m-%d")
-    return parse_date(date_str)
-
-# Fixed
-FIXED_SELECTION:
-def process(self, date_str):
-    return _parse_date(date_str)
-
-NEW_HELPER_CODE:
-def _parse_date(date_str):  # ← No self, pure utility
-    from datetime import datetime
-    return datetime.strptime(date_str, "%Y-%m-%d")
-
-PLACEMENT: GLOBAL_BOTTOM
-{CODE_BLOCK_END}
-
-Example 3 - GLOBAL_TOP (constant):
-{PYTHON_CODE_BLOCK}
-# Original
-def log_error(self):
-    color = "red"  # ← Duplicated literal
-    print(color)
-
-def highlight(self):
-    color = "red"  # ← Duplicated literal
-    print(color)
-
-# Fixed
-FIXED_SELECTION:
-def log_error(self):
-    print(ERROR_COLOR)
-
-def highlight(self):
-    print(ERROR_COLOR)
-
-NEW_HELPER_CODE:
-ERROR_COLOR = "red"
-
-PLACEMENT: GLOBAL_TOP
-{CODE_BLOCK_END}
-"""
-
-def _is_constant(code: str) -> bool:
-    """Check if code defines a constant"""
-    lines = code.strip().split('\n')
-    if not lines:
-        return False
-    first_line = lines[0].strip()
-    return bool(re.match(r'^[A-Z_][A-Z0-9_]*\s*=', first_line))
-
-def auto_fix_placement(response: Dict) -> Dict:
-    """Automatically fix incorrect placement"""
-
-    helper_code = response.get("NEW_HELPER_CODE", "")
-
-    if not helper_code:
-        return response
-
-    # Detect correct placement
-    if helper_code.strip().startswith(('import ', 'from ')) or _is_constant(helper_code):
-        correct_placement = "GLOBAL_TOP"
-    elif 'self.' in helper_code or ('def ' in helper_code and 'self)' in helper_code):
-        correct_placement = "SIBLING"
-    else:
-        correct_placement = "GLOBAL_BOTTOM"
-
-    # Update if wrong
-    if response["PLACEMENT"] != correct_placement:
-        print(f"⚠️ Auto-fixing placement: {response['PLACEMENT']} → {correct_placement}")
-        response["PLACEMENT"] = correct_placement
-
-    return response
