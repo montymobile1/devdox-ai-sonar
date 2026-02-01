@@ -294,120 +294,7 @@ class LLMFixer:
             )
             if not fix_response:
                 return None
-            # refresh_token_code = '''def refresh_token(refreshTokenRequest: RefreshTokenRequest = None) -> RefreshTokenResponse:
-            #     """
-            #     Refreshes the access token using a valid refresh token and validates
-            #     the status of the associated Reseller and Branch
-            #
-            #     Args:
-            #         refreshTokenRequest (RefreshTokenRequest): Object containing the refresh_token string.
-            #
-            #     Returns:
-            #         RefreshTokenResponse: Object containing new tokens and account status flags.
-            #     """
-            #
-            #     logger.debug("Token refresh process initiated")
-            #     if not refreshTokenRequest or not refreshTokenRequest.refresh_token:
-            #         raise ProblemException(status=400, title="invalid_request", detail="Missing refresh token")
-            #
-            #     try:
-            #         refresh_token_str = refreshTokenRequest.refresh_token
-            #         logger.debug("Processing refresh token request with token: %s...",
-            #                    refresh_token_str[:10] if refresh_token_str and len(refresh_token_str) > 10 else "<none>")
-            #
-            #         keycloak = keyCloak.KeycloakHelper()
-            #         logger.debug("Calling Keycloak to refresh token")
-            #         keycloakResponse = keycloak.refresh_token(refresh_token_str)
-            #
-            #         access_token = keycloakResponse["access_token"]
-            #         logger.debug("Access token received, validating token")
-            #         claims = keycloak.validate_token(access_token)
-            #
-            #         expires_in = claims["exp"]
-            #         refresh_token = keycloakResponse["refresh_token"]
-            #         refresh_expires_in = keycloakResponse["refresh_expires_in"]
-            #         reseller_id = claims.get("reseller_id", "")
-            #         branch_id = claims.get("branch_id", "")
-            #
-            #         logger.debug("Token validated successfully. Reseller ID: %s, Branch ID: %s", reseller_id, branch_id)
-            #
-            #         supports_promo = True
-            #         supports_vouchers = True
-            #         reseller_currency_code = "USD"
-            #         if reseller_id != "000000000000000000000000":
-            #             logger.debug("Retrieving reseller information for reseller_id: %s", reseller_id)
-            #             reseller = get_reseller_by_id(reseller_id)[0]
-            #             reseller = helpers.DataHelpers.to_good_dict(reseller)
-            #
-            #             if reseller:
-            #                 supports_promo = reseller.get("supports_promo", False)
-            #                 supports_vouchers = reseller.get("supports_vouchers", False)
-            #                 reseller_currency_code = reseller.get("default_currency_code", "USD")
-            #                 is_active = reseller.get("is_active")
-            #
-            #                 logger.debug("Reseller details - supports_promo: %s, supports_vouchers: %s, currency: %s, is_active: %s",
-            #                            supports_promo, supports_vouchers, reseller_currency_code, is_active)
-            #
-            #                 if not is_active:
-            #                     logger.warning("Token refresh attempt for disabled reseller: %s", reseller_id)
-            #                     raise ProblemException(status=401, title="invalid_grant", detail="Reseller is disabled, Contact administration!")
-            #
-            #             if branch_id:
-            #                 logger.debug("Checking branch status for branch_id: %s", branch_id)
-            #                 getQuery = {"_id": ObjectId(branch_id)}
-            #
-            #                 branch = mongodb.find_one("branch", getQuery, apply_Tenancy=0)
-            #                 if branch:
-            #                     is_active = branch.get("is_active")
-            #                     logger.debug("Branch status - is_active: %s", is_active)
-            #
-            #                     if not is_active:
-            #                         logger.warning("Token refresh attempt for disabled branch: %s", branch_id)
-            #                         raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
-            #                 else:
-            #                     logger.warning("Token refresh attempt for non-existent branch: %s", branch_id)
-            #                     raise ProblemException(status=400, title="invalid_grant", detail="Branch is disabled, Contact administration!")
-            #
-            #         logger.info("Token refresh successful for reseller_id: %s", reseller_id)
-            #
-            #         return RefreshTokenResponse(
-            #             message="Credentials Valid, Access Token Refreshed",
-            #             access_token=access_token,
-            #             token_type="ApiKey",
-            #             expires_in=expires_in,
-            #             refresh_expires_in=refresh_expires_in,
-            #             refresh_token=refresh_token,
-            #             supports_promo=supports_promo,
-            #             supports_vouchers=supports_vouchers,
-            #             reseller_currency_code=reseller_currency_code,
-            #         )
-            #     except (KeycloakPostError, KeycloakGetError) as e:
-            #         logger.warning("Keycloak refresh token failed : %s", str(e))
-            #         raise ProblemException(status=401, title="invalid_grant", detail="Refresh token is invalid or expired")
-            #     except Exception as e:
-            #         logger.error("Unexpected error during token refresh: %s", str(e))
-            #         raise ProblemException(status=500, title="server_error", detail="An internal error occurred.")'''
-            #
-            # fix_response = SonarFixResponse(IMPORT_BLOCK='',
-            #                                 FIXED_CODE_BLOCKS=[
-            #                                     CodeBlock(block_name='refresh_token', start_line=16, end_line=108,
-            #                                               has_changes=True,
-            #                                               change_type= ChangeType.FULL_CODE.value,
-            #                                               block_type=BlockType.FUNCTION,
-            #                                               context=refresh_token_code,
-            #                                               changes=None,
-            #                                               replacements=None
-            #                                               )],
-            #                                     NEW_HELPER_CODE ="",
-            #                                 PLACEMENT=PlacementType.SIBLING.value,
-            #                                 EXPLANATION="### Issue: python:S1066 - Merge this if statement with the  enclosing one. Nested if statements can be merged to reduce complexity and improve readability.### Fix: Merged the nested if statements on lines 113-114 into a single if statement.### Validation: Syntax OK,  logic preserved, 1 block modified",
-            # CONFIDENCE = 0.95
-            #                                 )
-            #
 
-            print("fix_response ")
-            print(fix_response)
-            print("end of fix_response")
             file_name = project_path / file_md
             self.write_explaination(
                 file_name,
@@ -596,9 +483,6 @@ class LLMFixer:
 
 
         prompt_system = system_template.render()
-        print("prompt_system line 604")
-        print(prompt_system)
-        print("end of prompt_system")
         try:
 
 
@@ -624,8 +508,7 @@ class LLMFixer:
 
 
                 )
-                print("response.parsed ")
-                print(response.parsed)
+
                 return  response.parsed
 
 
@@ -636,8 +519,7 @@ class LLMFixer:
                         {"role": "system", "content": prompt_system},
                         {"role": "user", "content": prompt},
                     ],
-                    #max_tokens=4000,
-
+                    max_tokens=8000,
                     temperature=0.08,
                     response_format={
                     "type": "json_schema",
@@ -648,6 +530,13 @@ class LLMFixer:
                     }
                     }
                 )
+                input_tokens = response.usage.prompt_tokens
+                output_tokens = response.usage.completion_tokens
+                total_tokens = response.usage.total_tokens
+
+                print(f"Input tokens: {input_tokens}")
+                print(f"Output tokens: {output_tokens}")
+                print(f"Total tokens: {total_tokens}")
 
                 return self._parse_togetherai_response(response)
             else:
@@ -657,77 +546,6 @@ class LLMFixer:
             logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
             return None
 
-    def _call_llm(
-        self,
-        issue: Union[SonarIssue, SonarSecurityIssue],
-        context: Dict[str, Any],
-        file_extension: str,
-        rule_info: Optional[Dict[str, Any]] = None,
-        error_message: str = "",
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Call the LLM to generate a fix.
-
-        Args:
-            issue: SonarCloud issue
-            context: Code context around the issue
-            rule_info: Rule info from sonar cloud
-            file_extension: File extension to determine language
-
-        Returns:
-            Dictionary with fix information or None
-        """
-        if not self.model:
-            logger.error("Model not configured")
-            return None
-
-        # Determine programming language
-        language = self._get_language_from_extension(file_extension)
-
-        # Prepare prompt
-        prompt = self._create_fix_prompt(
-            issue, context, rule_info, language, error_message
-        )
-
-        try:
-            if self.provider == "openai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system_message},
-                        {"role": "user", "content": prompt},
-                    ],
-                    temperature=0.1,
-
-                )
-                return self._parse_openai_response(response)
-
-            elif self.provider == "gemini":
-                response = self.client.models.generate_content(
-                    model=self.model, contents=prompt
-                )
-
-                return self._parse_gemini_response(response)
-            elif self.provider == "togetherai":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system_message},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=4000,
-                    top_p=0.9,
-                    top_k=40,
-                    repetition_penalty=1.1,
-                )
-
-                return self._parse_togetherai_response(response)
-            else:
-                logger.error(f"Unknown provider: {self.provider}")
-                return None
-        except Exception as e:
-            logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
-            return None
 
     def _is_init_method(self, context: str) -> bool:
         """
@@ -1085,13 +903,13 @@ class LLMFixer:
         system_template = self.jinja_env.get_template("python/system_fix_issues.j2")
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
-            print(rule_key)
-            print(rule_key.lower())
-            if rule_key in ['python:S3776']:
 
-                context ['import_section']['has_imports']=True
+            if rule_key in ['python:S3776']:
                 template = self.jinja_env.get_template("python/refactoring/user_prompt.j2")
                 system_template = self.jinja_env.get_template("python/refactoring/system_fix_issues.j2")
+
+                context ['import_section']['has_imports']=True
+
 
             if rule_key not in rule_info_list:
                 continue
@@ -1124,7 +942,7 @@ class LLMFixer:
         original_is_static = STATICMETHOD_DECORATOR in code_chunk
         original_has_self = 'def ' in code_chunk and 'self' in code_chunk.split('def ')[1].split(')')[0]
 
-   
+
         if original_is_static:
             method_instruction_list = [
             f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
@@ -1184,16 +1002,14 @@ class LLMFixer:
         }
         # Render enhanced content
         prompt = template.render(**context_dic)
-        print("user template ")
-        print(prompt)
-        print("end of user template")
+
         return prompt.strip(), system_template
 
     def _parse_openai_response(self, response: Any) -> Optional[Dict[str, Any]]:
         """Parse OpenAI API response."""
         try:
             return response.output_parsed
-            #return self._extract_fix_from_response(content)
+
         except Exception as e:
             logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
             return None
@@ -1527,7 +1343,6 @@ class LLMFixer:
 
                 result, lines = apply_single_fix(lines, fix)
 
-
                 if not result.success:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
                     print((f"Fix {fix.issue_key} skipped: {result.reason}"))
@@ -1733,8 +1548,15 @@ class LLMFixer:
                 else:
                     # STEP 2: Direct application failed, try AI validator fallback
                     if use_validator and validator:
+                        reason_list = []
+                        for f in new_fixes:
+                            if f.reason is not None:
+                                reason_list.append(f.reason)
+
+                        reason_msg = ", ".join(reason_list)
+
                         logger.warning(
-                            f"Direct fix application failed for {file_path}. Trying AI validator fallback..."
+                            f"Direct fix application failed for {file_path}. Trying AI validator fallback to fix {reason_msg}..."
                         )
 
                         # Restore original content
@@ -1749,17 +1571,12 @@ class LLMFixer:
                                 current_content = original_content
                                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
                                 if file_path_tmp.exists():
-                                    print("lsss")
+
                                     with open(file_path_tmp, "r", encoding="utf-8") as f:
                                         current_content = f.read()
                                         remove_tmp_files(file_path_tmp)
 
-                                reason_list = []
-                                for f in new_fixes:
-                                    if f.reason is not None:
-                                        reason_list.append(f.reason)
 
-                                reason_msg = ", ".join(reason_list)
                                 validation_result = validator.validate_fix(
                                     fix, issue, current_content, new_error_msg=reason_msg
                                 )
@@ -2010,13 +1827,7 @@ class LLMFixer:
 
 
             import_section = self._extract_import_section(file_lines, language)
-            # as no need for imports
-            # import_section = {
-            #     "start_line": 0,
-            #     "end_line": 0,
-            #     "content": "",
-            #     "has_imports": False
-            # }
+
             import_section['has_imports']=False
             # Build context dictionary
             if modified_content:
@@ -3400,9 +3211,12 @@ def get_content_range(
     last_line_tmp = line_range_tmp.get('last_line')
     problem_lines_tmp = line_range_tmp.get('problem_lines', [])
 
-
-    if first_line_tmp is None or last_line_tmp is None:
+    if first_line_tmp is None or last_line_tmp is None or len(problem_lines_tmp) == 0 :
         raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
+
+    min_problem_line = min(problem_lines_tmp)
+    if min_problem_line <= first_line_tmp:
+        first_line_tmp = min_problem_line
 
     # Read files
     try:
@@ -3652,7 +3466,7 @@ def _validate_and_extract_issue_info(
 
 def _extract_problem_lines(
     file_lines: List[str], problem_line_numbers: List[int]
-) -> List[str]:
+) -> Dict[str,Any]:
     """
     Extract actual line content for problem lines.
 
@@ -3660,14 +3474,12 @@ def _extract_problem_lines(
         file_lines: All lines in the file
         problem_line_numbers: List of 1-based line numbers to extract
 
-    Returns:
-        List of line content strings
 
     Note:
         Handles off-by-one conversion from SonarCloud's 1-based line numbers
         to Python's 0-based list indexing.
     """
-    problem_lines = []
+    problem_lines = {}
 
     for line_number in problem_line_numbers:
         # Convert 1-based line number to 0-based index
@@ -3675,7 +3487,8 @@ def _extract_problem_lines(
 
         # Bounds check
         if 0 <= line_index < len(file_lines):
-            problem_lines.append(file_lines[line_index])
+            problem_lines[line_number] = file_lines[line_index]
+
 
         else:
             logger.warning(
@@ -3683,152 +3496,5 @@ def _extract_problem_lines(
                 f"(file has {len(file_lines)} lines)"
             )
 
-            # Include placeholder to maintain alignment
-            problem_lines.append(f"<line {line_number} not found>")
 
     return problem_lines
-
-
-def _extract_context_with_lines(
-    file_lines: List[str],
-    first_line: int,
-    last_line: int,
-    context_lines: int,
-    problem_line_content: List[str],
-) -> Dict[str, Any]:
-    """
-    Extract context around the issue with specified number of surrounding lines.
-
-    Args:
-        file_lines: All lines in the file
-        first_line: First line of issue range (1-based)
-        last_line: Last line of issue range (1-based)
-        context_lines: Number of lines to include before/after
-        problem_line_content: Content of problem lines
-
-    Returns:
-        Dictionary with context, start_line, end_line, problem_lines
-    """
-    # Calculate context range with bounds checking
-    total_lines = len(file_lines)
-    context_start = max(1, first_line - context_lines)
-    context_end = min(total_lines, last_line + context_lines)
-
-    # Extract context (convert to 0-based indexing)
-    start_index = context_start - 1
-    end_index = context_end  # end_index is exclusive in slicing
-
-    context_lines_list = file_lines[start_index:end_index]
-    context_text = "".join(context_lines_list)
-
-    return {
-        "context": context_text,
-        "start_line": context_start,
-        "end_line": context_end,
-        "problem_lines": problem_line_content,
-    }
-
-
-def get_placement_examples() -> str:
-    """Get concrete placement examples"""
-    return f"""
-PLACEMENT EXAMPLES:
-
-Example 1 - SIBLING (needs self):
-{PYTHON_CODE_BLOCK}
-# Original
-def validate(self, user_id):
-    exists = self.user_repo.exists(user_id)  # Uses self.user_repo
-    if not exists:
-        raise Error()
-
-# Fixed
-FIXED_SELECTION:
-def validate(self, user_id):
-    if not self._user_exists(user_id):
-        raise Error()
-
-NEW_HELPER_CODE:
-def _user_exists(self, user_id):
-    return self.user_repo.exists(user_id)  # ← Needs self
-
-PLACEMENT: SIBLING
-{CODE_BLOCK_END}
-
-Example 2 - GLOBAL_BOTTOM (no self):
-{PYTHON_CODE_BLOCK}
-# Original  
-def process(self, date_str):
-    def parse_date(s):  # ← Nested function
-        return datetime.strptime(s, "%Y-%m-%d")
-    return parse_date(date_str)
-
-# Fixed
-FIXED_SELECTION:
-def process(self, date_str):
-    return _parse_date(date_str)
-
-NEW_HELPER_CODE:
-def _parse_date(date_str):  # ← No self, pure utility
-    from datetime import datetime
-    return datetime.strptime(date_str, "%Y-%m-%d")
-
-PLACEMENT: GLOBAL_BOTTOM
-{CODE_BLOCK_END}
-
-Example 3 - GLOBAL_TOP (constant):
-{PYTHON_CODE_BLOCK}
-# Original
-def log_error(self):
-    color = "red"  # ← Duplicated literal
-    print(color)
-
-def highlight(self):
-    color = "red"  # ← Duplicated literal
-    print(color)
-
-# Fixed
-FIXED_SELECTION:
-def log_error(self):
-    print(ERROR_COLOR)
-
-def highlight(self):
-    print(ERROR_COLOR)
-
-NEW_HELPER_CODE:
-ERROR_COLOR = "red"
-
-PLACEMENT: GLOBAL_TOP
-{CODE_BLOCK_END}
-"""
-
-def _is_constant(code: str) -> bool:
-    """Check if code defines a constant"""
-    lines = code.strip().split('\n')
-    if not lines:
-        return False
-    first_line = lines[0].strip()
-    return bool(re.match(r'^[A-Z_][A-Z0-9_]*\s*=', first_line))
-
-def auto_fix_placement(response: Dict) -> Dict:
-    """Automatically fix incorrect placement"""
-
-    helper_code = response.get("NEW_HELPER_CODE", "")
-
-    if not helper_code:
-        return response
-
-    # Detect correct placement
-    if helper_code.strip().startswith(('import ', 'from ')) or _is_constant(helper_code):
-        correct_placement = "GLOBAL_TOP"
-    elif 'self.' in helper_code or ('def ' in helper_code and 'self)' in helper_code):
-        correct_placement = "SIBLING"
-    else:
-        correct_placement = "GLOBAL_BOTTOM"
-
-    # Update if wrong
-    if response["PLACEMENT"] != correct_placement:
-        print(f"⚠️ Auto-fixing placement: {response['PLACEMENT']} → {correct_placement}")
-        response["PLACEMENT"] = correct_placement
-
-    return response

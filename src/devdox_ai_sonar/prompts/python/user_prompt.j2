@@ -47,7 +47,8 @@ Fix {{ language }} SonarQube issue. Preserve all original logic.
 {% endif %}
 
 ## PROBLEM LINES
-{% for line in context["problem_line_content"] %}• {{ line }}
+{% for line_no, content in context["problem_line_content"].items() %}
+• Line {{ line_no }}: {{ content }}
 {% endfor %}
 
 {% if strategy_text %}

@@ -128,9 +128,7 @@ def calculate_base_indentation_based_on_line(lines: List[str], line_number: int)
     if line_number < 1 or line_number > len(lines):
         return ""
 
-    # Convert to 0-indexed
-    line_idx = line_number - 1
-
+    line_idx = line_number
     # Get the indentation of the target line
     target_line = lines[line_idx]
     if not target_line.strip():
@@ -147,14 +145,6 @@ def calculate_base_indentation_based_on_line(lines: List[str], line_number: int)
         return target_line[:indent_length]
 
     return ""
-
-
-def replace_lines_simple(
-        lines: List[str], line_range: LineRange, new_code: str
-) -> List[str]:
-    """Replace line range with new code (no helper)."""
-    lines[line_range.start: line_range.end + 1] = [new_code, "\n", "\n"]
-    return lines
 
 
 def apply_sibling_helper(
@@ -185,11 +175,10 @@ def apply_sibling_helper(
 
 
 def apply_global_bottom_helper(
-        lines: List[str], line_range: LineRange, indented_code: str, helper_code: str
+        lines: List[str], helper_code: str
 ) -> List[str]:
-    """Apply fix with global bottom helper code."""
-    # Replace the target lines
-    lines[line_range.start: line_range.end + 1] = [indented_code, "\n"]
+
+
     # Append helper at bottom
     lines.extend(["\n", helper_code, "\n"])
     return lines
@@ -385,15 +374,12 @@ def apply_complex_fix(
         lines: List[str], fix: FixSuggestion, line_range: LineRange
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
-
     modified_blocks = fix.fixed_code_blocks
     for block in modified_blocks:
-
         lines , end_line= apply_single_code_block(lines, block)
         if end_line ==0:
             end_line = block.end_line
         line_range = LineRange(block.start_line, end_line)
-
 
     if fix.import_block_code:
         lines = apply_import_block(lines, fix.import_block_code, fix.end_import_block_code)
@@ -425,7 +411,7 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
         return apply_global_top_helper(lines,line_range ,"",helper_code,fix.end_import_block_code)
 
     elif placement == "GLOBAL_BOTTOM":
-        return apply_global_bottom_helper(lines,line_range,"", helper_code)
+        return apply_global_bottom_helper(lines,helper_code)
 
     elif placement == "SIBLING":
         return apply_sibling_helper(lines, line_range,"", helper_code)
@@ -438,10 +424,60 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
 
 
 def normalize_code(code: str) -> str:
-    """Normalize code by handling escaped newlines."""
+    """
+    Normalize code by:
+    1. Converting escaped newlines to actual newlines
+    2. Converting escaped tabs to spaces
+    3. Fixing broken docstrings (single quotes → triple quotes)
+    """
     if not code:
         return code
-    return code.replace("\\n", "\n").replace("\\t", "    ")
+
+    # Step 1: Handle escaped characters
+    code = code.replace("\\n", "\n").replace("\\t", "    ")
+
+    # Step 2: Fix broken docstrings
+    lines = code.split("\n")
+    fixed_lines = []
+    i = 0
+
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+
+        # Check if this is a standalone quote (potential broken docstring)
+        if stripped in ('"', "'"):
+            quote_char = stripped
+            indent = line[:len(line) - len(line.lstrip())]
+
+            # Look for closing quote
+            closing_found = False
+            docstring_content = []
+
+            for j in range(i + 1, len(lines)):
+                if lines[j].strip() == quote_char:
+                    # Found closing quote
+                    closing_found = True
+
+                    # Add triple-quoted docstring
+                    fixed_lines.append(f'{indent}{quote_char * 3}')
+                    fixed_lines.extend(docstring_content)
+                    fixed_lines.append(f'{indent}{quote_char * 3}')
+
+                    i = j + 1
+                    break
+                else:
+                    docstring_content.append(lines[j])
+
+            if not closing_found:
+                # No closing quote found, keep original line
+                fixed_lines.append(line)
+                i += 1
+        else:
+            fixed_lines.append(line)
+            i += 1
+
+    return "\n".join(fixed_lines)
 
 
 def apply_search_replace_change(
@@ -465,9 +501,9 @@ def apply_search_replace_change(
     # Convert to 0-indexed range
     start_idx = block.start_line - 1
     end_idx = block.end_line
-    found_count = False
+    applied_line_by_line = False
 
-    # Only modify lines within the block range
+    # # Strategy 1: Try line-by-line replacement first (for single-line patterns)
     for i in range(start_idx, min(end_idx, len(lines))):
         original_line = lines[i]
         modified_line = original_line
@@ -478,13 +514,9 @@ def apply_search_replace_change(
                 count = pattern.count if pattern.count else 0
 
                 modified_line = re.sub(pattern.search, pattern.replace, modified_line, count=count)
-
             else:
                 if pattern.count is not None:
-                    found_count=True
-
                     modified_line = modified_line.replace(pattern.search, pattern.replace, pattern.count)
-
 
                 else:
                     modified_line = modified_line.replace(pattern.search, pattern.replace)
@@ -492,13 +524,24 @@ def apply_search_replace_change(
 
         if modified_line != original_line:
             lines[i] = modified_line
+            applied_line_by_line = True
 
-    if not found_count:
+    # Strategy 2: If line-by-line didn't work, try multiline replacement
+    # This handles patterns that span multiple lines
+    if not applied_line_by_line:
         # Join lines to support multiline search patterns
         block_text = ''.join(lines[start_idx:end_idx])
         original_block_text = block_text
         for pattern in block.replacements:
-            block_text = block_text.replace(pattern.search, pattern.replace)
+            if pattern.is_regex:
+                count = pattern.count if pattern.count else 0
+                block_text = re.sub(pattern.search, pattern.replace, block_text, count=count)
+            else:
+                if pattern.count is not None:
+                    block_text = block_text.replace(pattern.search, pattern.replace, pattern.count)
+                else:
+                    block_text = block_text.replace(pattern.search, pattern.replace)
+
         if block_text != original_block_text:
             # Split back into lines and update the original list
             new_lines = block_text.splitlines(keepends=True)
@@ -532,12 +575,12 @@ def apply_full_code_change(
 
     # Convert to 0-indexed
     start_idx = block.start_line - 1
-    end_idx = block.end_line -1   # end_line is inclusive
+    end_idx = block.end_line
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
         print(f"Warning: Invalid start_line {block.start_line}")
-        return lines
+        return lines, block.end_line
 
     # Calculate base indentation from original code
     base_indent = calculate_base_indentation_based_on_line(lines, start_idx)
@@ -550,10 +593,6 @@ def apply_full_code_change(
     new_lines = indented_code.split("\n")
 
     new_lines = [line + "\n" for line in new_lines]
-
-    # Remove trailing empty line if present
-    if new_lines and new_lines[-1].strip() == "":
-        new_lines = new_lines[:-1]
 
     # Replace the lines
     lines[start_idx:end_idx] = new_lines
@@ -683,8 +722,6 @@ def apply_single_code_block(lines: List[str], block: CodeBlock) -> Tuple[List[st
         return lines, 0
 
 
-
-
 def find_code_start(lines: List[str]) -> int:
     """
     Find where actual code starts (after shebang, encoding, docstrings).
@@ -703,8 +740,13 @@ def find_code_start(lines: List[str]) -> int:
     if idx < len(lines):
         stripped = lines[idx].strip()
         if stripped.startswith('"""') or stripped.startswith("'''"):
-            # Find end of docstring
             quote = '"""' if stripped.startswith('"""') else "'''"
+
+            # Check if docstring starts and ends on same line
+            if stripped.endswith(quote) and len(stripped) > len(quote):
+                return idx + 1
+
+            # Multi-line docstring: skip opening line and find closing quote
             idx += 1
             while idx < len(lines):
                 if quote in lines[idx]:
@@ -713,7 +755,6 @@ def find_code_start(lines: List[str]) -> int:
                 idx += 1
 
     return idx
-
 
 
 def apply_import_block(lines: List[str], import_block: str, end_block_import: int) -> List[str]:
