@@ -3217,12 +3217,12 @@ def get_content_range(
     last_line_tmp = line_range_tmp.get('last_line')
     problem_lines_tmp = line_range_tmp.get('problem_lines', [])
 
+    if first_line_tmp is None or last_line_tmp is None or len(problem_lines_tmp) == 0 :
+        raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
+
     min_problem_line = min(problem_lines_tmp)
     if min_problem_line <= first_line_tmp:
         first_line_tmp = min_problem_line
-
-    if first_line_tmp is None or last_line_tmp is None:
-        raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
 
     # Read files
     try:
