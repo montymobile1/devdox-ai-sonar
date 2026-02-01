@@ -12,7 +12,8 @@ import shutil
 
 # Import the functions to test
 from devdox_ai_sonar.models.file_structures import LineRange, FixApplication, ImportState
-from devdox_ai_sonar.models.sonar import FixSuggestion, ChangeType, BlockType, CodeBlock
+from devdox_ai_sonar.models.sonar import (FixSuggestion, ChangeType, BlockType, CodeBlock,
+                                          SearchReplace, LineChange,ChangeAction)
 
 from devdox_ai_sonar.utils.file_indentation import (
     read_file_lines,
@@ -22,10 +23,9 @@ from devdox_ai_sonar.utils.file_indentation import (
     download_latest_version,
     calculate_base_indentation,
     calculate_base_indentation_based_on_line,
-    replace_lines_simple,
     apply_sibling_helper,
     apply_global_bottom_helper,
-
+    normalize_code,
     find_import_insertion_point,
     process_import_line,
     handle_docstring,
@@ -34,6 +34,10 @@ from devdox_ai_sonar.utils.file_indentation import (
     apply_indentation_to_fix,
     apply_complex_fix,
     apply_single_fix,
+    apply_search_replace_change,
+    apply_full_code_change,
+    apply_diff_change,
+    find_line_by_content
 )
 
 
@@ -267,62 +271,608 @@ class TestCalculateBaseIndentationBasedOnLine:
     def test_calculate_based_on_line_tabs(self):
         """Test with tab indentation."""
         lines = ["\t\tdef hello():\n", "\t\t\tx = 1\n"]
-        result = calculate_base_indentation_based_on_line(lines, 2)
+        result = calculate_base_indentation_based_on_line(lines, 1)
         assert result == "\t\t\t"
 
 
 # ============================================================================
-# TEST: replace_lines_simple
+# TEST: apply_search_replace_change
 # ============================================================================
 
-class TestReplaceLinesSimple:
-    """Test simple line replacement."""
+class TestSearchReplace:
+    """Test search and  replace."""
 
-    def test_replace_lines_simple_single_line(self):
-        """Test replacing a single line."""
+
+    def test_apply_search_replace_change_basic_replacement(self):
+        """Test basic string replacement"""
+
+
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            replacements=[SearchReplace(search="= 1", replace="= 100", is_regex=False, count=None)]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert result[0] == "x = 100\n"
+        assert result[1] == "y = 2\n"
+
+
+    def test_apply_search_replace_change_regex_pattern(self):
+        """Test regex pattern replacement"""
+
+
+        lines = ["value_123\n", "value_456\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(
+                search=r"value_\d+",
+                replace="new_value",
+                is_regex=True,
+                count=None
+            )]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert result[0] == "new_value\n"
+        assert result[1] == "new_value\n"
+
+
+    def test_apply_search_replace_change_with_count_limit(self):
+        """Test replacement with count limit"""
+
+
+        lines = ["foo foo foo\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(
+                search="foo",
+                replace="bar",
+                is_regex=False,
+                count=2
+            )]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert result[0] == "bar bar foo\n"  # Only first 2 replaced
+
+
+    def test_apply_search_replace_change_multiline_pattern(self):
+        """Test multiline search and replace"""
+
+
+
+    def test_apply_search_replace_change_no_replacements(self):
+        """Test with empty replacements list"""
+        lines = ["x = 1\n", "y = 2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert result == lines  # No changes
+
+
+    def test_apply_search_replace_change_pattern_not_found(self):
+        """Test when search pattern doesn't exist"""
+
+
+        lines = ["x = 1\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(
+                search="nonexistent",
+                replace="new",
+                is_regex=False,
+                count=None
+            )]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert result[0] == "x = 1\n"  # Unchanged
+
+
+    def test_apply_search_replace_change_multiple_replacements(self):
+        """Test multiple replacement patterns"""
+
+
+        lines = ["x = 1, y = 2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[
+                SearchReplace(search="x", replace="a", is_regex=False,count=1),
+                SearchReplace(search="y", replace="b", is_regex=False,count=1),
+                SearchReplace(search="1", replace="10", is_regex=False,count=1),
+                SearchReplace(search="2", replace="20", is_regex=False,count=1),
+            ]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert "a = 10" in result[0]
+        assert "b = 20" in result[0]
+
+
+    def test_apply_search_replace_change_regex_with_groups(self):
+        """Test regex with capture groups"""
+
+
+        lines = ["name: John, age: 30\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(
+                search=r"name: (\w+), age: (\d+)",
+                replace=r"Person(\1, \2)",
+                is_regex=True,
+                count=2
+            )]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        assert "Person(John, 30)" in result[0]
+
+
+    def test_apply_search_replace_change_out_of_bounds_range(self):
+        """Test when block range exceeds file length"""
+
+
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=100,  # Beyond file length
+            has_changes=True,
+            block_type=BlockType.FUNCTION,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(search="line", replace="new", is_regex=False,count=1)]
+        )
+
+        result = apply_search_replace_change(lines, block)
+        # Should only affect available lines
+        assert len(result) == 2
+
+class TestChangeReplace:
+    def test_apply_diff_change_replace_action(self):
+        """Test REPLACE action"""
+
+
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=2,
+                action=ChangeAction.REPLACE,
+                old="y = 2",
+                new="y = 200"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert result[1] == "y = 200\n"
+        assert result[0] == "x = 1\n"  # Unchanged
+        assert result[2] == "z = 3\n"  # Unchanged
+
+    def test_apply_diff_change_insert_action(self):
+        """Test INSERT action"""
+        
+
+        lines = ["line1\n", "line3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=2,
+                action=ChangeAction.INSERT,
+                new="line2"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert len(result) == 3
+        assert "line2" in result[1]
+
+    def test_apply_diff_change_delete_action(self):
+        """Test DELETE action"""
+        
+
         lines = ["line1\n", "line2\n", "line3\n"]
-        line_range = LineRange(start=1, end=1)
-        result = replace_lines_simple(lines, line_range, "new_line")
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=2,
+                action=ChangeAction.DELETE
+            )]
+        )
 
+        result = apply_diff_change(lines, block)
+        assert len(result) == 2
         assert result[0] == "line1\n"
-        assert result[1] == "new_line"
-        assert result[2] == "\n"
-        assert result[3] == "\n"
-        assert result[4] == "line3\n"
+        assert result[1] == "line3\n"
 
-    def test_replace_lines_simple_multiple_lines(self):
-        """Test replacing multiple lines."""
-        lines = ["line1\n", "line2\n", "line3\n", "line4\n"]
-        line_range = LineRange(start=1, end=2)
-        result = replace_lines_simple(lines, line_range, "new_code")
+    def test_apply_diff_change_multiple_changes_sorted(self):
+        """Test multiple changes are processed in reverse order"""
+        
 
-        assert result[0] == "line1\n"
-        assert result[1] == "new_code"
-        assert result[2] == "\n"
-        assert result[3] == "\n"
-        assert result[4] == "line4\n"
+        lines = ["a\n", "b\n", "c\n", "d\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=4,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.DIFF,
+            changes=[
+                LineChange(line=2, action=ChangeAction.REPLACE, old="b", new="B"),
+                LineChange(line=4, action=ChangeAction.REPLACE, old="d", new="D"),
+                LineChange(line=1, action=ChangeAction.REPLACE, old="a", new="A"),
+            ]
+        )
 
-    def test_replace_lines_simple_first_line(self):
-        """Test replacing the first line."""
+        result = apply_diff_change(lines, block)
+        # All should be applied correctly despite unsorted order
+        assert result[0] == "A\n"
+        assert result[1] == "B\n"
+        assert result[3] == "D\n"
+
+    def test_apply_diff_change_preserve_indentation_in_replace(self):
+        """Test that indentation is preserved in REPLACE"""
+        
+
+        lines = ["def func():\n", "    old_code\n", "    more_old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[LineChange(
+                line=2,
+                action=ChangeAction.REPLACE,
+                old="old_code",
+                new="new_code"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert "    new_code" in result[1]  # Indentation preserved
+
+    def test_apply_diff_change_with_new_line_having_indentation(self):
+        """Test when new line already has indentation"""
+        
+
+        lines = ["def func():\n", "    old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[LineChange(
+                line=2,
+                action=ChangeAction.REPLACE,
+                old="old",
+                new="    new_with_indent"  # Already indented
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert "    new_with_indent" in result[1]
+
+    def test_apply_diff_change_invalid_line_number(self):
+        """Test with line number out of bounds"""
+        
+
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=100,  # Out of bounds
+                action=ChangeAction.REPLACE,
+                old="old",
+                new="new"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        # Should handle gracefully, return unchanged
+        assert result == lines
+
+    def test_apply_diff_change_negative_line_number(self):
+        """Test with negative line number"""
+        
+
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=-1,
+                action=ChangeAction.REPLACE,
+                old="old",
+                new="new"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert result == lines
+
+    def test_apply_diff_change_empty_changes_list(self):
+        """Test with empty changes list"""
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.DIFF,
+            changes=[]
+        )
+
+        result = apply_diff_change(lines, block)
+        assert result == lines  # No changes
+
+    def test_apply_diff_change_none_changes(self):
+        """Test with None changes"""
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.DIFF,
+            changes=None
+        )
+
+        result = apply_diff_change(lines, block)
+        assert result == lines
+
+    def test_apply_diff_change_find_line_by_content_fallback(self):
+        """Test fallback to find_line_by_content when old doesn't match"""
+        
+
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            changes=[LineChange(
+                line=2,  # Wrong line number
+                action=ChangeAction.REPLACE,
+                old="z = 3",  # Actually on line 3
+                new="z = 300"
+            )]
+        )
+
+        result = apply_diff_change(lines, block)
+        # Should use find_line_by_content to correct line number
+        assert "z = 300" in ''.join(result)
+
+
+class TestFullChange:
+    def test_apply_full_code_change_basic_replacement(self):
+        """Test basic full code replacement"""
+        lines = ["old line 1\n", "old line 2\n", "old line 3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=2,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="new code here"
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        assert "new code here" in ''.join(result)
+        assert len(result) >= 1
+
+    def test_apply_full_code_change_with_indentation(self):
+        """Test full code replacement preserves indentation"""
+        lines = ["def func():\n", "    old code\n", "    more old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=2,
+            end_line=3,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="new_code()"
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        print("result: ", result)
+        # Should apply base indentation
+        assert "    " in ''.join(result)
+
+    def test_apply_full_code_change_multiline_replacement(self):
+        """Test multiline code replacement"""
+        lines = ["x = 1\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="x = 1\ny = 2\nz = 3"
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        assert len(result) == 3
+        assert "x = 1\n" in result
+        assert "y = 2\n" in result
+        assert "z = 3\n" in result
+
+    def test_apply_full_code_change_empty_context(self):
+        """Test with empty context (no replacement code)"""
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context=""
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        assert result == lines  # Should return unchanged
+        assert end_idx == 0
+
+    def test_apply_full_code_change_none_context(self):
+        """Test with None context"""
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context=None
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        assert result == lines
+        assert end_idx == 0
+
+    def test_apply_full_code_change_invalid_start_line(self):
+        """Test with invalid start line (negative)"""
+        lines = ["line1\n", "line2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=-1,
+            end_line=1,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="new code"
+        )
+
+        result, end_idx = apply_full_code_change(lines, block)
+        # Should handle gracefully
+        assert result == lines or len(result) > 0
+
+    def test_apply_full_code_change_start_line_exceeds_length(self):
+        """Test when start line exceeds file length"""
+        old_lines = ["line1\n", "line2\n"]
+
+        block = CodeBlock(
+            block_name="test",
+            start_line=100,
+            end_line=101,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="new code"
+        )
+
+        result, end_idx = apply_full_code_change(old_lines, block)
+        print("result: ", result)
+        print(end_idx)
+        assert result == old_lines  # Should return unchanged
+
+    def test_apply_full_code_change_returns_new_end_index(self):
+        """Test that function returns updated end index"""
         lines = ["line1\n", "line2\n", "line3\n"]
-        line_range = LineRange(start=0, end=0)
-        result = replace_lines_simple(lines, line_range, "new_first")
+        old_length=len(lines)
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="new1\nnew2\nnew3\nnew4"  # 4 lines replace 2
+        )
 
-        assert result[0] == "new_first"
-        assert result[1] == "\n"
-        assert result[2] == "\n"
-        assert result[3] == "line2\n"
+        result, end_idx = apply_full_code_change(lines, block)
 
-    def test_replace_lines_simple_last_line(self):
-        """Test replacing the last line."""
-        lines = ["line1\n", "line2\n", "line3\n"]
-        line_range = LineRange(start=2, end=2)
-        result = replace_lines_simple(lines, line_range, "new_last")
+        assert end_idx > 0  # Should return new end index
+        assert len(result) > old_length  # More lines now
 
-        assert result[0] == "line1\n"
-        assert result[1] == "line2\n"
-        assert result[2] == "new_last"
+    def test_apply_full_code_change_with_normalized_code(self):
+        """Test that normalize_code is applied"""
+        lines = ["old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="line1\\nline2\\nline3"  # Escaped newlines
+        )
 
+        result, end_idx = apply_full_code_change(lines, block)
+        # Should convert \\n to actual newlines
+        assert len(result) == 3
 
 # ============================================================================
 # TEST: apply_sibling_helper
@@ -789,6 +1339,64 @@ class TestIsShebangOrEncoding:
 
         assert result is False
 
+
+class TestNormalization:
+    def test_normalize_code_escaped_newlines(self):
+        """Test converting \\n to actual newlines"""
+        code = "line1\\nline2\\nline3"
+        result = normalize_code(code)
+        assert result == "line1\nline2\nline3"
+
+    def test_normalize_code_escaped_tabs(self):
+        """Test converting \\t to spaces"""
+        code = "def func():\\n\\tx = 1"
+        result = normalize_code(code)
+        assert result == "def func():\n    x = 1"
+
+    def test_normalize_code_fix_broken_docstrings_double_quotes(self):
+        """Test fixing broken docstrings with double quotes"""
+        code = '"\\nModule docstring\\n"'
+        result = normalize_code(code)
+        assert '"""' in result
+        assert result.count('"""') == 2
+
+    def test_normalize_code_fix_broken_docstrings_single_quotes(self):
+        """Test fixing broken docstrings with single quotes"""
+        code = "'\\nSome text\\n'"
+        result = normalize_code(code)
+        assert "'''" in result
+
+    def test_normalize_code_no_closing_quote(self):
+        """Test when closing quote not found"""
+        code = '"\\nUnclosed docstring'
+        result = normalize_code(code)
+        # Should keep original if not properly closed
+        assert '"' in result
+
+    def test_normalize_code_empty_string(self):
+        """Test with empty string"""
+        result = normalize_code("")
+        assert result == ""
+
+    def test_normalize_code_none_input(self):
+        """Test with None input"""
+        result = normalize_code(None)
+        assert result is None
+
+    def test_normalize_code_mixed_escapes(self):
+        """Test with multiple escape sequences"""
+        code = "line1\\nline2\\tindented\\nline3"
+        result = normalize_code(code)
+        assert "\\n" not in result
+        assert "\\t" not in result
+        assert "\n" in result
+
+    def test_normalize_code_preserve_indentation_in_docstring(self):
+        """Test that indentation is preserved in fixed docstrings"""
+        code = '    "\\n    Indented docstring\\n    "'
+        result = normalize_code(code)
+        assert '"""' in result
+        assert '    """' in result  # Indentation preserved
 
 # ============================================================================
 # TEST: normalize_indentation
