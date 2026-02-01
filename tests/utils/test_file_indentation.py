@@ -396,26 +396,19 @@ class TestApplyGlobalBottomHelper:
 
         result = apply_global_bottom_helper(
             lines,
-            line_range,
-            "fixed_code",
-            "helper_at_bottom"
+            "helper_at_bottom",
         )
 
         assert result[0] == "line1\n"
-        assert result[1] == "fixed_code"
-        assert result[2] == "\n"
-        assert result[3] == "line3\n"
-        # Helper should be at the end
         assert result[-2] == "helper_at_bottom"
         assert result[-1] == "\n"
 
     def test_apply_global_bottom_helper_multiple_lines(self):
         """Test with multiline helper code."""
         lines = ["line1\n", "line2\n"]
-        line_range = LineRange(start=0, end=0)
 
         helper = "def utility():\n    return True"
-        result = apply_global_bottom_helper(lines, line_range, "new", helper)
+        result = apply_global_bottom_helper(lines, helper)
 
         assert "utility()" in ''.join(result)
         assert result[-2] == helper
