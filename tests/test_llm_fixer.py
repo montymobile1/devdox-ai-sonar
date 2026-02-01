@@ -16,7 +16,6 @@ from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_su
                                        _validate_and_extract_issue_info,
                                        _generate_fix_key,
                                        _extract_problem_lines,
-                                       _extract_context_with_lines,
                                        get_content_range,
                                        _find_exact_match,
 
@@ -2090,59 +2089,30 @@ class TestModuleLevelFunctions:
         file_lines = [f"line {i}\n" for i in range(1, 11)]
         problem_lines = _extract_problem_lines(file_lines, [1, 5, 10])
 
-        assert len(problem_lines) == 3
-        assert "line 1" in problem_lines[0]
-        assert "line 5" in problem_lines[1]
-        assert "line 10" in problem_lines[2]
+        # Key-based access with line numbers
+        assert 1 in problem_lines
+        assert 5 in problem_lines
+        assert 10 in problem_lines
+
+        assert problem_lines[1] == "line 1\n"
+        assert problem_lines[5] == "line 5\n"
+        assert problem_lines[10] == "line 10\n"
 
     def test_extract_problem_lines_out_of_bounds(self):
         """Test extracting problem lines with out-of-bounds indices"""
         file_lines = ["line 1\n", "line 2\n"]
         problem_lines = _extract_problem_lines(file_lines, [1, 100])
 
-        assert len(problem_lines) == 2
-        assert "line 1" in problem_lines[0]
-        assert "not found" in problem_lines[1]
+        assert isinstance(problem_lines, dict)
+        assert len(problem_lines) == 1  # Only line 1 is valid
 
-    def test_extract_context_with_lines_simple(self):
-        """Test extracting context with lines - simple case"""
-        file_lines = [f"line {i}\n" for i in range(1, 21)]
+        # Line 1 should be present with correct content
+        assert 1 in problem_lines
+        assert problem_lines[1] == "line 1\n"
 
-        result = _extract_context_with_lines(
-            file_lines,
-            first_line=10,
-            last_line=10,
-            context_lines=3,
-            problem_line_content=["line 10\n"]
-        )
+        # Line 100 should NOT be in the dictionary (out of bounds)
+        assert 100 not in problem_lines
 
-        assert result["start_line"] == 7  # 10 - 3
-        assert result["end_line"] == 13  # 10 + 3
-        assert "line 10" in result["context"]
-
-    def test_extract_context_with_lines_at_boundaries(self):
-        """Test extracting context at file boundaries"""
-        file_lines = ["line 1\n", "line 2\n", "line 3\n"]
-
-        # At start
-        result = _extract_context_with_lines(
-            file_lines,
-            first_line=1,
-            last_line=1,
-            context_lines=10,
-            problem_line_content=["line 1\n"]
-        )
-        assert result["start_line"] == 1
-
-        # At end
-        result = _extract_context_with_lines(
-            file_lines,
-            first_line=3,
-            last_line=3,
-            context_lines=10,
-            problem_line_content=["line 3\n"]
-        )
-        assert result["end_line"] == 3
 
     @pytest.mark.skip(reason="Need update")
     def test_validate_and_extract_issue_info_single_issue(self, tmp_path):
@@ -3389,7 +3359,7 @@ def main():
         tmp_file.write_text("line1\nline2\n")
         actual_file.write_text("line1\nline2\n")
 
-        invalid_range = {'first_line': -1, 'last_line': 2, 'problem_lines': []}
+        invalid_range = {'first_line': -1, 'last_line': 2, 'problem_lines': [1]}
 
         with pytest.raises(ValueError, match="out of bounds"):
             get_content_range(tmp_file, invalid_range, actual_file)
@@ -3402,7 +3372,7 @@ def main():
         tmp_file.write_text("line1\nline2\nline3\n")
         actual_file.write_text("line1\nline2\nline3\n")
 
-        invalid_range = {'first_line': 3, 'last_line': 1, 'problem_lines': []}
+        invalid_range = {'first_line': 3, 'last_line': 1, 'problem_lines': [3]}
 
         # This should return None as the slice will be empty
         result = get_content_range(tmp_file, invalid_range, actual_file)
