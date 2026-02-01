@@ -905,12 +905,6 @@ class LLMFixer:
             rule_key = getattr(issue, "rule", "")
 
             if rule_key in ['python:S3776']:
-
-                complexity_issues = issues[0].message.split('from ')[1].split(' to')[0] if 'from' in issues[0].message else '0'
-                # if int(complexity_issues) > 17:
-                #     template = self.jinja_env.get_template("python/refactoring/user_mini.j2")
-                #     system_template = self.jinja_env.get_template("python/refactoring/system_mini.j2")
-                # else:
                 template = self.jinja_env.get_template("python/refactoring/user_prompt.j2")
                 system_template = self.jinja_env.get_template("python/refactoring/system_fix_issues.j2")
 
