@@ -523,7 +523,6 @@ def apply_search_replace_change(
 
 
         if modified_line != original_line:
-            print("modified line 532",modified_line , " by ", original_line)
             lines[i] = modified_line
             applied_line_by_line = True
 
