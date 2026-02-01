@@ -501,7 +501,7 @@ def apply_search_replace_change(
     # Convert to 0-indexed range
     start_idx = block.start_line - 1
     end_idx = block.end_line
-    found_count = False
+    applied_line_by_line = False
 
     # # Strategy 1: Try line-by-line replacement first (for single-line patterns)
     for i in range(start_idx, min(end_idx, len(lines))):
@@ -723,8 +723,6 @@ def apply_single_code_block(lines: List[str], block: CodeBlock) -> Tuple[List[st
         return lines, 0
 
 
-
-
 def find_code_start(lines: List[str]) -> int:
     """
     Find where actual code starts (after shebang, encoding, docstrings).
@@ -743,8 +741,13 @@ def find_code_start(lines: List[str]) -> int:
     if idx < len(lines):
         stripped = lines[idx].strip()
         if stripped.startswith('"""') or stripped.startswith("'''"):
-            # Find end of docstring
             quote = '"""' if stripped.startswith('"""') else "'''"
+
+            # Check if docstring starts and ends on same line
+            if stripped.endswith(quote) and len(stripped) > len(quote):
+                return idx + 1
+
+            # Multi-line docstring: skip opening line and find closing quote
             idx += 1
             while idx < len(lines):
                 if quote in lines[idx]:
@@ -753,7 +756,6 @@ def find_code_start(lines: List[str]) -> int:
                 idx += 1
 
     return idx
-
 
 
 def apply_import_block(lines: List[str], import_block: str, end_block_import: int) -> List[str]:

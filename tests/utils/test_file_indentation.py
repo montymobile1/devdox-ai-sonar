@@ -37,7 +37,12 @@ from devdox_ai_sonar.utils.file_indentation import (
     apply_search_replace_change,
     apply_full_code_change,
     apply_diff_change,
-    find_line_by_content
+    apply_single_code_block,
+    find_code_start,
+    apply_import_block,
+    apply_global_top_helper,
+    get_method_definition_indent,
+    apply_helper_code
 )
 
 
@@ -712,6 +717,286 @@ class TestChangeReplace:
         # Should use find_line_by_content to correct line number
         assert "z = 300" in ''.join(result)
 
+class TestApplySingleChange:
+    def test_apply_single_code_block_full_code_type(self):
+        """Test with FULL_CODE change type"""
+        lines = ["old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.FULL_CODE,
+            context="new code"
+        )
+
+        result, end_idx = apply_single_code_block(lines, block)
+        assert "new code" in ''.join(result)
+
+    def test_apply_single_code_block_diff_type(self):
+        """Test with DIFF change type"""
+
+
+        lines = ["old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.DIFF,
+            changes=[LineChange(line=1, action=ChangeAction.REPLACE, old="old", new="new")]
+        )
+
+        result, end_idx = apply_single_code_block(lines, block)
+        assert "new" in ''.join(result)
+        assert end_idx == 0
+
+    def test_apply_single_code_block_search_replace_type(self):
+        """Test with SEARCH_REPLACE change type"""
+
+
+        lines = ["old\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=1,
+            has_changes=True,
+            block_type=BlockType.MODULE,
+            change_type=ChangeType.SEARCH_REPLACE,
+            replacements=[SearchReplace(search="old", replace="new", is_regex=False)]
+        )
+
+        result, end_idx = apply_single_code_block(lines, block)
+        assert "new" in ''.join(result)
+        assert end_idx == 0
+
+class TestFindCodeStart:
+    def test_find_code_start_with_shebang(self):
+        """Test finding code start with shebang"""
+        lines = ["#!/usr/bin/env python3\n", "import os\n"]
+        result = find_code_start(lines)
+        assert result == 1  # After shebang
+
+    def test_find_code_start_with_encoding(self):
+        """Test finding code start with encoding"""
+        lines = ["# -*- coding: utf-8 -*-\n", "import os\n"]
+        result = find_code_start(lines)
+        assert result == 1  # After encoding
+
+    def test_find_code_start_with_shebang_and_encoding(self):
+        """Test with both shebang and encoding"""
+        lines = ["#!/usr/bin/env python3\n", "# coding: utf-8\n", "import os\n"]
+        result = find_code_start(lines)
+        assert result == 2  # After both
+
+    def test_find_code_start_with_docstring_double_quotes(self):
+        """Test with module docstring (double quotes)"""
+        lines = ['#!/usr/bin/env python3\n', '"""Module doc."""\n', 'import os\n']
+        result = find_code_start(lines)
+        assert result == 2  # After docstring
+
+    def test_find_code_start_with_docstring_single_quotes(self):
+        """Test with module docstring (single quotes)"""
+        lines = ["#!/usr/bin/env python3\n", "'''Module doc.'''\n", "import os\n"]
+        result = find_code_start(lines)
+        assert result == 2
+
+    def test_find_code_start_with_multiline_docstring(self):
+        """Test with multiline docstring"""
+        lines = [
+            "#!/usr/bin/env python3\n",
+            '"""\n',
+            "Module docstring\n",
+            "multiple lines\n",
+            '"""\n',
+            "import os\n"
+        ]
+        result = find_code_start(lines)
+        assert result == 5  # After multiline docstring
+
+    def test_find_code_start_empty_file(self):
+        """Test with empty file"""
+        result = find_code_start([])
+        assert result == 0
+
+    def test_find_code_start_no_special_content(self):
+        """Test file with just code, no headers"""
+        lines = ["import os\n", "def func():\n"]
+        result = find_code_start(lines)
+        assert result == 0
+
+    def test_find_code_start_all_elements(self):
+        """Test with shebang, encoding, and docstring"""
+        lines = [
+            "#!/usr/bin/env python3\n",
+            "# coding: utf-8\n",
+            '"""Module doc."""\n',
+            "import os\n"
+        ]
+        result = find_code_start(lines)
+        assert result == 3
+
+
+class TestApplyImportBlock:
+    def test_apply_import_block_no_existing_imports(self):
+        """Test adding imports when none exist"""
+        lines = ["def func():\n", "    pass\n"]
+        import_block = "import os\\nimport sys"
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        # Imports should be added at top
+        assert "import os\n" in result
+        assert "import sys\n" in result
+
+    def test_apply_import_block_after_existing_imports(self):
+        """Test adding imports after existing ones"""
+        lines = ["import os\n", "\n", "def func():\n"]
+        import_block = "import sys"
+
+        result = apply_import_block(lines, import_block, end_block_import=2)
+
+        assert "import sys\n" in result
+
+    def test_apply_import_block_with_shebang(self):
+        """Test imports added after shebang"""
+        lines = ["#!/usr/bin/env python3\n", "def func():\n"]
+        import_block = "import os"
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        # Should insert after shebang
+        assert result[0] == "#!/usr/bin/env python3\n"
+        assert "import os" in result[1]
+
+    def test_apply_import_block_with_encoding(self):
+        """Test imports after encoding declaration"""
+        lines = ["# -*- coding: utf-8 -*-\n", "def func():\n"]
+        import_block = "import os"
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        assert result[0] == "# -*- coding: utf-8 -*-\n"
+        assert "import os" in result[1]
+
+    def test_apply_import_block_with_docstring(self):
+        """Test imports after module docstring"""
+        lines = ['"""Module doc."""\n', "def func():\n"]
+        import_block = "import os"
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        assert "import os" in ''.join(result)
+
+    def test_apply_import_block_multiline_imports(self):
+        """Test adding multiple import lines"""
+        lines = ["def func():\n"]
+        import_block = "import os\\nimport sys\\nfrom typing import List"
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        assert "import os\n" in result
+        assert "import sys\n" in result
+        assert "from typing import List\n" in result
+
+    def test_apply_import_block_preserves_blank_line(self):
+        """Test that blank line is preserved/added"""
+        lines = ["import os\n", "\n", "def func():\n"]
+        import_block = "import sys"
+
+        result = apply_import_block(lines, import_block, end_block_import=2)
+
+        # Should maintain separation between imports and code
+        assert "\n" in result
+
+    def test_apply_import_block_normalized_newlines(self):
+        """Test that escaped newlines are converted"""
+        lines = ["def func():\n"]
+        import_block = "import os\\nimport sys"  # Escaped newlines
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        # Should have actual newlines, not escaped
+        content = ''.join(result)
+        assert "import os\nimport sys" in content
+
+    def test_apply_import_block_empty_import_block(self):
+        """Test with empty import block"""
+        lines = ["def func():\n"]
+        import_block = ""
+
+        result = apply_import_block(lines, import_block, end_block_import=0)
+
+        # Should return unchanged or with minimal modification
+        assert len(result) >= len(lines)
+
+class TestMethodDefinition:
+    def test_get_method_definition_indent_no_indent(self):
+        """Test method with no indentation"""
+        code = "def my_method():\n    pass"
+        result = get_method_definition_indent(code)
+        assert result == ""
+
+    def test_get_method_definition_indent_class_method(self):
+        """Test indented class method"""
+        code = "    def my_method(self):\n        pass"
+        result = get_method_definition_indent(code)
+        assert result == "    "
+
+    def test_get_method_definition_indent_async_method(self):
+        """Test async method"""
+        code = "    async def my_async_method(self):\n        await something()"
+        result = get_method_definition_indent(code)
+        assert result == "    "
+
+    def test_get_method_definition_indent_async_no_indent(self):
+        """Test async method with no indentation"""
+        code = "async def my_func():\n    pass"
+        result = get_method_definition_indent(code)
+        assert result == ""
+
+    def test_get_method_definition_indent_deeply_nested(self):
+        """Test deeply nested method"""
+        code = "        def nested_method():\n            pass"
+        result = get_method_definition_indent(code)
+        assert result == "        "
+
+    def test_get_method_definition_indent_no_def_found(self):
+        """Test code chunk with no def"""
+        code = "x = 1\ny = 2"
+        result = get_method_definition_indent(code)
+        assert result == ""  # Fallback
+
+    def test_get_method_definition_indent_with_decorator(self):
+        """Test method with decorator"""
+        code = "    @property\n    def my_method(self):\n        pass"
+        result = get_method_definition_indent(code)
+        assert result == "    "
+
+    def test_get_method_definition_indent_multiline_signature(self):
+        """Test method with multiline signature"""
+        code = """    def my_method(
+            self,
+            arg1: str,
+            arg2: int
+        ):
+            pass"""
+        result = get_method_definition_indent(code)
+        assert result == "    "
+
+    def test_get_method_definition_indent_empty_code(self):
+        """Test with empty code"""
+        result = get_method_definition_indent("")
+        assert result == ""
+
+    def test_get_method_definition_indent_tabs(self):
+        """Test with tab indentation"""
+        code = "\t\tdef method():\n\t\t\tpass"
+        result = get_method_definition_indent(code)
+        assert result == "\t\t"
+
 
 class TestFullChange:
     def test_apply_full_code_change_basic_replacement(self):
@@ -873,6 +1158,86 @@ class TestFullChange:
         result, end_idx = apply_full_code_change(lines, block)
         # Should convert \\n to actual newlines
         assert len(result) == 3
+
+class TestGlobalTopHelper:
+    def test_apply_global_top_helper_at_end_of_imports(self):
+        """Test inserting helper at specific import end position"""
+        lines = ["import os\n", "import sys\n", "\n", "def func():\n"]
+        helper_code = "CONSTANT = 42"
+
+        result = apply_global_top_helper(
+            lines,
+            LineRange(0, 0),
+            "",
+            helper_code,
+            end_import=2
+        )
+
+        assert "CONSTANT = 42" in ''.join(result)
+        assert result[2] == "CONSTANT = 42\n\n"
+
+    def test_apply_global_top_helper_with_newline_in_helper(self):
+        """Test helper code that already has newline"""
+        lines = ["import os\n", "def func():\n"]
+        helper_code = "CONSTANT = 42\n"
+
+        result = apply_global_top_helper(
+            lines,
+            LineRange(0, 0),
+            "",
+            helper_code,
+            end_import=1
+        )
+
+        # Should not add duplicate newline
+        assert result[1] == "CONSTANT = 42\n\n"
+
+    def test_apply_global_top_helper_without_newline(self):
+        """Test helper code without trailing newline"""
+        lines = ["import os\n", "def func():\n"]
+        helper_code = "CONSTANT = 42"  # No newline
+
+        result = apply_global_top_helper(
+            lines,
+            LineRange(0, 0),
+            "",
+            helper_code,
+            end_import=1
+        )
+
+        # Should add newline
+        assert "CONSTANT = 42\n" in ''.join(result)
+
+    def test_apply_global_top_helper_multiline_helper(self):
+        """Test with multiline helper code"""
+        lines = ["import os\n", "def func():\n"]
+        helper_code = "def utility():\n    return True"
+
+        result = apply_global_top_helper(
+            lines,
+            LineRange(0, 0),
+            "",
+            helper_code,
+            end_import=1
+        )
+
+        assert "def utility():" in ''.join(result)
+        assert "return True" in ''.join(result)
+
+    def test_apply_global_top_helper_end_import_zero(self):
+        """Test with end_import at position 0"""
+        lines = ["def func():\n"]
+        helper_code = "import helper_module"
+
+        result = apply_global_top_helper(
+            lines,
+            LineRange(0, 0),
+            "",
+            helper_code,
+            end_import=0
+        )
+
+        assert result[0] == "import helper_module\n\n"
 
 # ============================================================================
 # TEST: apply_sibling_helper
@@ -2700,3 +3065,76 @@ class TestDownloadLatestVersion:
             assert result is None, f"Failed for error type: {type(error)}"
             mock_print.assert_called_once()
 
+class TestAplyHelperCode:
+    def test_apply_helper_code_global_top_placement(self):
+        """Test GLOBAL_TOP placement"""
+        lines = ["import os\n", "def func():\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "HELPER_CONST = 1"
+        fix.placement_helper = "GLOBAL_TOP"
+        fix.end_import_block_code = 1
+
+        result = apply_helper_code(lines, LineRange(1, 1), fix)
+
+        assert "HELPER_CONST" in ''.join(result)
+
+    def test_apply_helper_code_global_bottom_placement(self):
+        """Test GLOBAL_BOTTOM placement"""
+        lines = ["def func():\n", "    pass\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "def helper():\n    return True"
+        fix.placement_helper = "GLOBAL_BOTTOM"
+
+        result = apply_helper_code(lines, LineRange(0, 1), fix)
+
+        # Helper should be at end
+        assert "def helper():" in ''.join(result)
+
+    def test_apply_helper_code_sibling_placement(self):
+        """Test SIBLING placement"""
+        lines = ["def func():\n", "    pass\n", "\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "def sibling_func():\n    pass"
+        fix.placement_helper = "SIBLING"
+
+        result = apply_helper_code(lines, LineRange(0, 1), fix)
+
+        assert "sibling_func" in ''.join(result)
+
+    def test_apply_helper_code_unknown_placement(self):
+        """Test with unknown placement (should default to GLOBAL_TOP)"""
+        lines = ["import os\n", "def func():\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "HELPER = 1"
+        fix.placement_helper = "UNKNOWN_PLACEMENT"
+        fix.end_import_block_code = 1
+
+        result = apply_helper_code(lines, LineRange(1, 1), fix)
+
+        # Should default to GLOBAL_TOP
+        assert "HELPER" in ''.join(result)
+
+    def test_apply_helper_code_with_escaped_newlines(self):
+        """Test helper code with escaped newlines"""
+        lines = ["def func():\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "line1\\nline2\\nline3"
+        fix.placement_helper = "GLOBAL_BOTTOM"
+
+        result = apply_helper_code(lines, LineRange(0, 0), fix)
+
+        # Should convert \\n to actual newlines
+        assert "line1\nline2\nline3" in ''.join(result)
+
+    def test_apply_helper_code_none_placement(self):
+        """Test with None placement"""
+        lines = ["import os\n", "def func():\n"]
+        fix = Mock(spec=FixSuggestion)
+        fix.helper_code = "HELPER = 1"
+        fix.placement_helper = None
+        fix.end_import_block_code = 1
+
+        result = apply_helper_code(lines, LineRange(1, 1), fix)
+
+        # Should still work (likely default to GLOBAL_TOP)
+        assert isinstance(result, list)
