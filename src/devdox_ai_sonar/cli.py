@@ -1,4 +1,4 @@
-"""Command-line interface for SonarCloud Analyzer with Claude Code-style interaction and mid-workflow command switching."""
+"""Command-line interface for SonarCloud Analyzer"""
 
 from datetime import timezone, datetime
 import sys
@@ -126,7 +126,7 @@ def show_command_selector() -> Optional[str]:
             "description": "Add provider configuration",
         },
         {
-            "name": "✏️ Update Provider - Update provider or sonar configuration",
+            "name": "✏️  Update Provider - Update provider or sonar configuration",
             "value": "update_provider",
             "description": "Update SonarCloud provider configuration",
         },
