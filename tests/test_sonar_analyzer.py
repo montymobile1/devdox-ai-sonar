@@ -1497,6 +1497,43 @@ class TestHelperMethods:
         assert params.get("pullRequest") == "123"
         assert "branch" not in params or params.get("branch") != "main"
 
+    def test_build_query_params_pr_takes_priority_over_branch(self, analyzer):
+        """Test that PR takes priority when both branch and PR are provided"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=456
+        )
+
+        # PR should be used, branch should NOT be in params
+        assert params.get("pullRequest") == "456"
+        assert "branch" not in params
+
+    def test_build_query_params_branch_used_when_pr_is_zero(self, analyzer):
+        """Test that branch is used when PR is 0"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="develop",
+            max_issues=10,
+            pull_request_number=0
+        )
+
+        assert params.get("branch") == "develop"
+        assert "pullRequest" not in params
+
+    def test_build_query_params_branch_used_when_pr_is_none(self, analyzer):
+        """Test that branch is used when PR is None"""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="feature-branch",
+            max_issues=10,
+            pull_request_number=None
+        )
+
+        assert params.get("branch") == "feature-branch"
+        assert "pullRequest" not in params
+
     def test_filter_rules_empty_input(self, analyzer):
         """Test with empty rules list"""
 
