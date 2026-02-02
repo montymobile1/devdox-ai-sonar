@@ -125,6 +125,37 @@ class ConfigManager:
                     + "\n".join(f"  - {issue}" for issue in issues)
                 )
 
+    def delete_value(self, key_path: str) -> bool:
+        """
+        Delete a value from config using dot notation.
+        Example: delete_value('configuration.exclude_rules')
+
+        Returns:
+            True if the key was deleted, False if it didn't exist
+        """
+        if not self.config:
+            self.load_config()
+
+        if not self.config:
+            raise RuntimeError(failed_load_config)
+
+        keys = key_path.split(".")
+        current: Dict[str, Any] = self.config
+
+        # Navigate to the parent of the target key
+        for key in keys[:-1]:
+            if key not in current:
+                return False
+            current = current[key]
+            if not isinstance(current, dict):
+                return False
+
+        # Delete the final key if it exists
+        if keys[-1] in current:
+            del current[keys[-1]]
+            return True
+        return False
+
     def validate_change(self, key_path: str, new_value: Any) -> tuple[bool, List[str]]:
         """
         Validate a configuration change
