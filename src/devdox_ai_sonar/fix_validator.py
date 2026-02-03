@@ -270,8 +270,57 @@ class FixValidator:
                 explanation=f"Validation error: {str(e)}",
                 confidence=0.0,
             )
-
-
+    
+    def _format_code_block_header(self, idx, code_block:CodeBlock):
+        header = f"\n{'=' * 60}\nBlock {idx}: {code_block.block_name} (Lines {code_block.start_line}-{code_block.end_line})\n"
+        header += f"Type: {code_block.block_type.value} | Change Type: {code_block.change_type.value}\n"
+        header += f"Has Changes: {code_block.has_changes}\n{'=' * 60}\n"
+        
+        return header
+    
+    def _format_code_block_full_code_replacement(self, code_block:CodeBlock) -> list:
+        format_pipeline:list = []
+        
+        format_pipeline.append("```python\n")
+        format_pipeline.append(code_block.context)
+        format_pipeline.append("\n```\n")
+        
+        return format_pipeline
+    
+    def _format_code_block_line_by_line_changes(self, code_block:CodeBlock) -> list:
+        
+        format_pipeline:list = []
+        # Line-by-line changes
+        format_pipeline.append("Changes:\n")
+        for change in code_block.changes:
+            if change.action == ChangeAction.REPLACE:
+                format_pipeline.append(f"  Line {change.line} (REPLACE):\n")
+                format_pipeline.append(f"    - Old: {change.old}\n")
+                format_pipeline.append(f"    + New: {change.new}\n")
+            elif change.action == ChangeAction.INSERT:
+                format_pipeline.append(f"  Line {change.line} (INSERT):\n")
+                format_pipeline.append(f"    + New: {change.new}\n")
+            elif change.action == ChangeAction.DELETE:
+                format_pipeline.append(f"  Line {change.line} (DELETE):\n")
+                format_pipeline.append(f"    - Old: {change.old}\n")
+        format_pipeline.append("\n")
+        
+        return format_pipeline
+    
+    def _format_code_block_search_replace_pattern(self, code_block:CodeBlock) -> list:
+        format_pipeline:list = []
+        
+        format_pipeline.append("Search/Replace Operations:\n")
+        for idx, repl in enumerate(code_block.replacements, 1):
+            regex_marker = " (REGEX)" if repl.is_regex else ""
+            count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
+            format_pipeline.append(f"\n  Operation {idx}{regex_marker}{count_info}:\n")
+            format_pipeline.append(f"    Search:  {repr(repl.search)}\n")
+            format_pipeline.append(f"    Replace: {repr(repl.replace)}\n")
+        format_pipeline.append("\n")
+        
+        return format_pipeline
+    
     def _format_code_blocks_for_validation(
             self,
             code_blocks: List[CodeBlock]
@@ -285,47 +334,26 @@ class FixValidator:
         Returns:
             Formatted string representation of all fixes
         """
-        formatted_parts = []
+        formatted_parts:list = []
 
         for idx, block in enumerate(code_blocks, 1):
-            header = f"\n{'=' * 60}\nBlock {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
-            header += f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
-            header += f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
-
+            header = self._format_code_block_header(idx=idx, code_block=block)
             formatted_parts.append(header)
 
             if block.change_type == ChangeType.FULL_CODE and block.context:
                 # Full code replacement
-                formatted_parts.append("```python\n")
-                formatted_parts.append(block.context)
-                formatted_parts.append("\n```\n")
+                full_code_replacement_pipeline = self._format_code_block_line_by_line_changes(code_block=block)
+                formatted_parts.extend(full_code_replacement_pipeline)
 
             elif block.change_type == ChangeType.DIFF and block.changes:
                 # Line-by-line changes
-                formatted_parts.append("Changes:\n")
-                for change in block.changes:
-                    if change.action == ChangeAction.REPLACE:
-                        formatted_parts.append(f"  Line {change.line} (REPLACE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.INSERT:
-                        formatted_parts.append(f"  Line {change.line} (INSERT):\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.DELETE:
-                        formatted_parts.append(f"  Line {change.line} (DELETE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                formatted_parts.append("\n")
+                line_by_line_changes_pipeline = self._format_code_block_line_by_line_changes(code_block=block)
+                formatted_parts.extend(line_by_line_changes_pipeline)
 
             elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
                 # Search/replace patterns
-                formatted_parts.append("Search/Replace Operations:\n")
-                for idx, repl in enumerate(block.replacements, 1):
-                    regex_marker = " (REGEX)" if repl.is_regex else ""
-                    count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
-                    formatted_parts.append(f"\n  Operation {idx}{regex_marker}{count_info}:\n")
-                    formatted_parts.append(f"    Search:  {repr(repl.search)}\n")
-                    formatted_parts.append(f"    Replace: {repr(repl.replace)}\n")
-                formatted_parts.append("\n")
+                search_replace_pipeline = self._format_code_block_search_replace_pattern(code_block=block)
+                formatted_parts.extend(search_replace_pipeline)
 
             # Add separator between blocks
             if idx < len(code_blocks):
