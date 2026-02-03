@@ -1198,5 +1198,192 @@ class TestAdditionalEdgeCases:
         assert result.concerns == concerns
 
 
+# ============================================================================
+# TEST CLASS: Code Block Formatting Methods
+# ============================================================================
+
+class TestCodeBlockFormattingMethods:
+    """Test the code block formatting helper methods."""
+
+    @pytest.fixture
+    def validator(self):
+        """Create a FixValidator instance for testing."""
+        return FixValidator(provider="openai", api_key="test-key")
+
+    @pytest.fixture
+    def full_code_block(self):
+        """Create a CodeBlock with FULL_CODE type."""
+        return CodeBlock(
+            block_name="my_function",
+            start_line=1,
+            end_line=10,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="def my_function():\n    return 42"
+        )
+
+    @pytest.fixture
+    def diff_code_block(self):
+        """Create a CodeBlock with DIFF type and changes."""
+        from devdox_ai_sonar.models.sonar import LineChange, ChangeAction
+        return CodeBlock(
+            block_name="process_data",
+            start_line=5,
+            end_line=15,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[
+                LineChange(line=7, action=ChangeAction.REPLACE, old="old_code", new="new_code"),
+                LineChange(line=10, action=ChangeAction.INSERT, new="inserted_line"),
+                LineChange(line=12, action=ChangeAction.DELETE, old="deleted_line"),
+            ]
+        )
+
+    @pytest.fixture
+    def search_replace_block(self):
+        """Create a CodeBlock with SEARCH_REPLACE type."""
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        return CodeBlock(
+            block_name="config_section",
+            start_line=20,
+            end_line=30,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.CLASS,
+            replacements=[
+                SearchReplace(search="old_value", replace="new_value", is_regex=False, count=None),
+                SearchReplace(search=r"\d+", replace="NUMBER", is_regex=True, count=2),
+            ]
+        )
+
+    def test_format_code_block_header(self, validator, full_code_block):
+        """Test _format_code_block_header produces correct header."""
+        header = validator._format_code_block_header(idx=1, code_block=full_code_block)
+
+        assert "Block 1:" in header
+        assert "my_function" in header
+        assert "Lines 1-10" in header
+        assert "function" in header
+        assert "FULL_CODE" in header
+        assert "Has Changes: True" in header
+
+    def test_format_code_block_full_code_replacement(self, validator, full_code_block):
+        """Test _format_code_block_full_code_replacement formats context correctly."""
+        result = validator._format_code_block_full_code_replacement(code_block=full_code_block)
+
+        assert isinstance(result, list)
+        formatted = "".join(result)
+        assert "```python" in formatted
+        assert "def my_function():" in formatted
+        assert "return 42" in formatted
+        assert "```" in formatted
+
+    def test_format_code_block_line_by_line_changes(self, validator, diff_code_block):
+        """Test _format_code_block_line_by_line_changes formats all change types."""
+        result = validator._format_code_block_line_by_line_changes(code_block=diff_code_block)
+
+        assert isinstance(result, list)
+        formatted = "".join(result)
+
+        # Check REPLACE formatting
+        assert "Line 7 (REPLACE):" in formatted
+        assert "- Old: old_code" in formatted
+        assert "+ New: new_code" in formatted
+
+        # Check INSERT formatting
+        assert "Line 10 (INSERT):" in formatted
+        assert "+ New: inserted_line" in formatted
+
+        # Check DELETE formatting
+        assert "Line 12 (DELETE):" in formatted
+        assert "- Old: deleted_line" in formatted
+
+    def test_format_code_block_search_replace_pattern(self, validator, search_replace_block):
+        """Test _format_code_block_search_replace_pattern formats replacements."""
+        result = validator._format_code_block_search_replace_pattern(code_block=search_replace_block)
+
+        assert isinstance(result, list)
+        formatted = "".join(result)
+
+        assert "Search/Replace Operations:" in formatted
+
+        # First replacement (non-regex, all occurrences)
+        assert "Operation 1" in formatted
+        assert "(all occurrences)" in formatted
+        assert "'old_value'" in formatted
+        assert "'new_value'" in formatted
+
+        # Second replacement (regex, count=2)
+        assert "Operation 2" in formatted
+        assert "(REGEX)" in formatted
+        assert "(count: 2)" in formatted
+
+    def test_format_code_blocks_for_validation_full_code(self, validator, full_code_block):
+        """Test _format_code_blocks_for_validation with FULL_CODE block."""
+        result = validator._format_code_blocks_for_validation([full_code_block])
+
+        assert isinstance(result, str)
+        assert "Block 1:" in result
+        assert "my_function" in result
+        assert "def my_function():" in result
+
+    def test_format_code_blocks_for_validation_diff(self, validator, diff_code_block):
+        """Test _format_code_blocks_for_validation with DIFF block."""
+        result = validator._format_code_blocks_for_validation([diff_code_block])
+
+        assert isinstance(result, str)
+        assert "Block 1:" in result
+        assert "REPLACE" in result
+        assert "INSERT" in result
+        assert "DELETE" in result
+
+    def test_format_code_blocks_for_validation_search_replace(self, validator, search_replace_block):
+        """Test _format_code_blocks_for_validation with SEARCH_REPLACE block."""
+        result = validator._format_code_blocks_for_validation([search_replace_block])
+
+        assert isinstance(result, str)
+        assert "Block 1:" in result
+        assert "Search/Replace Operations:" in result
+
+    def test_format_code_blocks_for_validation_multiple_blocks(
+        self, validator, full_code_block, diff_code_block
+    ):
+        """Test _format_code_blocks_for_validation with multiple blocks."""
+        result = validator._format_code_blocks_for_validation([full_code_block, diff_code_block])
+
+        assert isinstance(result, str)
+        assert "Block 1:" in result
+        assert "Block 2:" in result
+        # Check separator between blocks
+        assert "-" * 60 in result
+
+    def test_format_code_blocks_for_validation_empty_list(self, validator):
+        """Test _format_code_blocks_for_validation with empty list."""
+        result = validator._format_code_blocks_for_validation([])
+
+        assert result == ""
+
+    def test_format_code_block_header_different_block_types(self, validator):
+        """Test header formatting with different block types."""
+        block = CodeBlock(
+            block_name="MyClass",
+            start_line=100,
+            end_line=200,
+            has_changes=False,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.CLASS,
+        )
+
+        header = validator._format_code_block_header(idx=5, code_block=block)
+
+        assert "Block 5:" in header
+        assert "MyClass" in header
+        assert "Lines 100-200" in header
+        assert "class" in header
+        assert "Has Changes: False" in header
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

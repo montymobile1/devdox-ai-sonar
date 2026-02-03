@@ -342,7 +342,7 @@ class FixValidator:
 
             if block.change_type == ChangeType.FULL_CODE and block.context:
                 # Full code replacement
-                full_code_replacement_pipeline = self._format_code_block_line_by_line_changes(code_block=block)
+                full_code_replacement_pipeline = self._format_code_block_full_code_replacement(code_block=block)
                 formatted_parts.extend(full_code_replacement_pipeline)
 
             elif block.change_type == ChangeType.DIFF and block.changes:
