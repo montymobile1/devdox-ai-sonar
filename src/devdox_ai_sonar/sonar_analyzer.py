@@ -1,5 +1,5 @@
 """SonarCloud analyzer using direct REST API (production-ready)."""
-
+from enum import Enum
 from typing import List, Optional, Dict, Any, Union
 from datetime import datetime
 from urllib.parse import urljoin
@@ -25,6 +25,20 @@ from devdox_ai_sonar.config import settings
 
 logger = logging.getLogger(__name__)
 
+type MetricsDict = dict[str, int | float]
+
+class MetricKey(Enum):
+    LINES_OF_CODE = "ncloc" # Lines of code
+    TEST_COVERAGE = "coverage" # Test coverage
+    DUPLICATION_PERCENTAGE = "duplicated_lines_density" # Duplication percentage
+    MAINTAINABILITY_RATING = "sqale_rating" # Maintainability rating
+    RELIABILITY_RATING = "reliability_rating" # Reliability rating
+    SECURITY_RATING = "security_rating" # Security rating
+    NUMBER_OF_BUGS = "bugs" # Number of bugs
+    NUMBER_OF_VULNERABILITIES = "vulnerabilities" # Number of vulnerabilities
+    NUMBER_OF_CODE_SMELLS = "code_smells" # Number of code smells
+    TECHNICAL_DEBT_MINUTES = "sqale_index" # Technical debt (minutes)
+    SECURITY_HOTSPOTS_REVIEWED = "security_hotspots_reviewed" # Security hotspots reviewed
 
 class SonarCloudAnalyzer:
     """
@@ -291,7 +305,59 @@ class SonarCloudAnalyzer:
                 logger.error(
                     f"Project '{project_key}' not found in organization '{self.organization}'."
                 )
-
+    
+    def _normalize_metric_value_by_key(self, metric_key, metric_value):
+        if metric_value is None:
+            return None
+        
+        if metric_key in [
+            MetricKey.LINES_OF_CODE.value,
+            MetricKey.NUMBER_OF_BUGS.value,
+            MetricKey.NUMBER_OF_VULNERABILITIES.value,
+            MetricKey.NUMBER_OF_CODE_SMELLS.value
+        ]:
+            try:
+                return int(metric_value)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Could not convert {metric_key}={metric_value} to int"
+                )
+                return 0
+        
+        elif metric_key in [MetricKey.TEST_COVERAGE.value, MetricKey.DUPLICATION_PERCENTAGE.value]:
+            try:
+                return float(metric_value)
+            except (ValueError, TypeError):
+                logger.warning(
+                    f"Could not convert {metric_key}={metric_value} to float"
+                )
+                return 0.0
+        
+        else:
+            return metric_value
+    
+    def _map_project_metrics(self, project_key: str, metrics_dict:MetricsDict) -> ProjectMetrics:
+        
+        technical_debt_calculation = (
+                str(metrics_dict.get(MetricKey.TECHNICAL_DEBT_MINUTES.value))
+                if metrics_dict.get(MetricKey.TECHNICAL_DEBT_MINUTES.value)
+                else None
+        )
+        
+        return ProjectMetrics(
+            project_key=project_key,
+            lines_of_code=metrics_dict.get(MetricKey.LINES_OF_CODE.value),
+            coverage=metrics_dict.get(MetricKey.TEST_COVERAGE.value),
+            duplicated_lines_density=metrics_dict.get(MetricKey.DUPLICATION_PERCENTAGE.value),
+            maintainability_rating=metrics_dict.get(MetricKey.MAINTAINABILITY_RATING.value),
+            reliability_rating=metrics_dict.get(MetricKey.RELIABILITY_RATING.value),
+            security_rating=metrics_dict.get(MetricKey.SECURITY_RATING.value),
+            bugs=metrics_dict.get(MetricKey.NUMBER_OF_BUGS.value),
+            vulnerabilities=metrics_dict.get(MetricKey.NUMBER_OF_VULNERABILITIES.value),
+            code_smells=metrics_dict.get(MetricKey.NUMBER_OF_CODE_SMELLS.value),
+            technical_debt=technical_debt_calculation
+        )
+    
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
         """
         Fetch project metrics from SonarCloud.
@@ -309,19 +375,7 @@ class SonarCloudAnalyzer:
         url = urljoin(self.base_url, "/api/measures/component")
 
         # Metric keys to fetch
-        metric_keys = [
-            "ncloc",  # Lines of code
-            "coverage",  # Test coverage
-            "duplicated_lines_density",  # Duplication percentage
-            "sqale_rating",  # Maintainability rating
-            "reliability_rating",  # Reliability rating
-            "security_rating",  # Security rating
-            "bugs",  # Number of bugs
-            "vulnerabilities",  # Number of vulnerabilities
-            "code_smells",  # Number of code smells
-            "sqale_index",  # Technical debt (minutes)
-            "security_hotspots_reviewed",  # Security hotspots reviewed
-        ]
+        metric_keys = [metric.value for metric in MetricKey]
 
         params = {"component": project_key, "metricKeys": ",".join(metric_keys)}
 
@@ -332,55 +386,17 @@ class SonarCloudAnalyzer:
 
             data = response.json()
             # Parse metrics data
-            metrics_dict: dict[str, Union[int, float]] = {}
+            metrics_dict: MetricsDict = {}
             for measure in data.get("component", {}).get("measures", []):
                 metric_key = measure.get("metric")
 
                 metric_value = measure.get("value")
 
-                if metric_value is not None:
-                    # Convert numeric values
-                    if metric_key in [
-                        "ncloc",
-                        "bugs",
-                        "vulnerabilities",
-                        "code_smells",
-                    ]:
-                        try:
-                            metrics_dict[metric_key] = int(metric_value)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not convert {metric_key}={metric_value} to int"
-                            )
-                            metrics_dict[metric_key] = 0
-                    elif metric_key in ["coverage", "duplicated_lines_density"]:
-                        try:
-                            metrics_dict[metric_key] = float(metric_value)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not convert {metric_key}={metric_value} to float"
-                            )
-                            metrics_dict[metric_key] = 0.0
-
-                    else:
-                        metrics_dict[metric_key] = metric_value
-            return ProjectMetrics(
-                project_key=project_key,
-                lines_of_code=metrics_dict.get("ncloc"),
-                coverage=metrics_dict.get("coverage"),
-                duplicated_lines_density=metrics_dict.get("duplicated_lines_density"),
-                maintainability_rating=metrics_dict.get("sqale_rating"),
-                reliability_rating=metrics_dict.get("reliability_rating"),
-                security_rating=metrics_dict.get("security_rating"),
-                bugs=metrics_dict.get("bugs"),
-                vulnerabilities=metrics_dict.get("vulnerabilities"),
-                code_smells=metrics_dict.get("code_smells"),
-                technical_debt=(
-                    str(metrics_dict.get("sqale_index"))
-                    if metrics_dict.get("sqale_index")
-                    else None
-                ),
-            )
+                normalized_metric_value = self._normalize_metric_value_by_key(metric_key=metric_key, metric_value=metric_value)
+                if normalized_metric_value is not None:
+                    metrics_dict[metric_key] = normalized_metric_value
+            
+            return self._map_project_metrics(project_key=project_key, metrics_dict=metrics_dict)
 
         except requests.Timeout:
             logger.error(

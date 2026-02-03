@@ -9,7 +9,7 @@ from requests.exceptions import HTTPError, Timeout, RequestException
 from unittest.mock import Mock, patch, MagicMock, call
 from typing import List, Dict, Any
 
-from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
+from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer, MetricKey
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     SonarSecurityIssue,
@@ -438,6 +438,183 @@ class TestGetProjectMetrics:
 
         assert metrics is not None
 
+
+# ============================================================================
+# TEST CLASS: NORMALIZE METRIC VALUE BY KEY
+# ============================================================================
+
+class TestNormalizeMetricValueByKey:
+    """Test the _normalize_metric_value_by_key helper method"""
+
+    def test_normalize_none_value(self, analyzer):
+        """Test that None values return None"""
+        result = analyzer._normalize_metric_value_by_key("any_key", None)
+        assert result is None
+
+    def test_normalize_lines_of_code_valid(self, analyzer):
+        """Test normalizing lines of code to int"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.LINES_OF_CODE.value, "1234"
+        )
+        assert result == 1234
+        assert isinstance(result, int)
+
+    def test_normalize_bugs_valid(self, analyzer):
+        """Test normalizing bugs count to int"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.NUMBER_OF_BUGS.value, "42"
+        )
+        assert result == 42
+        assert isinstance(result, int)
+
+    def test_normalize_vulnerabilities_valid(self, analyzer):
+        """Test normalizing vulnerabilities count to int"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.NUMBER_OF_VULNERABILITIES.value, "7"
+        )
+        assert result == 7
+        assert isinstance(result, int)
+
+    def test_normalize_code_smells_valid(self, analyzer):
+        """Test normalizing code smells count to int"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.NUMBER_OF_CODE_SMELLS.value, "100"
+        )
+        assert result == 100
+        assert isinstance(result, int)
+
+    def test_normalize_int_metric_invalid_value(self, analyzer):
+        """Test normalizing invalid int value returns 0"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.LINES_OF_CODE.value, "not_a_number"
+        )
+        assert result == 0
+
+    def test_normalize_coverage_valid(self, analyzer):
+        """Test normalizing coverage to float"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.TEST_COVERAGE.value, "85.5"
+        )
+        assert result == 85.5
+        assert isinstance(result, float)
+
+    def test_normalize_duplication_valid(self, analyzer):
+        """Test normalizing duplication percentage to float"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.DUPLICATION_PERCENTAGE.value, "12.3"
+        )
+        assert result == 12.3
+        assert isinstance(result, float)
+
+    def test_normalize_float_metric_invalid_value(self, analyzer):
+        """Test normalizing invalid float value returns 0.0"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.TEST_COVERAGE.value, "invalid"
+        )
+        assert result == 0.0
+
+    def test_normalize_other_metric_passthrough(self, analyzer):
+        """Test that other metrics are passed through unchanged"""
+        result = analyzer._normalize_metric_value_by_key(
+            MetricKey.MAINTAINABILITY_RATING.value, "A"
+        )
+        assert result == "A"
+
+    def test_normalize_unknown_key_passthrough(self, analyzer):
+        """Test that unknown keys pass value through unchanged"""
+        result = analyzer._normalize_metric_value_by_key(
+            "unknown_metric_key", "some_value"
+        )
+        assert result == "some_value"
+
+
+# ============================================================================
+# TEST CLASS: MAP PROJECT METRICS
+# ============================================================================
+
+class TestMapProjectMetrics:
+    """Test the _map_project_metrics helper method"""
+
+    def test_map_complete_metrics(self, analyzer):
+        """Test mapping with all metrics present"""
+        metrics_dict = {
+            MetricKey.LINES_OF_CODE.value: 5000,
+            MetricKey.TEST_COVERAGE.value: 80.5,
+            MetricKey.DUPLICATION_PERCENTAGE.value: 5.2,
+            MetricKey.MAINTAINABILITY_RATING.value: "A",
+            MetricKey.RELIABILITY_RATING.value: "B",
+            MetricKey.SECURITY_RATING.value: "A",
+            MetricKey.NUMBER_OF_BUGS.value: 10,
+            MetricKey.NUMBER_OF_VULNERABILITIES.value: 2,
+            MetricKey.NUMBER_OF_CODE_SMELLS.value: 50,
+            MetricKey.TECHNICAL_DEBT_MINUTES.value: 120,
+        }
+
+        result = analyzer._map_project_metrics("test-project", metrics_dict)
+
+        assert result.project_key == "test-project"
+        assert result.lines_of_code == 5000
+        assert result.coverage == 80.5
+        assert result.duplicated_lines_density == 5.2
+        assert result.maintainability_rating == "A"
+        assert result.reliability_rating == "B"
+        assert result.security_rating == "A"
+        assert result.bugs == 10
+        assert result.vulnerabilities == 2
+        assert result.code_smells == 50
+        assert result.technical_debt == "120"
+
+    def test_map_empty_metrics(self, analyzer):
+        """Test mapping with empty metrics dict"""
+        result = analyzer._map_project_metrics("test-project", {})
+
+        assert result.project_key == "test-project"
+        assert result.lines_of_code is None
+        assert result.coverage is None
+        assert result.bugs is None
+        assert result.technical_debt is None
+
+    def test_map_partial_metrics(self, analyzer):
+        """Test mapping with only some metrics present"""
+        metrics_dict = {
+            MetricKey.LINES_OF_CODE.value: 1000,
+            MetricKey.NUMBER_OF_BUGS.value: 5,
+        }
+
+        result = analyzer._map_project_metrics("my-project", metrics_dict)
+
+        assert result.project_key == "my-project"
+        assert result.lines_of_code == 1000
+        assert result.bugs == 5
+        assert result.coverage is None
+        assert result.vulnerabilities is None
+
+    def test_map_technical_debt_none(self, analyzer):
+        """Test that technical debt is None when not present"""
+        metrics_dict = {
+            MetricKey.LINES_OF_CODE.value: 1000,
+        }
+
+        result = analyzer._map_project_metrics("test-project", metrics_dict)
+
+        assert result.technical_debt is None
+
+    def test_map_technical_debt_zero(self, analyzer):
+        """Test that technical debt of 0 is converted to string"""
+        metrics_dict = {
+            MetricKey.TECHNICAL_DEBT_MINUTES.value: 0,
+        }
+
+        result = analyzer._map_project_metrics("test-project", metrics_dict)
+
+        # 0 is falsy, so technical_debt should be None
+        assert result.technical_debt is None
+
+    def test_map_returns_project_metrics_type(self, analyzer):
+        """Test that result is a ProjectMetrics instance"""
+        result = analyzer._map_project_metrics("test-project", {})
+
+        assert isinstance(result, ProjectMetrics)
 
 
 # ============================================================================
