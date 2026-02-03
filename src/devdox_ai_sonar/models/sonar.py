@@ -169,7 +169,7 @@ class SonarFixResponse(BaseModel):
 
     @field_validator('FIXED_CODE_BLOCKS', mode='before')
     @classmethod
-    def clean_code_blocks(cls, v: List[dict]) -> List[dict]:
+    def clean_code_blocks(cls, v: List[dict]) -> List[dict]: # NOSONAR python:S3516
         """Clean triple quotes from code blocks."""
         if not isinstance(v, list):
             return v
