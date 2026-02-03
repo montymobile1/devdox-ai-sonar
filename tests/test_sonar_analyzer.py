@@ -618,6 +618,183 @@ class TestMapProjectMetrics:
 
 
 # ============================================================================
+# TEST CLASS: PARSE SEVERITY
+# ============================================================================
+
+class TestParseSeverity:
+    """Test the _parse_severity helper method"""
+
+    def test_parse_severity_major(self, analyzer):
+        """Test parsing MAJOR severity"""
+        result = analyzer._parse_severity("MAJOR")
+        assert result == Severity.MAJOR
+
+    def test_parse_severity_lowercase(self, analyzer):
+        """Test parsing lowercase severity"""
+        result = analyzer._parse_severity("critical")
+        assert result == Severity.CRITICAL
+
+    def test_parse_severity_mixed_case(self, analyzer):
+        """Test parsing mixed case severity"""
+        result = analyzer._parse_severity("Minor")
+        assert result == Severity.MINOR
+
+    def test_parse_severity_invalid(self, analyzer):
+        """Test parsing invalid severity returns INFO"""
+        result = analyzer._parse_severity("UNKNOWN")
+        assert result == Severity.INFO
+
+    def test_parse_severity_empty(self, analyzer):
+        """Test parsing empty string returns INFO"""
+        result = analyzer._parse_severity("")
+        assert result == Severity.INFO
+
+
+# ============================================================================
+# TEST CLASS: PARSE ISSUE TYPE
+# ============================================================================
+
+class TestParseIssueType:
+    """Test the _parse_issue_type helper method"""
+
+    def test_parse_issue_type_bug(self, analyzer):
+        """Test parsing BUG type"""
+        result = analyzer._parse_issue_type("BUG")
+        assert result == IssueType.BUG
+
+    def test_parse_issue_type_lowercase(self, analyzer):
+        """Test parsing lowercase type"""
+        result = analyzer._parse_issue_type("vulnerability")
+        assert result == IssueType.VULNERABILITY
+
+    def test_parse_issue_type_code_smell(self, analyzer):
+        """Test parsing CODE_SMELL type"""
+        result = analyzer._parse_issue_type("CODE_SMELL")
+        assert result == IssueType.CODE_SMELL
+
+    def test_parse_issue_type_invalid(self, analyzer):
+        """Test parsing invalid type returns CODE_SMELL"""
+        result = analyzer._parse_issue_type("UNKNOWN")
+        assert result == IssueType.CODE_SMELL
+
+    def test_parse_issue_type_empty(self, analyzer):
+        """Test parsing empty string returns CODE_SMELL"""
+        result = analyzer._parse_issue_type("")
+        assert result == IssueType.CODE_SMELL
+
+
+# ============================================================================
+# TEST CLASS: PARSE IMPACT
+# ============================================================================
+
+class TestParseImpact:
+    """Test the _parse_impact helper method"""
+
+    def test_parse_impact_high(self, analyzer):
+        """Test parsing HIGH impact"""
+        impacts = [{"severity": "HIGH"}]
+        result = analyzer._parse_impact(impacts)
+        from devdox_ai_sonar.models.sonar import Impact
+        assert result == Impact.HIGH
+
+    def test_parse_impact_lowercase(self, analyzer):
+        """Test parsing lowercase impact"""
+        impacts = [{"severity": "medium"}]
+        result = analyzer._parse_impact(impacts)
+        from devdox_ai_sonar.models.sonar import Impact
+        assert result == Impact.MEDIUM
+
+    def test_parse_impact_empty_list(self, analyzer):
+        """Test parsing empty impacts list returns None"""
+        result = analyzer._parse_impact([])
+        assert result is None
+
+    def test_parse_impact_none(self, analyzer):
+        """Test parsing None impacts returns None"""
+        result = analyzer._parse_impact(None)
+        assert result is None
+
+    def test_parse_impact_invalid_severity(self, analyzer):
+        """Test parsing invalid impact severity returns None"""
+        impacts = [{"severity": "UNKNOWN"}]
+        result = analyzer._parse_impact(impacts)
+        assert result is None
+
+    def test_parse_impact_missing_severity_key(self, analyzer):
+        """Test parsing impact without severity key returns None"""
+        impacts = [{"other_key": "value"}]
+        result = analyzer._parse_impact(impacts)
+        assert result is None
+
+
+# ============================================================================
+# TEST CLASS: EXTRACT LINES FROM FLOWS
+# ============================================================================
+
+class TestExtractLinesFromFlows:
+    """Test the _extract_lines_from_flows helper method"""
+
+    def test_extract_lines_empty_flows(self, analyzer):
+        """Test with empty flows list"""
+        problem_lines, last_line = analyzer._extract_lines_from_flows([], 10)
+        assert problem_lines == [10]
+        assert last_line == 10
+
+    def test_extract_lines_no_first_line(self, analyzer):
+        """Test with None first_line"""
+        problem_lines, last_line = analyzer._extract_lines_from_flows([], None)
+        assert problem_lines == []
+        assert last_line is None
+
+    def test_extract_lines_single_flow(self, analyzer):
+        """Test with single flow containing locations"""
+        flows = [
+            {
+                "locations": [
+                    {"textRange": {"endLine": 15}},
+                    {"textRange": {"endLine": 20}},
+                ]
+            }
+        ]
+        problem_lines, last_line = analyzer._extract_lines_from_flows(flows, 10)
+        assert 10 in problem_lines
+        assert 15 in problem_lines
+        assert 20 in problem_lines
+        assert last_line == 20
+
+    def test_extract_lines_multiple_flows(self, analyzer):
+        """Test with multiple flows"""
+        flows = [
+            {"locations": [{"textRange": {"endLine": 15}}]},
+            {"locations": [{"textRange": {"endLine": 25}}]},
+        ]
+        problem_lines, last_line = analyzer._extract_lines_from_flows(flows, 10)
+        assert last_line == 25
+        assert len(problem_lines) == 3
+
+    def test_extract_lines_missing_text_range(self, analyzer):
+        """Test with missing textRange"""
+        flows = [{"locations": [{"other": "data"}]}]
+        problem_lines, last_line = analyzer._extract_lines_from_flows(flows, 10)
+        assert problem_lines == [10]
+        assert last_line == 10
+
+    def test_extract_lines_missing_end_line(self, analyzer):
+        """Test with missing endLine in textRange"""
+        flows = [{"locations": [{"textRange": {"startLine": 5}}]}]
+        problem_lines, last_line = analyzer._extract_lines_from_flows(flows, 10)
+        assert problem_lines == [10]
+        assert last_line == 10
+
+    def test_extract_lines_flow_without_locations(self, analyzer):
+        """Test with flow missing locations key"""
+        flows = [{"other": "data"}]
+        problem_lines, last_line = analyzer._extract_lines_from_flows(flows, 10)
+        assert problem_lines == [10]
+        assert last_line == 10
+
+
+# ============================================================================
 # TEST CLASS: PARSE ISSUES
 # ============================================================================
 

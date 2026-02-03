@@ -425,6 +425,56 @@ class SonarCloudAnalyzer:
             )
             return None
 
+    def _parse_severity(self, severity_str: str) -> Severity:
+        """Map severity string to Severity enum."""
+        severity_upper = severity_str.upper()
+        if severity_upper in Severity._value2member_map_:
+            return Severity(severity_upper)
+        return Severity.INFO
+
+    def _parse_issue_type(self, type_str: str) -> IssueType:
+        """Map type string to IssueType enum."""
+        type_upper = type_str.upper()
+        if type_upper in IssueType._value2member_map_:
+            return IssueType(type_upper)
+        return IssueType.CODE_SMELL
+
+    def _parse_impact(self, impacts: List[Dict[str, Any]]) -> Optional[Impact]:
+        """Extract impact from impacts list."""
+        if not impacts:
+            return None
+        impact_severity = impacts[0].get("severity", "").upper()
+        if impact_severity in Impact._value2member_map_:
+            return Impact(impact_severity)
+        return None
+
+    def _extract_lines_from_flows(
+        self, flows: List[Dict[str, Any]], first_line: Optional[int]
+    ) -> tuple:
+        """
+        Extract problem lines and last line from flows data.
+
+        Returns:
+            Tuple of (problem_lines, last_line)
+        """
+        problem_lines = []
+        last_line = first_line
+
+        if first_line:
+            problem_lines.append(first_line)
+
+        for flow in flows:
+            for location in flow.get("locations", []):
+                text_range = location.get("textRange", {})
+                end_line = text_range.get("endLine")
+                if end_line:
+                    end_line_int = int(end_line)
+                    problem_lines.append(end_line_int)
+                    if last_line is None or end_line_int > last_line:
+                        last_line = end_line_int
+
+        return problem_lines, last_line
+
     def _parse_issues(self, issues_data: List[Dict[str, Any]]) -> List[SonarIssue]:
         """
         Parse raw issue data into SonarIssue objects.
@@ -438,62 +488,26 @@ class SonarCloudAnalyzer:
         issues = []
 
         for issue_data in issues_data:
-            problem_lines = []
             try:
-                # Map severity enum
-                severity_str = issue_data.get("severity", "").upper()
-                severity = (
-                    Severity(severity_str)
-                    if severity_str in Severity._value2member_map_
-                    else Severity.INFO
-                )
+                severity = self._parse_severity(issue_data.get("severity", ""))
+                issue_type = self._parse_issue_type(issue_data.get("type", ""))
+                impact = self._parse_impact(issue_data.get("impacts", []))
 
-                # Map issue type enum
-                type_str = issue_data.get("type", "").upper()
-                issue_type = (
-                    IssueType(type_str)
-                    if type_str in IssueType._value2member_map_
-                    else IssueType.CODE_SMELL
-                )
-
-                # Map impact enum (from impacts object)
-                impacts = issue_data.get("impacts", [])
-                impact = None
-                if impacts and len(impacts) > 0:
-                    # Get first impact's severity
-                    impact_severity = impacts[0].get("severity", "").upper()
-                    if impact_severity in Impact._value2member_map_:
-                        impact = Impact(impact_severity)
-
-                # Extract file path from component
                 component = issue_data.get("component", "")
                 file_path = self._extract_file_path(component)
 
                 first_line = issue_data.get("line")
-                problem_lines.append(int(first_line))
                 if first_line:
                     first_line = int(first_line)
 
                 flows = issue_data.get("flows", [])
-                last_line = first_line  # default
-
-
-                for flow in flows:
-                    for location in flow.get("locations", []):
-                        text_range = location.get("textRange", {})
-                        end_line = text_range.get("endLine")
-                        problem_lines.append(int(end_line))
-
-                        if end_line:
-                            end_line = int(end_line)
-                            if end_line > last_line:
-                                last_line = end_line
+                problem_lines, last_line = self._extract_lines_from_flows(flows, first_line)
 
                 issue = SonarIssue(
                     key=issue_data.get("key", ""),
                     rule=issue_data.get("rule", ""),
                     severity=severity.value,
-                    problem_lines = problem_lines,
+                    problem_lines=problem_lines,
                     component=component,
                     project=issue_data.get("project", ""),
                     first_line=first_line,
