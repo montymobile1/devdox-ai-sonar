@@ -1,5 +1,6 @@
 from enum import Enum
 from pathlib import Path
+from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, TypedDict, Tuple, Union
 from pydantic import BaseModel, Field, ConfigDict,  field_validator, model_validator
 
@@ -61,6 +62,7 @@ class CodeBlock(BaseModel):
 
     # For SEARCH_REPLACE
     replacements: Optional[List[SearchReplace]] = None
+    file_path: Optional[str] = Field(None, description="Path to the file being fixed")
 
 
 class SonarFixResponse(BaseModel):
@@ -107,13 +109,12 @@ class SonarFixResponse(BaseModel):
         )
     )
 
-    EXPLANATION: str = Field(
+    EXPLANATION: Optional[str] = Field(
         ...,
         description=(
             "Detailed explanation following structured format: "
             "1. Issue Analysis, 2. Fix Strategy, 3. Implementation Details, 4. Validation"
-        ),
-        min_length=50
+        )
     )
 
     CONFIDENCE: float = Field(
@@ -514,3 +515,12 @@ class FixResult(BaseModel):
         return len(self.successful_fixes) / self.total_fixes_attempted
 
 
+@dataclass
+class ValidationResult:
+    """Result of issue group validation."""
+    is_valid: bool
+    file_path: Optional[Path] = None
+    file_path_tmp: Optional[Path] = None
+    line_range: Optional[Dict[str, Any]] = None
+    language: Optional[str] = None
+    error: Optional[str] = None

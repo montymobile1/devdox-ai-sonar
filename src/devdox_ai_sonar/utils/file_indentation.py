@@ -378,15 +378,18 @@ def apply_complex_fix(
     for block in modified_blocks:
         lines , end_line= apply_single_code_block(lines, block)
         if end_line ==0:
-            end_line = block.end_line
+            if block.end_line > block.start_line:
+                end_line = block.end_line
         line_range = LineRange(block.start_line, end_line)
 
     if fix.import_block_code:
+
         lines = apply_import_block(lines, fix.import_block_code, fix.end_import_block_code)
 
     #
     #Step 3: Apply helper code if present
     if fix.helper_code:
+
         lines = apply_helper_code(lines, line_range, fix)
 
 
@@ -509,7 +512,6 @@ def apply_search_replace_change(
         modified_line = original_line
 
         for pattern in block.replacements:
-
             if pattern.is_regex:
                 count = pattern.count if pattern.count else 0
 
@@ -520,7 +522,6 @@ def apply_search_replace_change(
 
                 else:
                     modified_line = modified_line.replace(pattern.search, pattern.replace)
-
 
         if modified_line != original_line:
             lines[i] = modified_line
@@ -651,6 +652,7 @@ def apply_diff_change(
 
                     # Check if new content has its own indentation
                     if change.new.startswith(' ') or change.new.startswith('\t'):
+
                         lines[line_idx] = change.new.rstrip() + "\n"
 
                     else:
@@ -660,6 +662,7 @@ def apply_diff_change(
                     print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
                 else:
                     corrected_line = find_line_by_content(lines[start_line:end_line], change.old, start_line)
+
 
                     if corrected_line:
                         logger.info(f"Corrected line {change.line} -> {corrected_line}")
@@ -708,7 +711,6 @@ def find_line_by_content(
 
 
 def apply_single_code_block(lines: List[str], block: CodeBlock) -> Tuple[List[str],int]:
-
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 
@@ -831,10 +833,8 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
     line_range = LineRange.from_fix(fix)
     if not line_range:
         return FixApplication(fix, False, "Missing line numbers"), lines
-
     if not line_range.is_valid(len(lines)):
         return FixApplication(fix, False, "Invalid line range"),lines
-
 
     # Handle complex fix with helper code
     lines = apply_complex_fix(lines, fix, line_range)

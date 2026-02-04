@@ -1411,13 +1411,14 @@ def _process_single_fix(
     """
     Generate and handle a single fix.
     """
-    fix = _generate_fix_for_file(
+    fixes = _generate_fix_for_file(
         issues, services, auth_config, issue_type, tmp_path, rule_key, md_file_path,
 
     )
 
-    if fix:
-        handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
+    if fixes:
+        for fix in fixes:
+            handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
     else:
         console.print("[yellow]No fix could be generated[/yellow]")
 
@@ -1493,7 +1494,7 @@ def _generate_fix_for_file(
     tmp_path:str,
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
-) -> Optional[FixSuggestion]:
+) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         if issue_type == IssueType.SECURITY:
@@ -1509,7 +1510,7 @@ def _generate_fix_for_file(
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
-        result: Optional[FixSuggestion] = fixer.generate_fix_by_file(
+        result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
             issues,
             Path(str(auth_config.project_path)),
             tmp_path=tmp_path,

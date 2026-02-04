@@ -17,15 +17,17 @@ MANDATORY:
 
 
 ## CODE
-{% for func in context['new_context'] %}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
+{{context.context_dict.import_section}}
+## END CODE
+{% for func in context.context_dict['new_context']%}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
 `````{{ language }}
 {% for line in func['context'].split('\n') %}{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
 {% endfor %}```
 {% endfor %}
 
-{% if context.import_section and context.import_section.has_imports %}## IMPORTS
+{% if context.context_dict.import_section and context.context_dict.import_section.has_imports %}## IMPORTS
 ````{{ language }}
-{{ context.import_section.content }}```
+{{ context.context_dict.import_section.content }}```
 {% endif %}
 
 {% if error_message %}## ⚠️ RETRY as ERROR MESSAGE: {{ error_message }}
