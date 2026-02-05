@@ -2,6 +2,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 import logging
+import re
 
 from devdox_ai_sonar.models.file_structures import FixContext
 from devdox_ai_sonar.models.sonar import (
@@ -22,6 +23,8 @@ from devdox_ai_sonar.utils.function_finder import (
 )
 
 logger = logging.getLogger(__name__)
+
+AWAIT_REMOVAL_PATTERN = r'\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()'
 
 class RuleHandler(ABC):
     """Abstract base class for rule-specific fix handlers."""
@@ -234,9 +237,11 @@ class AsyncToSyncHandler(RuleHandler):
                 block_type=BlockType.FUNCTION,
                 replacements=[
                     SearchReplace(
-                        search="await ",
+                        search=AWAIT_REMOVAL_PATTERN.format(
+                            func_name=re.escape(function_info['name'])
+                        ),
                         replace="",
-                        is_regex=False,
+                        is_regex=True,
                         count=None
                     )
                 ],
