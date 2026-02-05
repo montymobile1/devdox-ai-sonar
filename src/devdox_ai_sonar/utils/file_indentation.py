@@ -161,13 +161,11 @@ def apply_sibling_helper(
     original_method_code = '\n'.join(original_method_lines)
 
     method_def_indent = get_method_definition_indent(original_method_code)
-
     # Apply method definition indent to helper (not body indent!)
-    indented_helper = apply_indentation_to_fix(helper_code, method_def_indent)
-
+    indented_helper = helper_code.replace("\\n", "\n")
 
     try:
-        lines[ line_range.end ] = indented_helper
+        lines[ line_range.end ] = indented_helper +"\n"
     except IndexError:
 
         lines [len(lines)-1] = indented_helper
@@ -350,7 +348,6 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
         return fixed_code
 
     min_indent = min(len(line) - len(line.lstrip()) for line in non_empty_lines)
-
     # Remove the minimum indentation from all lines, then add base_indent
     indented_lines = []
     for line in lines:
@@ -360,7 +357,6 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
             dedented = line[min_indent:] if len(line) > min_indent else line.lstrip()
             base_indent_line = len(line) - len(line.lstrip())
             if base_indent_line < len(base_indent):
-
                 indented_lines.append(base_indent + dedented)
             else:
                 indented_lines.append(dedented)
@@ -375,23 +371,23 @@ def apply_complex_fix(
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
     modified_blocks = fix.fixed_code_blocks
+
     for block in modified_blocks:
         lines , end_line= apply_single_code_block(lines, block)
         if end_line ==0:
-            if block.end_line > block.start_line:
+            if block.end_line > block.start_line and block.end_line> line_range.end:
                 end_line = block.end_line
         line_range = LineRange(block.start_line, end_line)
+
+    #Step 2: Apply helper code if present
+    if fix.helper_code:
+        lines = apply_helper_code(lines, line_range, fix)
 
     if fix.import_block_code:
 
         lines = apply_import_block(lines, fix.import_block_code, fix.end_import_block_code)
 
     #
-    #Step 3: Apply helper code if present
-    if fix.helper_code:
-
-        lines = apply_helper_code(lines, line_range, fix)
-
 
     return lines
 
@@ -409,7 +405,6 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
     """
     helper_code = fix.helper_code.replace("\\n", "\n")
     placement = fix.placement_helper
-
     if placement == "GLOBAL_TOP":
         return apply_global_top_helper(lines,line_range ,"",helper_code,fix.end_import_block_code)
 
@@ -576,7 +571,7 @@ def apply_full_code_change(
 
     # Convert to 0-indexed
     start_idx = block.start_line - 1
-    end_idx = block.end_line
+    end_idx = block.end_line -1
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
@@ -588,10 +583,8 @@ def apply_full_code_change(
 
     # Normalize and indent the fixed code
     fixed_code = normalize_code(block.context)
-    indented_code = apply_indentation_to_fix(fixed_code, base_indent)
 
-    # Split into lines and add newlines
-    new_lines = indented_code.split("\n")
+    new_lines = fixed_code.split("\n")
 
     new_lines = [line + "\n" for line in new_lines]
 
@@ -711,6 +704,7 @@ def find_line_by_content(
 
 
 def apply_single_code_block(lines: List[str], block: CodeBlock) -> Tuple[List[str],int]:
+    print("block.change_type ",block.change_type)
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 

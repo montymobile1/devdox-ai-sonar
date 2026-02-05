@@ -1,40 +1,96 @@
 ## 🔍 Issue: `{{rule}}`
 
-{% if severity %}
+{% if severity -%}
 **Severity:** {{ severity }}
 {% endif %}
 **File:** `{{file_path}}`
 
-{% if original_code %}
-### Original code
-{{original_code}}
-{% endif %}
+---
+
+### 📊 Summary
+- **Issues Found:** {{ suggestion|length if suggestion else 0 }}
+- **Impact:** Code quality improvement through reduced complexity
+
+---
 
 ### ❗ Problem
 {{message}}
 
+---
+
 ### 🧠 Explanation
-{{ explanation | replace('###', '\n###') }}
+{{ explanation | replace('###', '\n###') | trim }}
+
+---
+
+### 🎯 Impact Assessment
+- **Risk Level:** {{ "Low" if severity == "Severity.MINOR" else "Medium" if severity == "Severity.MAJOR" else "High" }}
+- **Breaking Change:** No
+- **Logic Preserved:** Yes
+- **Testing Required:** Recommended
+
+---
 
 ### 🛠 Suggested Fix
 
-{%- for code_block in suggestion -%}
+{%- if suggestion and suggestion|length > 0 %}
+{%- for code_block in suggestion %}
 
-    Block Changes on {{ code_block.block_name }} ({{ code_block.start_line }} - {{ code_block.end_line }})
-    {%- if code_block.context %}
-        ````{{ code_block.context }}```
-    {%- elif code_block.changes %}
-        {%- for change_code in code_block.changes %}
+#### 📝 {{ code_block.block_name }} (Lines {{ code_block.start_line }}–{{ code_block.end_line }})
 
-        Replace: {{ change_code.old }} by {{ change_code.new }}
-        {%- endfor %}
-    {%- elif code_block.replacements %}
-        {%- for change_code in code_block.replacements %}
+{%- if code_block.context %}
+```python
+{{ code_block.context | trim }}
+```
+{%- elif code_block.changes %}
+{%- for change_code in code_block.changes %}
 
-        Replace: {{ change_code.search }} by {{ change_code.replace }}
-        {%- endfor %}
-    {%- else %}
-        {# No changes specified for this block #}
-    {%- endif %}
+
+**Fixes:**
+```python
+{{ change_code.new | trim }}
+```
 {%- endfor %}
-````
+{%- elif code_block.replacements %}
+{%- for change_code in code_block.replacements %}
+
+**Replace:**
+```python
+{{ change_code.search | trim }}
+```
+
+**With:**
+```python
+{{ change_code.replace | trim }}
+```
+{%- endfor %}
+{%- else %}
+*No specific changes provided for this block.*
+{%- endif %}
+{%- endfor %}
+{%- else %}
+*No automated fix suggestions available. Manual review required.*
+{%- endif %}
+
+---
+
+### ✅ Review Checklist
+- [ ] Code change preserves original logic
+- [ ] No new bugs introduced
+- [ ] Syntax validated
+- [ ] Tests pass
+- [ ] Ready for commit
+
+---
+
+### 📚 Related Resources
+- [SonarQube Rule {{rule}}](https://rules.sonarsource.com/python/RSPEC-{{rule.split(':')[1] if ':' in rule else rule}})
+- [Python PEP 8 Style Guide](https://pep8.org/)
+
+<details>
+<summary>🔧 Metadata</summary>
+
+- **Rule:** {{rule}}
+- **File:** {{file_path}}
+- **Tool:** DevDox AI with SonarCloud integration
+</details>

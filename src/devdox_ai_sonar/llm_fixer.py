@@ -62,7 +62,6 @@ except ImportError as e:
 java_extension = ".java"
 scala_extension = ".scala"
 
-prompt_system_message = "You are a senior software engineer specializing in code quality and SonarCloud rule compliance. Your job is to analyze code issues and provide precise fixes."
 
 FUNCTION_ALREADY_CALLED="• As function can be already called so don't remove the parameters."
 STATICMETHOD_DECORATOR = "@staticmethod"
@@ -628,7 +627,6 @@ class LLMFixer:
         if first_line_idx >= len(lines) or last_line_idx >= len(lines):
             logger.error(f"Line range {first_line_number}-{last_line_number} exceeds file length {len(lines)}")
             return extractor._get_empty_context(first_line_number)
-
 
         functions_context = extractor._extract_all_functions_in_range(
             first_line_idx,
@@ -2729,7 +2727,7 @@ class ContextExtractor:
             'start_idx': decorator_start_idx,
             'end_idx': func_end_idx,
             'name': func_name,
-            'lines': self.lines[func_start_idx:func_end_idx + 1],
+            'lines': self.lines[decorator_start_idx:func_end_idx + 1],
             'indentation': base_indent,
             'decorators': decorators
         }
