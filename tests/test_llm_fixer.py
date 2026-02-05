@@ -12,17 +12,16 @@ import shutil
 import re
 
 from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_suggestion,
-
-                                       _validate_and_extract_issue_info,
                                        _generate_fix_key,
                                        _extract_problem_lines,
-                                       get_content_range,
-                                       _find_exact_match,
-
-                                       _find_fuzzy_match,
-                                       _find_all_single_line_matches,
-                                       _create_result
                                        )
+from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info,
+                                                get_content_range,
+                                                _find_exact_match,
+                                                _find_fuzzy_match,
+                                                _find_all_single_line_matches,
+                                                _create_result
+                                                )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
