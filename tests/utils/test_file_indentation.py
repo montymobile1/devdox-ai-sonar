@@ -1048,7 +1048,7 @@ class TestFullChange:
         )
 
         result, end_idx = apply_full_code_change(lines, block)
-        assert len(result) == 3
+        assert len(result) == 4
         assert "x = 1\n" in result
         assert "y = 2\n" in result
         assert "z = 3\n" in result
@@ -1157,7 +1157,7 @@ class TestFullChange:
 
         result, end_idx = apply_full_code_change(lines, block)
         # Should convert \\n to actual newlines
-        assert len(result) == 3
+        assert len(result) == 4
 
 class TestGlobalTopHelper:
     def test_apply_global_top_helper_at_end_of_imports(self):

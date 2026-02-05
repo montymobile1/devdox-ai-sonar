@@ -384,44 +384,44 @@ class TestContextExtraction:
         
         assert context["start_line"] <= 4
         assert context["end_line"] >= 4
-        assert "problem line" in context["context"]
-    
+        assert "problem line" in context["new_context"][0]["context"]
+
     def test_extract_context_at_file_start(self, fixer):
         """Test extracting context at beginning of file"""
         lines = ["line 1\n", "line 2\n", "line 3\n"]
-        
+
         context = fixer._extract_context(lines, 1, 1,[1], context_lines=5)
-        
+
         assert context["start_line"] == 1
-        assert "line 1" in context["context"]
-    
+        assert "line 1" in context["new_context"][0]["context"]
+
     def test_extract_context_at_file_end(self, fixer):
         """Test extracting context at end of file"""
         lines = ["line 1\n", "line 2\n", "line 3\n"]
-        
+
         context = fixer._extract_context(lines, 3, 3,[3], context_lines=5)
-        
+
         assert context["end_line"] == 3
-        assert "line 3" in context["context"]
-    
+        assert "line 3" in context["new_context"][0]["context"]
+
     def test_extract_context_multiline_issue(self, fixer):
         """Test extracting context for multi-line issue"""
         lines = [f"line {i}\n" for i in range(1, 21)]
-        
+
         context = fixer._extract_context(lines, 10, 15,[13,15], context_lines=3)
-        
+
         assert context["start_line"] <= 10
         assert context["end_line"] >= 15
         for i in range(10, 16):
-            assert f"line {i}" in context["context"]
-    
+            assert f"line {i}" in context["new_context"][0]["context"]
+
     def test_extract_context_zero_context_lines(self, fixer):
         """Test extracting context with zero context lines"""
         lines = [f"line {i}\n" for i in range(1, 11)]
-        
+
         context = fixer._extract_context(lines, 5, 5, [5],context_lines=0)
-        
-        assert "line 5" in context["context"]
+
+        assert "line 5" in context["new_context"][0]["context"]
     
     def test_extract_context_large_context(self, fixer):
         """Test extracting context with large context_lines"""
@@ -2839,6 +2839,7 @@ Hope this helps!
         finally:
             test_file.chmod(0o644)
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
     def test_write_explaination_io_error(self, fixer, tmp_path):
         """Test handling IO error during explanation writing"""
         file_md = tmp_path / "readonly" / "output.md"
@@ -2860,9 +2861,13 @@ Hope this helps!
             file="test.py"
         )
 
+        mock_fix_response = Mock()
+        mock_fix_response.EXPLANATION = "Test explanation"
+        mock_fix_response.FIXED_CODE_BLOCKS = []
+
         try:
             with pytest.raises((PermissionError, OSError)):
-                fixer.write_explaination(file_md, {}, [issue], "")
+                fixer.write_explaination(file_md, mock_fix_response, [issue], "")
         finally:
             file_md.parent.chmod(0o755)
 
@@ -2891,10 +2896,11 @@ Hope this helps!
         context = fixer._extract_context(lines, 100, 100,[100] ,context_lines=5)
 
         # Should handle gracefully
-        assert context["context"] == ""
+        assert context["new_context"][0]["context"] == ""
 
 
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
     def test_create_backup_permission_error(self, fixer, tmp_path):
         """Test backup creation with permission issues"""
         # Create directory structure
