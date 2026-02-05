@@ -17,8 +17,6 @@ MANDATORY:
 
 
 ## CODE
-{{context.context_dict.import_section}}
-## END CODE
 {% for func in context.context_dict['new_context']%}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
 `````{{ language }}
 {% for line in func['context'].split('\n') %}{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
