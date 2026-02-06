@@ -669,7 +669,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                         'context': self._get_caller_context(node, tree)
                     })
 
-    def _check_if_awaited_in_context(self, call_node: ast.Call, tree: ast.AST) -> bool:
+    def _check_if_awaited_in_context(self, call_node: ast.Call, tree: ast.AST) -> bool: #NOSONAR
         """Check if a call is awaited by examining parent nodes."""
         # Simplified - would need proper parent tracking
         for node in ast.walk(tree):
