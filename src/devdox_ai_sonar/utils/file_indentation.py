@@ -160,7 +160,9 @@ def apply_sibling_helper(
 
     original_method_code = '\n'.join(original_method_lines)
 
-    method_def_indent = get_method_definition_indent(original_method_code)
+    # method_def_indent
+    _ = get_method_definition_indent(original_method_code)
+    
     # Apply method definition indent to helper (not body indent!)
     indented_helper = helper_code.replace("\\n", "\n")
 
