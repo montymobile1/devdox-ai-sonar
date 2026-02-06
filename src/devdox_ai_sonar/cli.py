@@ -1511,10 +1511,9 @@ def _generate_fix_for_file(
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
         result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
-            issues,
-            Path(str(auth_config.project_path)),
+            issues=issues,
+            project_path=Path(str(auth_config.project_path)),
             tmp_path=tmp_path,
-            rule_info=rule_info_dic,
             file_md=file_md_str,
         )
         return result

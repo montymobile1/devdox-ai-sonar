@@ -226,9 +226,7 @@ class LLMFixer:
             issues: List[Union[SonarIssue, SonarSecurityIssue]],
             project_path: Path,
             tmp_path: Path,
-            rule_info: Dict[str, Dict[str, str]],
             modified_content: str = "",
-            error_message: str = "",
             file_md: str = "",
     ) -> Optional[List[FixSuggestion]]:
         """
@@ -241,9 +239,7 @@ class LLMFixer:
             issues: List of SonarCloud issues to fix (must be from same file)
             project_path: Path to the project root
             tmp_path: Path to temporary files
-            rule_info: Dictionary containing rule information
             modified_content: Optional pre-extracted content
-            error_message: Optional error message to include in context
             file_md: Optional markdown file path for documentation
 
         Returns:
