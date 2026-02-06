@@ -1498,7 +1498,9 @@ def _generate_fix_for_file(
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
         if issue_type == IssueType.SECURITY:
-            rule_info_dic = _collect_rule_information(issues, services["ruler"])
+            
+            # rule_info_dic
+            _ = _collect_rule_information(issues, services["ruler"])
         else:
             if not rule_name:
                 console.print("rule_name is required for non-security issues")
@@ -1506,7 +1508,9 @@ def _generate_fix_for_file(
 
             ruler = services["ruler"]
             rule_info = ruler.get_rule_by_key(rule_name)
-            rule_info_dic = {rule_name: rule_info}
+            
+            # rule_info_dic overwritten
+            _ = {rule_name: rule_info}
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
