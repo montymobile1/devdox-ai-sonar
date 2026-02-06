@@ -150,7 +150,6 @@ def calculate_base_indentation_based_on_line(lines: List[str], line_number: int)
 def apply_sibling_helper(
         lines: List[str],
         line_range: LineRange,
-        indented_code: str,
         helper_code: str,
 ) -> List[str]:
     """Apply fix with sibling helper code at the same indentation level."""
@@ -414,7 +413,11 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
         return apply_global_bottom_helper(lines,helper_code)
 
     elif placement == "SIBLING":
-        return apply_sibling_helper(lines, line_range,"", helper_code)
+        return apply_sibling_helper(
+        lines=lines,
+        line_range=line_range,
+        helper_code=helper_code
+        )
 
 
     else:
