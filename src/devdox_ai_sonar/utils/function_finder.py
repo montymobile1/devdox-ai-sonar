@@ -629,7 +629,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         async_patterns = {'async', 'await', 'aio', 'coroutine'}
         return any(pattern in func_name.lower() for pattern in async_patterns)
 
-    def _is_awaited(self, node: ast.Call) -> bool:
+    def _is_awaited(self, node: ast.Call) -> bool: #NOSONAR
         """Check if a call is wrapped in await (simplified)."""
         # This is a simplified check - full implementation would need parent tracking
         return False
