@@ -25,6 +25,7 @@ from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     FixSuggestion,
+    SonarFixResponse,
     SonarSecurityIssue,
     Severity,
     IssueType,
@@ -32,9 +33,11 @@ from devdox_ai_sonar.models.sonar import (
     FixResult,
     ChangeType,
     BlockType,
-    CodeBlock
+    CodeBlock,
+    PlacementType,
 
 )
+from devdox_ai_sonar.models.file_structures import FixContext
 
 # ============================================================================
 # FIXTURES
@@ -3504,4 +3507,244 @@ def validate(data):
         assert result['match_type'] == 'context'
         # Problem lines adjusted: offset = 6 - 2 = 4, so [3+4, 4+4] = [7, 8]
         assert set(result['problem_lines']) == {7, 8}
+
+
+# ============================================================================
+# TESTS FOR _resolve_effective_values, _resolve_relative_path,
+# _map_fix_suggestion_to_fix_suggestion_dto
+# ============================================================================
+
+
+class TestResolveEffectiveValues:
+    """Tests for LLMFixer._resolve_effective_values."""
+
+    def _make_context(self, start_line=1):
+        return FixContext(
+            file_path=Path("/project/src/test.py"),
+            file_path_tmp=Path("/tmp/test.py"),
+            line_range={},
+            code_content="original code",
+            language="python",
+            import_section={"start_line": 1, "end_line": 3},
+            class_name=None,
+            functions=[],
+            context_dict={"start_line": start_line, "import_section": {"end_line": 3}},
+        )
+
+    def test_returns_defaults_when_modify_line_range_false(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5, "last_line": 7}
+        code_blocks = [CodeBlock(
+            block_name="b", start_line=1, end_line=2,
+            has_changes=True, change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+        )]
+
+        result = LLMFixer._resolve_effective_values(
+            code_blocks, False, file_path, context, line_range
+        )
+
+        assert result == (file_path, 10, 5, 7)
+
+    def test_returns_defaults_when_code_blocks_empty(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5, "last_line": 7}
+
+        result = LLMFixer._resolve_effective_values(
+            [], True, file_path, context, line_range
+        )
+
+        assert result == (file_path, 10, 5, 7)
+
+    def test_returns_defaults_when_block_has_no_file_path(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5, "last_line": 7}
+        code_blocks = [CodeBlock(
+            block_name="b", start_line=20, end_line=30,
+            has_changes=True, change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            file_path=None,
+        )]
+
+        result = LLMFixer._resolve_effective_values(
+            code_blocks, True, file_path, context, line_range
+        )
+
+        assert result == (file_path, 10, 5, 7)
+
+    def test_overrides_when_block_has_different_file_path(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5, "last_line": 7}
+        code_blocks = [CodeBlock(
+            block_name="b", start_line=20, end_line=30,
+            has_changes=True, change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            file_path="/project/src/other.py",
+        )]
+
+        eff_path, eff_start, eff_sonar, eff_last = LLMFixer._resolve_effective_values(
+            code_blocks, True, file_path, context, line_range
+        )
+
+        assert eff_path == Path("/project/src/other.py")
+        assert eff_start == 20
+        assert eff_sonar == 20
+        assert eff_last == 30
+
+    def test_keeps_defaults_when_block_has_same_file_path(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5, "last_line": 7}
+        code_blocks = [CodeBlock(
+            block_name="b", start_line=20, end_line=30,
+            has_changes=True, change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            file_path="/project/src/test.py",
+        )]
+
+        result = LLMFixer._resolve_effective_values(
+            code_blocks, True, file_path, context, line_range
+        )
+
+        assert result == (file_path, 10, 5, 7)
+
+    def test_last_line_falls_back_to_first_line(self):
+        context = self._make_context(start_line=10)
+        file_path = Path("/project/src/test.py")
+        line_range = {"first_line": 5}
+
+        result = LLMFixer._resolve_effective_values(
+            [], False, file_path, context, line_range
+        )
+
+        assert result[3] == 5  # effective_last_line == first_line
+
+
+class TestResolveRelativePath:
+    """Tests for LLMFixer._resolve_relative_path."""
+
+    def test_returns_relative_path(self):
+        result = LLMFixer._resolve_relative_path(
+            Path("/project/src/test.py"), Path("/project")
+        )
+        assert result == "src/test.py"
+
+    def test_returns_absolute_when_outside_project(self):
+        result = LLMFixer._resolve_relative_path(
+            Path("/other/src/test.py"), Path("/project")
+        )
+        assert result == "/other/src/test.py"
+
+    def test_returns_file_name_when_same_as_project(self):
+        result = LLMFixer._resolve_relative_path(
+            Path("/project/file.py"), Path("/project")
+        )
+        assert result == "file.py"
+
+
+class TestMapFixSuggestionToDto:
+    """Tests for LLMFixer._map_fix_suggestion_to_fix_suggestion_dto."""
+
+    def _make_fixer(self):
+        with patch('devdox_ai_sonar.llm_fixer.openai.OpenAI'):
+            fixer = LLMFixer.__new__(LLMFixer)
+            fixer.model = "test-model"
+            return fixer
+
+    def _make_code_block(self):
+        return CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=10,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.MODULE,
+            context="fixed code",
+        )
+
+    def _make_fix_response(self, code_blocks):
+        return SonarFixResponse(
+            FIXED_CODE_BLOCKS=code_blocks,
+            IMPORT_BLOCK="import os",
+            NEW_HELPER_CODE="def helper(): pass",
+            PLACEMENT=PlacementType.GLOBAL_TOP,
+            EXPLANATION="Fixed the issue",
+            CONFIDENCE=0.95,
+        )
+
+    def test_maps_all_fields_correctly(self):
+        fixer = self._make_fixer()
+        code_block = self._make_code_block()
+        fix_response = self._make_fix_response([code_block])
+        context = FixContext(
+            file_path=Path("/project/src/test.py"),
+            file_path_tmp=Path("/tmp/test.py"),
+            line_range={},
+            code_content="original code",
+            language="python",
+            import_section={"start_line": 1, "end_line": 3},
+            class_name=None,
+            functions=[],
+            context_dict={"start_line": 5, "import_section": {"end_line": 3}},
+        )
+        line_range = {"problem_lines": [10, 12]}
+
+        result = fixer._map_fix_suggestion_to_fix_suggestion_dto(
+            line_range=line_range,
+            context=context,
+            code_blocks=[code_block],
+            fix_response_single=fix_response,
+            llm_model="test-model",
+            relative_file_path="src/test.py",
+            effective_start_line=5,
+            effective_sonar_line=10,
+            effective_last_line=12,
+        )
+
+        assert isinstance(result, FixSuggestion)
+        assert result.issue_key == "fix_L10-L12"
+        assert result.original_code == "original code"
+        assert result.fixed_code == ""
+        assert result.fixed_code_blocks == [code_block]
+        assert result.import_block_code == "import os"
+        assert result.helper_code == "def helper(): pass"
+        assert result.placement_helper == PlacementType.GLOBAL_TOP
+        assert result.explanation == "Fixed the issue"
+        assert result.confidence == 0.95
+        assert result.llm_model == "test-model"
+        assert result.file_path == "src/test.py"
+        assert result.line_number == 5
+        assert result.sonar_line_number == 10
+        assert result.last_line_number == 12
+        assert result.end_import_block_code == 3
+
+    def test_empty_problem_lines_gives_unknown_key(self):
+        fixer = self._make_fixer()
+        code_block = self._make_code_block()
+        fix_response = self._make_fix_response([code_block])
+        context = FixContext(
+            file_path=Path("/project/src/test.py"),
+            file_path_tmp=Path("/tmp/test.py"),
+            line_range={},
+            code_content="code",
+            language="python",
+            import_section={},
+            class_name=None,
+            functions=[],
+            context_dict={"start_line": 1, "import_section": {}},
+        )
+
+        result = fixer._map_fix_suggestion_to_fix_suggestion_dto(
+            line_range={},
+            context=context,
+            code_blocks=[code_block],
+            fix_response_single=fix_response,
+            llm_model="m",
+            relative_file_path="test.py",
+            effective_start_line=1,
+            effective_sonar_line=1,
+            effective_last_line=1,
+        )
+
+        assert result.issue_key == "fix_unknown"
 
