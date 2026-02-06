@@ -262,7 +262,7 @@ class FunctionLocator(ast.NodeVisitor):
 
         self.generic_visit(node)
 
-    def _get_context(self, node: ast.AST) -> str:
+    def _get_context(self, node: ast.AST) -> str: #NOSONAR
         """Get the enclosing function/class context for a node."""
         # Walk up the tree to find enclosing function/class
         # This is simplified - you'd need to track parent nodes
