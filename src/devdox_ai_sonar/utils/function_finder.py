@@ -663,10 +663,9 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         """Check if a call is awaited by examining parent nodes."""
         # Simplified - would need proper parent tracking
         for node in ast.walk(tree):
-            if isinstance(node, ast.Await):
-                if isinstance(node.value, ast.Call):
-                    if self._get_call_name(node.value) == self.target_function:
-                        return True
+            if isinstance(node, ast.Await) and isinstance(node.value, ast.Call):
+                if self._get_call_name(node.value) == self.target_function:
+                    return True
         return False
 
     def _get_caller_context(self, node: ast.Call, tree: ast.AST) -> str:
