@@ -2,6 +2,9 @@ from typing import Optional, Dict, Any, List, Tuple
 import ast
 from pathlib import Path
 from devdox_ai_sonar.models.file_structures import ConversionRisk, ConversionAnalysis
+import logging
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
@@ -639,7 +642,12 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                 tree = ast.parse(content, filename=str(file_path))
                 self._find_callers_in_tree(tree, str(file_path))
 
-            except Exception as e:
+            except Exception:
+                logger.warning(
+                    "Unexpected error while analyzing %s",
+                    file_path,
+                    exc_info=True,
+                )
                 continue
 
     def _find_callers_in_tree(self, tree: ast.AST, file_path: str):
