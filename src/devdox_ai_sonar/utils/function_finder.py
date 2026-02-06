@@ -809,7 +809,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                 f"⚠️  {len(non_awaited_callers)} callers must add 'await' keyword"
             )
             required_changes.append(
-                f"⚠️  All calling functions may need to become async too (cascading change)"
+                "⚠️  All calling functions may need to become async too (cascading change)"
             )
 
             for caller in non_awaited_callers[:5]:  # Show first 5
