@@ -2692,7 +2692,7 @@ class TestProcessFunctions:
         mock_fix.fixed_code = "# Secure code"
 
         mock_fixer = MagicMock()
-        mock_fixer.generate_fix_by_file.return_value = mock_fix
+        mock_fixer.generate_fix_by_file.return_value = [mock_fix]
 
         auth_config = Mock()
         auth_config.token = "test"
@@ -4761,7 +4761,7 @@ class TestHelperFunctions:
         auth_config, fix_params, sample_fix_suggestion
     ):
         """Test successful single fix processing."""
-        mock_generate.return_value = sample_fix_suggestion
+        mock_generate.return_value = [sample_fix_suggestion]
         issues = [Mock()]
 
         mock_services = {

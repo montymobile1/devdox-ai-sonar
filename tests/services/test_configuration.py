@@ -1,5 +1,6 @@
 
 
+import os
 import pytest
 from unittest.mock import Mock, MagicMock, patch, mock_open, call
 from pathlib import Path
@@ -1242,6 +1243,7 @@ class TestFileSystemInteractions:
         # Cleanup
         config_path.chmod(0o644)
 
+    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
     def test_save_to_readonly_directory(self, tmp_path):
         """Test saving to read-only directory (should fail)."""
         readonly_dir = tmp_path / "readonly"
