@@ -730,8 +730,8 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         # BLOCKING: Has async iterations
         if self.has_async_iterations:
             blocking_issues.append(
-                f"❌ Function uses async iterations (async for) "
-                f"- requires sync equivalents"
+                "❌ Function uses async iterations (async for) "
+                "- requires sync equivalents"
             )
             return ConversionRisk.IMPOSSIBLE
 
