@@ -110,7 +110,7 @@ class SonarFixResponse(BaseModel):
     )
 
     EXPLANATION: Optional[str] = Field(
-        ...,
+        default="",
         description=(
             "Detailed explanation following structured format: "
             "1. Issue Analysis, 2. Fix Strategy, 3. Implementation Details, 4. Validation"
