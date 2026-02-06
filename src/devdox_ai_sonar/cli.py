@@ -789,6 +789,7 @@ def change_field(
     default_value: Optional[Union[str, List[str]]] = None,
     choices: Optional[List[Union[str, Choice]]] = None,
     multiple: bool = True,
+    allow_empty: bool = False,
 ) -> Optional[Union[str, List[str]]]:
     types_input = smart_prompt(
         message, default=default_value, choices=choices, multiple=multiple
@@ -798,6 +799,10 @@ def change_field(
 
     if types:
         manager.set_value(field, types)
+    elif allow_empty and default_value:
+        # User provided empty input but there was a previous value
+        # This means they want to clear it - delete the property from config
+        manager.delete_value(field)
     return types
 
 
@@ -882,6 +887,7 @@ def change_parameters(
             field="configuration.exclude_rules",
             message="Rules to be excluded  (comma-separated, or press Enter to skip)",
             default_value=manager.get_value("configuration.exclude_rules"),
+            allow_empty=True,
         )
         manager.save_config(create_backup=False)
 
