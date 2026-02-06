@@ -722,8 +722,8 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         # BLOCKING: Has async context managers
         if self.has_async_context_managers:
             blocking_issues.append(
-                f"❌ Function uses async context managers (async with) "
-                f"- requires sync equivalents"
+                "❌ Function uses async context managers (async with) "
+                "- requires sync equivalents"
             )
             return ConversionRisk.IMPOSSIBLE
 
