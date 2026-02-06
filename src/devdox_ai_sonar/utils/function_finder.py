@@ -390,7 +390,9 @@ def find_function_implementations(
         Dictionary with 'definitions' and 'calls' lists
     """
     locator = FunctionLocator(function_name)
-    results = {'definitions': [], 'calls': []}
+    
+    # results
+    _ = {'definitions': [], 'calls': []}
 
     for file_path in directory.rglob('*'):
         if file_path.suffix not in extensions:
