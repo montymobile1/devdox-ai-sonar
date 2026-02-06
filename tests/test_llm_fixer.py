@@ -466,10 +466,9 @@ class TestGenerateFixByFile:
             }
 
             result = fixer.generate_fix_by_file(
-                [sample_issue],
-                tmp_path,
-                tmp_path,
-                rule_info,
+                issues=[sample_issue],
+                project_path=tmp_path,
+                tmp_path=tmp_path,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
 
@@ -484,10 +483,9 @@ class TestGenerateFixByFile:
         sample_issue.file = "nonexistent/file.py"
 
         result = fixer.generate_fix_by_file(
-            [sample_issue],
-            tmp_path,
-            tmp_path,
-            rule_info
+            issues=[sample_issue],
+            project_path=tmp_path,
+            tmp_path=tmp_path
         )
 
         assert result is None
@@ -533,10 +531,9 @@ class TestGenerateFixByFile:
             }
 
             result = fixer.generate_fix_by_file(
-                [issue1, issue2],
-                tmp_path,
-                tmp_path,
-                rule_info,
+                issues=[issue1, issue2],
+                project_path=tmp_path,
+                tmp_path=tmp_path,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
 
@@ -575,10 +572,9 @@ class TestGenerateFixByFile:
         )
 
         result = fixer.generate_fix_by_file(
-            [issue1, issue2],
-            tmp_path,
-            tmp_path,
-            rule_info
+            issues=[issue1, issue2],
+            project_path=tmp_path,
+            tmp_path=tmp_path
         )
 
         assert result is None
@@ -597,10 +593,9 @@ class TestGenerateFixByFile:
             }
 
             result = fixer.generate_fix_by_file(
-                [sample_issue],
-                tmp_path,
-                tmp_path,
-                rule_info,
+                issues=[sample_issue],
+                project_path=tmp_path,
+                tmp_path=tmp_path,
                 modified_content=modified_content,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
@@ -624,11 +619,9 @@ class TestGenerateFixByFile:
             }
 
             result = fixer.generate_fix_by_file(
-                [sample_issue],
-                tmp_path,
-                tmp_path,
-                rule_info,
-                error_message=error_msg,
+                issues=[sample_issue],
+                project_path=tmp_path,
+                tmp_path=tmp_path,
                 file_md=str(sample_python_file.relative_to(tmp_path)),
             )
 
@@ -642,10 +635,9 @@ class TestGenerateFixByFile:
             mock_llm.return_value = None
 
             result = fixer.generate_fix_by_file(
-                [sample_issue],
-                tmp_path,
-                tmp_path,
-                rule_info
+                issues=[sample_issue],
+                project_path=tmp_path,
+                tmp_path=tmp_path
             )
 
         assert result is None
@@ -658,10 +650,9 @@ class TestGenerateFixByFile:
             mock_llm.side_effect = Exception("LLM error")
 
             result = fixer.generate_fix_by_file(
-                [sample_issue],
-                tmp_path,
-                tmp_path,
-                rule_info
+                issues=[sample_issue],
+                project_path=tmp_path,
+                tmp_path=tmp_path
             )
 
         assert result is None
@@ -2813,7 +2804,11 @@ Hope this helps!
 
     def test_generate_fix_by_file_empty_issues(self, fixer, tmp_path):
         """Test generating fix with empty issues list"""
-        result = fixer.generate_fix_by_file([], tmp_path,tmp_path, {})
+        result = fixer.generate_fix_by_file(
+            issues=[],
+            project_path=tmp_path,
+            tmp_path=tmp_path
+        )
         assert result is None
 
     def test_apply_fixes_to_file_exception(self, fixer, tmp_path,sample_code_block):
