@@ -324,7 +324,72 @@ class LLMFixer:
         except Exception as e:
             logger.error(f"Error generating fixes: {e}", exc_info=True)
             return None
+    
+    @staticmethod
+    def _resolve_effective_values(
+            code_blocks,
+            modify_line_range: bool,
+            file_path: Path,
+            context: FixContext,
+            line_range: Dict[str, Any],
+    ) -> tuple:
+        """
+        Determine effective file path and line numbers from code blocks.
 
+        If code blocks specify a different file, use those values instead of the originals.
+        """
+        effective_file_path = file_path
+        effective_start_line = context.context_dict.get("start_line")
+        effective_sonar_line = line_range.get("first_line")
+        effective_last_line = line_range.get("last_line", line_range.get("first_line"))
+
+        if not (code_blocks and modify_line_range):
+            return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+        first_block = code_blocks[0]
+        if not (hasattr(first_block, 'file_path') and first_block.file_path):
+            return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+        block_file_path = first_block.file_path
+        if isinstance(block_file_path, str):
+            block_file_path = Path(block_file_path)
+
+        if block_file_path != file_path:
+            effective_file_path = block_file_path
+            effective_start_line = first_block.start_line
+            effective_sonar_line = first_block.start_line
+            effective_last_line = first_block.end_line
+
+        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+    @staticmethod
+    def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str:
+        """Compute relative file path, falling back to absolute if outside project."""
+        try:
+            return str(effective_file_path.relative_to(project_path))
+        except ValueError:
+            return str(effective_file_path)
+
+    def _map_fix_suggestion_to_fix_suggestion_dto(self, line_range, context, code_blocks, fix_response_single, llm_model, relative_file_path, effective_start_line, effective_sonar_line, effective_last_line) -> FixSuggestion:
+        return FixSuggestion(
+            issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
+            original_code=context.code_content,
+            fixed_code_blocks=code_blocks,
+            fixed_code="",
+            import_block_code=fix_response_single.IMPORT_BLOCK,
+            helper_code=fix_response_single.NEW_HELPER_CODE,
+            placement_helper=fix_response_single.PLACEMENT,
+            explanation=fix_response_single.EXPLANATION,
+            confidence=fix_response_single.CONFIDENCE,
+            llm_model=llm_model,
+            rule_description="",
+            file_path=relative_file_path,
+            line_number=effective_start_line,
+            sonar_line_number=effective_sonar_line,
+            end_import_block_code=context.context_dict.get("import_section", {}).get("end_line", 0),
+            last_line_number=effective_last_line,
+        )
+        
     def _build_fix_suggestion(
             self,
             fix_response_list: List[SonarFixResponse],
@@ -353,60 +418,24 @@ class LLMFixer:
         lst_suggestion = []
 
         for fix_response_single in fix_response_list:
-            # Check if any code block has a different file path
             code_blocks = fix_response_single.FIXED_CODE_BLOCKS
 
-            # Determine the effective file path and line numbers
-            # If code blocks specify a different file, use that
+            effective_file_path, effective_start_line, effective_sonar_line, effective_last_line = (
+                self._resolve_effective_values(code_blocks, modify_line_range, file_path, context, line_range)
+            )
 
-            effective_file_path = file_path
-            effective_start_line = context.context_dict.get("start_line")
+            relative_file_path = self._resolve_relative_path(effective_file_path, project_path)
 
-            effective_sonar_line = line_range.get("first_line")
-            effective_last_line = line_range.get("last_line", line_range.get("first_line"))
-
-            if code_blocks and modify_line_range:
-                first_block = code_blocks[0]
-
-                # Override file path if code block specifies a different one
-                if hasattr(first_block, 'file_path') and first_block.file_path:
-                    block_file_path = first_block.file_path
-                    # Handle both Path objects and strings
-                    if isinstance(block_file_path, str):
-                        block_file_path = Path(block_file_path)
-
-                    if block_file_path != file_path:
-                        effective_file_path = block_file_path
-                        # When file path changes, use the code block's line numbers
-                        effective_start_line = first_block.start_line
-                        effective_sonar_line = first_block.start_line
-                        effective_last_line = first_block.end_line
-
-            # Calculate relative file path
-            try:
-                relative_file_path = str(effective_file_path.relative_to(project_path))
-            except ValueError:
-                # If file is outside project_path, use absolute path
-                relative_file_path = str(effective_file_path)
-
-
-            lst_suggestion.append(FixSuggestion(
-                issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
-                original_code=context.code_content,
-                fixed_code_blocks=code_blocks,
-                fixed_code="",
-                import_block_code=fix_response_single.IMPORT_BLOCK,
-                helper_code=fix_response_single.NEW_HELPER_CODE,
-                placement_helper=fix_response_single.PLACEMENT,
-                explanation=fix_response_single.EXPLANATION,
-                confidence=fix_response_single.CONFIDENCE,
+            lst_suggestion.append(self._map_fix_suggestion_to_fix_suggestion_dto(
+                line_range=line_range,
+                context=context,
+                code_blocks=code_blocks,
+                fix_response_single=fix_response_single,
                 llm_model=self.model or "unknown",
-                rule_description="",
-                file_path=relative_file_path,
-                line_number=effective_start_line,
-                sonar_line_number=effective_sonar_line,
-                end_import_block_code=context.context_dict.get("import_section", {}).get("end_line", 0),
-                last_line_number=effective_last_line,
+                relative_file_path=relative_file_path,
+                effective_start_line=effective_start_line,
+                effective_sonar_line=effective_sonar_line,
+                effective_last_line=effective_last_line
             ))
 
         logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
