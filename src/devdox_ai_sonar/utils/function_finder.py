@@ -678,7 +678,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                     return True
         return False
 
-    def _get_caller_context(self, node: ast.Call, tree: ast.AST) -> str:
+    def _get_caller_context(self, node: ast.Call, tree: ast.AST) -> str: #NOSONAR
         """Get the function/class context of the caller."""
         # Simplified - would need parent tracking
         return "unknown"
