@@ -24,6 +24,52 @@ from devdox_ai_sonar.utils.function_finder import (
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_effective_values(
+        code_blocks,
+        file_path: Path,
+        context: FixContext,
+        line_range: Dict[str, Any],
+        modify_line_range: bool = True,
+) -> tuple:
+    """
+    Determine effective file path and line numbers from code blocks.
+
+    If code blocks specify a different file, use those values instead of the originals.
+    """
+    effective_file_path = file_path
+    effective_start_line = context.context_dict.get("start_line")
+    effective_sonar_line = line_range.get("first_line")
+    effective_last_line = line_range.get("last_line", line_range.get("first_line"))
+
+    if not (code_blocks and modify_line_range):
+        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+    first_block = code_blocks[0]
+    if not (hasattr(first_block, 'file_path') and first_block.file_path):
+        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+    block_file_path = first_block.file_path
+    if isinstance(block_file_path, str):
+        block_file_path = Path(block_file_path)
+
+    if block_file_path != file_path:
+        effective_file_path = block_file_path
+        effective_start_line = first_block.start_line
+        effective_sonar_line = first_block.start_line
+        effective_last_line = first_block.end_line
+
+    return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+
+
+def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str:
+    """Compute relative file path, falling back to absolute if outside project."""
+    try:
+        return str(effective_file_path.relative_to(project_path))
+    except ValueError:
+        return str(effective_file_path)
+
+
 AWAIT_REMOVAL_PATTERN = r'\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()'
 
 class RuleHandler(ABC):
@@ -279,39 +325,13 @@ class AsyncToSyncHandler(RuleHandler):
         lst_suggestion = []
 
         for fix_response_single in fix_response_list:
-            # Check if any code block has a different file path
             code_blocks = fix_response_single.FIXED_CODE_BLOCKS
 
-            # Determine the effective file path and line numbers
-            # If code blocks specify a different file, use that
-            effective_file_path = file_path
-            effective_start_line = context.context_dict.get("start_line")
-            effective_sonar_line = line_range.get("first_line")
-            effective_last_line = line_range.get("last_line", line_range.get("first_line"))
+            effective_file_path, effective_start_line, effective_sonar_line, effective_last_line = (
+                _resolve_effective_values(code_blocks, file_path, context, line_range)
+            )
 
-            if code_blocks:
-                first_block = code_blocks[0]
-
-                # Override file path if code block specifies a different one
-                if hasattr(first_block, 'file_path') and first_block.file_path:
-                    block_file_path = first_block.file_path
-                    # Handle both Path objects and strings
-                    if isinstance(block_file_path, str):
-                        block_file_path = Path(block_file_path)
-
-                    if block_file_path != file_path:
-                        effective_file_path = block_file_path
-                        # When file path changes, use the code block's line numbers
-                        effective_start_line = first_block.start_line
-                        effective_sonar_line = first_block.start_line
-                        effective_last_line = first_block.end_line
-
-            # Calculate relative file path
-            try:
-                relative_file_path = str(effective_file_path.relative_to(project_path))
-            except ValueError:
-                # If file is outside project_path, use absolute path
-                relative_file_path = str(effective_file_path)
+            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
 
             lst_suggestion.append(FixSuggestion(
                 issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),

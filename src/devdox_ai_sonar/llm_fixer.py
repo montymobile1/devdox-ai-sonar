@@ -30,7 +30,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     normalize_indentation,
     remove_tmp_files
 )
-from devdox_ai_sonar.services.rule_handler import RuleHandlerRegistry
+from devdox_ai_sonar.services.rule_handler import RuleHandlerRegistry, _resolve_effective_values, _resolve_relative_path
 from devdox_ai_sonar.services.extractor import IssueExtractor
 
 logger = logging.getLogger(__name__)
@@ -325,51 +325,6 @@ class LLMFixer:
             logger.error(f"Error generating fixes: {e}", exc_info=True)
             return None
     
-    @staticmethod
-    def _resolve_effective_values(
-            code_blocks,
-            modify_line_range: bool,
-            file_path: Path,
-            context: FixContext,
-            line_range: Dict[str, Any],
-    ) -> tuple:
-        """
-        Determine effective file path and line numbers from code blocks.
-
-        If code blocks specify a different file, use those values instead of the originals.
-        """
-        effective_file_path = file_path
-        effective_start_line = context.context_dict.get("start_line")
-        effective_sonar_line = line_range.get("first_line")
-        effective_last_line = line_range.get("last_line", line_range.get("first_line"))
-
-        if not (code_blocks and modify_line_range):
-            return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
-
-        first_block = code_blocks[0]
-        if not (hasattr(first_block, 'file_path') and first_block.file_path):
-            return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
-
-        block_file_path = first_block.file_path
-        if isinstance(block_file_path, str):
-            block_file_path = Path(block_file_path)
-
-        if block_file_path != file_path:
-            effective_file_path = block_file_path
-            effective_start_line = first_block.start_line
-            effective_sonar_line = first_block.start_line
-            effective_last_line = first_block.end_line
-
-        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
-
-    @staticmethod
-    def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str:
-        """Compute relative file path, falling back to absolute if outside project."""
-        try:
-            return str(effective_file_path.relative_to(project_path))
-        except ValueError:
-            return str(effective_file_path)
-
     def _map_fix_suggestion_to_fix_suggestion_dto(self, line_range, context, code_blocks, fix_response_single, llm_model, relative_file_path, effective_start_line, effective_sonar_line, effective_last_line) -> FixSuggestion:
         return FixSuggestion(
             issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
@@ -421,10 +376,10 @@ class LLMFixer:
             code_blocks = fix_response_single.FIXED_CODE_BLOCKS
 
             effective_file_path, effective_start_line, effective_sonar_line, effective_last_line = (
-                self._resolve_effective_values(code_blocks, modify_line_range, file_path, context, line_range)
+                _resolve_effective_values(code_blocks, file_path, context, line_range, modify_line_range)
             )
 
-            relative_file_path = self._resolve_relative_path(effective_file_path, project_path)
+            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
 
             lst_suggestion.append(self._map_fix_suggestion_to_fix_suggestion_dto(
                 line_range=line_range,

@@ -38,6 +38,7 @@ from devdox_ai_sonar.models.sonar import (
 
 )
 from devdox_ai_sonar.models.file_structures import FixContext
+from devdox_ai_sonar.services.rule_handler import _resolve_effective_values, _resolve_relative_path
 
 # ============================================================================
 # FIXTURES
@@ -3516,7 +3517,7 @@ def validate(data):
 
 
 class TestResolveEffectiveValues:
-    """Tests for LLMFixer._resolve_effective_values."""
+    """Tests for _resolve_effective_values."""
 
     def _make_context(self, start_line=1):
         return FixContext(
@@ -3540,8 +3541,8 @@ class TestResolveEffectiveValues:
             has_changes=True, change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
         )]
 
-        result = LLMFixer._resolve_effective_values(
-            code_blocks, False, file_path, context, line_range
+        result = _resolve_effective_values(
+            code_blocks, file_path, context, line_range, modify_line_range=False
         )
 
         assert result == (file_path, 10, 5, 7)
@@ -3551,8 +3552,8 @@ class TestResolveEffectiveValues:
         file_path = Path("/project/src/test.py")
         line_range = {"first_line": 5, "last_line": 7}
 
-        result = LLMFixer._resolve_effective_values(
-            [], True, file_path, context, line_range
+        result = _resolve_effective_values(
+            [], file_path, context, line_range
         )
 
         assert result == (file_path, 10, 5, 7)
@@ -3567,8 +3568,8 @@ class TestResolveEffectiveValues:
             file_path=None,
         )]
 
-        result = LLMFixer._resolve_effective_values(
-            code_blocks, True, file_path, context, line_range
+        result = _resolve_effective_values(
+            code_blocks, file_path, context, line_range
         )
 
         assert result == (file_path, 10, 5, 7)
@@ -3583,8 +3584,8 @@ class TestResolveEffectiveValues:
             file_path="/project/src/other.py",
         )]
 
-        eff_path, eff_start, eff_sonar, eff_last = LLMFixer._resolve_effective_values(
-            code_blocks, True, file_path, context, line_range
+        eff_path, eff_start, eff_sonar, eff_last = _resolve_effective_values(
+            code_blocks, file_path, context, line_range
         )
 
         assert eff_path == Path("/project/src/other.py")
@@ -3602,8 +3603,8 @@ class TestResolveEffectiveValues:
             file_path="/project/src/test.py",
         )]
 
-        result = LLMFixer._resolve_effective_values(
-            code_blocks, True, file_path, context, line_range
+        result = _resolve_effective_values(
+            code_blocks, file_path, context, line_range
         )
 
         assert result == (file_path, 10, 5, 7)
@@ -3613,30 +3614,30 @@ class TestResolveEffectiveValues:
         file_path = Path("/project/src/test.py")
         line_range = {"first_line": 5}
 
-        result = LLMFixer._resolve_effective_values(
-            [], False, file_path, context, line_range
+        result = _resolve_effective_values(
+            [], file_path, context, line_range, modify_line_range=False
         )
 
         assert result[3] == 5  # effective_last_line == first_line
 
 
 class TestResolveRelativePath:
-    """Tests for LLMFixer._resolve_relative_path."""
+    """Tests for _resolve_relative_path."""
 
     def test_returns_relative_path(self):
-        result = LLMFixer._resolve_relative_path(
+        result = _resolve_relative_path(
             Path("/project/src/test.py"), Path("/project")
         )
         assert result == "src/test.py"
 
     def test_returns_absolute_when_outside_project(self):
-        result = LLMFixer._resolve_relative_path(
+        result = _resolve_relative_path(
             Path("/other/src/test.py"), Path("/project")
         )
         assert result == "/other/src/test.py"
 
     def test_returns_file_name_when_same_as_project(self):
-        result = LLMFixer._resolve_relative_path(
+        result = _resolve_relative_path(
             Path("/project/file.py"), Path("/project")
         )
         assert result == "file.py"
