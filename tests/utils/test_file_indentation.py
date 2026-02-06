@@ -1252,10 +1252,9 @@ class TestApplySiblingHelper:
         line_range = LineRange(start=1, end=1)
 
         result = apply_sibling_helper(
-            lines,
-            line_range,
-            "fixed_code",
-            "helper_code",
+            lines=lines,
+            line_range=line_range,
+            helper_code="helper_code",
         )
         assert result[0] == "line1\n"
         assert result[1] == "fixed_code"
@@ -1271,10 +1270,9 @@ class TestApplySiblingHelper:
         line_range = LineRange(start=1, end=1)
 
         result = apply_sibling_helper(
-            lines,
-            line_range,
-            "    x = 2",
-            "# comment",
+            lines=lines,
+            line_range=line_range,
+            helper_code="# comment",
         )
         # Fixed code should be indented
         assert "    x = 2" in result[1]
@@ -1288,10 +1286,9 @@ class TestApplySiblingHelper:
 
         helper_code = "def helper():\n    pass"
         result = apply_sibling_helper(
-            lines,
-            line_range,
-            "fixed",
-            helper_code
+            lines=lines,
+            line_range=line_range,
+            helper_code=helper_code
         )
 
         assert "helper()" in ''.join(result)
