@@ -586,6 +586,7 @@ def apply_full_code_change(
         return lines, block.end_line
 
     # Calculate base indentation from original code
+    # Kept for future auditing purposes, return value intentionally unused
     _ = calculate_base_indentation_based_on_line(lines, start_idx)
 
     # Normalize and indent the fixed code

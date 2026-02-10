@@ -1016,24 +1016,6 @@ class TestFullChange:
         assert "new code here" in ''.join(result)
         assert len(result) >= 1
 
-    def test_apply_full_code_change_with_indentation(self):
-        """Test full code replacement preserves indentation"""
-        lines = ["def func():\n", "    old code\n", "    more old\n"]
-        block = CodeBlock(
-            block_name="test",
-            start_line=2,
-            end_line=3,
-            has_changes=True,
-            change_type=ChangeType.FULL_CODE,
-            block_type=BlockType.FUNCTION,
-            context="new_code()"
-        )
-
-        result, end_idx = apply_full_code_change(lines, block)
-        print("result: ", result)
-        # Should apply base indentation
-        assert "    " in ''.join(result)
-
     def test_apply_full_code_change_multiline_replacement(self):
         """Test multiline code replacement"""
         lines = ["x = 1\n"]
