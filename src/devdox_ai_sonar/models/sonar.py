@@ -178,13 +178,16 @@ class SonarFixResponse(BaseModel):
         if not isinstance(v, list):
             return v
 
+        cleaned_blocks = []
         for block in v:
-            if "context" in block and isinstance(block["context"], str):
-                block["context"] = (
-                    block["context"].replace('"""', '"').replace("'''", "'")
-                )
+            if isinstance(block, dict) and isinstance(block.get("context"), str):
+                block = {
+                    **block,
+                    "context": block["context"].replace('"""', '"').replace("'''", "'"),
+                }
+            cleaned_blocks.append(block)
 
-        return v
+        return cleaned_blocks
 
     class Config:
         json_schema_extra = {
