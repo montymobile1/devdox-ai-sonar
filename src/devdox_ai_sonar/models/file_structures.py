@@ -1,7 +1,7 @@
 from typing import Optional, TypedDict, List, Dict, Any
 from pathlib import Path
 from enum import Enum
-from devdox_ai_sonar.models.sonar import FixSuggestion, SonarIssue
+from devdox_ai_sonar.models.sonar import FixSuggestion
 from dataclasses import dataclass
 
 

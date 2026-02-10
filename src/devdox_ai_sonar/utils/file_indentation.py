@@ -1,7 +1,6 @@
 from pathlib import Path
 import shutil
 import tempfile
-import os
 import re
 from git import Repo
 from typing import List, Tuple
@@ -711,7 +710,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
 
         elif change.action == ChangeAction.DELETE:
             if 0 <= line_idx < len(lines):
-                deleted = lines.pop(line_idx)
+                lines.pop(line_idx)
 
     return lines
 

@@ -934,7 +934,7 @@ class LLMFixer:
                 [
                     f"TARGET: Reduce complexity to <{target}",
                     f"- Create at least {min_helpers} helpers in NEW_HELPER_CODE",
-                    f"- Update original function to call them all",
+                    "- Update original function to call them all",
                 ]
             )
         # # Cognitive Complexity
