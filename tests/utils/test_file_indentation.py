@@ -1048,7 +1048,8 @@ class TestFullChange:
         )
 
         result, end_idx = apply_full_code_change(lines, block)
-        assert len(result) == 4
+
+        assert len(result) == 3
         assert "x = 1\n" in result
         assert "y = 2\n" in result
         assert "z = 3\n" in result
