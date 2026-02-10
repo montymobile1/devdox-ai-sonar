@@ -413,7 +413,9 @@ def apply_helper_code(
     placement = fix.placement_helper
     if placement == "GLOBAL_TOP":
         return apply_global_top_helper(
-            lines, line_range, "", helper_code, fix.end_import_block_code or 0
+            lines=lines,
+            helper_code=helper_code,
+            end_import=fix.end_import_block_code or 0
         )
 
     elif placement == "GLOBAL_BOTTOM":
@@ -426,7 +428,11 @@ def apply_helper_code(
 
     else:
         # Unknown placement - default to GLOBAL_TOP
-        return apply_global_top_helper(lines, line_range, "", helper_code, 0)
+        return apply_global_top_helper(
+	            lines=lines,
+	            helper_code=helper_code,
+	            end_import=0
+            )
 
 
 def normalize_code(code: str) -> str:
@@ -834,8 +840,6 @@ def apply_import_block(
 
 def apply_global_top_helper(
     lines: List[str],
-    line_range: LineRange,
-    indented_code: str,
     helper_code: str,
     end_import: int,
 ) -> List[str]:

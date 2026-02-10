@@ -1149,10 +1149,8 @@ class TestGlobalTopHelper:
         helper_code = "CONSTANT = 42"
 
         result = apply_global_top_helper(
-            lines,
-            LineRange(0, 0),
-            "",
-            helper_code,
+            lines=lines,
+            helper_code=helper_code,
             end_import=2
         )
 
@@ -1165,10 +1163,8 @@ class TestGlobalTopHelper:
         helper_code = "CONSTANT = 42\n"
 
         result = apply_global_top_helper(
-            lines,
-            LineRange(0, 0),
-            "",
-            helper_code,
+            lines=lines,
+            helper_code=helper_code,
             end_import=1
         )
 
@@ -1181,10 +1177,8 @@ class TestGlobalTopHelper:
         helper_code = "CONSTANT = 42"  # No newline
 
         result = apply_global_top_helper(
-            lines,
-            LineRange(0, 0),
-            "",
-            helper_code,
+            lines=lines,
+            helper_code=helper_code,
             end_import=1
         )
 
@@ -1197,10 +1191,8 @@ class TestGlobalTopHelper:
         helper_code = "def utility():\n    return True"
 
         result = apply_global_top_helper(
-            lines,
-            LineRange(0, 0),
-            "",
-            helper_code,
+            lines=lines,
+            helper_code=helper_code,
             end_import=1
         )
 
@@ -1213,10 +1205,8 @@ class TestGlobalTopHelper:
         helper_code = "import helper_module"
 
         result = apply_global_top_helper(
-            lines,
-            LineRange(0, 0),
-            "",
-            helper_code,
+            lines=lines,
+            helper_code=helper_code,
             end_import=0
         )
 
