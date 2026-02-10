@@ -3794,14 +3794,14 @@ class TestPrepareFixContext:
         assert result.language == "python"
         assert result.file_path == py_file
 
-    def test_with_modified_content_hits_attribute_error(self, fixer, tmp_path):
-        """modified_content path returns None due to self._extract_problem_lines AttributeError."""
+    def test_with_modified_content_succeeds(self, fixer, tmp_path):
+        """modified_content path succeeds with proper problem line extraction."""
         py_file = tmp_path / "module.py"
         py_file.write_text("import os\n\ndef foo():\n    pass\n")
         line_range = {"first_line": 3, "last_line": 4, "problem_lines": [3]}
 
         result = fixer._prepare_fix_context(py_file, line_range, "custom context")
-        assert result is None
+        assert result is not None
 
     def test_file_not_found_returns_none(self, fixer, tmp_path):
         missing = tmp_path / "missing.py"
