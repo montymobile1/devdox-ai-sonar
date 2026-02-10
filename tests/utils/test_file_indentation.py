@@ -42,7 +42,11 @@ from devdox_ai_sonar.utils.file_indentation import (
     apply_import_block,
     apply_global_top_helper,
     get_method_definition_indent,
-    apply_helper_code
+    apply_helper_code,
+    _apply_single_pattern,
+    _apply_all_patterns,
+    _apply_line_by_line_replacements,
+    _apply_multiline_replacements,
 )
 
 
@@ -3108,3 +3112,146 @@ class TestAplyHelperCode:
 
         # Should still work (likely default to GLOBAL_TOP)
         assert isinstance(result, list)
+
+
+# ============================================================================
+# TEST: _apply_single_pattern
+# ============================================================================
+
+
+class TestApplySinglePattern:
+    """Test _apply_single_pattern helper."""
+
+    def test_literal_replace_all(self):
+        pattern = SearchReplace(search="foo", replace="bar")
+        assert _apply_single_pattern("foo foo foo", pattern) == "bar bar bar"
+
+    def test_literal_replace_with_count(self):
+        pattern = SearchReplace(search="foo", replace="bar", count=2)
+        assert _apply_single_pattern("foo foo foo", pattern) == "bar bar foo"
+
+    def test_regex_replace_all(self):
+        pattern = SearchReplace(search=r"\d+", replace="X", is_regex=True)
+        assert _apply_single_pattern("a1 b2 c3", pattern) == "aX bX cX"
+
+    def test_regex_replace_with_count(self):
+        pattern = SearchReplace(search=r"\d+", replace="X", is_regex=True, count=1)
+        assert _apply_single_pattern("a1 b2 c3", pattern) == "aX b2 c3"
+
+    def test_no_match_returns_unchanged(self):
+        pattern = SearchReplace(search="missing", replace="found")
+        assert _apply_single_pattern("hello world", pattern) == "hello world"
+
+    def test_regex_with_capture_groups(self):
+        pattern = SearchReplace(
+            search=r"(\w+)=(\w+)", replace=r"\2=\1", is_regex=True
+        )
+        assert _apply_single_pattern("key=value", pattern) == "value=key"
+
+
+# ============================================================================
+# TEST: _apply_all_patterns
+# ============================================================================
+
+
+class TestApplyAllPatterns:
+    """Test _apply_all_patterns helper."""
+
+    def test_applies_patterns_sequentially(self):
+        patterns = [
+            SearchReplace(search="a", replace="b"),
+            SearchReplace(search="b", replace="c"),
+        ]
+        # "a" -> "b" -> "c" (sequential, not parallel)
+        assert _apply_all_patterns("a", patterns) == "c"
+
+    def test_empty_patterns_returns_unchanged(self):
+        assert _apply_all_patterns("hello", []) == "hello"
+
+    def test_mixed_literal_and_regex(self):
+        patterns = [
+            SearchReplace(search="hello", replace="hi"),
+            SearchReplace(search=r"\s+", replace="_", is_regex=True),
+        ]
+        assert _apply_all_patterns("hello world", patterns) == "hi_world"
+
+
+# ============================================================================
+# TEST: _apply_line_by_line_replacements
+# ============================================================================
+
+
+class TestApplyLineByLineReplacements:
+    """Test _apply_line_by_line_replacements helper."""
+
+    def test_replaces_matching_lines(self):
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        patterns = [SearchReplace(search="1", replace="100")]
+        result = _apply_line_by_line_replacements(lines, patterns, 0, 3)
+
+        assert result is True
+        assert lines[0] == "x = 100\n"
+        assert lines[1] == "y = 2\n"  # unchanged
+
+    def test_returns_false_when_no_match(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        patterns = [SearchReplace(search="missing", replace="found")]
+        result = _apply_line_by_line_replacements(lines, patterns, 0, 2)
+
+        assert result is False
+        assert lines == ["x = 1\n", "y = 2\n"]
+
+    def test_respects_range_bounds(self):
+        lines = ["a = 1\n", "b = 1\n", "c = 1\n"]
+        patterns = [SearchReplace(search="1", replace="9")]
+        _apply_line_by_line_replacements(lines, patterns, 1, 2)
+
+        assert lines[0] == "a = 1\n"  # out of range, untouched
+        assert lines[1] == "b = 9\n"  # in range
+        assert lines[2] == "c = 1\n"  # out of range
+
+    def test_handles_end_idx_beyond_file(self):
+        lines = ["x = 1\n"]
+        patterns = [SearchReplace(search="1", replace="2")]
+        result = _apply_line_by_line_replacements(lines, patterns, 0, 100)
+
+        assert result is True
+        assert lines[0] == "x = 2\n"
+
+
+# ============================================================================
+# TEST: _apply_multiline_replacements
+# ============================================================================
+
+
+class TestApplyMultilineReplacements:
+    """Test _apply_multiline_replacements helper."""
+
+    def test_replaces_across_joined_lines(self):
+        lines = ["def foo():\n", "    pass\n"]
+        patterns = [SearchReplace(search="def foo():\n    pass", replace="def foo():\n    return 1")]
+        _apply_multiline_replacements(lines, patterns, 0, 2)
+
+        assert lines == ["def foo():\n", "    return 1\n"]
+
+    def test_no_change_when_pattern_not_found(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        original = lines.copy()
+        patterns = [SearchReplace(search="missing", replace="found")]
+        _apply_multiline_replacements(lines, patterns, 0, 2)
+
+        assert lines == original
+
+    def test_preserves_trailing_newline(self):
+        lines = ["hello world\n"]
+        patterns = [SearchReplace(search="world", replace="earth")]
+        _apply_multiline_replacements(lines, patterns, 0, 1)
+
+        assert lines[0].endswith("\n")
+
+    def test_regex_multiline(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        patterns = [SearchReplace(search=r"\d", replace="0", is_regex=True)]
+        _apply_multiline_replacements(lines, patterns, 0, 2)
+
+        assert lines == ["x = 0\n", "y = 0\n"]

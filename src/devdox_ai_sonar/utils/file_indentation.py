@@ -15,6 +15,7 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     ChangeAction,
+    SearchReplace,
 )
 
 logger = logging.getLogger(__name__)
@@ -415,7 +416,7 @@ def apply_helper_code(
         return apply_global_top_helper(
             lines=lines,
             helper_code=helper_code,
-            end_import=fix.end_import_block_code or 0
+            end_import=fix.end_import_block_code or 0,
         )
 
     elif placement == "GLOBAL_BOTTOM":
@@ -429,10 +430,8 @@ def apply_helper_code(
     else:
         # Unknown placement - default to GLOBAL_TOP
         return apply_global_top_helper(
-	            lines=lines,
-	            helper_code=helper_code,
-	            end_import=0
-            )
+            lines=lines, helper_code=helper_code, end_import=0
+        )
 
 
 def normalize_code(code: str) -> str:
@@ -492,6 +491,78 @@ def normalize_code(code: str) -> str:
     return "\n".join(fixed_lines)
 
 
+def _apply_single_pattern(text: str, pattern: SearchReplace) -> str:
+    """Apply a single SearchReplace pattern to a text string."""
+    if pattern.is_regex:
+        count = pattern.count if pattern.count else 0
+        return re.sub(pattern.search, pattern.replace, text, count=count)
+
+    if pattern.count is not None:
+        return text.replace(pattern.search, pattern.replace, pattern.count)
+
+    return text.replace(pattern.search, pattern.replace)
+
+
+def _apply_all_patterns(text: str, patterns: List[SearchReplace]) -> str:
+    """Apply all SearchReplace patterns to a text string sequentially."""
+    for pattern in patterns:
+        text = _apply_single_pattern(text, pattern)
+    return text
+
+
+def _apply_line_by_line_replacements(
+    lines: List[str],
+    replacements: List[SearchReplace],
+    start_idx: int,
+    end_idx: int,
+) -> bool:
+    """
+    Try to apply replacements line by line.
+
+    Returns True if at least one line was modified.
+    """
+    applied = False
+    for i in range(start_idx, min(end_idx, len(lines))):
+        original_line = lines[i]
+        modified_line = _apply_all_patterns(original_line, replacements)
+
+        if modified_line != original_line:
+            lines[i] = modified_line
+            applied = True
+
+    return applied
+
+
+def _apply_multiline_replacements(
+    lines: List[str],
+    replacements: List[SearchReplace],
+    start_idx: int,
+    end_idx: int,
+) -> None:
+    """
+    Apply replacements across a joined block of lines (multiline strategy).
+
+    Mutates `lines` in place if the block text changed.
+    """
+    block_text = "".join(lines[start_idx:end_idx])
+    modified_text = _apply_all_patterns(block_text, replacements)
+
+    if modified_text == block_text:
+        return
+
+    new_lines = modified_text.splitlines(keepends=True)
+
+    # Preserve trailing newline from the original last line
+    if (
+        new_lines
+        and not new_lines[-1].endswith("\n")
+        and lines[end_idx - 1].endswith("\n")
+    ):
+        new_lines[-1] += "\n"
+
+    lines[start_idx:end_idx] = new_lines
+
+
 def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]:
     """
     Apply SEARCH_REPLACE change - find and replace patterns.
@@ -503,75 +574,18 @@ def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]
     Returns:
         Modified lines
     """
-
     if not block.replacements:
         return lines
 
-    # Convert to 0-indexed range
     start_idx = block.start_line - 1
     end_idx = block.end_line
-    applied_line_by_line = False
 
-    # # Strategy 1: Try line-by-line replacement first (for single-line patterns)
-    for i in range(start_idx, min(end_idx, len(lines))):
-        original_line = lines[i]
-        modified_line = original_line
-
-        for pattern in block.replacements:
-            if pattern.is_regex:
-                count = pattern.count if pattern.count else 0
-
-                modified_line = re.sub(
-                    pattern.search, pattern.replace, modified_line, count=count
-                )
-            else:
-                if pattern.count is not None:
-                    modified_line = modified_line.replace(
-                        pattern.search, pattern.replace, pattern.count
-                    )
-
-                else:
-                    modified_line = modified_line.replace(
-                        pattern.search, pattern.replace
-                    )
-
-        if modified_line != original_line:
-            lines[i] = modified_line
-            applied_line_by_line = True
-
-    # Strategy 2: If line-by-line didn't work, try multiline replacement
-    # This handles patterns that span multiple lines
-    if not applied_line_by_line:
-        # Join lines to support multiline search patterns
-        block_text = "".join(lines[start_idx:end_idx])
-        original_block_text = block_text
-        for pattern in block.replacements:
-            if pattern.is_regex:
-                count = pattern.count if pattern.count else 0
-                block_text = re.sub(
-                    pattern.search, pattern.replace, block_text, count=count
-                )
-            else:
-                if pattern.count is not None:
-                    block_text = block_text.replace(
-                        pattern.search, pattern.replace, pattern.count
-                    )
-                else:
-                    block_text = block_text.replace(pattern.search, pattern.replace)
-
-        if block_text != original_block_text:
-            # Split back into lines and update the original list
-            new_lines = block_text.splitlines(keepends=True)
-
-            # Ensure the last line has a newline if it didn't before
-            if (
-                new_lines
-                and not new_lines[-1].endswith("\n")
-                and lines[end_idx - 1].endswith("\n")
-            ):
-                new_lines[-1] += "\n"
-
-            lines[start_idx:end_idx] = new_lines
+    # Strategy 1: Try line-by-line replacement first (for single-line patterns)
+    if not _apply_line_by_line_replacements(
+        lines, block.replacements, start_idx, end_idx
+    ):
+        # Strategy 2: Fall back to multiline replacement
+        _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
 
     return lines
 
