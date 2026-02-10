@@ -47,6 +47,12 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_all_patterns,
     _apply_line_by_line_replacements,
     _apply_multiline_replacements,
+    _has_own_indentation,
+    _replace_line_preserving_indent,
+    _try_replace_at_corrected_line,
+    _apply_replace_action,
+    _apply_insert_action,
+    _apply_delete_action,
 )
 
 
@@ -720,6 +726,170 @@ class TestChangeReplace:
         result = apply_diff_change(lines, block)
         # Should use find_line_by_content to correct line number
         assert "z = 300" in ''.join(result)
+
+class TestHasOwnIndentation:
+    def test_space_indented(self):
+        assert _has_own_indentation("    code") is True
+
+    def test_tab_indented(self):
+        assert _has_own_indentation("\tcode") is True
+
+    def test_no_indentation(self):
+        assert _has_own_indentation("code") is False
+
+    def test_empty_string(self):
+        assert _has_own_indentation("") is False
+
+    def test_single_space(self):
+        assert _has_own_indentation(" ") is True
+
+
+class TestReplaceLinePreservingIndent:
+    def test_new_content_with_own_indentation(self):
+        lines = ["    old_code\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="old_code", new="    new_code")
+        _replace_line_preserving_indent(lines, 0, change)
+        assert lines[0] == "    new_code\n"
+
+    def test_new_content_without_indentation_preserves_original(self):
+        lines = ["    old_code\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="old_code", new="new_code")
+        _replace_line_preserving_indent(lines, 0, change)
+        assert lines[0] == "    new_code\n"
+
+    def test_no_original_indentation(self):
+        lines = ["old_code\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="old_code", new="new_code")
+        _replace_line_preserving_indent(lines, 0, change)
+        assert lines[0] == "new_code\n"
+
+    def test_tab_indented_new_content(self):
+        lines = ["    old_code\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="old_code", new="\tnew_code")
+        _replace_line_preserving_indent(lines, 0, change)
+        assert lines[0] == "\tnew_code\n"
+
+    def test_strips_trailing_whitespace_from_indented_new(self):
+        lines = ["    old_code\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="old_code", new="    new_code   ")
+        _replace_line_preserving_indent(lines, 0, change)
+        assert lines[0] == "    new_code\n"
+
+
+class TestTryReplaceAtCorrectedLine:
+    def test_corrects_line_and_replaces(self):
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="z = 3", new="z = 300")
+        _try_replace_at_corrected_line(lines, change, 1, 3)
+        assert lines[2] == "z = 300\n"
+        assert change.line == 3
+
+    def test_no_match_leaves_lines_unchanged(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        original = lines.copy()
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="not_found", new="replacement")
+        _try_replace_at_corrected_line(lines, change, 1, 2)
+        assert lines == original
+
+    def test_content_found_but_strip_mismatch_no_replace(self):
+        lines = ["x = 1\n", "# y = 2 something\n", "z = 3\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="y = 2", new="y = 200")
+        _try_replace_at_corrected_line(lines, change, 1, 3)
+        # find_line_by_content uses 'in' check so it matches, but strip equality fails
+        assert "y = 200" not in lines[1]
+
+
+class TestApplyReplaceAction:
+    def test_direct_match_replaces(self):
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        change = LineChange(line=2, action=ChangeAction.REPLACE, old="y = 2", new="y = 200")
+        _apply_replace_action(lines, change, 1, 3)
+        assert lines[1] == "y = 200\n"
+
+    def test_none_new_does_nothing(self):
+        lines = ["x = 1\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="x = 1", new=None)
+        _apply_replace_action(lines, change, 1, 1)
+        assert lines[0] == "x = 1\n"
+
+    def test_none_old_does_nothing(self):
+        lines = ["x = 1\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old=None, new="x = 2")
+        _apply_replace_action(lines, change, 1, 1)
+        assert lines[0] == "x = 1\n"
+
+    def test_mismatch_falls_back_to_corrected_line(self):
+        lines = ["x = 1\n", "y = 2\n", "z = 3\n"]
+        change = LineChange(line=1, action=ChangeAction.REPLACE, old="z = 3", new="z = 300")
+        _apply_replace_action(lines, change, 1, 3)
+        assert "z = 300" in "".join(lines)
+
+    def test_preserves_indentation_on_replace(self):
+        lines = ["def func():\n", "    old_code\n"]
+        change = LineChange(line=2, action=ChangeAction.REPLACE, old="old_code", new="new_code")
+        _apply_replace_action(lines, change, 1, 2)
+        assert lines[1] == "    new_code\n"
+
+
+class TestApplyInsertAction:
+    def test_inserts_new_line(self):
+        lines = ["line1\n", "line3\n"]
+        change = LineChange(line=2, action=ChangeAction.INSERT, new="line2")
+        _apply_insert_action(lines, change)
+        assert len(lines) == 3
+        assert "line2" in lines[1]
+
+    def test_none_new_does_nothing(self):
+        lines = ["line1\n", "line2\n"]
+        original_len = len(lines)
+        change = LineChange(line=2, action=ChangeAction.INSERT, new=None)
+        _apply_insert_action(lines, change)
+        assert len(lines) == original_len
+
+    def test_inserts_at_beginning(self):
+        lines = ["line1\n", "line2\n"]
+        change = LineChange(line=1, action=ChangeAction.INSERT, new="line0")
+        _apply_insert_action(lines, change)
+        assert len(lines) == 3
+        assert "line0" in lines[0]
+
+
+class TestApplyDeleteAction:
+    def test_deletes_valid_line(self):
+        lines = ["line1\n", "line2\n", "line3\n"]
+        change = LineChange(line=2, action=ChangeAction.DELETE)
+        _apply_delete_action(lines, change)
+        assert len(lines) == 2
+        assert lines[0] == "line1\n"
+        assert lines[1] == "line3\n"
+
+    def test_out_of_bounds_does_nothing(self):
+        lines = ["line1\n", "line2\n"]
+        change = LineChange(line=100, action=ChangeAction.DELETE)
+        _apply_delete_action(lines, change)
+        assert len(lines) == 2
+
+    def test_negative_index_does_nothing(self):
+        lines = ["line1\n", "line2\n"]
+        change = LineChange(line=0, action=ChangeAction.DELETE)
+        _apply_delete_action(lines, change)
+        # line 0 -> line_idx = -1, guard catches it
+        assert len(lines) == 2
+
+    def test_deletes_last_line(self):
+        lines = ["line1\n", "line2\n"]
+        change = LineChange(line=2, action=ChangeAction.DELETE)
+        _apply_delete_action(lines, change)
+        assert len(lines) == 1
+        assert lines[0] == "line1\n"
+
+    def test_deletes_first_line(self):
+        lines = ["line1\n", "line2\n"]
+        change = LineChange(line=1, action=ChangeAction.DELETE)
+        _apply_delete_action(lines, change)
+        assert len(lines) == 1
+        assert lines[0] == "line2\n"
+
 
 class TestApplySingleChange:
     def test_apply_single_code_block_full_code_type(self):

@@ -15,6 +15,7 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     ChangeAction,
+    LineChange,
     SearchReplace,
 )
 
@@ -646,6 +647,79 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
     return lines, end_idx
 
 
+def _has_own_indentation(text: str) -> bool:
+    """Check if text has its own leading indentation (spaces or tabs)."""
+    return text.startswith(" ") or text.startswith("\t")
+
+
+def _replace_line_preserving_indent(
+    lines: List[str], line_idx: int, change: LineChange
+) -> None:
+    """Replace a line, preserving original indentation when new content has none."""
+    if _has_own_indentation(change.new):
+        lines[line_idx] = change.new.rstrip() + "\n"
+    else:
+        original_indent = calculate_base_indentation(lines[line_idx])
+        lines[line_idx] = " " * original_indent + change.new.strip() + "\n"
+    print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
+
+
+def _try_replace_at_corrected_line(
+    lines: List[str],
+    change: LineChange,
+    start_line: int,
+    end_line: int,
+) -> None:
+    """Find the correct line by content and apply the replacement there."""
+    corrected_line = find_line_by_content(
+        lines[start_line:end_line], change.old, start_line
+    )
+    if not corrected_line:
+        return
+
+    logger.info(f"Corrected line {change.line} -> {corrected_line}")
+    change.line = corrected_line
+    line_idx = change.line - 1
+
+    if change.old.strip() == lines[line_idx].strip():
+        _replace_line_preserving_indent(lines, line_idx, change)
+
+
+def _apply_replace_action(
+    lines: List[str],
+    change: LineChange,
+    start_line: int,
+    end_line: int,
+) -> None:
+    """Apply a single REPLACE change to lines."""
+    if change.new is None or change.old is None:
+        return
+
+    line_idx = change.line - 1
+
+    if change.old.strip() == lines[line_idx].strip():
+        _replace_line_preserving_indent(lines, line_idx, change)
+    else:
+        _try_replace_at_corrected_line(lines, change, start_line, end_line)
+
+
+def _apply_insert_action(lines: List[str], change: LineChange) -> None:
+    """Apply a single INSERT change to lines."""
+    if change.new is None:
+        return
+    line_idx = change.line - 1
+    indent = calculate_base_indentation_based_on_line(lines, line_idx)
+    new_line = indent + change.new.strip() + "\n"
+    lines.insert(line_idx, new_line)
+
+
+def _apply_delete_action(lines: List[str], change: LineChange) -> None:
+    """Apply a single DELETE change to lines."""
+    line_idx = change.line - 1
+    if 0 <= line_idx < len(lines):
+        lines.pop(line_idx)
+
+
 def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
     """
     Apply DIFF change - modify specific lines.
@@ -659,15 +733,11 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
     """
     if not block.changes:
         return lines
-    start_line = block.start_line
-    end_line = block.end_line
 
     # Sort changes by line number (descending) to avoid index shifting
     sorted_changes = sorted(block.changes, key=lambda c: c.line, reverse=True)
 
     for change in sorted_changes:
-        # Convert to 0-indexed
-
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
@@ -675,57 +745,11 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
             continue
 
         if change.action == ChangeAction.REPLACE:
-            if change.new is not None and change.old is not None:
-                # Preserve original indentation if new line doesn't specify it
-                original_indent = calculate_base_indentation(lines[line_idx])
-                new_content = change.new.strip()
-
-                if change.old.strip() == lines[line_idx].strip():
-                    # Check if new content has its own indentation
-                    if change.new.startswith(" ") or change.new.startswith("\t"):
-                        lines[line_idx] = change.new.rstrip() + "\n"
-
-                    else:
-                        lines[line_idx] = " " * original_indent + new_content + "\n"
-
-                    print(
-                        f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}"
-                    )
-                else:
-                    corrected_line = find_line_by_content(
-                        lines[start_line:end_line], change.old, start_line
-                    )
-
-                    if corrected_line:
-                        logger.info(f"Corrected line {change.line} -> {corrected_line}")
-
-                        change.line = corrected_line
-                        line_idx = change.line - 1
-                        if change.old.strip() == lines[line_idx].strip():
-                            # Check if new content has its own indentation
-                            if change.new.startswith(" ") or change.new.startswith(
-                                "\t"
-                            ):
-                                lines[line_idx] = change.new.rstrip() + "\n"
-                            else:
-                                lines[line_idx] = (
-                                    " " * original_indent + new_content + "\n"
-                                )
-
-                            print(
-                                f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}"
-                            )
-
+            _apply_replace_action(lines, change, block.start_line, block.end_line)
         elif change.action == ChangeAction.INSERT:
-            if change.new is not None:
-                # Get indentation from surrounding context
-                indent = calculate_base_indentation_based_on_line(lines, line_idx)
-                new_line = indent + change.new.strip() + "\n"
-                lines.insert(line_idx, new_line)
-
+            _apply_insert_action(lines, change)
         elif change.action == ChangeAction.DELETE:
-            if 0 <= line_idx < len(lines):
-                lines.pop(line_idx)
+            _apply_delete_action(lines, change)
 
     return lines
 
