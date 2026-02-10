@@ -575,8 +575,10 @@ def apply_full_code_change(
         return lines, 0
 
     # Convert to 0-indexed
-    start_idx = block.start_line - 1
-    end_idx = block.end_line -1
+
+    start_idx = max(0, block.start_line - 1)
+    end_idx = max(0, block.end_line -1)
+
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
@@ -594,14 +596,18 @@ def apply_full_code_change(
     new_lines = [line + "\n" for line in new_lines]
 
     # Replace the lines
-    lines[start_idx:end_idx] = new_lines
+    if start_idx>end_idx:
+        lines[start_idx:end_idx] = new_lines
+    else:
+        lines[start_idx:end_idx+1] = new_lines
 
 
     print(f"[FULL_CODE] Replaced lines {block.start_line}-{block.end_line} "
           f"({end_idx - start_idx} lines) with {len(new_lines)} lines")
-    #if len(new_lines) > 1 and len(new_lines)+block.start_line != block.end_line -1 :
+
     if len(new_lines) > 1 :
         end_idx = len(new_lines)+block.start_line -1
+
         print(f"Warning: Full code block has {len(new_lines)} lines, expected {end_idx - start_idx + 1}")
 
 
