@@ -15,22 +15,22 @@ from devdox_ai_sonar.models.sonar import (
     BlockType,
     LineChange,
     ChangeAction,
-    SearchReplace
+    SearchReplace,
 )
 from devdox_ai_sonar.utils.function_finder import (
     detect_original_function_type,
-    AsyncConversionAnalyzer
+    AsyncConversionAnalyzer,
 )
 
 logger = logging.getLogger(__name__)
 
 
 def _resolve_effective_values(
-        code_blocks,
-        file_path: Path,
-        context: FixContext,
-        line_range: Dict[str, Any],
-        modify_line_range: bool = True,
+    code_blocks,
+    file_path: Path,
+    context: FixContext,
+    line_range: Dict[str, Any],
+    modify_line_range: bool = True,
 ) -> tuple:
     """
     Determine effective file path and line numbers from code blocks.
@@ -43,11 +43,21 @@ def _resolve_effective_values(
     effective_last_line = line_range.get("last_line", line_range.get("first_line"))
 
     if not (code_blocks and modify_line_range):
-        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+        return (
+            effective_file_path,
+            effective_start_line,
+            effective_sonar_line,
+            effective_last_line,
+        )
 
     first_block = code_blocks[0]
-    if not (hasattr(first_block, 'file_path') and first_block.file_path):
-        return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+    if not (hasattr(first_block, "file_path") and first_block.file_path):
+        return (
+            effective_file_path,
+            effective_start_line,
+            effective_sonar_line,
+            effective_last_line,
+        )
 
     block_file_path = first_block.file_path
     if isinstance(block_file_path, str):
@@ -59,7 +69,12 @@ def _resolve_effective_values(
         effective_sonar_line = first_block.start_line
         effective_last_line = first_block.end_line
 
-    return effective_file_path, effective_start_line, effective_sonar_line, effective_last_line
+    return (
+        effective_file_path,
+        effective_start_line,
+        effective_sonar_line,
+        effective_last_line,
+    )
 
 
 def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str:
@@ -70,7 +85,8 @@ def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str
         return str(effective_file_path)
 
 
-AWAIT_REMOVAL_PATTERN = r'\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()'
+AWAIT_REMOVAL_PATTERN = r"\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()"
+
 
 class RuleHandler(ABC):
     """Abstract base class for rule-specific fix handlers."""
@@ -90,12 +106,12 @@ class RuleHandler(ABC):
 
     @abstractmethod
     def generate_fixes(
-            self,
-            issues: List[Union[SonarIssue, SonarSecurityIssue]],
-            context: FixContext,
-            project_path: Path,
-            file_path: Path,
-            llm_caller: Any  # Forward reference to avoid circular import
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any,  # Forward reference to avoid circular import
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fix suggestions for the given issues.
@@ -128,12 +144,12 @@ class AsyncToSyncHandler(RuleHandler):
         return rule == self.RULE_ID
 
     def generate_fixes(
-            self,
-            issues: List[Union[SonarIssue, SonarSecurityIssue]],
-            context: FixContext,
-            project_path: Path,
-            file_path: Path,
-            llm_caller: Any = None
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for async-to-sync conversion.
@@ -156,41 +172,38 @@ class AsyncToSyncHandler(RuleHandler):
             # Step 1: Detect function type
             function_info = detect_original_function_type(source_lines.strip(), 1)
 
-            if not function_info.get('found'):
+            if not function_info.get("found"):
                 logger.warning("Could not detect function type for async conversion")
                 return None
 
             # Step 2: Build code block for function definition
             function_block = self._create_function_definition_block(
-                function_info,
-                context
+                function_info, context
             )
             code_blocks.append(function_block)
 
             # Step 3: Analyze call sites
-            analyzer = AsyncConversionAnalyzer(function_info['name'], project_path)
+            analyzer = AsyncConversionAnalyzer(function_info["name"], project_path)
             analysis = analyzer.analyze()
 
-
             # Step 4: Generate code blocks for all awaited call sites
-            caller_blocks = self._create_caller_blocks(
-                analysis,
-                function_info
-            )
+            caller_blocks = self._create_caller_blocks(analysis, function_info)
             for blocks in caller_blocks:
 
                 if blocks.file_path == file_path:
 
                     code_blocks.append(blocks)
                 else:
-                    response_lst.append(SonarFixResponse(
-                IMPORT_BLOCK="",
-                FIXED_CODE_BLOCKS=[blocks],
-                NEW_HELPER_CODE="",
-                PLACEMENT="SIBLING",
-                EXPLANATION="",
-                CONFIDENCE=0.95
-            ))
+                    response_lst.append(
+                        SonarFixResponse(
+                            IMPORT_BLOCK="",
+                            FIXED_CODE_BLOCKS=[blocks],
+                            NEW_HELPER_CODE="",
+                            PLACEMENT="SIBLING",
+                            EXPLANATION="",
+                            CONFIDENCE=0.95,
+                        )
+                    )
 
                     # Step 5: Build unified response
                 explanation = (
@@ -203,15 +216,16 @@ class AsyncToSyncHandler(RuleHandler):
                 f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
             )
 
-            response_lst.append(SonarFixResponse(
-                IMPORT_BLOCK="",
-                FIXED_CODE_BLOCKS=code_blocks,
-                NEW_HELPER_CODE="",
-                PLACEMENT="SIBLING",
-                EXPLANATION=explanation,
-                CONFIDENCE=0.95
-            ))
-
+            response_lst.append(
+                SonarFixResponse(
+                    IMPORT_BLOCK="",
+                    FIXED_CODE_BLOCKS=code_blocks,
+                    NEW_HELPER_CODE="",
+                    PLACEMENT="SIBLING",
+                    EXPLANATION=explanation,
+                    CONFIDENCE=0.95,
+                )
+            )
 
             return response_lst
         except Exception as e:
@@ -219,32 +233,29 @@ class AsyncToSyncHandler(RuleHandler):
             logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
             return None
 
-
     def _create_function_definition_block(
-            self,
-            function_info: Dict[str, Any],
-            context: FixContext
+        self, function_info: Dict[str, Any], context: FixContext
     ) -> CodeBlock:
         """Create code block for the function definition (remove 'async' keyword)."""
 
         # Extract the original definition
-        original_def = function_info['definition']
+        original_def = function_info["definition"]
         new_def = original_def.replace("async def", "def")
 
         # Find function start line in context
-        function_names = context.context_dict.get('functions', [])
+        function_names = context.context_dict.get("functions", [])
         start_line = 0
 
         for func in function_names:
-            if func['name'] == function_info['name']:
-                start_line = func['start_line']
+            if func["name"] == function_info["name"]:
+                start_line = func["start_line"]
                 break
 
         # Calculate actual line number
-        actual_line = start_line + function_info['start_line']
+        actual_line = start_line + function_info["start_line"]
 
         return CodeBlock(
-            block_name=function_info['name'],
+            block_name=function_info["name"],
             start_line=actual_line,
             end_line=actual_line + 1,
             has_changes=True,
@@ -255,43 +266,41 @@ class AsyncToSyncHandler(RuleHandler):
                     line=actual_line - 1,
                     action=ChangeAction.REPLACE,
                     old=original_def,
-                    new=new_def
+                    new=new_def,
                 )
-            ]
+            ],
         )
 
     def _create_caller_blocks(
-            self,
-            analysis: Any,
-            function_info: Dict[str, Any]
+        self, analysis: Any, function_info: Dict[str, Any]
     ) -> List[CodeBlock]:
         """Create code blocks for all call sites that use 'await'."""
 
         blocks = []
 
         for caller in analysis.caller_impact:
-            if not caller.get('awaited'):
+            if not caller.get("awaited"):
                 continue  # Only fix awaited calls
 
             # Build code block for removing 'await'
             block = CodeBlock(
-                block_name=function_info['name'],
-                start_line=caller['line'],
-                end_line=caller['line'],
+                block_name=function_info["name"],
+                start_line=caller["line"],
+                end_line=caller["line"],
                 has_changes=True,
                 change_type=ChangeType.SEARCH_REPLACE,
                 block_type=BlockType.FUNCTION,
                 replacements=[
                     SearchReplace(
                         search=AWAIT_REMOVAL_PATTERN.format(
-                            func_name=re.escape(function_info['name'])
+                            func_name=re.escape(function_info["name"])
                         ),
                         replace="",
                         is_regex=True,
-                        count=None
+                        count=None,
                     )
                 ],
-                file_path=caller['file']
+                file_path=caller["file"],
             )
 
             blocks.append(block)
@@ -299,12 +308,12 @@ class AsyncToSyncHandler(RuleHandler):
         return blocks
 
     def _build_fix_suggestion(
-            self,
-            fix_response_list: List[SonarFixResponse],
-            context: FixContext,
-            file_path: Path,
-            project_path: Path,
-            line_range: Dict[str, Any]
+        self,
+        fix_response_list: List[SonarFixResponse],
+        context: FixContext,
+        file_path: Path,
+        project_path: Path,
+        line_range: Dict[str, Any],
     ) -> List[FixSuggestion]:
         """
         Build FixSuggestion objects from SonarFixResponse list.
@@ -327,33 +336,45 @@ class AsyncToSyncHandler(RuleHandler):
         for fix_response_single in fix_response_list:
             code_blocks = fix_response_single.FIXED_CODE_BLOCKS
 
-            effective_file_path, effective_start_line, effective_sonar_line, effective_last_line = (
-                _resolve_effective_values(code_blocks, file_path, context, line_range)
+            (
+                effective_file_path,
+                effective_start_line,
+                effective_sonar_line,
+                effective_last_line,
+            ) = _resolve_effective_values(code_blocks, file_path, context, line_range)
+
+            relative_file_path = _resolve_relative_path(
+                effective_file_path, project_path
             )
 
-            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
-
-            lst_suggestion.append(FixSuggestion(
-                issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
-                original_code=context.code_content,
-                fixed_code_blocks=code_blocks,
-                fixed_code="",
-                import_block_code=fix_response_single.IMPORT_BLOCK,
-                helper_code=fix_response_single.NEW_HELPER_CODE,
-                placement_helper=fix_response_single.PLACEMENT,
-                explanation=fix_response_single.EXPLANATION,
-                confidence=fix_response_single.CONFIDENCE,
-                llm_model=self.model or "unknown",
-                rule_description="",
-                file_path=relative_file_path,
-                line_number=effective_start_line,
-                sonar_line_number=effective_sonar_line,
-                end_import_block_code=context.context_dict.get("import_section", {}).get("end_line", 0),
-                last_line_number=effective_last_line,
-            ))
+            lst_suggestion.append(
+                FixSuggestion(
+                    issue_key=self._generate_fix_key(
+                        line_range.get("problem_lines", [])
+                    ),
+                    original_code=context.code_content,
+                    fixed_code_blocks=code_blocks,
+                    fixed_code="",
+                    import_block_code=fix_response_single.IMPORT_BLOCK,
+                    helper_code=fix_response_single.NEW_HELPER_CODE,
+                    placement_helper=fix_response_single.PLACEMENT,
+                    explanation=fix_response_single.EXPLANATION,
+                    confidence=fix_response_single.CONFIDENCE,
+                    llm_model=self.model or "unknown",
+                    rule_description="",
+                    file_path=relative_file_path,
+                    line_number=effective_start_line,
+                    sonar_line_number=effective_sonar_line,
+                    end_import_block_code=context.context_dict.get(
+                        "import_section", {}
+                    ).get("end_line", 0),
+                    last_line_number=effective_last_line,
+                )
+            )
 
         logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
         return lst_suggestion
+
 
 class CognitiveComplexityHandler(RuleHandler):
     """
@@ -370,12 +391,12 @@ class CognitiveComplexityHandler(RuleHandler):
         return rule == self.RULE_ID
 
     def generate_fixes(
-            self,
-            issues: List[Union[SonarIssue, SonarSecurityIssue]],
-            context: FixContext,
-            project_path: Path,
-            file_path: Path,
-            llm_caller: Any
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for cognitive complexity issues.
@@ -396,18 +417,14 @@ class CognitiveComplexityHandler(RuleHandler):
                 context,
                 context.file_path.suffix,
                 {},  # rule_info will be populated by caller
-                error_message=""
+                error_message="",
             )
-
 
             return [fix_response]
 
         except Exception as e:
             logger.error(f"Error in CognitiveComplexityHandler: {e}", exc_info=True)
             return None
-
-
-
 
 
 class DefaultRuleHandler(RuleHandler):
@@ -425,12 +442,12 @@ class DefaultRuleHandler(RuleHandler):
         return True
 
     def generate_fixes(
-            self,
-            issues: List[Union[SonarIssue, SonarSecurityIssue]],
-            context: FixContext,
-            project_path: Path,
-            file_path: Path,
-            llm_caller: Any
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes using standard LLM approach.
@@ -455,7 +472,7 @@ class DefaultRuleHandler(RuleHandler):
                 context,
                 context.file_path.suffix,
                 {},  # rule_info populated by caller
-                error_message=""
+                error_message="",
             )
 
             return [fix_response]

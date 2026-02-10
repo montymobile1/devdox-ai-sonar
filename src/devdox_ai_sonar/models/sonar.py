@@ -2,30 +2,34 @@ from enum import Enum
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional, Dict, Any, TypedDict, Tuple, Union
-from pydantic import BaseModel, Field, ConfigDict,  field_validator, model_validator
+from pydantic import BaseModel, Field, ConfigDict, field_validator, model_validator
 
 project_key = "Project key"
 
+
 class BlockType(str, Enum):
     """Valid code block types."""
+
     FUNCTION = "function"
     CLASS = "class"
     METHOD = "method"
     MODULE = "module"
 
-class ChangeType(str, Enum):
-    FULL_CODE = "FULL_CODE"           # Complete function (small functions)
-    DIFF = "DIFF"                      # Line-level changes
-    SEARCH_REPLACE = "SEARCH_REPLACE"  # Pattern replacement
 
+class ChangeType(str, Enum):
+    FULL_CODE = "FULL_CODE"  # Complete function (small functions)
+    DIFF = "DIFF"  # Line-level changes
+    SEARCH_REPLACE = "SEARCH_REPLACE"  # Pattern replacement
 
 
 class PlacementType(str, Enum):
     """Valid placement options for NEW_HELPER_CODE."""
+
     SIBLING = "SIBLING"
     GLOBAL_TOP = "GLOBAL_TOP"
     GLOBAL_BOTTOM = "GLOBAL_BOTTOM"
     INSIDE_CLASS = "INSIDE_CLASS"
+
 
 class ChangeAction(str, Enum):
     REPLACE = "replace"
@@ -35,9 +39,10 @@ class ChangeAction(str, Enum):
 
 class LineChange(BaseModel):
     line: int
-    action: ChangeAction # "replace", "insert", "delete"
+    action: ChangeAction  # "replace", "insert", "delete"
     old: Optional[str] = None
     new: Optional[str] = None
+
 
 class SearchReplace(BaseModel):
     search: str
@@ -77,7 +82,7 @@ class SonarFixResponse(BaseModel):
         description=(
             "Updated import section as a string with newlines (\\n), "
             "or empty string if no changes needed"
-        )
+        ),
     )
 
     FIXED_CODE_BLOCKS: List[CodeBlock] = Field(
@@ -87,7 +92,7 @@ class SonarFixResponse(BaseModel):
             "or module-level code section. Include all blocks provided in input, "
             "marking has_changes=true for modified blocks."
         ),
-        min_length=1
+        min_length=1,
     )
 
     NEW_HELPER_CODE: str = Field(
@@ -95,7 +100,7 @@ class SonarFixResponse(BaseModel):
         description=(
             "Any new helper functions or constants to add, "
             "or empty string if none needed"
-        )
+        ),
     )
 
     PLACEMENT: PlacementType = Field(
@@ -106,7 +111,7 @@ class SonarFixResponse(BaseModel):
             "GLOBAL_TOP (after imports), "
             "GLOBAL_BOTTOM (end of file), "
             "INSIDE_CLASS (within a class)"
-        )
+        ),
     )
 
     EXPLANATION: Optional[str] = Field(
@@ -114,7 +119,7 @@ class SonarFixResponse(BaseModel):
         description=(
             "Detailed explanation following structured format: "
             "1. Issue Analysis, 2. Fix Strategy, 3. Implementation Details, 4. Validation"
-        )
+        ),
     )
 
     CONFIDENCE: float = Field(
@@ -127,10 +132,10 @@ class SonarFixResponse(BaseModel):
             "<0.5 = very low confidence"
         ),
         ge=0.0,
-        le=1.0
+        le=1.0,
     )
 
-    @field_validator('FIXED_CODE_BLOCKS')
+    @field_validator("FIXED_CODE_BLOCKS")
     @classmethod
     def validate_has_changes(cls, v):
         """Ensure at least one block has changes."""
@@ -138,24 +143,22 @@ class SonarFixResponse(BaseModel):
             raise ValueError("At least one code block must have has_changes=True")
         return v
 
-
-
-    @model_validator(mode='after')
+    @model_validator(mode="after")
     def validate_helper_code_placement(self):
         """If NEW_HELPER_CODE exists, ensure PLACEMENT is set appropriately."""
         if self.NEW_HELPER_CODE and self.PLACEMENT == PlacementType.SIBLING:
             # Verify at least one function exists for SIBLING placement
             if not any(
-                    block.block_type in [BlockType.FUNCTION, BlockType.METHOD]
-                    and block.has_changes
-                    for block in self.FIXED_CODE_BLOCKS
+                block.block_type in [BlockType.FUNCTION, BlockType.METHOD]
+                and block.has_changes
+                for block in self.FIXED_CODE_BLOCKS
             ):
                 raise ValueError(
                     "SIBLING placement requires at least one modified function/method"
                 )
         return self
 
-    @field_validator('NEW_HELPER_CODE', 'IMPORT_BLOCK', mode='before')
+    @field_validator("NEW_HELPER_CODE", "IMPORT_BLOCK", mode="before")
     @classmethod
     def clean_triple_quotes(cls, v: str) -> str:
         """Remove triple quotes from code strings."""
@@ -168,7 +171,7 @@ class SonarFixResponse(BaseModel):
 
         return v
 
-    @field_validator('FIXED_CODE_BLOCKS', mode='before')
+    @field_validator("FIXED_CODE_BLOCKS", mode="before")
     @classmethod
     def clean_code_blocks(cls, v: List[dict]) -> List[dict]:
         """Clean triple quotes from code blocks."""
@@ -176,8 +179,10 @@ class SonarFixResponse(BaseModel):
             return v
 
         for block in v:
-            if 'context' in block and isinstance(block['context'], str):
-                block['context'] = block['context'].replace('"""', '"').replace("'''", "'")
+            if "context" in block and isinstance(block["context"], str):
+                block["context"] = (
+                    block["context"].replace('"""', '"').replace("'''", "'")
+                )
 
         return v
 
@@ -194,7 +199,7 @@ class SonarFixResponse(BaseModel):
                         "is_complete_function": True,
                         "block_type": "function",
                         "block_name": "validate_email",
-                        "has_changes": True
+                        "has_changes": True,
                     },
                     {
                         "context": "def validate_phone(phone: str) -> bool:\n    pattern = PHONE_REGEX\n    return bool(re.match(pattern, phone))",
@@ -204,7 +209,7 @@ class SonarFixResponse(BaseModel):
                         "is_complete_function": True,
                         "block_type": "function",
                         "block_name": "validate_phone",
-                        "has_changes": True
+                        "has_changes": True,
                     },
                     {
                         "context": "class UserValidator:\n    def __init__(self):\n        self.email_validator = validate_email\n        self.phone_validator = validate_phone",
@@ -214,16 +219,15 @@ class SonarFixResponse(BaseModel):
                         "is_complete_function": True,
                         "block_type": "class",
                         "block_name": "UserValidator",
-                        "has_changes": False
-                    }
+                        "has_changes": False,
+                    },
                 ],
                 "NEW_HELPER_CODE": "EMAIL_REGEX = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$'\nPHONE_REGEX = r'^\\+?1?\\d{9,15}$'",
                 "PLACEMENT": "GLOBAL_TOP",
                 "EXPLANATION": "### 1. Issue Analysis\n- Sonar Rule: python:S1192\n- Root Cause: Duplicated string literals\n\n### 2. Fix Strategy\n- Extract to constants\n\n### 3. Implementation Details\n- Created EMAIL_REGEX and PHONE_REGEX constants\n\n### 4. Validation\n- Syntax confirmed\n- Logic preserved",
-                "CONFIDENCE": 0.92
+                "CONFIDENCE": 0.92,
             }
         }
-
 
 
 class SonarType(str, Enum):
@@ -263,7 +267,7 @@ class SonarCloudConfig(BaseModel):
     organization: str = Field(..., description="SonarCloud organization key")
     project: str = Field(..., description="SonarCloud project key")
     project_path: str = Field(..., description="Path to local project directory")
-    git_url:str = Field(..., description="Git URL for the project")
+    git_url: str = Field(..., description="Git URL for the project")
 
     def validate(self) -> Tuple[bool, Optional[str]]:
         """Validate SonarCloud configuration."""
@@ -283,7 +287,6 @@ class SonarCloudConfig(BaseModel):
             return False, "Git URL cannot be empty"
         if not self.git_url.endswith(".git"):
             return False, "Git URL must end with .git"
-
 
         return True, None
 
@@ -459,11 +462,13 @@ class FixSuggestion(BaseModel):
             "Each block is a complete function/class/module section. "
             "Blocks with has_changes=True contain the actual fixes."
         ),
-        min_length=1
+        min_length=1,
     )
     helper_code: Optional[str] = Field("", description="Additional helper code")
     import_block_code: Optional[str] = Field("", description="Import block code")
-    end_import_block_code: Optional[int] = Field(None, description="End import block code")
+    end_import_block_code: Optional[int] = Field(
+        None, description="End import block code"
+    )
     placement_helper: Optional[str] = Field(
         "", description="Additional helper code for placing the fix"
     )
@@ -518,6 +523,7 @@ class FixResult(BaseModel):
 @dataclass
 class ValidationResult:
     """Result of issue group validation."""
+
     is_valid: bool
     file_path: Optional[Path] = None
     file_path_tmp: Optional[Path] = None

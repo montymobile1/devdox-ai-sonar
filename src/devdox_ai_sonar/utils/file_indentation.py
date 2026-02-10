@@ -11,7 +11,12 @@ from devdox_ai_sonar.models.file_structures import (
     FixApplication,
     ImportState,
 )
-from devdox_ai_sonar.models.sonar import FixSuggestion, CodeBlock, ChangeType, ChangeAction
+from devdox_ai_sonar.models.sonar import (
+    FixSuggestion,
+    CodeBlock,
+    ChangeType,
+    ChangeAction,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +76,7 @@ def generate_tmp_path() -> str:
     tmp_dir = tempfile.mkdtemp(
         prefix="devdox_",
         suffix="_test",
-        dir=None  # Uses system temp dir (respects TMPDIR env var)
+        dir=None,  # Uses system temp dir (respects TMPDIR env var)
     )
     return tmp_dir
 
@@ -148,39 +153,37 @@ def calculate_base_indentation_based_on_line(lines: List[str], line_number: int)
 
 
 def apply_sibling_helper(
-        lines: List[str],
-        line_range: LineRange,
-        helper_code: str,
+    lines: List[str],
+    line_range: LineRange,
+    helper_code: str,
 ) -> List[str]:
     """Apply fix with sibling helper code at the same indentation level."""
     # For SIBLING helpers, we need METHOD definition indent, not body indent
     # Extract the original method to find its definition indent
-    original_method_lines = lines[line_range.start: line_range.end + 1]
+    original_method_lines = lines[line_range.start : line_range.end + 1]
 
-    original_method_code = '\n'.join(original_method_lines)
+    original_method_code = "\n".join(original_method_lines)
 
     # method_def_indent
     _ = get_method_definition_indent(original_method_code)
-    
+
     # Apply method definition indent to helper (not body indent!)
     indented_helper = helper_code.replace("\\n", "\n")
 
     try:
-        lines[ line_range.end ] = indented_helper +"\n"
+        lines[line_range.end] = indented_helper + "\n"
     except IndexError:
 
-        lines [len(lines)-1] = indented_helper
+        lines[len(lines) - 1] = indented_helper
     return lines
 
 
-def apply_global_bottom_helper(
-        lines: List[str], helper_code: str
-) -> List[str]:
-
+def apply_global_bottom_helper(lines: List[str], helper_code: str) -> List[str]:
 
     # Append helper at bottom
     lines.extend(["\n", helper_code, "\n"])
     return lines
+
 
 def find_import_insertion_point(lines: List[str]) -> int:
     """
@@ -211,7 +214,7 @@ def find_import_insertion_point(lines: List[str]) -> int:
 
 
 def process_import_line(
-        i: int, line: str, lines: List[str], state: ImportState
+    i: int, line: str, lines: List[str], state: ImportState
 ) -> Tuple[ImportState, bool]:
     """Process a single line for import detection."""
 
@@ -251,7 +254,7 @@ def process_import_line(
 
 
 def handle_docstring(
-        i: int, stripped: str, state: ImportState
+    i: int, stripped: str, state: ImportState
 ) -> Tuple[bool, ImportState]:
     if not state.get("in_docstring"):
         if stripped.startswith('"""') or stripped.startswith("'''"):
@@ -276,12 +279,12 @@ def handle_docstring(
 
 
 def is_shebang_or_encoding(
-        i: int, stripped: str, state: ImportState
+    i: int, stripped: str, state: ImportState
 ) -> Tuple[bool, ImportState]:
     if (
-            i < 3
-            and stripped.startswith("#")
-            and ("coding" in stripped or "encoding" in stripped)
+        i < 3
+        and stripped.startswith("#")
+        and ("coding" in stripped or "encoding" in stripped)
     ):
         state["last_shebang_encoding_line"] = i
         return True, state
@@ -305,7 +308,7 @@ def normalize_indentation(lines: List[str]) -> List[str]:
         return lines
 
     # Find minimum indentation of non-empty lines
-    min_indent = 10 ** 9
+    min_indent = 10**9
     for line in lines:
         if line.strip():  # Non-empty line
             stripped = line.lstrip()
@@ -334,7 +337,7 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
     and we just need to shift the entire block to start at base_indent.
     """
 
-    no_whitespace = ''.join(fixed_code.split())
+    no_whitespace = "".join(fixed_code.split())
     if not no_whitespace:
         return fixed_code
 
@@ -344,7 +347,7 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
         return fixed_code
 
     # Find the minimum indentation in the fixed code (excluding empty lines)
-    non_empty_lines = [line for line in lines if ''.join(line.split())]
+    non_empty_lines = [line for line in lines if "".join(line.split())]
     if not non_empty_lines:
         return fixed_code
 
@@ -352,7 +355,7 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
     # Remove the minimum indentation from all lines, then add base_indent
     indented_lines = []
     for line in lines:
-        no_whitespace_line = ''.join(line)
+        no_whitespace_line = "".join(line)
         if no_whitespace_line:  # Non-empty line
             # Remove min_indent, then add base_indent
             dedented = line[min_indent:] if len(line) > min_indent else line.lstrip()
@@ -368,32 +371,36 @@ def apply_indentation_to_fix(fixed_code: str, base_indent: str) -> str:
 
 
 def apply_complex_fix(
-        lines: List[str], fix: FixSuggestion, line_range: LineRange
+    lines: List[str], fix: FixSuggestion, line_range: LineRange
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
     modified_blocks = fix.fixed_code_blocks
 
     for block in modified_blocks:
-        lines , end_line= apply_single_code_block(lines, block)
-        if end_line ==0:
-            if block.end_line > block.start_line and block.end_line> line_range.end:
+        lines, end_line = apply_single_code_block(lines, block)
+        if end_line == 0:
+            if block.end_line > block.start_line and block.end_line > line_range.end:
                 end_line = block.end_line
         line_range = LineRange(block.start_line, end_line)
 
-    #Step 2: Apply helper code if present
+    # Step 2: Apply helper code if present
     if fix.helper_code:
         lines = apply_helper_code(lines, line_range, fix)
 
     if fix.import_block_code:
 
-        lines = apply_import_block(lines, fix.import_block_code, fix.end_import_block_code)
+        lines = apply_import_block(
+            lines, fix.import_block_code, fix.end_import_block_code
+        )
 
     #
 
     return lines
 
 
-def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion) -> List[str]:
+def apply_helper_code(
+    lines: List[str], line_range: LineRange, fix: FixSuggestion
+) -> List[str]:
     """
     Apply helper code based on placement strategy.
 
@@ -407,23 +414,22 @@ def apply_helper_code(lines: List[str],line_range:LineRange,  fix: FixSuggestion
     helper_code = fix.helper_code.replace("\\n", "\n")
     placement = fix.placement_helper
     if placement == "GLOBAL_TOP":
-        return apply_global_top_helper(lines,line_range ,"",helper_code,fix.end_import_block_code)
+        return apply_global_top_helper(
+            lines, line_range, "", helper_code, fix.end_import_block_code
+        )
 
     elif placement == "GLOBAL_BOTTOM":
-        return apply_global_bottom_helper(lines,helper_code)
+        return apply_global_bottom_helper(lines, helper_code)
 
     elif placement == "SIBLING":
         return apply_sibling_helper(
-        lines=lines,
-        line_range=line_range,
-        helper_code=helper_code
+            lines=lines, line_range=line_range, helper_code=helper_code
         )
-
 
     else:
 
         # Unknown placement - default to GLOBAL_TOP
-        return apply_global_top_helper(lines, line_range,"",helper_code,0)
+        return apply_global_top_helper(lines, line_range, "", helper_code, 0)
 
 
 def normalize_code(code: str) -> str:
@@ -451,7 +457,7 @@ def normalize_code(code: str) -> str:
         # Check if this is a standalone quote (potential broken docstring)
         if stripped in ('"', "'"):
             quote_char = stripped
-            indent = line[:len(line) - len(line.lstrip())]
+            indent = line[: len(line) - len(line.lstrip())]
 
             # Look for closing quote
             closing_found = False
@@ -463,9 +469,9 @@ def normalize_code(code: str) -> str:
                     closing_found = True
 
                     # Add triple-quoted docstring
-                    fixed_lines.append(f'{indent}{quote_char * 3}')
+                    fixed_lines.append(f"{indent}{quote_char * 3}")
                     fixed_lines.extend(docstring_content)
-                    fixed_lines.append(f'{indent}{quote_char * 3}')
+                    fixed_lines.append(f"{indent}{quote_char * 3}")
 
                     i = j + 1
                     break
@@ -483,10 +489,7 @@ def normalize_code(code: str) -> str:
     return "\n".join(fixed_lines)
 
 
-def apply_search_replace_change(
-        lines: List[str],
-        block: CodeBlock
-) -> List[str]:
+def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]:
     """
     Apply SEARCH_REPLACE change - find and replace patterns.
 
@@ -515,13 +518,19 @@ def apply_search_replace_change(
             if pattern.is_regex:
                 count = pattern.count if pattern.count else 0
 
-                modified_line = re.sub(pattern.search, pattern.replace, modified_line, count=count)
+                modified_line = re.sub(
+                    pattern.search, pattern.replace, modified_line, count=count
+                )
             else:
                 if pattern.count is not None:
-                    modified_line = modified_line.replace(pattern.search, pattern.replace, pattern.count)
+                    modified_line = modified_line.replace(
+                        pattern.search, pattern.replace, pattern.count
+                    )
 
                 else:
-                    modified_line = modified_line.replace(pattern.search, pattern.replace)
+                    modified_line = modified_line.replace(
+                        pattern.search, pattern.replace
+                    )
 
         if modified_line != original_line:
             lines[i] = modified_line
@@ -531,15 +540,19 @@ def apply_search_replace_change(
     # This handles patterns that span multiple lines
     if not applied_line_by_line:
         # Join lines to support multiline search patterns
-        block_text = ''.join(lines[start_idx:end_idx])
+        block_text = "".join(lines[start_idx:end_idx])
         original_block_text = block_text
         for pattern in block.replacements:
             if pattern.is_regex:
                 count = pattern.count if pattern.count else 0
-                block_text = re.sub(pattern.search, pattern.replace, block_text, count=count)
+                block_text = re.sub(
+                    pattern.search, pattern.replace, block_text, count=count
+                )
             else:
                 if pattern.count is not None:
-                    block_text = block_text.replace(pattern.search, pattern.replace, pattern.count)
+                    block_text = block_text.replace(
+                        pattern.search, pattern.replace, pattern.count
+                    )
                 else:
                     block_text = block_text.replace(pattern.search, pattern.replace)
 
@@ -548,19 +561,19 @@ def apply_search_replace_change(
             new_lines = block_text.splitlines(keepends=True)
 
             # Ensure the last line has a newline if it didn't before
-            if new_lines and not new_lines[-1].endswith('\n') and lines[end_idx - 1].endswith('\n'):
-                new_lines[-1] += '\n'
+            if (
+                new_lines
+                and not new_lines[-1].endswith("\n")
+                and lines[end_idx - 1].endswith("\n")
+            ):
+                new_lines[-1] += "\n"
 
             lines[start_idx:end_idx] = new_lines
 
     return lines
 
 
-
-def apply_full_code_change(
-        lines: List[str],
-        block: CodeBlock
-) -> Tuple[List[str],int]:
+def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str], int]:
     """
     Apply FULL_CODE change - replace entire block with new code.
 
@@ -577,8 +590,7 @@ def apply_full_code_change(
     # Convert to 0-indexed
 
     start_idx = max(0, block.start_line - 1)
-    end_idx = max(0, block.end_line -1)
-
+    end_idx = max(0, block.end_line - 1)
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
@@ -597,28 +609,27 @@ def apply_full_code_change(
     new_lines = [line + "\n" for line in new_lines]
 
     # Replace the lines
-    if start_idx>end_idx:
+    if start_idx > end_idx:
         lines[start_idx:end_idx] = new_lines
     else:
-        lines[start_idx:end_idx+1] = new_lines
+        lines[start_idx : end_idx + 1] = new_lines
 
+    print(
+        f"[FULL_CODE] Replaced lines {block.start_line}-{block.end_line} "
+        f"({end_idx - start_idx} lines) with {len(new_lines)} lines"
+    )
 
-    print(f"[FULL_CODE] Replaced lines {block.start_line}-{block.end_line} "
-          f"({end_idx - start_idx} lines) with {len(new_lines)} lines")
+    if len(new_lines) > 1:
+        end_idx = len(new_lines) + block.start_line - 1
 
-    if len(new_lines) > 1 :
-        end_idx = len(new_lines)+block.start_line -1
-
-        print(f"Warning: Full code block has {len(new_lines)} lines, expected {end_idx - start_idx + 1}")
-
+        print(
+            f"Warning: Full code block has {len(new_lines)} lines, expected {end_idx - start_idx + 1}"
+        )
 
     return lines, end_idx
 
 
-def apply_diff_change(
-        lines: List[str],
-        block: CodeBlock
-) -> List[str]:
+def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
     """
     Apply DIFF change - modify specific lines.
 
@@ -640,7 +651,6 @@ def apply_diff_change(
     for change in sorted_changes:
         # Convert to 0-indexed
 
-
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
@@ -656,18 +666,20 @@ def apply_diff_change(
                 if change.old.strip() == lines[line_idx].strip():
 
                     # Check if new content has its own indentation
-                    if change.new.startswith(' ') or change.new.startswith('\t'):
+                    if change.new.startswith(" ") or change.new.startswith("\t"):
 
                         lines[line_idx] = change.new.rstrip() + "\n"
 
                     else:
                         lines[line_idx] = " " * original_indent + new_content + "\n"
 
-
-                    print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
+                    print(
+                        f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}"
+                    )
                 else:
-                    corrected_line = find_line_by_content(lines[start_line:end_line], change.old, start_line)
-
+                    corrected_line = find_line_by_content(
+                        lines[start_line:end_line], change.old, start_line
+                    )
 
                     if corrected_line:
                         logger.info(f"Corrected line {change.line} -> {corrected_line}")
@@ -677,12 +689,18 @@ def apply_diff_change(
                         if change.old.strip() == lines[line_idx].strip():
 
                             # Check if new content has its own indentation
-                            if change.new.startswith(' ') or change.new.startswith('\t'):
+                            if change.new.startswith(" ") or change.new.startswith(
+                                "\t"
+                            ):
                                 lines[line_idx] = change.new.rstrip() + "\n"
                             else:
-                                lines[line_idx] = " " * original_indent + new_content + "\n"
+                                lines[line_idx] = (
+                                    " " * original_indent + new_content + "\n"
+                                )
 
-                            print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
+                            print(
+                                f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}"
+                            )
 
         elif change.action == ChangeAction.INSERT:
             if change.new is not None:
@@ -691,20 +709,14 @@ def apply_diff_change(
                 new_line = indent + change.new.strip() + "\n"
                 lines.insert(line_idx, new_line)
 
-
         elif change.action == ChangeAction.DELETE:
             if 0 <= line_idx < len(lines):
                 deleted = lines.pop(line_idx)
 
-
     return lines
 
 
-def find_line_by_content(
-        lines: list[str],
-        content: str,
-        start_line: int
-) -> int | None:
+def find_line_by_content(lines: list[str], content: str, start_line: int) -> int | None:
     """Find the actual line number by matching content."""
     content_stripped = content.strip()
 
@@ -715,16 +727,18 @@ def find_line_by_content(
     return None
 
 
-def apply_single_code_block(lines: List[str], block: CodeBlock) -> Tuple[List[str],int]:
-    print("block.change_type ",block.change_type)
+def apply_single_code_block(
+    lines: List[str], block: CodeBlock
+) -> Tuple[List[str], int]:
+    print("block.change_type ", block.change_type)
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 
     elif block.change_type == ChangeType.DIFF:
-        return apply_diff_change(lines, block),0
+        return apply_diff_change(lines, block), 0
     elif block.change_type == ChangeType.SEARCH_REPLACE:
 
-        return apply_search_replace_change(lines, block),0
+        return apply_search_replace_change(lines, block), 0
     else:
         print(f"Warning: Unknown change_type '{block.change_type}'")
         return lines, 0
@@ -737,11 +751,11 @@ def find_code_start(lines: List[str]) -> int:
     idx = 0
 
     # Skip shebang
-    if lines and lines[0].startswith('#!'):
+    if lines and lines[0].startswith("#!"):
         idx = 1
 
     # Skip encoding declaration
-    if idx < len(lines) and 'coding' in lines[idx]:
+    if idx < len(lines) and "coding" in lines[idx]:
         idx += 1
 
     # Skip module docstring
@@ -765,7 +779,9 @@ def find_code_start(lines: List[str]) -> int:
     return idx
 
 
-def apply_import_block(lines: List[str], import_block: str, end_block_import: int) -> List[str]:
+def apply_import_block(
+    lines: List[str], import_block: str, end_block_import: int
+) -> List[str]:
     """
     Apply/update import block at the top of the file.
 
@@ -775,12 +791,14 @@ def apply_import_block(lines: List[str], import_block: str, end_block_import: in
     """
     # Normalize import block
     import_lines = import_block.replace("\\n", "\n").split("\n")
-    import_lines = [line + "\n" if not line.endswith("\n") else line
-                    for line in import_lines if line.strip()]
-
+    import_lines = [
+        line + "\n" if not line.endswith("\n") else line
+        for line in import_lines
+        if line.strip()
+    ]
 
     # Find end of existing imports
-    import_end_idx  = end_block_import
+    import_end_idx = end_block_import
     if import_end_idx == 0:
         # No existing imports - insert at top (after shebang/encoding if present)
         insert_idx = find_code_start(lines)
@@ -793,12 +811,14 @@ def apply_import_block(lines: List[str], import_block: str, end_block_import: in
         else:
             # No blank line, just insert at end_block_import
 
-            lines = lines[:end_block_import] + import_lines + ["\n"] + lines[end_block_import:]
+            lines = (
+                lines[:end_block_import]
+                + import_lines
+                + ["\n"]
+                + lines[end_block_import:]
+            )
 
     return lines
-
-
-
 
 
 # def find_global_top_insertion_point(lines: List[str]) -> int:
@@ -818,8 +838,13 @@ def apply_import_block(lines: List[str], import_block: str, end_block_import: in
 #     return len(lines)
 #
 
+
 def apply_global_top_helper(
-        lines: List[str], line_range: LineRange, indented_code: str, helper_code: str, end_import: int
+    lines: List[str],
+    line_range: LineRange,
+    indented_code: str,
+    helper_code: str,
+    end_import: int,
 ) -> List[str]:
     """Apply fix with global top helper code."""
 
@@ -827,7 +852,6 @@ def apply_global_top_helper(
     helper_with_newline = (
         helper_code if helper_code.endswith("\n") else helper_code + "\n"
     )
-
 
     lines.insert(end_import, helper_with_newline + "\n")
     return lines
@@ -840,7 +864,7 @@ def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
     if not line_range:
         return FixApplication(fix, False, "Missing line numbers"), lines
     if not line_range.is_valid(len(lines)):
-        return FixApplication(fix, False, "Invalid line range"),lines
+        return FixApplication(fix, False, "Invalid line range"), lines
 
     # Handle complex fix with helper code
     lines = apply_complex_fix(lines, fix, line_range)
@@ -855,11 +879,11 @@ def get_method_definition_indent(code_chunk: str) -> str:
         async def _fetch_user_profiles(self):  # <- This line's indent (0 spaces for class methods)
             pass  # <- Body indent (4 spaces)
     """
-    lines = code_chunk.split('\n')
+    lines = code_chunk.split("\n")
 
     for line in lines:
         # Match 'def' or 'async def'
-        match = re.match(r'^(\s*)(?:async\s+)?def\s+', line)
+        match = re.match(r"^(\s*)(?:async\s+)?def\s+", line)
         if match:
             return match.group(1)  # Return leading whitespace before 'def'
 

@@ -119,7 +119,12 @@ class SonarCloudConfigUI:
         if not project_path:
             return None
 
-        git_url = SonarCloudConfigUI.prompt_with_default("Git URL for the project","git_url",existing_config.get("git_url"),required=True)
+        git_url = SonarCloudConfigUI.prompt_with_default(
+            "Git URL for the project",
+            "git_url",
+            existing_config.get("git_url"),
+            required=True,
+        )
         if not git_url:
             return None
 
@@ -128,7 +133,7 @@ class SonarCloudConfigUI:
             organization=organization,
             project=project,
             project_path=project_path,
-            git_url=git_url
+            git_url=git_url,
         )
 
         # Validate configuration

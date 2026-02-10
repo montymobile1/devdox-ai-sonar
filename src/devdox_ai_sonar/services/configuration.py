@@ -43,7 +43,13 @@ class AuthConfig:
         git_url = data.get("git_url")
 
         # Validate all are present and non-empty
-        if not token or not organization or not project or not project_path or not git_url:
+        if (
+            not token
+            or not organization
+            or not project
+            or not project_path
+            or not git_url
+        ):
             return None
 
         # Safe to create now - all values validated as non-None, non-empty strings
@@ -52,7 +58,7 @@ class AuthConfig:
             organization=organization,
             project=project,
             project_path=project_path,
-            git_url=git_url
+            git_url=git_url,
         )
 
     def validate(self) -> tuple[bool, Optional[str]]:
@@ -102,7 +108,7 @@ class ConfigService:
             "organization": None,
             "project": None,
             "project_path": None,
-            "git_url": None
+            "git_url": None,
         }
         try:
             if self.sonar_path.exists():
@@ -113,7 +119,7 @@ class ConfigService:
                         "organization": config.get("SONAR_ORG"),
                         "project": config.get("SONAR_PROJ"),
                         "project_path": config.get("PROJECT_PATH"),
-                        "git_url": config.get("GIT_URL")
+                        "git_url": config.get("GIT_URL"),
                     }
         except (json.JSONDecodeError, IOError) as e:
             console.print(f"[yellow]Warning: Could not read auth.json: {e}[/yellow]")
@@ -158,7 +164,12 @@ class ConfigService:
         return True
 
     def save_config(
-        self, token: str, organization: str, project: str, project_path: str, git_url: str
+        self,
+        token: str,
+        organization: str,
+        project: str,
+        project_path: str,
+        git_url: str,
     ) -> bool:
         """Save authentication configuration"""
 
@@ -171,7 +182,9 @@ class ConfigService:
         ):
             console.print("[red]Cancelled[/red]")
             return False
-        success = self.save_complete_config(token, organization, project, project_path,git_url)
+        success = self.save_complete_config(
+            token, organization, project, project_path, git_url
+        )
 
         return success
 
@@ -217,7 +230,7 @@ class ConfigService:
                     "organization": None,
                     "project": None,
                     "project_path": None,
-                    "git_url": None
+                    "git_url": None,
                 }
 
             # Prepare new config
@@ -261,7 +274,7 @@ class ConfigService:
 
     def check_all_value_empty(self, auth_config: dict) -> bool:
         """Check if any value in the auth_config is empty."""
-        required_keys = ["token", "organization", "project", "project_path","git_url"]
+        required_keys = ["token", "organization", "project", "project_path", "git_url"]
 
         missing_or_empty = [k for k in required_keys if not auth_config.get(k)]
 
