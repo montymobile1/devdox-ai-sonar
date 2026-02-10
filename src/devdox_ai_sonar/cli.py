@@ -1259,9 +1259,13 @@ def _process_and_fix_issues(
 
     tmp_path = generate_tmp_path()
 
+    if not branch_downloaded:
+        console.print("[red]Could not determine branch to download[/red]")
+        raise click.Abort()
+
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
     downloaded = download_latest_version(
-        auth_config.git_url, tmp_path, branch_downloaded or ""
+        auth_config.git_url, tmp_path, branch_downloaded
     )
     if not downloaded:
         console.print("Not able to download latest version")

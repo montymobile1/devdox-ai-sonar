@@ -6,7 +6,7 @@ import shutil
 
 import subprocess
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from pathlib import Path
 import json
 from pydantic import ValidationError
@@ -22,6 +22,7 @@ from devdox_ai_sonar.models.sonar import (
     FixSuggestion,
     FixResult,
     SonarFixResponse,
+    CodeBlock,
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
@@ -187,7 +188,7 @@ class LLMFixer:
         file_md: Path,
         fix_response: SonarFixResponse,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
-        original_code: Any,
+        original_code: Dict[str, Any],
     ) -> None:
         # Ensure parent directory exists
         file_md.parent.mkdir(parents=True, exist_ok=True)
@@ -329,13 +330,13 @@ class LLMFixer:
         self,
         line_range: Dict[str, Any],
         context: FixContext,
-        code_blocks: Any,
+        code_blocks: List[CodeBlock],
         fix_response_single: SonarFixResponse,
         llm_model: str,
         relative_file_path: str,
-        effective_start_line: Any,
-        effective_sonar_line: Any,
-        effective_last_line: Any,
+        effective_start_line: Optional[int],
+        effective_sonar_line: Optional[int],
+        effective_last_line: Optional[int],
     ) -> FixSuggestion:
         return FixSuggestion(
             issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
@@ -1095,10 +1096,10 @@ class LLMFixer:
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         context: FixContext,
-        rule_info_list: Dict[str, Any],
+        rule_info_list: Dict[str, Dict[str, Any]],
         language: str = "python",
         error_message: str = "",
-    ) -> Tuple[str, Any]:
+    ) -> Tuple[str, Template]:
         """Create a concise, focused prompt for the LLM to generate a fix."""
 
         # 1. Context Setup
