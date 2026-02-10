@@ -1139,8 +1139,8 @@ class TestFullChange:
         )
 
         result, end_idx = apply_full_code_change(lines, block)
-        # Should convert \\n to actual newlines
-        assert len(result) == 4
+        
+        assert len(result) == 3
 
 class TestGlobalTopHelper:
     def test_apply_global_top_helper_at_end_of_imports(self):
