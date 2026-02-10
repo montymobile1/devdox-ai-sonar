@@ -189,9 +189,7 @@ class AsyncToSyncHandler(RuleHandler):
             # Step 4: Generate code blocks for all awaited call sites
             caller_blocks = self._create_caller_blocks(analysis, function_info)
             for blocks in caller_blocks:
-
                 if blocks.file_path == file_path:
-
                     code_blocks.append(blocks)
                 else:
                     response_lst.append(

@@ -234,7 +234,6 @@ class FixValidator:
                     and each_block.context is None
                     and each_block.change_type == ChangeType.FULL_CODE
                 ):
-
                     matching_block = next(
                         (
                             block
@@ -442,7 +441,6 @@ class FixValidator:
         return response.parsed
 
     def _call_openai_validator(self, prompt: str) -> Optional[str]:
-
         response = self.client.responses.parse(
             model=self.model,
             input=[

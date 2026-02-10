@@ -682,9 +682,7 @@ class LLMFixer:
         prompt_system = system_template.render()
 
         try:
-
             if self.provider == "openai":
-
                 response = self.client.responses.parse(
                     model=self.model,
                     input=[
@@ -1037,7 +1035,6 @@ class LLMFixer:
 
         # Unused Code
         elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
-
             strategies_list.append("• Remove ONLY the specific unused variable/import.")
             strategies_list.append(
                 "• Do not break code that references adjacent lines."
@@ -1140,9 +1137,9 @@ class LLMFixer:
                 filtered_steps.append("• Print or Log the unused parameters.")
 
                 rule_info_list[rule_key]["how_to_fix"]["steps"] = filtered_steps
-                rule_info_list[rule_key][
-                    "name"
-                ] = "Be sure that every parameter is used"
+                rule_info_list[rule_key]["name"] = (
+                    "Be sure that every parameter is used"
+                )
                 rule_info_list[rule_key]["root_cause"] = None
 
             strategies = self._extend_strategies_for_issue(
@@ -1404,7 +1401,6 @@ class LLMFixer:
 
             if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
                 try:
-
                     fix_data = json.loads(cleaned_content)
 
                     return self._extract_fields_from_parsed_json(fix_data)
@@ -1550,7 +1546,6 @@ class LLMFixer:
             lines = read_file_lines(file_path)
             results = []
             for fix in fixes:
-
                 result, lines = apply_single_fix(lines, fix)
 
                 if not result.success:
@@ -1566,7 +1561,6 @@ class LLMFixer:
 
                 results.append(result)
                 if result.success:
-
                     write_file_lines(file_path, lines)
                     remove_tmp_files(file_path_tmp)
 
@@ -1782,7 +1776,6 @@ class LLMFixer:
                                     f".tmp{file_path.suffix}"
                                 )
                                 if file_path_tmp.exists():
-
                                     with open(
                                         file_path_tmp, "r", encoding="utf-8"
                                     ) as f:
@@ -1869,7 +1862,6 @@ class LLMFixer:
                                 )
 
                     else:
-
                         # No validator available, mark all as failed
                         result.failed_fixes.extend(
                             [

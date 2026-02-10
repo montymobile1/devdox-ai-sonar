@@ -172,13 +172,11 @@ def apply_sibling_helper(
     try:
         lines[line_range.end] = indented_helper + "\n"
     except IndexError:
-
         lines[len(lines) - 1] = indented_helper
     return lines
 
 
 def apply_global_bottom_helper(lines: List[str], helper_code: str) -> List[str]:
-
     # Append helper at bottom
     lines.extend(["\n", helper_code, "\n"])
     return lines
@@ -387,7 +385,6 @@ def apply_complex_fix(
         lines = apply_helper_code(lines, line_range, fix)
 
     if fix.import_block_code:
-
         lines = apply_import_block(
             lines, fix.import_block_code, fix.end_import_block_code
         )
@@ -426,7 +423,6 @@ def apply_helper_code(
         )
 
     else:
-
         # Unknown placement - default to GLOBAL_TOP
         return apply_global_top_helper(lines, line_range, "", helper_code, 0)
 
@@ -663,10 +659,8 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
                 new_content = change.new.strip()
 
                 if change.old.strip() == lines[line_idx].strip():
-
                     # Check if new content has its own indentation
                     if change.new.startswith(" ") or change.new.startswith("\t"):
-
                         lines[line_idx] = change.new.rstrip() + "\n"
 
                     else:
@@ -686,7 +680,6 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
                         change.line = corrected_line
                         line_idx = change.line - 1
                         if change.old.strip() == lines[line_idx].strip():
-
                             # Check if new content has its own indentation
                             if change.new.startswith(" ") or change.new.startswith(
                                 "\t"
@@ -736,7 +729,6 @@ def apply_single_code_block(
     elif block.change_type == ChangeType.DIFF:
         return apply_diff_change(lines, block), 0
     elif block.change_type == ChangeType.SEARCH_REPLACE:
-
         return apply_search_replace_change(lines, block), 0
     else:
         print(f"Warning: Unknown change_type '{block.change_type}'")

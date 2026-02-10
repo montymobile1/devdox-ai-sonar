@@ -158,7 +158,6 @@ def _find_fuzzy_match(
 def get_content_range(
     file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path
 ) -> Optional[Dict[str, Any]]:
-
     if not file_path_tmp.exists():
         raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
     if not file_path.exists():
@@ -205,7 +204,6 @@ def get_content_range(
 
     actual_content = actual_lines[start_idx:end_idx]
     if actual_content == target_content:
-
         return {
             "first_line": first_line_tmp,
             "last_line": last_line_tmp,
@@ -228,7 +226,6 @@ def get_content_range(
     # Strategy 3: Fuzzy matching for similar content
     fuzzy_match = _find_fuzzy_match(target_content, actual_lines, threshold=0.65)
     if fuzzy_match:
-
         return _create_result(
             fuzzy_match,
             problem_lines_tmp,
@@ -240,7 +237,6 @@ def get_content_range(
     # Strategy 4: If single line, try to find all occurrences and use heuristics
 
     if len(target_content) == 1:
-
         all_matches = _find_all_single_line_matches(
             target_content[0], actual_lines, first_line_tmp
         )
