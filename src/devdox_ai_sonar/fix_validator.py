@@ -89,6 +89,53 @@ class ValidationResult:
         return self.status in [ValidationStatus.APPROVED, ValidationStatus.MODIFIED]
 
 
+def _format_block_header(idx: int, block: CodeBlock) -> str:
+    """Format the header section for a code block."""
+    header = (
+        f"\n{'=' * 60}\n"
+        f"Block {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
+        f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
+        f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
+    )
+    return header
+
+
+def _format_full_code_content(block: CodeBlock) -> str:
+    """Format a FULL_CODE block as a fenced code block."""
+    return f"```python\n{block.context}\n```\n"
+
+
+def _format_diff_content(block: CodeBlock) -> str:
+    """Format a DIFF block with line-by-line changes."""
+    parts = ["Changes:\n"]
+    for change in block.changes or []:
+        if change.action == ChangeAction.REPLACE:
+            parts.append(f"  Line {change.line} (REPLACE):\n")
+            parts.append(f"    - Old: {change.old}\n")
+            parts.append(f"    + New: {change.new}\n")
+        elif change.action == ChangeAction.INSERT:
+            parts.append(f"  Line {change.line} (INSERT):\n")
+            parts.append(f"    + New: {change.new}\n")
+        elif change.action == ChangeAction.DELETE:
+            parts.append(f"  Line {change.line} (DELETE):\n")
+            parts.append(f"    - Old: {change.old}\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
+def _format_search_replace_content(block: CodeBlock) -> str:
+    """Format a SEARCH_REPLACE block with replacement operations."""
+    parts = ["Search/Replace Operations:\n"]
+    for op_idx, repl in enumerate(block.replacements or [], 1):
+        regex_marker = " (REGEX)" if repl.is_regex else ""
+        count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
+        parts.append(f"\n  Operation {op_idx}{regex_marker}{count_info}:\n")
+        parts.append(f"    Search:  {repr(repl.search)}\n")
+        parts.append(f"    Replace: {repr(repl.replace)}\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
 class FixValidator:
     """
     Senior code reviewer agent that validates and potentially improves LLM-generated fixes.
@@ -293,52 +340,15 @@ class FixValidator:
         formatted_parts = []
 
         for idx, block in enumerate(code_blocks, 1):
-            header = f"\n{'=' * 60}\nBlock {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
-            header += f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
-            header += f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
-
-            formatted_parts.append(header)
+            formatted_parts.append(_format_block_header(idx, block))
 
             if block.change_type == ChangeType.FULL_CODE and block.context:
-                # Full code replacement
-                formatted_parts.append("```python\n")
-                formatted_parts.append(block.context)
-                formatted_parts.append("\n```\n")
-
+                formatted_parts.append(_format_full_code_content(block))
             elif block.change_type == ChangeType.DIFF and block.changes:
-                # Line-by-line changes
-                formatted_parts.append("Changes:\n")
-                for change in block.changes:
-                    if change.action == ChangeAction.REPLACE:
-                        formatted_parts.append(f"  Line {change.line} (REPLACE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.INSERT:
-                        formatted_parts.append(f"  Line {change.line} (INSERT):\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.DELETE:
-                        formatted_parts.append(f"  Line {change.line} (DELETE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                formatted_parts.append("\n")
-
+                formatted_parts.append(_format_diff_content(block))
             elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
-                # Search/replace patterns
-                formatted_parts.append("Search/Replace Operations:\n")
-                for idx, repl in enumerate(block.replacements, 1):
-                    regex_marker = " (REGEX)" if repl.is_regex else ""
-                    count_info = (
-                        f" (count: {repl.count})"
-                        if repl.count
-                        else " (all occurrences)"
-                    )
-                    formatted_parts.append(
-                        f"\n  Operation {idx}{regex_marker}{count_info}:\n"
-                    )
-                    formatted_parts.append(f"    Search:  {repr(repl.search)}\n")
-                    formatted_parts.append(f"    Replace: {repr(repl.replace)}\n")
-                formatted_parts.append("\n")
+                formatted_parts.append(_format_search_replace_content(block))
 
-            # Add separator between blocks
             if idx < len(code_blocks):
                 formatted_parts.append("\n" + "-" * 60 + "\n")
 
