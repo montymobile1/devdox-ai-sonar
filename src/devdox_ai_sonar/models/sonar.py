@@ -137,14 +137,14 @@ class SonarFixResponse(BaseModel):
 
     @field_validator("FIXED_CODE_BLOCKS")
     @classmethod
-    def validate_has_changes(cls, v):
+    def validate_has_changes(cls, v: List[CodeBlock]) -> List[CodeBlock]:
         """Ensure at least one block has changes."""
         if not any(block.has_changes for block in v):
             raise ValueError("At least one code block must have has_changes=True")
         return v
 
     @model_validator(mode="after")
-    def validate_helper_code_placement(self):
+    def validate_helper_code_placement(self) -> "SonarFixResponse":
         """If NEW_HELPER_CODE exists, ensure PLACEMENT is set appropriately."""
         if self.NEW_HELPER_CODE and self.PLACEMENT == PlacementType.SIBLING:
             # Verify at least one function exists for SIBLING placement
@@ -160,7 +160,7 @@ class SonarFixResponse(BaseModel):
 
     @field_validator("NEW_HELPER_CODE", "IMPORT_BLOCK", mode="before")
     @classmethod
-    def clean_triple_quotes(cls, v: str) -> str:
+    def clean_triple_quotes(cls, v: Any) -> Any:
         """Remove triple quotes from code strings."""
         if not isinstance(v, str):
             return v
@@ -173,7 +173,7 @@ class SonarFixResponse(BaseModel):
 
     @field_validator("FIXED_CODE_BLOCKS", mode="before")
     @classmethod
-    def clean_code_blocks(cls, v: List[dict]) -> List[dict]:
+    def clean_code_blocks(cls, v: Any) -> Any:
         """Clean triple quotes from code blocks."""
         if not isinstance(v, list):
             return v

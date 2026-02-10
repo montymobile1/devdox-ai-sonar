@@ -1252,7 +1252,7 @@ def _process_and_fix_issues(
     services = _initialize_fix_services(auth_config, llm_config)
 
     branch_downloaded = branch
-    if int(pull_request) > 0:
+    if pull_request and int(pull_request) > 0:
         branch_downloaded = services["analyzer"].get_branch_from_pr(
             project_key=auth_config.project, pull_request=str(pull_request)
         )
@@ -1261,11 +1261,11 @@ def _process_and_fix_issues(
 
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
     downloaded = download_latest_version(
-        auth_config.git_url, tmp_path, branch_downloaded
+        auth_config.git_url, tmp_path, branch_downloaded or ""
     )
     if not downloaded:
         console.print("Not able to download latest version")
-        return click.Abort()
+        raise click.Abort()
 
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
@@ -1432,7 +1432,7 @@ def _process_single_fix(
         services,
         auth_config,
         issue_type,
-        tmp_path,
+        str(tmp_path),
         rule_key,
         md_file_path,
     )

@@ -3,7 +3,7 @@ import shutil
 import tempfile
 import re
 from git import Repo
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import logging
 from devdox_ai_sonar.models.file_structures import (
     LineRange,
@@ -80,7 +80,9 @@ def generate_tmp_path() -> str:
     return tmp_dir
 
 
-def download_latest_version(repo_url: str, repo_path: str, branch: str):
+def download_latest_version(
+    repo_url: str, repo_path: str, branch: str
+) -> Optional[Repo]:
     try:
         repo = Repo.clone_from(repo_url, repo_path, branch=branch)
         return repo
@@ -386,7 +388,7 @@ def apply_complex_fix(
 
     if fix.import_block_code:
         lines = apply_import_block(
-            lines, fix.import_block_code, fix.end_import_block_code
+            lines, fix.import_block_code, fix.end_import_block_code or 0
         )
 
     #
@@ -407,11 +409,11 @@ def apply_helper_code(
     Returns:
         Modified lines
     """
-    helper_code = fix.helper_code.replace("\\n", "\n")
+    helper_code = (fix.helper_code or "").replace("\\n", "\n")
     placement = fix.placement_helper
     if placement == "GLOBAL_TOP":
         return apply_global_top_helper(
-            lines, line_range, "", helper_code, fix.end_import_block_code
+            lines, line_range, "", helper_code, fix.end_import_block_code or 0
         )
 
     elif placement == "GLOBAL_BOTTOM":
@@ -456,7 +458,7 @@ def normalize_code(code: str) -> str:
 
             # Look for closing quote
             closing_found = False
-            docstring_content = []
+            docstring_content: List[str] = []
 
             for j in range(i + 1, len(lines)):
                 if lines[j].strip() == quote_char:
@@ -653,7 +655,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
             continue
 
         if change.action == ChangeAction.REPLACE:
-            if change.new is not None:
+            if change.new is not None and change.old is not None:
                 # Preserve original indentation if new line doesn't specify it
                 original_indent = calculate_base_indentation(lines[line_idx])
                 new_content = change.new.strip()
@@ -848,7 +850,9 @@ def apply_global_top_helper(
     return lines
 
 
-def apply_single_fix(lines: List[str], fix: FixSuggestion) -> FixApplication:
+def apply_single_fix(
+    lines: List[str], fix: FixSuggestion
+) -> Tuple[FixApplication, List[str]]:
     """Apply a single fix to the lines array."""
 
     line_range = LineRange.from_fix(fix)

@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_effective_values(
-    code_blocks,
+    code_blocks: List[CodeBlock],
     file_path: Path,
     context: FixContext,
     line_range: Dict[str, Any],
@@ -59,9 +59,10 @@ def _resolve_effective_values(
             effective_last_line,
         )
 
-    block_file_path = first_block.file_path
-    if isinstance(block_file_path, str):
-        block_file_path = Path(block_file_path)
+    raw_block_file_path = first_block.file_path
+    block_file_path: Path = (
+        Path(raw_block_file_path) if isinstance(raw_block_file_path, str) else file_path
+    )
 
     if block_file_path != file_path:
         effective_file_path = block_file_path
@@ -347,7 +348,7 @@ class AsyncToSyncHandler(RuleHandler):
 
             lst_suggestion.append(
                 FixSuggestion(
-                    issue_key=self._generate_fix_key(
+                    issue_key=self._generate_fix_key(  # type: ignore[attr-defined]
                         line_range.get("problem_lines", [])
                     ),
                     original_code=context.code_content,
@@ -358,7 +359,7 @@ class AsyncToSyncHandler(RuleHandler):
                     placement_helper=fix_response_single.PLACEMENT,
                     explanation=fix_response_single.EXPLANATION,
                     confidence=fix_response_single.CONFIDENCE,
-                    llm_model=self.model or "unknown",
+                    llm_model=self.model or "unknown",  # type: ignore[attr-defined]
                     rule_description="",
                     file_path=relative_file_path,
                     line_number=effective_start_line,
@@ -488,7 +489,7 @@ class RuleHandlerRegistry:
     in priority order until one accepts the rule.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize registry with default handlers in priority order."""
         self.handlers: List[RuleHandler] = [
             AsyncToSyncHandler(),

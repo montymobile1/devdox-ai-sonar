@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, cast
 from enum import Enum
 import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -265,7 +265,7 @@ class FixValidator:
                 status=ValidationStatus.MODIFIED,
                 original_fix=fix,
                 modified_fix=modified_fix,
-                explanation=validation_response.EXPLANATION,
+                explanation=validation_response.EXPLANATION or "",
                 confidence=validation_response.CONFIDENCE,
             )
 
@@ -407,7 +407,7 @@ class FixValidator:
         prompt = template.render(**context_dic)
         return prompt.strip()
 
-    def _call_llm_validator(self, prompt: str) -> Optional[str]:
+    def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         """Call LLM for validation."""
         try:
             if not self.client:
@@ -429,7 +429,7 @@ class FixValidator:
             logger.error(f"Error calling validator LLM: {e}", exc_info=True)
             return None
 
-    def _call_gemini_validator(self, prompt: str) -> Optional[str]:
+    def _call_gemini_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
@@ -438,9 +438,9 @@ class FixValidator:
                 response_schema=SonarFixResponse,
             ),
         )
-        return response.parsed
+        return cast(Optional[SonarFixResponse], response.parsed)
 
-    def _call_openai_validator(self, prompt: str) -> Optional[str]:
+    def _call_openai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.responses.parse(
             model=self.model,
             input=[
@@ -457,9 +457,9 @@ class FixValidator:
             text_format=SonarFixResponse,
         )
 
-        return response.output_parsed
+        return cast(Optional[SonarFixResponse], response.output_parsed)
 
-    def _call_togetherai_validator(self, prompt: str) -> Optional[str]:
+    def _call_togetherai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[

@@ -46,22 +46,26 @@ class IssueExtractor:
             )
 
             # Step 2: Get content range from tmp file
-            line_range = get_content_range(file_path_tmp, line_range_tmp, file_path)
+            line_range_result: Optional[Dict[str, Any]] = get_content_range(
+                file_path_tmp, line_range_tmp, file_path
+            )
 
-            if line_range is None:
+            if line_range_result is None:
                 return ValidationResult(
                     is_valid=False, error="Could not determine line range"
                 )
 
             # Check for errors in line range
-            if line_range.get("error", ""):
-                return ValidationResult(is_valid=False, error=line_range["error"])
+            if line_range_result.get("error", ""):
+                return ValidationResult(
+                    is_valid=False, error=line_range_result["error"]
+                )
 
             return ValidationResult(
                 is_valid=True,
                 file_path=file_path,
                 file_path_tmp=file_path_tmp,
-                line_range=line_range,
+                line_range=line_range_result,
             )
 
         except FileNotFoundError as e:
@@ -72,7 +76,7 @@ class IssueExtractor:
 
 
 def _validate_and_extract_issue_info(
-    issues: Union[List[SonarIssue], List[SonarSecurityIssue]], project_path: Path
+    issues: List[Union[SonarIssue, SonarSecurityIssue]], project_path: Path
 ) -> Tuple[Path, Dict[str, Any]]:
     """
     Validate that all issues are from the same file and extract line range.
@@ -104,7 +108,7 @@ def _validate_and_extract_issue_info(
     # Initialize range with first issue
     first_line = first_issue.first_line or 0
     last_line = first_issue.last_line or 0
-    problem_line_numbers = []
+    problem_line_numbers: List[int] = []
 
     # Validate all issues are from same file and calculate range
     for issue in issues:
@@ -118,7 +122,7 @@ def _validate_and_extract_issue_info(
         # Expand range to encompass all issues
         first_line = min(first_line, issue.first_line or 0)
         last_line = max(last_line, issue.last_line or 0)
-        problem_line_numbers.extend(issue.problem_lines)
+        problem_line_numbers.extend(issue.problem_lines or [])
 
     return file_path, {
         "first_line": first_line,
@@ -135,7 +139,7 @@ def _find_fuzzy_match(
     Returns match with confidence score.
     """
     target_len = len(target_content)
-    best_match = None
+    best_match: Optional[Dict[str, Any]] = None
     best_ratio = 0.0
 
     for i in range(len(actual_lines) - target_len + 1):

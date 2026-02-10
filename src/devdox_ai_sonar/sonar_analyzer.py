@@ -454,8 +454,8 @@ class SonarCloudAnalyzer:
                 file_path = self._extract_file_path(component)
 
                 first_line = issue_data.get("line")
-                problem_lines.append(int(first_line))
                 if first_line:
+                    problem_lines.append(int(first_line))
                     first_line = int(first_line)
 
                 flows = issue_data.get("flows", [])
@@ -465,9 +465,8 @@ class SonarCloudAnalyzer:
                     for location in flow.get("locations", []):
                         text_range = location.get("textRange", {})
                         end_line = text_range.get("endLine")
-                        problem_lines.append(int(end_line))
-
                         if end_line:
+                            problem_lines.append(int(end_line))
                             end_line = int(end_line)
                             if end_line > last_line:
                                 last_line = end_line

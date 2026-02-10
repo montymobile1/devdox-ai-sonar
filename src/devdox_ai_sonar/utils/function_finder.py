@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List, Tuple, Union
 import ast
 from pathlib import Path
 from devdox_ai_sonar.models.file_structures import ConversionRisk, ConversionAnalysis
@@ -40,7 +40,9 @@ class ClassMethodFinder(ast.NodeVisitor):
             self.function_info = self._extract_function_info(node, is_async=True)
         self.generic_visit(node)
 
-    def _extract_function_info(self, node, is_async: bool) -> Dict[str, Any]:
+    def _extract_function_info(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], is_async: bool
+    ) -> Dict[str, Any]:
         """Extract function information with class context."""
         # Check for @staticmethod or @classmethod
         decorators = [self._get_decorator_name(d) for d in node.decorator_list]
@@ -73,7 +75,7 @@ class ClassMethodFinder(ast.NodeVisitor):
             ),
         }
 
-    def _get_decorator_name(self, decorator) -> str:
+    def _get_decorator_name(self, decorator: ast.expr) -> str:
         """Extract decorator name."""
         if isinstance(decorator, ast.Name):
             return decorator.id
@@ -92,7 +94,7 @@ class ClassMethodFinder(ast.NodeVisitor):
 class AllFunctionsFinder(ast.NodeVisitor):
     """Find ALL functions in code (useful for analysis)."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.functions: List[Dict[str, Any]] = []
         self.class_stack: List[str] = []
 
@@ -112,7 +114,9 @@ class AllFunctionsFinder(ast.NodeVisitor):
         self.functions.append(self._extract_info(node, is_async=True))
         self.generic_visit(node)
 
-    def _extract_info(self, node, is_async: bool) -> Dict[str, Any]:
+    def _extract_info(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], is_async: bool
+    ) -> Dict[str, Any]:
         """Extract minimal function info."""
         decorators = [
             d.id if isinstance(d, ast.Name) else ast.unparse(d)
@@ -158,7 +162,9 @@ class FunctionContainingLineFinder(ast.NodeVisitor):
             self.function_info = self._extract_info(node, is_async=True)
         self.generic_visit(node)
 
-    def _extract_info(self, node, is_async: bool) -> Dict[str, Any]:
+    def _extract_info(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef], is_async: bool
+    ) -> Dict[str, Any]:
         """Extract function type information."""
         decorators = []
         source_lines = self.source_lines
@@ -219,7 +225,9 @@ class FunctionLocator(ast.NodeVisitor):
         self.current_file: str = ""
         self.current_class: str = ""
 
-    def visit_FunctionDef(self, node: ast.FunctionDef):
+    def visit_FunctionDef(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> None:
         """Track function definitions."""
         if node.name == self.target_function:
             self.definitions.append(
@@ -239,18 +247,18 @@ class FunctionLocator(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
         """Handle async function definitions."""
         self.visit_FunctionDef(node)
 
-    def visit_ClassDef(self, node: ast.ClassDef):
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Track class context for methods."""
         old_class = self.current_class
         self.current_class = node.name
         self.generic_visit(node)
         self.current_class = old_class
 
-    def visit_Call(self, node: ast.Call):
+    def visit_Call(self, node: ast.Call) -> None:
         """Track function calls."""
         func_name = None
 
@@ -443,7 +451,9 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         self.codebase_root = codebase_root
 
         # Analysis results
-        self.function_node: Optional[ast.FunctionDef] = None
+        self.function_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = (
+            None
+        )
         self.is_async: bool = False
         self.file_path: str = ""
 
@@ -497,7 +507,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         # Step 4: Determine conversion feasibility
         return self._generate_analysis()
 
-    def _find_function_definition(self):
+    def _find_function_definition(self) -> None:
         """Locate the function definition in the codebase."""
         for file_path in self.codebase_root.rglob("*.py"):
             try:
@@ -527,7 +537,9 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
             except Exception as e:
                 print(f"Error processing {file_path}: {e}")
 
-    def _analyze_decorators(self, node: ast.FunctionDef):
+    def _analyze_decorators(
+        self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
+    ) -> None:
         """Extract and categorize decorators."""
         for decorator in node.decorator_list:
             if isinstance(decorator, ast.Name):
@@ -541,7 +553,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                 elif dec_name == "staticmethod":
                     self.is_staticmethod = True
 
-    def _analyze_function_body(self):
+    def _analyze_function_body(self) -> None:
         """Analyze what the function does internally."""
         if not self.function_node:
             return
@@ -550,13 +562,13 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         self.visit(self.function_node)
         self.in_target_function = False
 
-    def visit_Await(self, node: ast.Await):
+    def visit_Await(self, node: ast.Await) -> None:
         """Track await expressions."""
         if self.in_target_function:
             self.has_await_expressions.append({"line": node.lineno, "type": "await"})
         self.generic_visit(node)
 
-    def visit_AsyncWith(self, node: ast.AsyncWith):
+    def visit_AsyncWith(self, node: ast.AsyncWith) -> None:
         """Track async context managers."""
         if self.in_target_function:
             self.has_async_context_managers.append(
@@ -564,25 +576,25 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
             )
         self.generic_visit(node)
 
-    def visit_AsyncFor(self, node: ast.AsyncFor):
+    def visit_AsyncFor(self, node: ast.AsyncFor) -> None:
         """Track async iterations."""
         if self.in_target_function:
             self.has_async_iterations.append({"line": node.lineno, "type": "async for"})
         self.generic_visit(node)
 
-    def visit_Yield(self, node: ast.Yield):
+    def visit_Yield(self, node: ast.Yield) -> None:
         """Track if function is a generator."""
         if self.in_target_function:
             self.yields = True
         self.generic_visit(node)
 
-    def visit_YieldFrom(self, node: ast.YieldFrom):
+    def visit_YieldFrom(self, node: ast.YieldFrom) -> None:
         """Track yield from expressions."""
         if self.in_target_function:
             self.yields = True
         self.generic_visit(node)
 
-    def visit_Call(self, node: ast.Call):
+    def visit_Call(self, node: ast.Call) -> None:
         """Track function calls - identify sync/async calls."""
         if self.in_target_function:
             func_name = self._get_call_name(node)
@@ -648,7 +660,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         # This is a simplified check - full implementation would need parent tracking
         return False
 
-    def _find_all_callers(self):
+    def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
         for file_path in self.codebase_root.rglob("*.py"):
             try:
@@ -666,7 +678,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                 )
                 continue
 
-    def _find_callers_in_tree(self, tree: ast.AST, file_path: str):
+    def _find_callers_in_tree(self, tree: ast.AST, file_path: str) -> None:
         """Find callers in a specific AST."""
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
@@ -706,9 +718,9 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         current_type = "async" if self.is_async else "sync"
         target_type = "sync" if self.is_async else "async"
 
-        blocking_issues = []
-        required_changes = []
-        suggestions = []
+        blocking_issues: List[str] = []
+        required_changes: List[str] = []
+        suggestions: List[str] = []
 
         # Determine conversion direction and feasibility
         if self.is_async:

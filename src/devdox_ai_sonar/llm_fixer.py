@@ -185,9 +185,9 @@ class LLMFixer:
     def write_explaination(
         self,
         file_md: Path,
-        fix_response: Dict[str, Any],
-        issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
-        original_code: str,
+        fix_response: SonarFixResponse,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        original_code: Any,
     ) -> None:
         # Ensure parent directory exists
         file_md.parent.mkdir(parents=True, exist_ok=True)
@@ -265,6 +265,10 @@ class LLMFixer:
                 logger.error(f"Validation failed: {validation.error}")
                 return None
 
+            if validation.file_path is None or validation.line_range is None:
+                logger.error("Validation passed but file_path or line_range is None")
+                return None
+
             # Step 2: Prepare context for fix generation
             context = self._prepare_fix_context(
                 validation.file_path,
@@ -292,13 +296,14 @@ class LLMFixer:
                 return None
 
             # Step 4: Build FixSuggestion from the response
+            modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
             fix_suggestion_lst = self._build_fix_suggestion(
                 fix_response_lst,
                 context,
                 validation.file_path,
                 project_path,
                 validation.line_range,
-                handler.MOIDY_LINE_RANGE,
+                modify_line_range,
             )
 
             # Step 5: Write documentation if requested
@@ -322,15 +327,15 @@ class LLMFixer:
 
     def _map_fix_suggestion_to_fix_suggestion_dto(
         self,
-        line_range,
-        context,
-        code_blocks,
-        fix_response_single,
-        llm_model,
-        relative_file_path,
-        effective_start_line,
-        effective_sonar_line,
-        effective_last_line,
+        line_range: Dict[str, Any],
+        context: FixContext,
+        code_blocks: Any,
+        fix_response_single: SonarFixResponse,
+        llm_model: str,
+        relative_file_path: str,
+        effective_start_line: Any,
+        effective_sonar_line: Any,
+        effective_last_line: Any,
     ) -> FixSuggestion:
         return FixSuggestion(
             issue_key=self._generate_fix_key(line_range.get("problem_lines", [])),
@@ -339,8 +344,8 @@ class LLMFixer:
             fixed_code="",
             import_block_code=fix_response_single.IMPORT_BLOCK,
             helper_code=fix_response_single.NEW_HELPER_CODE,
-            placement_helper=fix_response_single.PLACEMENT,
-            explanation=fix_response_single.EXPLANATION,
+            placement_helper=fix_response_single.PLACEMENT.value,
+            explanation=fix_response_single.EXPLANATION or "",
             confidence=fix_response_single.CONFIDENCE,
             llm_model=llm_model,
             rule_description="",
@@ -475,7 +480,7 @@ class LLMFixer:
                     "context": modified_content,
                     "start_line": line_range["first_line"],
                     "end_line": line_range["last_line"],
-                    "problem_line_content": self._extract_problem_lines(
+                    "problem_line_content": _extract_problem_lines(
                         file_lines, line_range["problem_lines"]
                     ),
                     "class_name": class_name,
@@ -654,7 +659,7 @@ class LLMFixer:
         file_extension: str,
         rule_info_dict: Dict[str, Dict[str, str]],
         error_message: str = "",
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Optional[SonarFixResponse]:
         """
         Call the LLM to generate a fix.
 
@@ -703,7 +708,7 @@ class LLMFixer:
                     ),
                 )
 
-                return response.parsed
+                return response.parsed  # type: ignore[no-any-return]
 
             elif self.provider == "togetherai":
                 response = self.client.chat.completions.create(
@@ -1089,11 +1094,11 @@ class LLMFixer:
     def _create_fix_prompt_list(
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
-        context: Dict[str, Any],
-        rule_info_list: Dict[str, Dict[str, str]],
+        context: FixContext,
+        rule_info_list: Dict[str, Any],
         language: str = "python",
         error_message: str = "",
-    ) -> Tuple[str, str]:
+    ) -> Tuple[str, Any]:
         """Create a concise, focused prompt for the LLM to generate a fix."""
 
         # 1. Context Setup
@@ -1209,10 +1214,10 @@ class LLMFixer:
 
         return prompt.strip(), system_template
 
-    def _parse_openai_response(self, response: Any) -> Optional[Dict[str, Any]]:
+    def _parse_openai_response(self, response: Any) -> Optional[SonarFixResponse]:
         """Parse OpenAI API response."""
         try:
-            return response.output_parsed
+            return response.output_parsed  # type: ignore[no-any-return]
 
         except Exception as e:
             logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
@@ -1227,7 +1232,7 @@ class LLMFixer:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
 
-    def _parse_togetherai_response(self, response: Any) -> Optional[Dict[str, Any]]:
+    def _parse_togetherai_response(self, response: Any) -> Optional[SonarFixResponse]:
         """Parse Together API response."""
         try:
             content = response.choices[0].message.content
@@ -1557,12 +1562,12 @@ class LLMFixer:
                 write_file_lines(file_path_tmp, lines)
                 validate, msg = self.check_python_interpreter(file_path_tmp)
                 result.success = validate
-                result.reason = msg
+                result.reason = msg or ""
 
                 results.append(result)
                 if result.success:
                     write_file_lines(file_path, lines)
-                    remove_tmp_files(file_path_tmp)
+                    remove_tmp_files(str(file_path_tmp))
 
             return all(r.success for r in results), results
 
@@ -1752,9 +1757,9 @@ class LLMFixer:
                     # STEP 2: Direct application failed, try AI validator fallback
                     if use_validator and validator:
                         reason_list = []
-                        for f in new_fixes:
-                            if f.reason is not None:
-                                reason_list.append(f.reason)
+                        for fix_app in new_fixes:
+                            if fix_app.reason is not None:
+                                reason_list.append(fix_app.reason)
 
                         reason_msg = ", ".join(reason_list)
 
@@ -1780,7 +1785,7 @@ class LLMFixer:
                                         file_path_tmp, "r", encoding="utf-8"
                                     ) as f:
                                         current_content = f.read()
-                                        remove_tmp_files(file_path_tmp)
+                                        remove_tmp_files(str(file_path_tmp))
 
                                 validation_result = validator.validate_fix(
                                     fix,
@@ -2194,9 +2199,9 @@ class LLMFixer:
 
         Returns line range and content of all import statements.
         """
-        import_lines = []
-        start_line = None
-        end_line = None
+        import_lines: List[str] = []
+        start_line: Optional[int] = None
+        end_line: Optional[int] = None
 
         state = {
             "in_multiline_import": False,
@@ -2511,7 +2516,7 @@ class ContextExtractor:
             processed_function_starts.add(containing_func_idx)
 
         # Sort by start line to maintain file order
-        functions_with_issues.sort(key=lambda f: f["start_idx"])
+        functions_with_issues.sort(key=lambda f: int(f["start_idx"]))
 
         logger.info(
             f"Found {len(functions_with_issues)} functions containing "
@@ -2522,7 +2527,7 @@ class ContextExtractor:
 
     def _build_optimized_context(
         self, functions: List[Dict[str, Any]], problem_lines: List[int]
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Build the new context format with individual function entries.
 
@@ -3299,7 +3304,7 @@ class ContextExtractor:
 
 
 def _build_fix_suggestion(
-    fix_response: Dict[str, Any],
+    fix_response: SonarFixResponse,
     context_info: Dict[str, Any],
     file_path: Path,
     project_path: Path,
@@ -3343,9 +3348,9 @@ def _build_fix_suggestion(
         import_block_code=fix_response.IMPORT_BLOCK,
         helper_code=fix_response.NEW_HELPER_CODE,
         placement_helper=fix_response.PLACEMENT.value,
-        explanation=fix_response.EXPLANATION,
+        explanation=fix_response.EXPLANATION or "",
         confidence=fix_response.CONFIDENCE,
-        llm_model=model_name,
+        llm_model=model_name or "unknown",
         rule_description="",
         file_path=str(file_path.relative_to(project_path)),
         line_number=context_dict.get("start_line"),
@@ -3378,7 +3383,7 @@ def _generate_fix_key(problem_lines: List[int]) -> str:
 
 def _extract_problem_lines(
     file_lines: List[str], problem_line_numbers: List[int]
-) -> Dict[str, Any]:
+) -> Dict[int, str]:
     """
     Extract actual line content for problem lines.
 
