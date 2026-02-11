@@ -839,11 +839,24 @@ async def change_field(
     types = types_input if types_input else None
 
     if types:
-        await manager.set_value(field, types)
-    elif allow_empty and default_value:
-        # User provided empty input but there was a previous value
-        # This means they want to clear it - delete the property from config
-        await manager.delete_value(field)
+        if types == constant.EXCLUDE_NONE:
+            await manager.delete_value(field)
+        else:
+            await manager.set_value(field, types)
+    elif allow_empty:
+        # User cleared input but there was a previous value — warn and re-prompt once
+        console.print(constant.EXCLUDE_RULES_EMPTY_WARNING)
+        retry_input = smart_prompt(
+            message, default=None, choices=choices, multiple=multiple
+        )
+        retry = retry_input if retry_input else None
+        if retry:
+            if retry == constant.EXCLUDE_NONE:
+                await manager.delete_value(field)
+            else:
+                await manager.set_value(field, retry)
+            return retry
+        # User left it empty again — keep existing value as-is
     return types
 
 
@@ -925,7 +938,7 @@ async def change_parameters(
         _ = await change_field(
             manager=manager,
             field="configuration.exclude_rules",
-            message="Rules to be excluded  (comma-separated, or press Enter to skip)",
+            message="Rules to be excluded  (comma-separated, 'NONE' to exclude nothing, or Enter to keep current)",
             default_value=await manager.get_value("configuration.exclude_rules"),
             allow_empty=True,
         )
