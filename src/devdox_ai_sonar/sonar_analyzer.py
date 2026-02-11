@@ -454,21 +454,19 @@ class SonarCloudAnalyzer:
                 file_path = self._extract_file_path(component)
 
                 first_line = issue_data.get("line")
-                problem_lines.append(int(first_line))
                 if first_line:
+                    problem_lines.append(int(first_line))
                     first_line = int(first_line)
 
                 flows = issue_data.get("flows", [])
                 last_line = first_line  # default
 
-
                 for flow in flows:
                     for location in flow.get("locations", []):
                         text_range = location.get("textRange", {})
                         end_line = text_range.get("endLine")
-                        problem_lines.append(int(end_line))
-
                         if end_line:
+                            problem_lines.append(int(end_line))
                             end_line = int(end_line)
                             if end_line > last_line:
                                 last_line = end_line
@@ -477,7 +475,7 @@ class SonarCloudAnalyzer:
                     key=issue_data.get("key", ""),
                     rule=issue_data.get("rule", ""),
                     severity=severity.value,
-                    problem_lines = problem_lines,
+                    problem_lines=problem_lines,
                     component=component,
                     project=issue_data.get("project", ""),
                     first_line=first_line,
@@ -661,8 +659,7 @@ class SonarCloudAnalyzer:
         fixable_by_file = analysis.fixable_issues_by_file
         return fixable_by_file
 
-
-    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str|None:
+    def get_branch_from_pr(self, project_key: str, pull_request: str) -> str | None:
         """Get branch name from pull request number."""
 
         url = urljoin(self.base_url, "/api/project_pull_requests/list")
@@ -672,7 +669,6 @@ class SonarCloudAnalyzer:
         response.raise_for_status()
         data = response.json()
 
-
         # Find PR by key (PR number)
         for pr in data.get("pullRequests", []):
             if pr.get("key") == pull_request:
@@ -681,7 +677,9 @@ class SonarCloudAnalyzer:
                     return branch.split(":")[-1] if ":" in branch else branch
                 return None
 
-        raise ValueError(f"Pull request {pull_request} not found in project {project_key}")
+        raise ValueError(
+            f"Pull request {pull_request} not found in project {project_key}"
+        )
 
     def get_fixable_issues_by_types(
         self,

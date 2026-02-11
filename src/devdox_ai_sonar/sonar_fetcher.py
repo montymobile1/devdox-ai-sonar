@@ -39,7 +39,7 @@ def main() -> None:
         #
         # # Example 4: Get detailed rule information
         # print("\n4. Getting detailed rule information...")
-        rule_info = analyzer.get_rule_by_key("python:S1481")  # Unused variables
+        rule_info = analyzer.get_rule_by_key("python:S1481")  # type: ignore[attr-defined]  # Unused variables
         if rule_info:
             print(f"   📋 Rule: {rule_info['name']}")
             print(f"   🎯 Root Cause: {rule_info['root_cause']}")

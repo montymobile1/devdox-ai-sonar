@@ -1,6 +1,43 @@
-from typing import Optional, TypedDict
+from typing import Optional, TypedDict, List, Dict, Any
+from pathlib import Path
+from enum import Enum
 from devdox_ai_sonar.models.sonar import FixSuggestion
 from dataclasses import dataclass
+
+
+@dataclass
+class FixContext:
+    """Value object containing all context needed for fix generation."""
+
+    file_path: Path
+    file_path_tmp: Path
+    line_range: Dict[str, Any]
+    code_content: str
+    language: str
+    import_section: Dict[str, Any]
+    class_name: Optional[str]
+    functions: List[Dict[str, Any]]
+    context_dict: Dict[str, Any]
+
+
+class ConversionRisk(Enum):
+    SAFE = "safe"
+    NEEDS_CHANGES = "needs_changes"
+    BREAKING = "breaking"
+    IMPOSSIBLE = "impossible"
+
+
+@dataclass
+class ConversionAnalysis:
+    function_name: str
+    current_type: str  # 'sync' or 'async'
+    target_type: str
+    risk_level: ConversionRisk
+    blocking_issues: List[str]
+    required_changes: List[str]
+    caller_impact: List[Dict]
+    internal_calls: List[Dict]
+    suggestions: List[str]
 
 
 @dataclass

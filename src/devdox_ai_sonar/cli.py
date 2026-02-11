@@ -23,7 +23,11 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
-from devdox_ai_sonar.utils.file_indentation import remove_tmp_files, download_latest_version , generate_tmp_path
+from devdox_ai_sonar.utils.file_indentation import (
+    remove_tmp_files,
+    download_latest_version,
+    generate_tmp_path,
+)
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.exceptions import ValidationError
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -393,7 +397,7 @@ def _configure_sonarcloud(
         organization=sonar_config.organization,
         project=sonar_config.project,
         project_path=str(sonar_config.project_path),
-        git_url=sonar_config.git_url
+        git_url=sonar_config.git_url,
     )
 
     if not save_success:
@@ -1034,7 +1038,7 @@ def display_configuration(
         "apply": apply_value,
         "dry_run": dry_run,
         "exclude_rules": parameters.get("exclude_rules", None),
-        "create_backup": 0
+        "create_backup": 0,
     }
 
     return fix_params
@@ -1254,19 +1258,24 @@ def _process_and_fix_issues(
     services = _initialize_fix_services(auth_config, llm_config)
 
     branch_downloaded = branch
-    if int(pull_request) > 0:
+    if pull_request and int(pull_request) > 0:
         branch_downloaded = services["analyzer"].get_branch_from_pr(
-            project_key=auth_config.project,
-            pull_request=str(pull_request))
-
+            project_key=auth_config.project, pull_request=str(pull_request)
+        )
 
     tmp_path = generate_tmp_path()
 
+    if not branch_downloaded:
+        console.print("[red]Could not determine branch to download[/red]")
+        raise click.Abort()
+
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
-    downloaded = download_latest_version(auth_config.git_url,tmp_path,branch_downloaded)
+    downloaded = download_latest_version(
+        auth_config.git_url, tmp_path, branch_downloaded
+    )
     if not downloaded:
         console.print("Not able to download latest version")
-        return  click.Abort()
+        raise click.Abort()
 
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
@@ -1284,7 +1293,9 @@ def _process_and_fix_issues(
     total_issues = sum(len(issue_list) for issue_list in issues.values())
 
     console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    _process_files_with_issues(issues, services, auth_config, fix_params, issue_type,Path(tmp_path))
+    _process_files_with_issues(
+        issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
+    )
     remove_tmp_files(tmp_path)
 
 
@@ -1305,14 +1316,13 @@ def _initialize_fix_services(
     }
 
 
-
 def _process_files_with_issues(
     issues_by_file: Dict[str, List[Any]],
     services: Dict[str, Any],
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     issue_type: IssueType,
-    tmp_path:Path
+    tmp_path: Path,
 ) -> None:
     """
     Process files with issues.
@@ -1333,7 +1343,12 @@ def _process_files_with_issues(
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
         _process_regular_issues(
-            issues_by_rule_nested, services, auth_config, fix_params, md_file_path,tmp_path
+            issues_by_rule_nested,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
         )
 
 
@@ -1343,7 +1358,7 @@ def _process_regular_issues(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
-    tmp_path:Path
+    tmp_path: Path,
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1359,11 +1374,17 @@ def _process_regular_issues(
         )
 
         success = _process_issues_for_rule(
-            rule_key, issues_list, services, auth_config, fix_params, md_file_path, tmp_path)
+            rule_key,
+            issues_list,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+        )
 
         if not success:
-                console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
-
+            console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
 
 
 def _process_issues_for_rule(
@@ -1373,7 +1394,7 @@ def _process_issues_for_rule(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
-    tmp_path:Path
+    tmp_path: Path,
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1386,19 +1407,19 @@ def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-            _process_single_fix(
-                issues=[issue],
-                services=services,
-                auth_config=auth_config,
-                fix_params=fix_params,
-                issue_type=IssueType.REGULAR,
-                rule_key=rule_key,
-                md_file_path=md_file_path,
-                tmp_path=tmp_path
-            )
+        _process_single_fix(
+            issues=[issue],
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            rule_key=rule_key,
+            md_file_path=md_file_path,
+            tmp_path=tmp_path,
+        )
 
-            if not _should_continue_to_next_issue(idx, total_issues):
-                return False  # Stop processing
+        if not _should_continue_to_next_issue(idx, total_issues):
+            return False  # Stop processing
 
     return True  # Continue to next rule
 
@@ -1410,20 +1431,25 @@ def _process_single_fix(
     fix_params: Dict[str, Any],
     issue_type: IssueType,
     rule_key: str,
-    tmp_path:Path,
+    tmp_path: Path,
     md_file_path: Optional[Path] = None,
-
 ) -> None:
     """
     Generate and handle a single fix.
     """
-    fix = _generate_fix_for_file(
-        issues, services, auth_config, issue_type, tmp_path, rule_key, md_file_path,
-
+    fixes = _generate_fix_for_file(
+        issues,
+        services,
+        auth_config,
+        issue_type,
+        str(tmp_path),
+        rule_key,
+        md_file_path,
     )
 
-    if fix:
-        handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
+    if fixes:
+        for fix in fixes:
+            handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
     else:
         console.print("[yellow]No fix could be generated[/yellow]")
 
@@ -1434,7 +1460,7 @@ def _process_security_issues(
     auth_config: AuthConfig,
     fix_params: Dict[str, Any],
     md_file_path: Path,
-    tmp_path:Path
+    tmp_path: Path,
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1454,7 +1480,7 @@ def _process_security_issues(
                 issue_type=IssueType.SECURITY,
                 rule_key=file_key,
                 md_file_path=md_file_path,
-                tmp_path=tmp_path
+                tmp_path=tmp_path,
             )
 
             if not _should_continue_to_next_issue(idx, total_files):
@@ -1496,30 +1522,22 @@ def _generate_fix_for_file(
     services: Dict[str, Any],
     auth_config: AuthConfig,
     issue_type: IssueType,
-    tmp_path:str,
+    tmp_path: str,
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
-) -> Optional[FixSuggestion]:
+) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
-        if issue_type == IssueType.SECURITY:
-            rule_info_dic = _collect_rule_information(issues, services["ruler"])
-        else:
-            if not rule_name:
-                console.print("rule_name is required for non-security issues")
-                return None
-
-            ruler = services["ruler"]
-            rule_info = ruler.get_rule_by_key(rule_name)
-            rule_info_dic = {rule_name: rule_info}
+        if issue_type != IssueType.SECURITY and not rule_name:
+            console.print("rule_name is required for non-security issues")
+            return None
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
-        result: Optional[FixSuggestion] = fixer.generate_fix_by_file(
-            issues,
-            Path(str(auth_config.project_path)),
-            tmp_path=tmp_path,
-            rule_info=rule_info_dic,
+        result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
+            issues=issues,
+            project_path=Path(str(auth_config.project_path)),
+            tmp_path=Path(tmp_path),
             file_md=file_md_str,
         )
         return result
@@ -1559,11 +1577,11 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
     console.print("\n[bold]Changes:[/bold]")
 
     console.print(
-            Panel(
-                fix.explanation,
-                title="Explanation of changed",
-                border_style="green",
-            )
+        Panel(
+            fix.explanation,
+            title="Explanation of changed",
+            border_style="green",
+        )
     )
 
 
@@ -1629,7 +1647,6 @@ def _display_fix_results(result: FixResult) -> None:
     console.print(f"Success Rate: {result.success_rate:.1%}")
 
 
-
 def _fetch_issues_by_type(
     analyzer: SonarCloudAnalyzer,
     auth_config: AuthConfig,
@@ -1661,8 +1678,6 @@ def _fetch_issues_by_type(
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
             )
-
-
 
 
 if __name__ == "__main__":
