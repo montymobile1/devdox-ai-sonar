@@ -1531,7 +1531,7 @@ def _generate_fix_for_file(
         result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
-            tmp_path=tmp_path,
+            tmp_path=Path(tmp_path),
             file_md=file_md_str,
         )
         return result
