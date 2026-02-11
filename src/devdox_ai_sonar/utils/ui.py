@@ -254,7 +254,7 @@ def _parse_default_choices(default: Optional[List[str]]) -> Set[str]:
     return {choice.strip() for choice in default if choice and choice.strip()}
 
 
-def _confirm_with_questionary(config: ConfirmConfig) -> str:
+async def _confirm_with_questionary(config: ConfirmConfig) -> str:
     """
     Execute confirmation using questionary library.
 
@@ -263,9 +263,10 @@ def _confirm_with_questionary(config: ConfirmConfig) -> str:
     Raises:
         ImportError: If questionary is not available
     """
-    import questionary
 
-    result = questionary.confirm(config.message, default=config.default).ask()
+
+    result = await questionary.confirm(config.message, default=config.default).ask_async()
+
     if result:
         return "yes"
     return "no"
@@ -319,7 +320,7 @@ def _parse_confirmation_result(result: Optional[str], default: bool) -> bool:
     return result_lower in ("y", "yes")
 
 
-def smart_confirm(
+async def smart_confirm(
     message: str, default: bool = True, allow_switch: bool = True
 ) -> bool:
     """
@@ -339,7 +340,7 @@ def smart_confirm(
     config = ConfirmConfig(message, default, allow_switch)
 
     try:
-        result = _confirm_with_questionary(config)
+        result = await _confirm_with_questionary(config)
 
     except ImportError:
         result = _confirm_with_console_fallback(config)
