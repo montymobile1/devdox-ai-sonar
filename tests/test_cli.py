@@ -7,7 +7,7 @@ import click
 from click.testing import CliRunner
 from devdox_ai_sonar.services.configuration import AuthConfig, LLMConfig
 from devdox_ai_sonar.utils.validator import IssueType, InputValidator
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.cli import (
     main,
@@ -32,11 +32,11 @@ from devdox_ai_sonar.cli import (
     change_field,
     change_max_fix,
     _exit_application,
-    _execute_interactive_command,
+    _execute_interactive_command_async,
     _should_continue_to_menu,
     _handle_command_switch,
     _handle_interactive_error,
-    _run_interactive_mode,
+    _run_interactive_mode_async,
     _collect_rule_information,
     _initialize_fix_services,
     _handle_keyboard_interrupt,
@@ -51,7 +51,7 @@ from devdox_ai_sonar.cli import (
     _generate_fix_for_file,
     _process_single_fix,
     handle_fix,
-    _execute_interactive_iteration,
+    _execute_interactive_iteration_async,
     _should_continue_to_next_issue,
     _fetch_issues_by_type,
     _display_project_header,
@@ -486,13 +486,14 @@ class TestFallbackCommandSelector:
 class TestExecuteInteractiveCommand:
     """Test cases for _execute_interactive_command."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._execute_command')
     @patch('devdox_ai_sonar.cli.console')
-    def test_executes_command_with_context(self, mock_console, mock_execute):
+    async def test_executes_command_with_context(self, mock_console, mock_execute):
         """Test command execution with context."""
         mock_ctx = Mock(spec=click.Context)
 
-        _execute_interactive_command(mock_ctx, 'fix_issues')
+        await _execute_interactive_command_async(mock_ctx, 'fix_issues')
 
         mock_execute.assert_called_once_with(ctx=mock_ctx, command='fix_issues')
         assert mock_console.print.call_count >= 2  # Running message and separator
@@ -567,17 +568,18 @@ class TestMainCommand:
         result = runner.invoke(main, ['--version'])
         assert result.exit_code == 0
 
-    def test_main_with_direct_command(self, runner, mock_config_service):
+    @pytest.mark.asyncio
+    async def test_main_with_direct_command(self, runner, mock_config_service):
         """Test main with direct command"""
         with patch('devdox_ai_sonar.cli.init_config'):
             with patch('devdox_ai_sonar.cli._execute_command'):
-                result = runner.invoke(main, ['-c', 'analyze'])
+                result = runner.invoke(await main, ['-c', 'analyze'])
                 # Should attempt to execute
 
     def test_main_verbose_flag(self, runner):
         """Test verbose flag sets context"""
         with patch('devdox_ai_sonar.cli.init_config'):
-            with patch('devdox_ai_sonar.cli._run_interactive_mode'):
+            with patch('devdox_ai_sonar.cli._run_interactive_mode_async'):
                 result = runner.invoke(main, ['--verbose'])
 
     def test_main_with_invalid_command(self, runner):
@@ -587,7 +589,8 @@ class TestMainCommand:
         # Should fail
         assert result.exit_code != 0
 
-    def test_main_with_verbose_and_command(self, runner):
+    @pytest.mark.asyncio
+    async def test_main_with_verbose_and_command(self, runner):
         """Test main with verbose flag and command"""
         with patch('devdox_ai_sonar.cli._execute_command'):
             with patch('devdox_ai_sonar.cli.init_config'):
@@ -596,7 +599,8 @@ class TestMainCommand:
                 # Should set verbose in context
                 assert result.exit_code == 0 or 'verbose' in str(result.output).lower()
 
-    def test_main_dry_run_flag(self, runner):
+    @pytest.mark.asyncio
+    async def test_main_dry_run_flag(self, runner):
         """Test main with --dry-run flag"""
         with patch('devdox_ai_sonar.cli._execute_command'):
             with patch('devdox_ai_sonar.cli.init_config'):
@@ -605,7 +609,7 @@ class TestMainCommand:
                 # Dry run should be set
                 assert result.exit_code == 0
 
-    @patch('devdox_ai_sonar.cli._run_interactive_mode')
+    @patch('devdox_ai_sonar.cli._run_interactive_mode_async')
     @patch('devdox_ai_sonar.cli.init_config')
     def test_main_interactive_mode_default(self, mock_init, mock_interactive, runner):
         """Test that main enters interactive mode by default"""
@@ -644,18 +648,19 @@ class TestConfigurationManagement:
                         ctx = Mock()
                         init_config(ctx)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
     @patch('devdox_ai_sonar.cli._configure_providers_loop')
     @patch('devdox_ai_sonar.cli.change_parameters')
-    def test_init_config_first_time_success(
+    async def test_init_config_first_time_success(
             self, mock_change_params, mock_providers_loop, mock_sonar, mock_init
     ):
         """Test successful first-time initialization"""
         mock_manager = Mock()
-        mock_manager.get_value.return_value = []  # No providers yet
+        mock_manager.get_value = AsyncMock(return_value=[])  # No providers yet
         mock_manager.create_default_config.return_value = None
-        mock_manager.load_config.return_value = None
+        mock_manager.load_config = AsyncMock(return_value=None)
         mock_manager.save_config.return_value = None
 
         mock_provider_manager = Mock()
@@ -668,7 +673,7 @@ class TestConfigurationManagement:
 
         mock_sonar.return_value = True
 
-        init_config()
+        await init_config()
 
         # Verify initialization steps
         mock_manager.create_default_config.assert_called_once()
@@ -677,12 +682,15 @@ class TestConfigurationManagement:
         mock_providers_loop.assert_called_once()
         mock_change_params.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._check_reconfiguration_consent')
-    def test_init_config_existing_config_no_consent(self, mock_consent, mock_init):
+    async def test_init_config_existing_config_no_consent(self, mock_consent, mock_init):
         """Test when config exists and user doesn't consent to reconfigure"""
         mock_manager = Mock()
-        mock_manager.get_value.return_value = ['openai']  # Providers exist
+        mock_manager.get_value = AsyncMock(return_value=['openai'])  # Providers exist
+        mock_manager.create_default_config.return_value = None
+        mock_manager.load_config = AsyncMock(return_value=None)
 
         mock_init.return_value = (
             mock_manager, Mock(), Mock(), Mock(), Mock(), Mock()
@@ -690,23 +698,28 @@ class TestConfigurationManagement:
 
         mock_consent.return_value = False  # User says no
 
-        init_config()
+        await init_config()
 
         # Should exit early
         mock_manager.create_default_config.assert_called_once()
 
+
     def test_check_reconfiguration_consent_no_providers(self):
-        """Test with no providers"""
-        result = _check_reconfiguration_consent([])
+            """Test with no providers"""
+            result = _check_reconfiguration_consent([])
 
-        assert result is True
+            assert result is True
 
+
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
-    def test_init_config_no_available_providers(self, mock_sonar, mock_init):
+    async def test_init_config_no_available_providers(self, mock_sonar, mock_init):
         """Test when no providers are available"""
         mock_manager = Mock()
-        mock_manager.get_value.return_value = []
+        mock_manager.get_value = AsyncMock(return_value=[])
+        mock_manager.create_default_config.return_value = None
+        mock_manager.load_config = AsyncMock(return_value=None)
 
         mock_provider_manager = Mock()
         mock_provider_manager.get_available_providers.return_value = []  # No providers
@@ -720,22 +733,25 @@ class TestConfigurationManagement:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                init_config()
+                await init_config()
 
 
     def test_check_reconfiguration_consent_existing_providers(self):
-        """Test with existing providers"""
-        with patch('devdox_ai_sonar.cli.click'):
-            result = _check_reconfiguration_consent(["openai", "anthropic"])
+            """Test with existing providers"""
+            with patch('devdox_ai_sonar.cli.click'):
+                result = _check_reconfiguration_consent(["openai", "anthropic"])
 
-            assert result is False
+                assert result is False
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
-    def test_init_config_sonar_configuration_fails(self, mock_sonar, mock_init):
+    async def test_init_config_sonar_configuration_fails(self, mock_sonar, mock_init):
         """Test when SonarCloud configuration fails"""
         mock_manager = Mock()
-        mock_manager.get_value.return_value = []
+        mock_manager.get_value = AsyncMock(return_value=[])
+        mock_manager.create_default_config.return_value = None
+        mock_manager.load_config = AsyncMock(return_value=None)
 
         mock_init.return_value = (
             mock_manager, Mock(), Mock(), Mock(), Mock(), Mock()
@@ -744,7 +760,8 @@ class TestConfigurationManagement:
         mock_sonar.return_value = False  # SonarCloud config fails
 
         with pytest.raises(click.Abort):
-            init_config()
+            await init_config()
+
 
     def test_init_config_existing_config(
             self, runner, mock_config_service, mock_config_manager, mock_provider_manager
@@ -766,76 +783,67 @@ class TestConfigurationManagement:
                 ctx = Mock()
                 init_config(ctx)
 
-    def test_add_provider_success(
-        self,
-        runner,
-        mock_config_manager,
-        mock_provider_manager,
-        mock_ui
+
+    @pytest.mark.asyncio
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli._display_completion_message')
+    @patch('devdox_ai_sonar.cli._configure_providers_loop')
+    async def test_add_provider_success(
+            self,
+            mock_loop,
+            mock_display,
+            mock_init,
+            mock_config_manager,
+            mock_provider_manager,
+            mock_ui
     ):
         """Test adding new provider successfully"""
-        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
-            # Setup all mocked managers
-            mock_init.return_value = (
-                mock_config_manager,       # manager
-                mock_ui,                   # ui
-                Mock(),                    # validator
-                mock_provider_manager,     # provider_manager
-                Mock(),                    # sonar_ui
-                Mock()                     # config_service
-            )
+        mock_config_manager.load_config = AsyncMock(return_value=None)
+        mock_init.return_value = (
+            mock_config_manager,
+            mock_ui,
+            Mock(),
+            mock_provider_manager,
+            Mock(),
+            Mock()
+        )
 
-            with patch('devdox_ai_sonar.cli._display_completion_message') as mock_display:
-                with patch('devdox_ai_sonar.cli._configure_providers_loop') as mock_loop:
-                    # Call the function
-                    add_provider()
+        await add_provider()
 
-                    # Verify initialization
-                    mock_init.assert_called_once()
+        mock_init.assert_called_once()
+        mock_config_manager.load_config.assert_called_once()
+        mock_provider_manager.get_available_providers.assert_called_once()
+        mock_loop.assert_called_once()
+        mock_config_manager.save_config.assert_called_once_with(create_backup=False)
+        mock_display.assert_called_once()
 
-                    # Verify config was loaded
-                    mock_config_manager.load_config.assert_called_once()
-
-                    # Verify available providers were fetched
-                    mock_provider_manager.get_available_providers.assert_called_once()
-
-                    # Verify providers loop was called
-                    mock_loop.assert_called_once()
-
-                    # Verify config was saved
-                    mock_config_manager.save_config.assert_called_once_with(create_backup=False)
-
-                    # Verify completion message was displayed
-                    mock_display.assert_called_once()
-
-    def test_add_provider_with_error_handling(
+    @pytest.mark.asyncio
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli._handle_cli_error')
+    async def test_add_provider_with_error_handling(
             self,
-            runner,
+            mock_error,
+            mock_init,
             mock_config_manager,
             mock_provider_manager
     ):
         """Test add_provider error handling"""
-        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
-            mock_init.return_value = (
-                mock_config_manager,
-                Mock(),
-                Mock(),
-                mock_provider_manager,
-                Mock(),
-                Mock()
-            )
+        mock_config_manager.load_config = AsyncMock(side_effect=Exception("Config load failed"))
+        mock_init.return_value = (
+            mock_config_manager,
+            Mock(),
+            Mock(),
+            mock_provider_manager,
+            Mock(),
+            Mock()
+        )
 
-            # Simulate error during load_config
-            mock_config_manager.load_config.side_effect = Exception("Config load failed")
+        mock_error.side_effect = SystemExit(1)
 
-            with patch('devdox_ai_sonar.cli._handle_cli_error') as mock_error:
-                mock_error.side_effect = SystemExit(1)
+        with pytest.raises(SystemExit):
+            await add_provider()
 
-                with pytest.raises(SystemExit):
-                    add_provider()
-
-                # Verify error handler was called
-                mock_error.assert_called_once()
+        mock_error.assert_called_once()
 
     def test_configure_providers_loop_integration(
             self,
@@ -927,92 +935,75 @@ class TestConfigurationManagement:
         # Verify add_provider was NOT called
         mock_config_manager.add_provider.assert_not_called()
 
-    def test_update_provider_success(
-        self,
-        runner,
-        mock_config_manager,
-        mock_provider_manager,
-        mock_ui
+    @pytest.mark.asyncio
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    @patch('devdox_ai_sonar.cli._display_operation_header')
+    @patch('devdox_ai_sonar.cli._select_existing_ui')
+    async def test_update_provider_success(
+            self,
+            mock_select,
+            mock_header,
+            mock_init,
+            mock_config_manager,
+            mock_provider_manager,
+            mock_ui
     ):
         """Test updating existing provider successfully"""
-        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
-            # Setup all mocked managers
-            mock_init.return_value = (
-                mock_config_manager,       # manager
-                mock_ui,                   # ui
-                Mock(),                    # validator
-                mock_provider_manager,     # provider_manager
-                Mock(),                    # sonar_ui
-                Mock()                     # config_service
-            )
+        mock_config_manager.load_config = AsyncMock(return_value=None)
+        mock_init.return_value = (
+            mock_config_manager,
+            mock_ui,
+            Mock(),
+            mock_provider_manager,
+            Mock(),
+            Mock()
+        )
 
+        mock_select.return_value = 'openai'
 
-            with patch('devdox_ai_sonar.cli._display_operation_header') as mock_header:
-                    with patch('devdox_ai_sonar.cli._select_existing_ui') as mock_select:
-                        # Mock user selection
-                        mock_select.return_value = 'openai'
+        await update_provider()
 
-                        # Call the function
-                        update_provider()
+        mock_init.assert_called_once()
+        mock_config_manager.load_config.assert_called_once()
+        mock_provider_manager.get_existing_providers.assert_called_once()
+        mock_header.assert_called_once_with("🔧 UPDATE EXISTING PROVIDER")
+        mock_select.assert_called_once_with(
+            "provider",
+            "Select the provider to update",
+            ['openai']
+        )
+        mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
+        mock_config_manager.save_config.assert_called_once_with(create_backup=False)
 
-                        # Verify initialization
-                        mock_init.assert_called_once()
-
-                        # Verify config was loaded
-                        mock_config_manager.load_config.assert_called_once()
-
-                        # Verify existing providers were fetched
-                        mock_provider_manager.get_existing_providers.assert_called_once()
-
-                        # Verify operation header was displayed
-                        mock_header.assert_called_once_with("🔧 UPDATE EXISTING PROVIDER")
-
-                        # Verify provider selection was prompted
-                        mock_select.assert_called_once_with(
-                            "provider",
-                            "Select the provider to update",
-                            ['openai']
-                        )
-
-                        # Verify provider was updated
-                        mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
-
-                        # Verify config was saved
-                        mock_config_manager.save_config.assert_called_once_with(create_backup=False)
-
-    def test_update_provider_no_existing_providers(
+    @pytest.mark.asyncio
+    @patch('devdox_ai_sonar.cli._initialize_managers')
+    async def test_update_provider_no_existing_providers(
             self,
-            runner,
+            mock_init,
             mock_config_manager,
             mock_provider_manager
     ):
         """Test update_provider when no providers are configured"""
-        with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
-            # Setup managers
-            mock_init.return_value = (
-                mock_config_manager,
-                Mock(),
-                Mock(),
-                mock_provider_manager,
-                Mock(),
-                Mock()
-            )
+        mock_config_manager.load_config = AsyncMock(return_value=None)
+        mock_init.return_value = (
+            mock_config_manager,
+            Mock(),
+            Mock(),
+            mock_provider_manager,
+            Mock(),
+            Mock()
+        )
 
-            mock_provider_manager.get_existing_providers.return_value = []
+        mock_provider_manager.get_existing_providers.return_value = []
 
-            with patch('devdox_ai_sonar.cli.console.print') as mock_print:
-                # ✅ FIX: Use click.Abort, not SystemExit
-                with pytest.raises(click.Abort):
-                    update_provider()
+        with patch('devdox_ai_sonar.cli.console.print') as mock_print:
+            with pytest.raises(click.Abort):
+                await update_provider()
 
-                # Verify warning message was printed
-                mock_print.assert_called()
-                call_args = str(mock_print.call_args_list)
-                assert 'No providers configured' in call_args or \
-                       'add at least one provider' in call_args
+            mock_print.assert_called()
 
-
-    def test_update_provider_no_existing_providers_alternative(
+    @pytest.mark.asyncio
+    async def test_update_provider_no_existing_providers_alternative(
             self,
             runner,
             mock_config_manager,
@@ -1035,7 +1026,7 @@ class TestConfigurationManagement:
             with patch('devdox_ai_sonar.cli.console.print') as mock_print:
                 # ✅ Catch the exception and verify it's the right type
                 try:
-                    update_provider()
+                    await update_provider()
                     pytest.fail("Should have raised click.Abort")
                 except click.Abort:
                     # Expected behavior
@@ -2175,7 +2166,7 @@ class TestSecurityIssuesProcessing:
 
         # Should still call process_rule
         mock_process_rule.assert_called_once()
-        
+
 # ============================================================================
 # TEST CLASS: REGULAR ISSUES PROCESSING
 # ============================================================================
@@ -4115,51 +4106,55 @@ class TestFetchIssues:
 class TestInteractiveMode:
     """Tests for interactive mode functions"""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._process_interactive_command')
-    def test_execute_interactive_iteration_normal(self, mock_process):
+    async def test_execute_interactive_iteration_async_normal(self, mock_process):
         """Test normal iteration"""
         mock_process.return_value = False
 
-        result = _execute_interactive_iteration(Mock())
+        result = await  _execute_interactive_iteration_async(Mock())
 
         assert result is False
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._process_interactive_command')
     @patch('devdox_ai_sonar.cli._handle_command_switch')
-    def test_execute_interactive_iteration_switch(self, mock_handle, mock_process):
+    async def test_execute_interactive_iteration_async_switch(self, mock_handle, mock_process):
         """Test with command switch"""
         mock_process.side_effect = SwitchCommandException()
 
-        result = _execute_interactive_iteration(Mock())
+        result = await _execute_interactive_iteration_async(Mock())
 
         assert result is False
         mock_handle.assert_called_once()
 
 # ============================================================================
-# Test _run_interactive_mode (Integration)
+# Test _run_interactive_mode_async (Integration)
 # ============================================================================
 
 class TestRunInteractiveMode:
-    """Integration tests for _run_interactive_mode."""
+    """Integration tests for _run_interactive_mode_async."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.show_command_selector')
     @patch('devdox_ai_sonar.cli._exit_application')
-    def test_exits_when_no_command_selected(self, mock_exit, mock_selector):
+    async def test_exits_when_no_command_selected(self, mock_exit, mock_selector):
         """Test exits when no command selected."""
         mock_selector.return_value = None
         mock_exit.side_effect = SystemExit(0)
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+            await _run_interactive_mode_async(mock_ctx)
 
         mock_exit.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.show_command_selector')
-    @patch('devdox_ai_sonar.cli._execute_interactive_command')
+    @patch('devdox_ai_sonar.cli._execute_interactive_command_async')
     @patch('devdox_ai_sonar.cli._should_continue_to_menu')
     @patch('devdox_ai_sonar.cli._exit_application')
-    def test_executes_command_and_exits(
+    async def test_executes_command_and_exits(
             self, mock_exit, mock_continue, mock_execute, mock_selector
     ):
         """Test executes command then exits."""
@@ -4169,15 +4164,16 @@ class TestRunInteractiveMode:
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+            await _run_interactive_mode_async(mock_ctx)
 
         mock_execute.assert_called_once()
         mock_exit.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.show_command_selector')
-    @patch('devdox_ai_sonar.cli._execute_interactive_command')
+    @patch('devdox_ai_sonar.cli._execute_interactive_command_async')
     @patch('devdox_ai_sonar.cli._should_continue_to_menu')
-    def test_handles_switch_command_exception(
+    async def test_handles_switch_command_exception(
             self, mock_continue, mock_execute, mock_selector
     ):
         """Test handles SwitchCommandException."""
@@ -4190,7 +4186,7 @@ class TestRunInteractiveMode:
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+            await _run_interactive_mode_async(mock_ctx)
 
         # Should have tried to execute twice (once raises exception, once exits)
         assert mock_selector.call_count == 2
