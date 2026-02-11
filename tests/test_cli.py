@@ -3171,7 +3171,8 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] is None
                         assert params['pull_request'] == "456"
 
-    def test_load_and_validate_config_with_predefined_no_branch_or_pr(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_with_predefined_no_branch_or_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3201,7 +3202,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
-                            _load_and_validate_config(use_predefined=True)
+                            await _load_and_validate_config(use_predefined=True)
 
                         # Verify correct method was attempted
                         mock_provider_manager.branch_or_pr.assert_called_once()
@@ -3210,7 +3211,8 @@ class TestLoadAndValidateConfig:
         # NEW TESTS: use_predefined=False (Prompt Mode - Explicit)
         # ========================================================================
 
-    def test_load_and_validate_config_with_prompt_explicit(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_with_prompt_explicit(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3241,7 +3243,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        result = _load_and_validate_config(use_predefined=False)
+                        result = await _load_and_validate_config(use_predefined=False)
 
                         assert result is not None
                         _, _, params = result
@@ -3253,7 +3255,8 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "develop"
                         assert params['pull_request'] == "789"
 
-    def test_load_and_validate_config_prompt_mode_no_branch_or_pr(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_prompt_mode_no_branch_or_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3285,7 +3288,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
-                            _load_and_validate_config(use_predefined=False)
+                            await _load_and_validate_config(use_predefined=False)
 
                         mock_provider_manager.branch_or_pr_prompt.assert_called_once()
 
@@ -3293,7 +3296,8 @@ class TestLoadAndValidateConfig:
         # NEW TESTS: Edge Cases and Error Scenarios
         # ========================================================================
 
-    def test_load_and_validate_config_predefined_method_raises_exception(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_predefined_method_raises_exception(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3325,11 +3329,12 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception) as exc_info:
-                            _load_and_validate_config(use_predefined=True)
+                            await _load_and_validate_config(use_predefined=True)
 
                         assert "Config error" in str(exc_info.value)
 
-    def test_load_and_validate_config_params_merge_with_existing_config(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_params_merge_with_existing_config(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3361,7 +3366,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config(use_predefined=True)
+                        _, _, params = await _load_and_validate_config(use_predefined=True)
 
                         # Verify existing config is preserved
                         assert params['max_fixes'] == 10
@@ -3370,7 +3375,8 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "100"
 
-    def test_load_and_validate_config_params_empty_dict_when_no_existing(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_params_empty_dict_when_no_existing(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config,mock_auth_dict
     ):
@@ -3396,7 +3402,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Should handle None gracefully and create new dict
                         assert isinstance(params, dict)
@@ -3408,8 +3414,8 @@ class TestLoadAndValidateConfig:
         # ========================================================================
 
 
-
-    def test_load_and_validate_config_returns_correct_types(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_returns_correct_types(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3433,7 +3439,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        auth_config, llm_config, params = _load_and_validate_config(
+                        auth_config, llm_config, params = await _load_and_validate_config(
                             use_predefined=True
                         )
 
@@ -3442,7 +3448,8 @@ class TestLoadAndValidateConfig:
                         assert llm_config is not None
                         assert isinstance(params, dict)  # Should be Dict[str, Any], not Optional[str]
 
-    def test_load_and_validate_config_console_message_loading(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_loading(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3467,7 +3474,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                             # Verify loading message displayed at start
                             loading_calls = [
@@ -3476,7 +3483,8 @@ class TestLoadAndValidateConfig:
                             ]
                             assert len(loading_calls) >= 1
 
-    def test_load_and_validate_config_console_message_success(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_success(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3501,7 +3509,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                             # Verify success message displayed at end
                             success_calls = [
@@ -3510,7 +3518,8 @@ class TestLoadAndValidateConfig:
                             ]
                             assert len(success_calls) >= 1
 
-    def test_load_and_validate_config_console_message_no_auth(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_no_auth(
             self, mock_config_service
     ):
         """Test console displays appropriate messages when auth not found"""
@@ -3521,14 +3530,15 @@ class TestLoadAndValidateConfig:
 
             with patch('devdox_ai_sonar.cli.console') as mock_console:
                 with pytest.raises(click.Abort):
-                    _load_and_validate_config()
+                    await _load_and_validate_config()
 
                 # Verify error messages displayed
                 calls = [str(call) for call in mock_console.print.call_args_list]
                 # Should display AUTHENTICATION_NOT_FOUND and DEVDOX_SONAR_CONFIG
                 assert len(calls) >= 2
 
-    def test_load_and_validate_config_console_message_invalid_auth(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_invalid_auth(
             self, mock_config_service, mock_config_manager
     ):
         """Test console displays error message for invalid auth"""
@@ -3551,7 +3561,7 @@ class TestLoadAndValidateConfig:
 
             with patch("devdox_ai_sonar.cli.AuthConfig.from_dict", return_value=mock_auth_instance):
                 with pytest.raises(click.Abort):
-                    _load_and_validate_config()
+                    await _load_and_validate_config()
 
                 # Check that some error message was printed containing our validation error
                 all_print_calls = [str(call) for call in mock_console.print.call_args_list]
@@ -3562,8 +3572,8 @@ class TestLoadAndValidateConfig:
                 )
 
 
-
-    def test_load_and_validate_config_console_message_no_llm(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_no_llm(
             self, mock_config_service, mock_config_manager, auth_config
     ):
         """Test console displays error when no LLM providers configured"""
@@ -3583,7 +3593,7 @@ class TestLoadAndValidateConfig:
 
                 with patch('devdox_ai_sonar.cli.console') as mock_console:
                         with pytest.raises(click.Abort):
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                         # Verify LLM error message
                         calls = [str(call) for call in mock_console.print.call_args_list]
