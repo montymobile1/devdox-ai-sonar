@@ -1041,7 +1041,8 @@ class TestConfigurationManagement:
                     'Please add'
                 ])
 
-    def test_update_provider_no_existing_providers_with_error_handler(
+    @pytest.mark.asyncio
+    async def test_update_provider_no_existing_providers_with_error_handler(
             self,
             runner,
             mock_config_manager,
@@ -1067,7 +1068,7 @@ class TestConfigurationManagement:
 
                 with patch('devdox_ai_sonar.cli.console.print'):
                     with pytest.raises(click.Abort):
-                        update_provider()
+                        await update_provider()
 
         # ========================================================================
         # Additional tests for other abort scenarios
@@ -1150,18 +1151,18 @@ class TestConfigurationManagement:
                     ctx = Mock()
                     change_parameters(ctx)
 
-
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_types_provided(
+    async def test_change_parameters_with_types_provided(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that types parameter skips interactive prompt for types"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1170,7 +1171,7 @@ class TestConfigurationManagement:
         )
 
         # Call with types pre-populated
-        change_parameters(types="BUG,VULNERABILITY")
+        await change_parameters(types="BUG,VULNERABILITY")
 
         # change_field should NOT be called for types (skipped because types provided)
         types_calls = [
@@ -1182,17 +1183,18 @@ class TestConfigurationManagement:
         # But other fields should still be called
         assert mock_change_field.call_count >= 3
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_severity_provided(
+    async def test_change_parameters_with_severity_provided(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that severity parameter skips interactive prompt for severities"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1201,7 +1203,7 @@ class TestConfigurationManagement:
         )
 
         # Call with severity pre-populated
-        change_parameters(severity="CRITICAL,BLOCKER")
+        await change_parameters(severity="CRITICAL,BLOCKER")
 
         # change_field should NOT be called for severities
         severity_calls = [
@@ -1213,17 +1215,18 @@ class TestConfigurationManagement:
         # But other fields should still be called
         assert mock_change_field.call_count >= 3  # types, apply, backup, exclude_rules
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_both_types_and_severity(
+    async def test_change_parameters_with_both_types_and_severity(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that both types and severity parameters skip their prompts"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1232,7 +1235,7 @@ class TestConfigurationManagement:
         )
 
         # Call with both types and severity
-        change_parameters(types="BUG", severity="CRITICAL")
+        await change_parameters(types="BUG", severity="CRITICAL")
 
         # Neither types nor severities should be prompted
         types_calls = [
@@ -1250,22 +1253,22 @@ class TestConfigurationManagement:
         # Only apply, backup, and exclude_rules should be prompted
         assert mock_change_field.call_count >= 3
 
-
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_apply_in_kwargs(
+    async def test_change_parameters_with_apply_in_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that apply parameter from kwargs is used as default"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: None,  # Not in config
             constant.CONFIGURATION_BACKUP: None,
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1274,7 +1277,7 @@ class TestConfigurationManagement:
         )
 
         # Call with apply in kwargs
-        change_parameters(apply=1)
+        await change_parameters(apply=1)
 
         # Find the call for CONFIGURATION_APPLY
         apply_calls = [
@@ -1288,21 +1291,22 @@ class TestConfigurationManagement:
         call_kwargs = apply_calls[0][1]
         assert call_kwargs['default_value'] == 1, "Should use apply value from kwargs as default"
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_create_backup_in_kwargs(
+    async def test_change_parameters_with_create_backup_in_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that create_backup parameter from kwargs is used as default"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: None,
             constant.CONFIGURATION_BACKUP: None,  # Not in config
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1311,7 +1315,7 @@ class TestConfigurationManagement:
         )
 
         # Call with create_backup in kwargs
-        change_parameters(create_backup=1)
+        await change_parameters(create_backup=1)
 
         # Find the call for CONFIGURATION_BACKUP
         backup_calls = [
@@ -1325,21 +1329,22 @@ class TestConfigurationManagement:
         call_kwargs = backup_calls[0][1]
         assert call_kwargs['default_value'] == 1, "Should use create_backup value from kwargs as default"
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_config_overrides_kwargs(
+    async def test_change_parameters_config_overrides_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that config values take precedence over kwargs"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: 0,  # In config
             constant.CONFIGURATION_BACKUP: 1,  # In config
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1348,7 +1353,7 @@ class TestConfigurationManagement:
         )
 
         # Call with different values in kwargs
-        change_parameters(apply=1, create_backup=0)
+        await change_parameters(apply=1, create_backup=0)
 
         # Find the calls
         apply_calls = [
@@ -1364,20 +1369,21 @@ class TestConfigurationManagement:
         assert apply_calls[0][1]['default_value'] == 0, "Should use config value for apply"
         assert backup_calls[0][1]['default_value'] == 1, "Should use config value for backup"
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_types_field_with_choices(
+    async def test_change_parameters_types_field_with_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that types field is called with VALID_ISSUE_TYPES choices"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.types": "BUG,CODE_SMELL",
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1386,7 +1392,7 @@ class TestConfigurationManagement:
         )
 
         # Call without types parameter (should prompt)
-        change_parameters()
+        await change_parameters()
 
         # Find types field call
         types_calls = [
@@ -1401,20 +1407,21 @@ class TestConfigurationManagement:
         assert 'choices' in call_kwargs
         assert call_kwargs['choices'] == list(InputValidator.VALID_ISSUE_TYPES)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_severities_field_with_choices(
+    async def test_change_parameters_severities_field_with_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that severities field is called with VALID_SEVERITIES choices"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.severities": "CRITICAL,BLOCKER",
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1423,7 +1430,7 @@ class TestConfigurationManagement:
         )
 
         # Call without severity parameter (should prompt)
-        change_parameters()
+        await change_parameters()
 
         # Find severities field call
         severity_calls = [
@@ -1475,17 +1482,18 @@ class TestConfigurationManagement:
         assert 'choices' in call_kwargs
         assert call_kwargs['choices'] == list(InputValidator.VALID_SEVERITIES)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_apply_field_with_yes_no_choices(
+    async def test_change_parameters_apply_field_with_yes_no_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that apply field has yes/no choices with correct format"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1493,7 +1501,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Find apply field call
         apply_calls = [
@@ -1512,20 +1520,21 @@ class TestConfigurationManagement:
         assert all(hasattr(choice, 'title') and hasattr(choice, 'value') for choice in choices)
         assert call_kwargs['multiple'] is False
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_exclude_rules_field_no_choices(
+    async def test_change_parameters_exclude_rules_field_no_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that exclude_rules field has no predefined choices"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.exclude_rules": "python:S3776,python:S1192",
         }.get(key)
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1533,7 +1542,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Find exclude_rules field call
         exclude_calls = [
@@ -1550,14 +1559,15 @@ class TestConfigurationManagement:
     # ========================================================================
     # NEW TESTS: Branch/PR Validation
     # ========================================================================
-
+    
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_change_parameters_with_branch_only(self, mock_init):
+    async def test_change_parameters_with_branch_only(self, mock_init):
         """Test change_parameters with only branch (no PR)"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("feature/test", None)
 
         mock_init.return_value = (
@@ -1568,16 +1578,17 @@ class TestConfigurationManagement:
         with patch('devdox_ai_sonar.cli.change_field'):
             with patch('devdox_ai_sonar.cli.change_max_fix'):
                 # Should succeed with only branch
-                change_parameters()
+                await change_parameters()
                 mock_manager.save_config.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_change_parameters_with_pr_only(self, mock_init):
+    async def test_change_parameters_with_pr_only(self, mock_init):
         """Test change_parameters with only PR (no branch)"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = (None, "123")
 
         mock_init.return_value = (
@@ -1588,22 +1599,23 @@ class TestConfigurationManagement:
         with patch('devdox_ai_sonar.cli.change_field'):
             with patch('devdox_ai_sonar.cli.change_max_fix'):
                 # Should succeed with only PR
-                change_parameters()
+                await change_parameters()
                 mock_manager.save_config.assert_called_once()
 
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_change_field(
+    async def test_change_parameters_handles_exception_in_change_field(
             self, mock_handle_error, mock_change_max, mock_change_field, mock_init
     ):
         """Test exception handling when change_field raises error"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1614,25 +1626,26 @@ class TestConfigurationManagement:
         # Make change_field raise exception
         mock_change_field.side_effect = ValueError("Invalid input")
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
         assert isinstance(mock_handle_error.call_args[0][0], ValueError)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_save(
+    async def test_change_parameters_handles_exception_in_save(
             self, mock_handle_error, mock_change_max, mock_change_field, mock_init
     ):
         """Test exception handling when save_config fails"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
         mock_manager.save_config.side_effect = IOError("Cannot write to file")
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1640,31 +1653,32 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
         assert isinstance(mock_handle_error.call_args[0][0], IOError)
 
 
-
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_init(
+    async def test_change_parameters_handles_exception_in_init(
             self, mock_handle_error, mock_init
     ):
         """Test exception handling when initialization fails"""
         # Make init raise exception
         mock_init.side_effect = RuntimeError("Config error")
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
         assert isinstance(mock_handle_error.call_args[0][0], RuntimeError)
 
 
-    def test_change_parameters_no_branch_or_pr(
+    @pytest.mark.asyncio
+    async def test_change_parameters_no_branch_or_pr(
             self, runner, mock_config_manager, mock_provider_manager
     ):
         """Test change_parameters without branch or PR"""
@@ -1682,9 +1696,10 @@ class TestConfigurationManagement:
 
             with pytest.raises(Exception):  # Should abort
                 ctx = Mock()
-                change_parameters(ctx)
+                await change_parameters(ctx)
 
-    def test_change_parameters_invalid_pr(
+    @pytest.mark.asyncio
+    async def test_change_parameters_invalid_pr(
             self, runner, mock_config_manager, mock_provider_manager
     ):
         """Test change_parameters with invalid PR"""
@@ -1702,7 +1717,7 @@ class TestConfigurationManagement:
 
             with pytest.raises(Exception):  # Should abort after validation
                 ctx = Mock()
-                change_parameters(ctx)
+                await change_parameters(ctx)
 
     def test_change_field_with_value(self, mock_config_manager):
         """Test change_field with value"""
@@ -1814,17 +1829,18 @@ class TestConfigurationManagement:
                 mock_settings.DEFAULT_MAX_FIXES = 10
                 change_max_fix(mock_config_manager, "Enter max:", 10, 50)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_all_values(
+    async def test_change_parameters_all_values(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test changing all parameter values"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1834,7 +1850,7 @@ class TestConfigurationManagement:
 
         mock_change_field.return_value = None
 
-        change_parameters()
+        await change_parameters()
 
         # Should call change_max_fix and change_field multiple times
         mock_change_max.assert_called_once()
@@ -1855,17 +1871,18 @@ class TestConfigurationManagement:
             with pytest.raises(click.Abort):
                 change_parameters()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_save_config(
+    async def test_change_parameters_save_config(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that config is saved after changes"""
-        mock_manager = Mock()
+        mock_manager = AsyncMock()
         mock_manager.get_value.return_value = 10
 
-        mock_provider_manager = Mock()
+        mock_provider_manager = AsyncMock()
         mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
 
         mock_init.return_value = (
@@ -1873,7 +1890,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Should save config at end
         mock_manager.save_config.assert_called_once_with(create_backup=False)
@@ -1886,7 +1903,8 @@ class TestConfigurationManagement:
 class TestConfigureSonarCloud:
     """Tests for _configure_sonarcloud"""
 
-    def test_configure_sonarcloud_success(self):
+    @pytest.mark.asyncio
+    async def test_configure_sonarcloud_success(self):
         """Test successful configuration"""
         mock_sonar_ui = Mock()
         mock_config_service = Mock()
@@ -1908,12 +1926,13 @@ class TestConfigureSonarCloud:
         mock_sonar_ui.configure_sonarcloud.return_value = mock_sonar_config
         mock_config_service.save_config.return_value = True
 
-        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+        result = await _configure_sonarcloud(mock_sonar_ui, mock_config_service)
 
         assert result is True
         mock_sonar_ui.display_welcome.assert_called_once()
 
-    def test_configure_sonarcloud_already_configured(self):
+    @pytest.mark.asyncio
+    async def test_configure_sonarcloud_already_configured(self):
         """Test when already configured"""
         mock_sonar_ui = Mock()
         mock_config_service = Mock()
@@ -1926,7 +1945,7 @@ class TestConfigureSonarCloud:
         }
         mock_config_service.check_all_value_empty.return_value = False
 
-        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+        result = await _configure_sonarcloud(mock_sonar_ui, mock_config_service)
 
         assert result is True
         mock_sonar_ui.configure_sonarcloud.assert_not_called()
@@ -1981,13 +2000,14 @@ class TestFixIssuesCommand:
 
                     _run_fix_issues()
 
-    def test_run_fix_issues_switch_command(self):
+    @pytest.mark.asyncio
+    async def test_run_fix_issues_switch_command(self):
         """Test fix_issues with command switch"""
         with patch('devdox_ai_sonar.cli._load_and_validate_config', side_effect=SwitchCommandException):
 
 
             with pytest.raises(SwitchCommandException):
-                _run_fix_issues()
+                await _run_fix_issues()
 
     def test_display_configuration(self):
         """Test display_configuration function"""
@@ -2128,9 +2148,10 @@ class TestFixSecurityIssuesCommand:
 class TestSecurityIssuesProcessing:
     """Test security issues processing."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
-    def test_process_security_issues_single_file(
+    async def test_process_security_issues_single_file(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params
     ):
@@ -2141,7 +2162,7 @@ class TestSecurityIssuesProcessing:
             "security.py": [Mock(), Mock()]
         }
 
-        _process_security_issues(
+        await _process_security_issues(
             issues_by_file, mock_services, auth_config, fix_params,Mock(),tmp_path=Mock()
         )
 
@@ -2149,9 +2170,10 @@ class TestSecurityIssuesProcessing:
         mock_single_fix.assert_called_once()
         mock_continue.assert_called_once_with(1, 1)
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
-    def test_process_security_issues_multiple_files(
+    async def test_process_security_issues_multiple_files(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params
     ):
@@ -2163,7 +2185,7 @@ class TestSecurityIssuesProcessing:
             "crypto.py": [Mock(), Mock()]
         }
 
-        _process_security_issues(
+        await _process_security_issues(
             issues_by_file, mock_services, auth_config, fix_params,Mock(), tmp_path=Mock()
         )
 
@@ -2207,8 +2229,9 @@ class TestSecurityIssuesProcessing:
         # Should handle gracefully
         mock_single_fix.assert_not_called()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._process_issues_for_rule')
-    def test_process_rule_with_empty_issues_list(
+    async def test_process_rule_with_empty_issues_list(
             self, mock_process_rule,
             mock_services, auth_config, fix_params
     ):
@@ -2219,7 +2242,7 @@ class TestSecurityIssuesProcessing:
             "python:S1234": {"issue": []}  # Empty list
         }
         md_file_path = Mock()
-        _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
@@ -2233,8 +2256,9 @@ class TestSecurityIssuesProcessing:
 class TestRegularIssuesProcessing:
     """Test regular issues processing."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._process_issues_for_rule')
-    def test_process_regular_issues_single_rule(
+    async def test_process_regular_issues_single_rule(
             self, mock_process_rule,
             mock_services, auth_config, fix_params
     ):
@@ -2248,15 +2272,16 @@ class TestRegularIssuesProcessing:
         }
 
         md_file_path = Mock()
-        _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
 
         mock_process_rule.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._process_issues_for_rule')
-    def test_process_regular_issues_multiple_rules(
+    async def test_process_regular_issues_multiple_rules(
             self, mock_process_rule,
             mock_services, auth_config, fix_params
     ):
@@ -2269,7 +2294,7 @@ class TestRegularIssuesProcessing:
             "python:S9012": {"issue": [Mock()]}
         }
         md_file_path = Mock()
-        _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
@@ -2325,20 +2350,22 @@ class TestRegularIssuesProcessing:
 class TestAnalyzeCommand:
     """Test analyze command"""
 
-
-    def test_run_analyze_success(self):
-        """Test successful analysis - Updated for refactored version"""
-
-
-        # Mock the return from _load_and_validate_config
+    @pytest.mark.asyncio
+    @patch('devdox_ai_sonar.cli._load_and_validate_config')
+    @patch('devdox_ai_sonar.cli.smart_prompt')
+    @patch('devdox_ai_sonar.cli.SonarCloudAnalyzer')
+    @patch('devdox_ai_sonar.cli.show_progress', mock_show_progress)
+    @patch('devdox_ai_sonar.cli._display_analysis_results')
+    async def test_run_analyze_success(
+            self, mock_display, mock_analyzer_class, mock_prompt, mock_load
+    ):
+        """Test successful analysis"""
         mock_auth_config = Mock()
         mock_auth_config.project = "test-project"
         mock_auth_config.organization = "test-org"
         mock_auth_config.token = "test-token"
 
         mock_llm_config = Mock()
-        mock_llm_config.provider = "openai"
-        mock_llm_config.model = "gpt-4"
 
         parameters = {
             "branch": "main",
@@ -2348,7 +2375,9 @@ class TestAnalyzeCommand:
             "types": ""
         }
 
-        # Mock analyzer
+        mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
+        mock_prompt.return_value = "10"
+
         mock_analyzer = MagicMock()
         mock_analyzer.get_project_issues.return_value = AnalysisResult(
             project_key="test",
@@ -2358,22 +2387,15 @@ class TestAnalyzeCommand:
             issues=[],
             issues_by_severity={}
         )
+        mock_analyzer_class.return_value = mock_analyzer
 
-        # Patch dependencies
-        with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
-            mock_load.return_value = (mock_auth_config, mock_llm_config, parameters)
+        await _run_analyze({})
 
-            with patch('devdox_ai_sonar.cli.smart_prompt', return_value="10"):
-                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
-                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        with patch('devdox_ai_sonar.cli._display_analysis_results'):
-                            _run_analyze()
+        mock_load.assert_called_once()
+        mock_analyzer.get_project_issues.assert_called_once()
 
-                            # Verify
-                            mock_load.assert_called_once()
-                            mock_analyzer.get_project_issues.assert_called_once()
-
-    def test_run_analyze_no_results(self):
+    @pytest.mark.asyncio
+    async def test_run_analyze_no_results(self):
         """Test analyze when no results returned"""
         # Mock config
         mock_auth_config = Mock()
@@ -2402,12 +2424,13 @@ class TestAnalyzeCommand:
                 with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
 
-                        _run_analyze()
+                        await _run_analyze({})
 
                         # Should still call analyzer
                         mock_analyzer.get_project_issues.assert_called_once()
 
-    def test_run_analyze_no_config(self):
+    @pytest.mark.asyncio
+    async def test_run_analyze_no_config(self):
         """Test analyze without config - _load_and_validate_config raises Abort"""
 
 
@@ -2416,16 +2439,17 @@ class TestAnalyzeCommand:
             mock_load.side_effect = click.Abort()
 
             with pytest.raises(click.Abort):
-                _run_analyze()
+                await _run_analyze({})
 
-    def test_run_inspect_no_config(self):
+    @pytest.mark.asyncio
+    async def test_run_inspect_no_config(self):
         """Test inspect without config - _load_and_validate_config raises Abort"""
 
         with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
             mock_load.side_effect = click.Abort()
 
             with pytest.raises(click.Abort):
-                _run_inspect()
+                await _run_inspect()
 
 
     def test_run_analyze_with_severity_and_types(self):
@@ -3623,7 +3647,8 @@ class TestLoadAndValidateConfig:
                         llm_error_calls = [c for c in calls if 'LLM' in c or 'providers' in c]
                         assert len(llm_error_calls) >= 1
 
-    def test_load_and_validate_config_console_message_no_branch_pr(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_console_message_no_branch_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3649,12 +3674,13 @@ class TestLoadAndValidateConfig:
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
                                 with pytest.raises(click.Abort):
-                                    _load_and_validate_config()
+                                    await _load_and_validate_config()
 
                                 # Verify NO_BRANCH_OR_PR_SPECIFIED message displayed
                                 mock_console.print.assert_any_call(constant.NO_BRANCH_OR_PR_SPECIFIED)
 
-    def test_load_and_validate_config_exclude_rules_string_split(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_exclude_rules_string_split(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3681,14 +3707,15 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Verify exclude_rules is split into list
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 3
                         assert params['exclude_rules'] == ["python:S3776", "python:S1192", "python:S107"]
 
-    def test_load_and_validate_config_exclude_rules_single_rule(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_exclude_rules_single_rule(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3714,14 +3741,15 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Single rule should result in list with one element
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 1
                         assert params['exclude_rules'] == ["python:S3776"]
 
-    def test_load_and_validate_config_exclude_rules_with_spaces(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_exclude_rules_with_spaces(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3747,13 +3775,14 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Should preserve spaces (or you might want to strip them)
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 3
 
-    def test_load_and_validate_config_no_exclude_rules(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_no_exclude_rules(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3780,12 +3809,13 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # exclude_rules should not be in params or be None
                         assert 'exclude_rules' not in params or params.get('exclude_rules') is None
 
-    def test_load_and_validate_config_exclude_rules_empty_string(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_exclude_rules_empty_string(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3811,7 +3841,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await  _load_and_validate_config()
 
                         # Empty string should not be split (falsy value)
                         # Based on code: if params.get("exclude_rules")
@@ -3819,7 +3849,8 @@ class TestLoadAndValidateConfig:
                         # Empty string is falsy, so split shouldn't be called
                         assert params['exclude_rules'] == ""
 
-    def test_load_and_validate_config_exclude_rules_already_list(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_exclude_rules_already_list(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config,auth_config
     ):
@@ -3849,14 +3880,15 @@ class TestLoadAndValidateConfig:
                         # This might raise AttributeError: 'list' object has no attribute 'split'
                         # Need to test actual behavior
                         try:
-                            _, _, params = _load_and_validate_config()
+                            _, _, params = await _load_and_validate_config()
                             # If it doesn't raise, verify it's still a list
                             assert isinstance(params['exclude_rules'], list)
                         except AttributeError:
                             # Expected if code doesn't handle list case
                             pytest.xfail("Code doesn't handle exclude_rules as list")
 
-    def test_load_and_validate_config_params_preserves_all_existing_config(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_params_preserves_all_existing_config(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3889,7 +3921,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Verify all existing config preserved
                         assert params['max_fixes'] == 10
@@ -3904,7 +3936,8 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "100"
 
-    def test_load_and_validate_config_params_branch_overwrites_existing(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_params_branch_overwrites_existing(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3931,7 +3964,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # New values should overwrite old
                         assert params['branch'] == "new-branch"
@@ -3943,7 +3976,8 @@ class TestLoadAndValidateConfig:
 class TestWithFixtures:
     """Cleaner tests using fixtures"""
 
-    def test_run_analyze_with_fixtures(self, mock_loaded_config):
+    @pytest.mark.asyncio
+    async def test_run_analyze_with_fixtures(self, mock_loaded_config):
         """Test analyze using fixtures"""
 
         mock_analyzer = MagicMock()
@@ -3963,7 +3997,7 @@ class TestWithFixtures:
 
                         with patch('devdox_ai_sonar.cli._display_analysis_results'):
 
-                            _run_analyze()
+                            await _run_analyze({})
 
     def test_run_inspect_with_fixtures(self, mock_loaded_config):
         """Test inspect using fixtures"""
@@ -3987,12 +4021,13 @@ class TestWithFixtures:
 class TestShouldContinueToMenu:
     """Test cases for _should_continue_to_menu."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
-    def test_should_continue_returns_true(self, mock_confirm):
+    async def test_should_continue_returns_true(self, mock_confirm):
         """Test returns True when user confirms."""
         mock_confirm.return_value = True
 
-        result = _should_continue_to_menu()
+        result = await _should_continue_to_menu()
 
         assert result is True
         mock_confirm.assert_called_once_with(
@@ -4001,12 +4036,13 @@ class TestShouldContinueToMenu:
             allow_switch=True
         )
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
-    def test_should_continue_returns_false(self, mock_confirm):
+    async def test_should_continue_returns_false(self, mock_confirm):
         """Test returns False when user declines."""
         mock_confirm.return_value = False
 
-        result = _should_continue_to_menu()
+        result = await _should_continue_to_menu()
 
         assert result is False
 
@@ -4026,57 +4062,62 @@ class TestHandleCommandSwitch:
 class TestHandleKeyboardInterrupt:
     """Test cases for _handle_keyboard_interrupt."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_confirms_exit(self, mock_console, mock_confirm):
+    async def test_user_confirms_exit(self, mock_console, mock_confirm):
         """Test user confirms exit."""
         mock_confirm.return_value = True
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_keyboard_interrupt()
+            await _handle_keyboard_interrupt()
 
         assert exc_info.value.code == 0
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_declines_exit(self, mock_console, mock_confirm):
+    async def test_user_declines_exit(self, mock_console, mock_confirm):
         """Test user declines exit."""
         mock_confirm.return_value = False
 
-        result = _handle_keyboard_interrupt()
+        result = await _handle_keyboard_interrupt()
 
         assert result is False
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_double_keyboard_interrupt(self, mock_console, mock_confirm):
+    async def test_double_keyboard_interrupt(self, mock_console, mock_confirm):
         """Test double Ctrl+C forces exit."""
         mock_confirm.side_effect = KeyboardInterrupt()
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_keyboard_interrupt()
+           await _handle_keyboard_interrupt()
 
         assert exc_info.value.code == 130  # SIGINT exit code
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_eof_error_forces_exit(self, mock_console, mock_confirm):
+    async def test_eof_error_forces_exit(self, mock_console, mock_confirm):
         """Test EOF error forces exit."""
         mock_confirm.side_effect = EOFError()
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_keyboard_interrupt()
+            await _handle_keyboard_interrupt()
 
         assert exc_info.value.code == 130
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_unexpected_exception_during_exit(self, mock_console, mock_confirm):
+    async def test_unexpected_exception_during_exit(self, mock_console, mock_confirm):
         """Test unexpected exception during exit confirmation."""
         mock_confirm.side_effect = RuntimeError("Unexpected error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_keyboard_interrupt()
+            await _handle_keyboard_interrupt()
 
         assert exc_info.value.code == 1
 
@@ -4084,51 +4125,55 @@ class TestHandleKeyboardInterrupt:
 class TestHandleInteractiveError:
     """Test cases for _handle_interactive_error."""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_returns_to_menu(self, mock_console, mock_confirm):
+    async def test_user_returns_to_menu(self, mock_console, mock_confirm):
         """Test user chooses to return to menu."""
         mock_confirm.return_value = True
         error = ValueError("Test error")
 
-        result = _handle_interactive_error(error)
+        result = await _handle_interactive_error(error)
 
         assert result is False
         mock_console.print.assert_called()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_exits_after_error(self, mock_console, mock_confirm):
+    async def test_user_exits_after_error(self, mock_console, mock_confirm):
         """Test user chooses to exit after error."""
         mock_confirm.return_value = False
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+            await _handle_interactive_error(error)
 
         assert exc_info.value.code == 1
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_keyboard_interrupt_during_error_handling(self, mock_console, mock_confirm):
+    async def test_keyboard_interrupt_during_error_handling(self, mock_console, mock_confirm):
         """Test keyboard interrupt during error handling."""
         mock_confirm.side_effect = KeyboardInterrupt()
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+            await _handle_interactive_error(error)
 
         assert exc_info.value.code == 1
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_fatal_error_during_confirmation(self, mock_console, mock_confirm):
+    async def test_fatal_error_during_confirmation(self, mock_console, mock_confirm):
         """Test fatal error during confirmation prompt."""
         mock_confirm.side_effect = RuntimeError("Fatal error")
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+           await  _handle_interactive_error(error)
 
         assert exc_info.value.code == 2
 
@@ -4385,7 +4430,8 @@ class TestClickAbortPatterns:
         return mock_manager, mock_provider_mgr
 
     # Pattern 1: Direct exception catching
-    def test_pattern_1_direct_catch(self, mock_setup):
+    @pytest.mark.asyncio
+    async def test_pattern_1_direct_catch(self, mock_setup):
         """Pattern 1: Catch click.Abort directly"""
         mock_manager, mock_provider_mgr = mock_setup
 
@@ -4395,10 +4441,11 @@ class TestClickAbortPatterns:
             with patch('devdox_ai_sonar.cli.console.print'):
                 # ✅ Correct way
                 with pytest.raises(click.Abort):
-                    update_provider()
+                    await update_provider()
 
     # Pattern 2: Try-except verification
-    def test_pattern_2_try_except(self, mock_setup):
+    @pytest.mark.asyncio
+    async def test_pattern_2_try_except(self, mock_setup):
         """Pattern 2: Use try-except for more control"""
         mock_manager, mock_provider_mgr = mock_setup
 
@@ -4408,14 +4455,15 @@ class TestClickAbortPatterns:
             with patch('devdox_ai_sonar.cli.console.print'):
                 abort_raised = False
                 try:
-                    update_provider()
+                    await update_provider()
                 except click.Abort:
                     abort_raised = True
 
                 assert abort_raised, "Expected click.Abort to be raised"
 
     # Pattern 4: Check exception message
-    def test_pattern_4_exception_info(self, mock_setup):
+    @pytest.mark.asyncio
+    async def test_pattern_4_exception_info(self, mock_setup):
         """Pattern 4: Verify exception details"""
         mock_manager, mock_provider_mgr = mock_setup
 
@@ -4424,7 +4472,7 @@ class TestClickAbortPatterns:
 
             with patch('devdox_ai_sonar.cli.console.print') as mock_print:
                 with pytest.raises(click.Abort) as exc_info:
-                    update_provider()
+                   await update_provider()
 
                 # Verify it's the right exception type
                 assert isinstance(exc_info.value, click.Abort)
@@ -4454,10 +4502,11 @@ class TestUpdateProviderComplete:
         manager.update_existing_provider.return_value = True
         return manager
 
-    def test_update_provider_success(
-        self,
-        mock_config_manager,
-        mock_provider_manager
+    @pytest.mark.asyncio
+    async def test_update_provider_success(
+            self,
+            mock_config_manager,
+            mock_provider_manager
     ):
         """Test successful provider update"""
         with patch('devdox_ai_sonar.cli._initialize_managers') as mock_init:
@@ -4474,14 +4523,13 @@ class TestUpdateProviderComplete:
                 with patch('devdox_ai_sonar.cli._display_operation_header'):
                     with patch('devdox_ai_sonar.cli._select_existing_ui', return_value='openai'):
                         with patch('devdox_ai_sonar.cli.console.print'):
-                            # ✅ This should NOT raise any exception
-                            update_provider()
+                            await update_provider()
 
-                            # Verify success flow
                             mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
                             mock_config_manager.save_config.assert_called_once_with(create_backup=False)
 
-    def test_update_provider_no_providers_abort(
+    @pytest.mark.asyncio
+    async def test_update_provider_no_providers_abort(
         self,
         mock_config_manager,
         mock_provider_manager
@@ -4502,9 +4550,10 @@ class TestUpdateProviderComplete:
             with patch('devdox_ai_sonar.cli.console.print'):
                 # ✅ Expect click.Abort
                 with pytest.raises(click.Abort):
-                    update_provider()
+                   await update_provider()
 
-    def test_update_provider_user_cancels_abort(
+    @pytest.mark.asyncio
+    async def test_update_provider_user_cancels_abort(
         self,
         mock_config_manager,
         mock_provider_manager
@@ -4526,7 +4575,7 @@ class TestUpdateProviderComplete:
                 with patch('devdox_ai_sonar.cli._select_existing_ui', return_value=""):
                     # ✅ Expect click.Abort when user cancels
                     with pytest.raises(click.Abort):
-                        update_provider()
+                        await update_provider()
 
 
 class TestHandleCliError:
@@ -4549,8 +4598,9 @@ class TestHandleCliError:
 class TestLoadAndValidateConfigErrors:
     """Test error cases for _load_and_validate_config"""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_load_config_service_returns_none(self, mock_init):
+    async def test_load_config_service_returns_none(self, mock_init):
         """Test when config service returns None"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = None
@@ -4561,11 +4611,12 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_validation_fails(self, mock_auth_config, mock_init):
+    async def test_load_config_validation_fails(self, mock_auth_config, mock_init):
         """Test when auth config validation fails"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4585,11 +4636,12 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_no_llm_config(self, mock_auth_config, mock_init):
+    async def test_load_config_no_llm_config(self, mock_auth_config, mock_init):
         """Test when LLM config is missing"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4610,11 +4662,12 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_no_branch_or_pr(self, mock_auth_config, mock_init):
+    async def test_load_config_no_branch_or_pr(self, mock_auth_config, mock_init):
         """Test when neither branch nor PR is provided"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4639,7 +4692,7 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
 
 # ============================================================================
@@ -4648,20 +4701,21 @@ class TestLoadAndValidateConfigErrors:
 
 class TestCommandExecutionErrors:
     """Test error scenarios in command execution"""
-
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
-    def test_run_fix_issues_config_load_fails(self, mock_load):
+    async def test_run_fix_issues_config_load_fails(self, mock_load):
         """Test fix_issues when config loading fails"""
         mock_load.side_effect = click.Abort()
 
         with pytest.raises(click.Abort):
-            _run_fix_issues()
+            await _run_fix_issues()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
     @patch('devdox_ai_sonar.cli.display_configuration')
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli._process_and_fix_issues')
-    def test_run_fix_issues_processing_exception(
+    async def test_run_fix_issues_processing_exception(
             self, mock_process, mock_confirm, mock_display, mock_load
     ):
         """Test fix_issues when processing raises exception"""
@@ -4677,12 +4731,13 @@ class TestCommandExecutionErrors:
         mock_process.side_effect = Exception("Processing failed")
 
         with pytest.raises(Exception, match="Processing failed"):
-            _run_fix_issues()
+            await _run_fix_issues()
 
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
     @patch('devdox_ai_sonar.cli.SonarCloudAnalyzer')
-    def test_run_inspect_directory_not_found(self, mock_analyzer_class, mock_load):
+    async def test_run_inspect_directory_not_found(self, mock_analyzer_class, mock_load):
         """Test inspect when directory doesn't exist"""
         mock_auth = Mock()
         mock_auth.token = "test"
@@ -4696,7 +4751,7 @@ class TestCommandExecutionErrors:
         mock_analyzer_class.return_value = mock_analyzer
 
         with pytest.raises(ValueError, match="Invalid path"):
-            _run_inspect()
+            await _run_inspect()
 
 
 # ============================================================================
@@ -4782,8 +4837,9 @@ class TestEdgeCasesAndBoundaries:
 class TestConcurrentScenarios:
     """Test concurrent access scenarios"""
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_multiple_init_config_calls(self, mock_init):
+    async def test_multiple_init_config_calls(self, mock_init):
         """Test multiple simultaneous init_config calls"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = ['openai']
@@ -4796,7 +4852,7 @@ class TestConcurrentScenarios:
         for _ in range(3):
             with patch('devdox_ai_sonar.cli._configure_sonarcloud', return_value=True):
                 with patch('devdox_ai_sonar.cli.change_parameters'):
-                    init_config()
+                    await init_config()
 
         # Should handle gracefully
         assert mock_init.call_count == 3
@@ -4805,11 +4861,11 @@ class TestConcurrentScenarios:
 class TestHelperFunctions:
     """Test extracted helper functions."""
 
-
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._generate_fix_for_file')
     @patch('devdox_ai_sonar.cli.handle_fix')
     @patch('devdox_ai_sonar.cli.console')
-    def test_process_single_fix_success(
+    async def test_process_single_fix_success(
             self, mock_console, mock_handle, mock_generate,
         auth_config, fix_params, sample_fix_suggestion
     ):
@@ -4822,7 +4878,7 @@ class TestHelperFunctions:
             'ruler': Mock(),
             'fixer': Mock()
         }
-        _process_single_fix(
+        await _process_single_fix(
             issues, mock_services, auth_config,
             fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )
@@ -4830,9 +4886,10 @@ class TestHelperFunctions:
         mock_generate.assert_called_once()
         mock_handle.assert_called_once()
 
+    @pytest.mark.asyncio
     @patch('devdox_ai_sonar.cli._generate_fix_for_file')
     @patch('devdox_ai_sonar.cli.console')
-    def test_process_single_fix_no_fix_generated(
+    async def test_process_single_fix_no_fix_generated(
             self, mock_console, mock_generate
             ,auth_config, fix_params
     ):
@@ -4844,7 +4901,7 @@ class TestHelperFunctions:
             'ruler': Mock(),
             'fixer': Mock()
         }
-        _process_single_fix(
+        await _process_single_fix(
             issues, mock_services, auth_config,
             fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )
