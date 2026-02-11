@@ -41,7 +41,7 @@ class IssueExtractor:
                 issues, tmp_path
             )
 
-            file_path, line_range = _validate_and_extract_issue_info(
+            file_path, _ = _validate_and_extract_issue_info(
                 issues, project_path
             )
 
