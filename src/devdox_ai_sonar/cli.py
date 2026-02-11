@@ -58,11 +58,14 @@ console = Console()
 # ============================================================================
 
 
-def _safe_convert_pr(pull_request: Optional[str]) -> int:
+def _safe_convert_pr(pull_request: str | int | None) -> int:
     """Safely convert PR string to integer."""
     if not pull_request:
         return 0
-
+    
+    if isinstance(pull_request, int):
+        return pull_request
+    
     try:
         pr_int = int(pull_request.strip())
         if pr_int < 0:
@@ -1004,7 +1007,7 @@ def _run_fix_issues(**kwargs: Any) -> None:
             auth_config,
             llm_config,
             fix_params.get("branch", ""),
-            pull_request=parameters.get("pull_request", 0),
+            pull_request=str(parameters.get("pull_request", 0)),
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
         )
@@ -1073,7 +1076,7 @@ def _run_fix_security_issues(**kwargs: Any) -> None:
             auth_config,
             llm_config,
             fix_params.get("branch", ""),
-            fix_params.get("pull_request", 0),
+            str(fix_params.get("pull_request", 0)),
             fix_params,
             issue_type=IssueType.SECURITY,
         )
@@ -1260,7 +1263,7 @@ def _process_and_fix_issues(
     branch_downloaded = branch
     if pull_request and int(pull_request) > 0:
         branch_downloaded = services["analyzer"].get_branch_from_pr(
-            project_key=auth_config.project, pull_request=str(pull_request)
+            project_key=auth_config.project, pull_request=pull_request
         )
 
     tmp_path = generate_tmp_path()
