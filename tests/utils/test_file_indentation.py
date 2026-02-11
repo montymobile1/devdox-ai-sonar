@@ -16,7 +16,7 @@ from devdox_ai_sonar.models.sonar import (FixSuggestion, ChangeType, BlockType, 
                                           SearchReplace, LineChange,ChangeAction)
 
 from devdox_ai_sonar.utils.file_indentation import (
-    read_file_lines,
+
     write_file_lines,
     remove_tmp_files,
     generate_tmp_path,
@@ -141,39 +141,12 @@ def sample_lines():
 
 
 # ============================================================================
-# TEST: read_file_lines & write_file_lines
+# TEST:  write_file_lines
 # ============================================================================
 
 class TestFileIO:
     """Test file I/O operations."""
 
-    def test_read_file_lines_basic(self, sample_file):
-        """Test reading lines from a file."""
-        lines = read_file_lines(sample_file)
-        assert isinstance(lines, list)
-        assert len(lines) > 0
-        assert lines[0].startswith("#!/usr/bin/env")
-
-    def test_read_file_lines_empty_file(self, temp_dir):
-        """Test reading an empty file."""
-        empty_file = temp_dir / "empty.py"
-        empty_file.write_text("")
-        lines = read_file_lines(empty_file)
-        assert lines == []
-
-    def test_read_file_lines_encoding(self, temp_dir):
-        """Test reading file with special characters."""
-        file_path = temp_dir / "unicode.py"
-        content = "# Testing unicode: café, naïve, 日本語\n"
-        file_path.write_text(content, encoding='utf-8')
-        lines = read_file_lines(file_path)
-        assert len(lines) == 1
-        assert "café" in lines[0]
-
-    def test_read_file_lines_nonexistent(self, temp_dir):
-        """Test reading non-existent file raises error."""
-        with pytest.raises(FileNotFoundError):
-            read_file_lines(temp_dir / "nonexistent.py")
 
     def test_write_file_lines_basic(self, temp_dir):
         """Test writing lines to a file."""
@@ -2185,97 +2158,6 @@ class TestApplySingleFix:
         assert "new_line" in ''.join(lines)
 
 
-# ============================================================================
-# INTEGRATION TESTS
-# ============================================================================
-@pytest.mark.skip(reason="Need update")
-class TestIntegration:
-    """Integration tests combining multiple functions."""
-
-    def test_full_workflow_simple_fix(self, temp_dir, mock_fix):
-        """Test complete workflow for simple fix."""
-        # Create test file
-        file_path = temp_dir / "test.py"
-        original_content = "def func():\n    x = 1\n    y = 2\n"
-        file_path.write_text(original_content)
-
-        # Read lines
-        lines = read_file_lines(file_path)
-
-        # Apply fix
-        mock_fix.fixed_code = "z = 3"
-        mock_fix.sonar_line_number = 2
-        mock_fix.line_number = 2
-        mock_fix.last_line_number = 2
-        mock_fix.helper_code = ""
-
-        result = apply_single_fix(lines, mock_fix)
-
-        # Write back
-        write_file_lines(file_path, lines)
-
-        # Verify
-        assert result.success is True
-        content = file_path.read_text()
-        assert "z = 3" in content
-        assert "x = 1" not in content
-
-    def test_full_workflow_with_helper(self, temp_dir, mock_fix):
-        """Test complete workflow with helper code."""
-        file_path = temp_dir / "test.py"
-        original_content = "def func():\n    x = 1\n"
-        file_path.write_text(original_content)
-
-        lines = read_file_lines(file_path)
-
-        mock_fix.fixed_code = "x = 2"
-        mock_fix.helper_code = "import math"
-        mock_fix.placement_helper = "GLOBAL_TOP"
-        mock_fix.line_number = 2
-        mock_fix.last_line_number = 2
-
-        result = apply_single_fix(lines, mock_fix)
-        write_file_lines(file_path, lines)
-
-        assert result.success is True
-        content = file_path.read_text()
-        assert "import math" in content
-        assert "x = 2" in content
-
-    def test_multiple_fixes_sequence(self, temp_dir):
-        """Test applying multiple fixes in sequence."""
-        file_path = temp_dir / "test.py"
-        content = "line1\nline2\nline3\nline4\nline5\n"
-        file_path.write_text(content)
-
-        lines = read_file_lines(file_path)
-
-        # Create multiple fixes
-        fixes = []
-        for i in range(2, 5):
-            fix = Mock(spec=FixSuggestion)
-            fix.issue_key = f"TEST-{i}"
-            fix.line_number = i
-            fix.import_block_code=""
-            fix.end_import_block_code = 2
-            fix.last_line_number = i
-            fix.sonar_line_number = i
-            fix.fixed_code = f"new_line{i}"
-            fix.helper_code = ""
-            fixes.append(fix)
-
-        # Apply fixes in reverse order (important!)
-        for fix in reversed(fixes):
-            result = apply_single_fix(lines, fix)
-            assert result.success is True
-
-        write_file_lines(file_path, lines)
-        content = file_path.read_text()
-
-        assert "new_line2" in content
-        assert "new_line3" in content
-        assert "new_line4" in content
-
 
 # ============================================================================
 # EDGE CASES AND ERROR CONDITIONS
@@ -2336,25 +2218,6 @@ class TestEdgeCases:
         assert result.success is True
         assert len(lines) >= 9999  # Might have added newlines
 
-    def test_unicode_content(self, temp_dir, mock_fix):
-        """Test with unicode content."""
-        file_path = temp_dir / "unicode.py"
-        content = "# 日本語 コメント\ncafé = 'naïve'\n"
-        file_path.write_text(content, encoding='utf-8')
-
-        lines = read_file_lines(file_path)
-        mock_fix.fixed_code = "résumé = 'élève'"
-        mock_fix.line_number = 2
-        mock_fix.last_line_number = 2
-        mock_fix.sonar_line_number = 2
-        mock_fix.helper_code = ""
-
-        result = apply_single_fix(lines, mock_fix)
-        write_file_lines(file_path, lines)
-
-        assert result.success is True
-        content = file_path.read_text(encoding='utf-8')
-        assert "résumé" in content
 
     def test_empty_fixed_code(self, mock_fix):
         """Test with empty fixed code."""
@@ -2461,36 +2324,6 @@ class TestPerformance:
         assert result.success is True
         assert elapsed < 0.1  # Should be fast (< 100ms)
 
-    def test_many_fixes_performance(self, temp_dir):
-        """Test performance with many sequential fixes."""
-        import time
-
-        file_path = temp_dir / "large.py"
-        lines_content = [f"line{i}\n" for i in range(1000)]
-        file_path.write_text(''.join(lines_content))
-
-        lines = read_file_lines(file_path)
-
-        # Create 50 fixes
-        fixes = []
-        for i in range(50, 100):
-            fix = Mock(spec=FixSuggestion)
-            fix.issue_key = f"TEST-{i}"
-            fix.end_import_block_code = 10
-            fix.import_block_code=""
-            fix.line_number = i
-            fix.last_line_number = i
-            fix.sonar_line_number = i
-            fix.fixed_code = f"new_line{i}"
-            fix.helper_code = ""
-            fixes.append(fix)
-
-        start = time.time()
-        for fix in reversed(fixes):
-            apply_single_fix(lines, fix)
-        elapsed = time.time() - start
-
-        assert elapsed < 1.0  # Should complete in < 1 second
 
 
 # ============================================================================

@@ -85,11 +85,6 @@ def download_latest_version(repo_url: str, repo_path: str, branch: str):
         return None
 
 
-def read_file_lines(file_path: Path) -> List[str]:
-    """Read file and return list of lines."""
-    with open(file_path, "r", encoding="utf-8") as f:
-        return f.readlines()
-
 
 def write_file_lines(file_path: Path, lines: List[str]) -> None:
     """Write lines to file."""
