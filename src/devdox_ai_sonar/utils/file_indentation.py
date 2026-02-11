@@ -656,6 +656,8 @@ def _replace_line_preserving_indent(
     lines: List[str], line_idx: int, change: LineChange
 ) -> None:
     """Replace a line, preserving original indentation when new content has none."""
+    if change.new is None:
+        return
     if _has_own_indentation(change.new):
         lines[line_idx] = change.new.rstrip() + "\n"
     else:
@@ -671,6 +673,8 @@ def _try_replace_at_corrected_line(
     end_line: int,
 ) -> None:
     """Find the correct line by content and apply the replacement there."""
+    if change.old is None:
+        return
     corrected_line = find_line_by_content(
         lines[start_line:end_line], change.old, start_line
     )
