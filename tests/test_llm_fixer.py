@@ -17,13 +17,16 @@ from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_su
                                        _extract_problem_lines,
                                        FUNCTION_ALREADY_CALLED,
                                        )
+
+from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
 from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info,
-                                                get_content_range,
+
                                                 _find_exact_match,
                                                 _find_fuzzy_match,
                                                 _find_all_single_line_matches,
-                                                _create_result
+                                                _create_result,
+IssueExtractor
                                                 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -2863,8 +2866,8 @@ class TestGetContentRange:
 
 
     # ==================== UNIT TESTS ====================
-
-    def test_exact_match_scenario(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_exact_match_scenario(self, temp_dir, sample_code):
         """Test Case 1: Exact match - content exists at same lines."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -2877,8 +2880,9 @@ class TestGetContentRange:
             'last_line': 6,
             'problem_lines': [5]
         }
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 4
@@ -2887,7 +2891,8 @@ class TestGetContentRange:
         assert result['confidence'] == 1.0
         assert result['match_type'] == 'exact'
 
-    def test_code_shifted_down(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_code_shifted_down(self, temp_dir, sample_code):
         """Test Case 2: Code moved - lines shifted down by adding comments."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -2903,8 +2908,8 @@ class TestGetContentRange:
             'last_line': 6,
             'problem_lines': [5]
         }
-
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 7  # Shifted by 3 lines
@@ -2913,7 +2918,8 @@ class TestGetContentRange:
         assert result['confidence'] == 1.0
         assert result['match_type'] == 'exact'
 
-    def test_code_shifted_up(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_code_shifted_up(self, temp_dir, sample_code):
         """Test Case 3: Code moved - lines shifted up by removing content."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -2931,7 +2937,9 @@ class TestGetContentRange:
             'problem_lines': [5]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 2  # Shifted up by 2 lines
@@ -2939,7 +2947,8 @@ class TestGetContentRange:
         assert result['problem_lines'] == [3]
         assert result['confidence'] == 1.0
 
-    def test_duplicate_code_blocks(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_duplicate_code_blocks(self, temp_dir):
         """Test Case 4: Duplicate code - same code appears multiple times."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -2970,7 +2979,9 @@ def function_three():
             'problem_lines': [2, 3]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         # Should find first occurrence (with context matching)
@@ -2978,7 +2989,8 @@ def function_three():
         assert result['last_line'] == 3
         assert result['confidence'] >= 0.9
 
-    def test_single_line_multiple_occurrences(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_single_line_multiple_occurrences(self, temp_dir):
         """Test Case 5: Single line appears multiple times."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3002,14 +3014,17 @@ def func3():
             'problem_lines': [2]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         # Should find closest match to original line 2
         assert result['first_line'] == 2
         assert result['problem_lines'] == [2]
 
-    def test_modified_code_fuzzy_match(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_modified_code_fuzzy_match(self, temp_dir, sample_code):
         """Test Case 6: Code slightly modified (comments added)."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3030,14 +3045,17 @@ def func3():
             'problem_lines': [5]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         # Should still find it with fuzzy matching or context
         assert result is not None
         assert result['first_line'] is not None
         assert result['confidence'] >= 0.65
 
-    def test_content_not_found(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_content_not_found(self, temp_dir, sample_code):
         """Test Case 7: Content completely removed/not found."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3052,8 +3070,9 @@ def func3():
             'last_line': 6,
             'problem_lines': [5]
         }
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] is None
@@ -3062,7 +3081,8 @@ def func3():
         assert result['match_type'] == 'not_found'
         assert 'error' in result
 
-    def test_multiline_range(self, temp_dir, sample_code):
+    @pytest.mark.asyncio
+    async def test_multiline_range(self, temp_dir, sample_code):
         """Test Case 8: Multi-line range (class with multiple methods)."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3076,7 +3096,9 @@ def func3():
             'problem_lines': [14, 17]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 12
@@ -3084,7 +3106,8 @@ def func3():
         assert 14 in result['problem_lines']
         assert 17 in result['problem_lines']
 
-    def test_edge_case_first_line(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_edge_case_first_line(self, temp_dir):
         """Test Case 9: Edge case - first line of file."""
         code = """import os
 import sys
@@ -3105,13 +3128,16 @@ def main():
             'problem_lines': [1]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 1
         assert result['problem_lines'] == [1]
 
-    def test_edge_case_last_line(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_edge_case_last_line(self, temp_dir):
         """Test Case 10: Edge case - last line of file."""
         code = """def main():
     pass
@@ -3130,13 +3156,16 @@ def main():
             'problem_lines': [3]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 3
         assert result['last_line'] == 3
 
-    def test_empty_file(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_empty_file(self, temp_dir):
         """Test Case 11: Edge case - empty actual file."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3150,12 +3179,15 @@ def main():
             'problem_lines': [1]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['match_type'] == 'not_found'
 
-    def test_whitespace_differences(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_whitespace_differences(self, temp_dir):
         """Test Case 12: Code with different whitespace/indentation."""
         tmp_code = """def test():
     x = 1
@@ -3182,7 +3214,9 @@ def main():
             'problem_lines': [2]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         # Should not find exact match due to whitespace
         assert result is not None
@@ -3190,7 +3224,8 @@ def main():
         if result['match_type'] != 'not_found':
             assert result['confidence'] < 1.0
 
-    def test_unicode_content(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_unicode_content(self, temp_dir):
         """Test Case 13: Files with unicode characters."""
         code = """def greet():
     message = "Hello 世界! 🌍"
@@ -3209,13 +3244,16 @@ def main():
             'problem_lines': [2]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 2
         assert result['match_type'] == 'exact'
 
-    def test_very_long_file(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_very_long_file(self, temp_dir):
         """Test Case 14: Performance - large file with many lines."""
         # Generate a large file
         lines = []
@@ -3240,15 +3278,17 @@ def main():
             'problem_lines': [502]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         assert result['first_line'] == 502
         assert result['confidence'] == 1.0
 
     # ==================== ERROR HANDLING TESTS ====================
-
-    def test_file_not_found_tmp(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_file_not_found_tmp(self, temp_dir):
         """Test Case 15: Error - temporary file doesn't exist."""
         tmp_file = temp_dir / "nonexistent.py"
         actual_file = temp_dir / "actual.py"
@@ -3257,9 +3297,12 @@ def main():
         line_range = {'first_line': 1, 'last_line': 1, 'problem_lines': [1]}
 
         with pytest.raises(FileNotFoundError, match="Temporary file not found"):
-            get_content_range(tmp_file, line_range, actual_file)
+            extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-    def test_file_not_found_actual(self, temp_dir):
+            result = await extractor.get_content_range(tmp_file, line_range, actual_file)
+
+    @pytest.mark.asyncio
+    async def test_file_not_found_actual(self, temp_dir):
         """Test Case 16: Error - actual file doesn't exist."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "nonexistent.py"
@@ -3268,9 +3311,12 @@ def main():
         line_range = {'first_line': 1, 'last_line': 1, 'problem_lines': [1]}
 
         with pytest.raises(FileNotFoundError, match="Actual file not found"):
-            get_content_range(tmp_file, line_range, actual_file)
+            extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-    def test_invalid_line_range_missing_keys(self, temp_dir):
+            await extractor.get_content_range(tmp_file, line_range, actual_file)
+
+    @pytest.mark.asyncio
+    async def test_invalid_line_range_missing_keys(self, temp_dir):
         """Test Case 17: Error - line_range missing required keys."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3281,9 +3327,12 @@ def main():
         invalid_range = {'problem_lines': [1]}  # Missing first_line and last_line
 
         with pytest.raises(ValueError, match="must contain 'first_line' and 'last_line'"):
-            get_content_range(tmp_file, invalid_range, actual_file)
+            extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-    def test_out_of_bounds_line_range(self, temp_dir):
+            await extractor.get_content_range(tmp_file, invalid_range, actual_file)
+
+    @pytest.mark.asyncio
+    async def test_out_of_bounds_line_range(self, temp_dir):
         """Test Case 18: Error - line range out of bounds."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3294,9 +3343,12 @@ def main():
         out_of_bounds = {'first_line': 5, 'last_line': 10, 'problem_lines': [5]}
 
         with pytest.raises(ValueError, match="out of bounds"):
-            get_content_range(tmp_file, out_of_bounds, actual_file)
+            extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-    def test_negative_line_numbers(self, temp_dir):
+            result = await extractor.get_content_range(tmp_file, out_of_bounds, actual_file)
+
+    @pytest.mark.asyncio
+    async def test_negative_line_numbers(self, temp_dir):
         """Test Case 19: Error - negative line numbers."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3307,9 +3359,12 @@ def main():
         invalid_range = {'first_line': -1, 'last_line': 2, 'problem_lines': [1]}
 
         with pytest.raises(ValueError, match="out of bounds"):
-            get_content_range(tmp_file, invalid_range, actual_file)
+            extractor = IssueExtractor(file_reader=AsyncFileReader())
 
-    def test_first_line_greater_than_last_line(self, temp_dir):
+            result = await extractor.get_content_range(tmp_file, invalid_range, actual_file)
+
+    @pytest.mark.asyncio
+    async def test_first_line_greater_than_last_line(self, temp_dir):
         """Test Case 20: Error - first_line > last_line."""
         tmp_file = temp_dir / "temp.py"
         actual_file = temp_dir / "actual.py"
@@ -3320,12 +3375,15 @@ def main():
         invalid_range = {'first_line': 3, 'last_line': 1, 'problem_lines': [3]}
 
         # This should return None as the slice will be empty
-        result = get_content_range(tmp_file, invalid_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, invalid_range, actual_file)
         assert result is None
 
     # ==================== INTEGRATION TESTS ====================
 
-    def test_real_world_scenario_refactoring(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_real_world_scenario_refactoring(self, temp_dir):
         """Test Case 21: Real scenario - code refactored with new structure."""
         original = """def process_data(data):
     cleaned = clean(data)
@@ -3361,14 +3419,17 @@ def validate(data):
         # Looking for the clean function
         line_range = {'first_line': 7, 'last_line': 8, 'problem_lines': [8]}
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         # Should find it with context or fuzzy matching
         assert result is not None
         if result['match_type'] != 'not_found':
             assert result['confidence'] >= 0.7
 
-    def test_problem_lines_adjustment(self, temp_dir):
+    @pytest.mark.asyncio
+    async def test_problem_lines_adjustment(self, temp_dir):
         """Test Case 22: Verify problem_lines are correctly adjusted."""
         code = """def func():
     line2
@@ -3391,7 +3452,9 @@ def validate(data):
             'problem_lines': [2, 3, 4]
         }
 
-        result = get_content_range(tmp_file, line_range, actual_file)
+        extractor = IssueExtractor(file_reader=AsyncFileReader())
+
+        result = await extractor.get_content_range(tmp_file, line_range, actual_file)
 
         assert result is not None
         # Lines should be shifted by 2
