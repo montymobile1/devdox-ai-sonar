@@ -2,19 +2,21 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union
+from typing import List, Optional, Dict, Any, Union, cast
 from enum import Enum
 import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
 from pydantic import ValidationError
-from devdox_ai_sonar.models.sonar import (SonarIssue,
-                                          SonarSecurityIssue,
-                                          FixSuggestion,
-                                          CodeBlock,
-                                          ChangeType,
-                                          ChangeAction,
-                                          SonarFixResponse)
+from devdox_ai_sonar.models.sonar import (
+    SonarIssue,
+    SonarSecurityIssue,
+    FixSuggestion,
+    CodeBlock,
+    ChangeType,
+    ChangeAction,
+    SonarFixResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +38,7 @@ except ImportError:
 try:
     from google import genai
     from google.genai import types
+
     HAS_GEMINI = True
 except ImportError as e:
     logger.warning(f"Failed to import Gemini library: {e}")
@@ -86,6 +89,53 @@ class ValidationResult:
         return self.status in [ValidationStatus.APPROVED, ValidationStatus.MODIFIED]
 
 
+def _format_block_header(idx: int, block: CodeBlock) -> str:
+    """Format the header section for a code block."""
+    header = (
+        f"\n{'=' * 60}\n"
+        f"Block {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
+        f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
+        f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
+    )
+    return header
+
+
+def _format_full_code_content(block: CodeBlock) -> str:
+    """Format a FULL_CODE block as a fenced code block."""
+    return f"```python\n{block.context}\n```\n"
+
+
+def _format_diff_content(block: CodeBlock) -> str:
+    """Format a DIFF block with line-by-line changes."""
+    parts = ["Changes:\n"]
+    for change in block.changes or []:
+        if change.action == ChangeAction.REPLACE:
+            parts.append(f"  Line {change.line} (REPLACE):\n")
+            parts.append(f"    - Old: {change.old}\n")
+            parts.append(f"    + New: {change.new}\n")
+        elif change.action == ChangeAction.INSERT:
+            parts.append(f"  Line {change.line} (INSERT):\n")
+            parts.append(f"    + New: {change.new}\n")
+        elif change.action == ChangeAction.DELETE:
+            parts.append(f"  Line {change.line} (DELETE):\n")
+            parts.append(f"    - Old: {change.old}\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
+def _format_search_replace_content(block: CodeBlock) -> str:
+    """Format a SEARCH_REPLACE block with replacement operations."""
+    parts = ["Search/Replace Operations:\n"]
+    for op_idx, repl in enumerate(block.replacements or [], 1):
+        regex_marker = " (REGEX)" if repl.is_regex else ""
+        count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
+        parts.append(f"\n  Operation {op_idx}{regex_marker}{count_info}:\n")
+        parts.append(f"    Search:  {repr(repl.search)}\n")
+        parts.append(f"    Replace: {repr(repl.replace)}\n")
+    parts.append("\n")
+    return "".join(parts)
+
+
 class FixValidator:
     """
     Senior code reviewer agent that validates and potentially improves LLM-generated fixes.
@@ -113,7 +163,7 @@ class FixValidator:
 
         self.client: Any = None
         self.jinja_env = Environment(
-            loader=FileSystemLoader(str( Path(__file__).parent / "prompts")),
+            loader=FileSystemLoader(str(Path(__file__).parent / "prompts")),
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
@@ -178,7 +228,7 @@ class FixValidator:
         issue: Union[SonarIssue, SonarSecurityIssue],
         file_content: str,
         context_lines: int = 20,
-        new_error_msg:str=""
+        new_error_msg: str = "",
     ) -> ValidationResult:
         """
         Validate a fix suggestion using a senior code reviewer persona.
@@ -203,34 +253,41 @@ class FixValidator:
                 file_content, first_line, last_line, context_lines
             )
 
-            formatted_fix = self._format_code_blocks_for_validation(fix.fixed_code_blocks)
-
+            formatted_fix = self._format_code_blocks_for_validation(
+                fix.fixed_code_blocks
+            )
 
             # Generate validation prompt
-            prompt = self._create_validation_prompt(fix, issue, context, new_error_msg, formatted_fix)
+            prompt = self._create_validation_prompt(
+                fix, issue, context, new_error_msg, formatted_fix
+            )
 
             # Call LLM for validation
             validation_response = self._call_llm_validator(prompt)
-
 
             if not validation_response:
                 logger.warning(f"Failed to validate fix for issue {issue.key}")
                 return ValidationResult(
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=fix,
-
                     explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
             modified_fix = fix
             blocks = validation_response.FIXED_CODE_BLOCKS
             for each_block in blocks:
-                if each_block.has_changes and each_block.context is None and each_block.change_type== ChangeType.FULL_CODE:
-
+                if (
+                    each_block.has_changes
+                    and each_block.context is None
+                    and each_block.change_type == ChangeType.FULL_CODE
+                ):
                     matching_block = next(
-                        (block for block in fix.fixed_code_blocks
-                         if block.start_line == each_block.start_line ),
-                        None
+                        (
+                            block
+                            for block in fix.fixed_code_blocks
+                            if block.start_line == each_block.start_line
+                        ),
+                        None,
                     )
 
                     if matching_block:
@@ -239,26 +296,25 @@ class FixValidator:
                     else:
                         # Fallback or error handling
                         print(
-                            f"⚠️ Warning: No matching block found for lines {each_block.start_line}-{each_block.end_line}")
+                            f"⚠️ Warning: No matching block found for lines {each_block.start_line}-{each_block.end_line}"
+                        )
 
             modified_fix.fixed_code_blocks = blocks
             helper_code = validation_response.NEW_HELPER_CODE
 
-            no_whitespace = ''.join(helper_code.split())
+            no_whitespace = "".join(helper_code.split())
 
             if isinstance(helper_code, str) and no_whitespace:
                 modified_fix.helper_code = helper_code
                 modified_fix.placement_helper = validation_response.PLACEMENT.value
 
-
-            return   ValidationResult(
+            return ValidationResult(
                 status=ValidationStatus.MODIFIED,
                 original_fix=fix,
                 modified_fix=modified_fix,
-                explanation= validation_response.EXPLANATION,
-                confidence=validation_response.CONFIDENCE
+                explanation=validation_response.EXPLANATION or "",
+                confidence=validation_response.CONFIDENCE,
             )
-
 
         except Exception as e:
             logger.error(
@@ -271,11 +327,7 @@ class FixValidator:
                 confidence=0.0,
             )
 
-
-    def _format_code_blocks_for_validation(
-            self,
-            code_blocks: List[CodeBlock]
-    ) -> str:
+    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> str:
         """
         Format code blocks into a readable string for validation.
 
@@ -288,46 +340,15 @@ class FixValidator:
         formatted_parts = []
 
         for idx, block in enumerate(code_blocks, 1):
-            header = f"\n{'=' * 60}\nBlock {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
-            header += f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
-            header += f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
-
-            formatted_parts.append(header)
+            formatted_parts.append(_format_block_header(idx, block))
 
             if block.change_type == ChangeType.FULL_CODE and block.context:
-                # Full code replacement
-                formatted_parts.append("```python\n")
-                formatted_parts.append(block.context)
-                formatted_parts.append("\n```\n")
-
+                formatted_parts.append(_format_full_code_content(block))
             elif block.change_type == ChangeType.DIFF and block.changes:
-                # Line-by-line changes
-                formatted_parts.append("Changes:\n")
-                for change in block.changes:
-                    if change.action == ChangeAction.REPLACE:
-                        formatted_parts.append(f"  Line {change.line} (REPLACE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.INSERT:
-                        formatted_parts.append(f"  Line {change.line} (INSERT):\n")
-                        formatted_parts.append(f"    + New: {change.new}\n")
-                    elif change.action == ChangeAction.DELETE:
-                        formatted_parts.append(f"  Line {change.line} (DELETE):\n")
-                        formatted_parts.append(f"    - Old: {change.old}\n")
-                formatted_parts.append("\n")
-
+                formatted_parts.append(_format_diff_content(block))
             elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
-                # Search/replace patterns
-                formatted_parts.append("Search/Replace Operations:\n")
-                for idx, repl in enumerate(block.replacements, 1):
-                    regex_marker = " (REGEX)" if repl.is_regex else ""
-                    count_info = f" (count: {repl.count})" if repl.count else " (all occurrences)"
-                    formatted_parts.append(f"\n  Operation {idx}{regex_marker}{count_info}:\n")
-                    formatted_parts.append(f"    Search:  {repr(repl.search)}\n")
-                    formatted_parts.append(f"    Replace: {repr(repl.replace)}\n")
-                formatted_parts.append("\n")
+                formatted_parts.append(_format_search_replace_content(block))
 
-            # Add separator between blocks
             if idx < len(code_blocks):
                 formatted_parts.append("\n" + "-" * 60 + "\n")
 
@@ -377,7 +398,7 @@ class FixValidator:
         issue: Union[SonarIssue, SonarSecurityIssue],
         context: Dict[str, Any],
         new_error: str,
-        formatted_fix: str
+        formatted_fix: str,
     ) -> str:
         """Create a prompt for fix validation."""
         severity = getattr(issue, "severity", "N/A")
@@ -385,21 +406,18 @@ class FixValidator:
         context_dic = {
             "fix": fix,
             "issue": issue,
-            "severity":severity,
-            "issue_type":issue_type,
+            "severity": severity,
+            "issue_type": issue_type,
             "context": context,
             "error_message": new_error,
-            "formatted_fix":formatted_fix
-
+            "formatted_fix": formatted_fix,
         }
         template = self.jinja_env.get_template("python/validator.j2")
         # Render enhanced content
         prompt = template.render(**context_dic)
         return prompt.strip()
 
-
-
-    def _call_llm_validator(self, prompt: str) -> Optional[str]:
+    def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         """Call LLM for validation."""
         try:
             if not self.client:
@@ -421,20 +439,18 @@ class FixValidator:
             logger.error(f"Error calling validator LLM: {e}", exc_info=True)
             return None
 
-    def _call_gemini_validator(self, prompt: str) -> Optional[str]:
+    def _call_gemini_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.models.generate_content(
             model=self.model,
             contents=prompt,
-        config=types.GenerateContentConfig(
-                        response_mime_type='application/json',
-                        response_schema=SonarFixResponse,
-                    ),
-
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=SonarFixResponse,
+            ),
         )
-        return  response.parsed
+        return cast(Optional[SonarFixResponse], response.parsed)
 
-    def _call_openai_validator(self, prompt: str) -> Optional[str]:
-
+    def _call_openai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.responses.parse(
             model=self.model,
             input=[
@@ -451,11 +467,9 @@ class FixValidator:
             text_format=SonarFixResponse,
         )
 
-        return response.output_parsed
+        return cast(Optional[SonarFixResponse], response.output_parsed)
 
-
-
-    def _call_togetherai_validator(self, prompt: str) -> Optional[str]:
+    def _call_togetherai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -475,9 +489,9 @@ class FixValidator:
                 "json_schema": {
                     "name": "sonar_fix_response",
                     "schema": SonarFixResponse.model_json_schema(),
-                    "strict": True
-                }
-            }
+                    "strict": True,
+                },
+            },
         )
         response_json = response.choices[0].message.content
 

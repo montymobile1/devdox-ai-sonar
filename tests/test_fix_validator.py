@@ -7,6 +7,10 @@ from devdox_ai_sonar.fix_validator import (
     ValidationStatus,
     ValidationResult,
     FixValidator,
+    _format_block_header,
+    _format_full_code_content,
+    _format_diff_content,
+    _format_search_replace_content,
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -14,8 +18,11 @@ from devdox_ai_sonar.models.sonar import (
     Severity,
     IssueType,
     ChangeType,
+    ChangeAction,
     BlockType,
-    CodeBlock
+    CodeBlock,
+    LineChange,
+    SearchReplace,
 )
 
 
@@ -1196,6 +1203,246 @@ class TestAdditionalEdgeCases:
 
         assert len(result.concerns) == 2
         assert result.concerns == concerns
+
+
+class TestFormatBlockHeader:
+    """Test _format_block_header helper."""
+
+    def test_formats_header_with_block_info(self):
+        block = CodeBlock(
+            block_name="my_function",
+            start_line=10,
+            end_line=25,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+        )
+        result = _format_block_header(1, block)
+
+        assert "Block 1: my_function" in result
+        assert "Lines 10-25" in result
+        assert "Type: function" in result
+        assert "Change Type: FULL_CODE" in result
+        assert "Has Changes: True" in result
+
+    def test_formats_header_with_no_changes(self):
+        block = CodeBlock(
+            block_name="unchanged",
+            start_line=1,
+            end_line=5,
+            has_changes=False,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.CLASS,
+        )
+        result = _format_block_header(3, block)
+
+        assert "Block 3: unchanged" in result
+        assert "Has Changes: False" in result
+        assert "Type: class" in result
+
+
+class TestFormatFullCodeContent:
+    """Test _format_full_code_content helper."""
+
+    def test_wraps_context_in_code_fence(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="def func():\n    return 42",
+        )
+        result = _format_full_code_content(block)
+
+        assert result.startswith("```python\n")
+        assert result.endswith("\n```\n")
+        assert "def func():\n    return 42" in result
+
+
+class TestFormatDiffContent:
+    """Test _format_diff_content helper."""
+
+    def test_formats_replace_action(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[
+                LineChange(
+                    line=3,
+                    action=ChangeAction.REPLACE,
+                    old="x = 1",
+                    new="x = 2",
+                )
+            ],
+        )
+        result = _format_diff_content(block)
+
+        assert "Changes:\n" in result
+        assert "Line 3 (REPLACE):" in result
+        assert "- Old: x = 1" in result
+        assert "+ New: x = 2" in result
+
+    def test_formats_insert_action(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[
+                LineChange(
+                    line=4,
+                    action=ChangeAction.INSERT,
+                    new="    logger.info('done')",
+                )
+            ],
+        )
+        result = _format_diff_content(block)
+
+        assert "Line 4 (INSERT):" in result
+        assert "+ New:     logger.info('done')" in result
+        assert "Old" not in result
+
+    def test_formats_delete_action(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[
+                LineChange(
+                    line=2,
+                    action=ChangeAction.DELETE,
+                    old="unused = 42",
+                )
+            ],
+        )
+        result = _format_diff_content(block)
+
+        assert "Line 2 (DELETE):" in result
+        assert "- Old: unused = 42" in result
+        assert "New" not in result
+
+    def test_formats_multiple_changes(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=10,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[
+                LineChange(line=2, action=ChangeAction.DELETE, old="old_line"),
+                LineChange(line=5, action=ChangeAction.REPLACE, old="a", new="b"),
+                LineChange(line=8, action=ChangeAction.INSERT, new="new_line"),
+            ],
+        )
+        result = _format_diff_content(block)
+
+        assert "Line 2 (DELETE):" in result
+        assert "Line 5 (REPLACE):" in result
+        assert "Line 8 (INSERT):" in result
+
+    def test_empty_changes_list(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            changes=[],
+        )
+        result = _format_diff_content(block)
+
+        assert result == "Changes:\n\n"
+
+
+class TestFormatSearchReplaceContent:
+    """Test _format_search_replace_content helper."""
+
+    def test_formats_simple_replacement(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            replacements=[
+                SearchReplace(search="foo", replace="bar"),
+            ],
+        )
+        result = _format_search_replace_content(block)
+
+        assert "Search/Replace Operations:\n" in result
+        assert "Operation 1" in result
+        assert "(all occurrences)" in result
+        assert "Search:  'foo'" in result
+        assert "Replace: 'bar'" in result
+        assert "(REGEX)" not in result
+
+    def test_formats_regex_replacement(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            replacements=[
+                SearchReplace(
+                    search=r"\bawait\s+", replace="", is_regex=True, count=1
+                ),
+            ],
+        )
+        result = _format_search_replace_content(block)
+
+        assert "(REGEX)" in result
+        assert "(count: 1)" in result
+
+    def test_formats_multiple_replacements(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=10,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            replacements=[
+                SearchReplace(search="a", replace="b"),
+                SearchReplace(search="c", replace="d", is_regex=True, count=2),
+            ],
+        )
+        result = _format_search_replace_content(block)
+
+        assert "Operation 1" in result
+        assert "Operation 2" in result
+        assert "(all occurrences)" in result
+        assert "(count: 2)" in result
+
+    def test_empty_replacements_list(self):
+        block = CodeBlock(
+            block_name="func",
+            start_line=1,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            replacements=[],
+        )
+        result = _format_search_replace_content(block)
+
+        assert result == "Search/Replace Operations:\n\n"
 
 
 if __name__ == "__main__":
