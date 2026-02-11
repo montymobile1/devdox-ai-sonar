@@ -389,6 +389,101 @@ class TestConfigManagerSetValue:
 
 
 # ============================================================================
+# TEST CLASS: ConfigManager - Delete Value
+# ============================================================================
+
+class TestConfigManagerDeleteValue:
+    """Test configuration value deletion"""
+
+    @pytest.fixture
+    def manager_with_config(self, tmp_path):
+        """Create manager with sample config"""
+        config_file = tmp_path / "config.toml"
+        config_data = {
+            "sonar": {"default_branch": "main"},
+            "llm": {"default_provider": "openai", "default_model": "gpt-4"},
+            "configuration": {
+                "max_fixes": 10,
+                "exclude_rules": "python:S1234,python:S5678"
+            }
+        }
+        with open(config_file, "wb") as f:
+            tomli_w.dump(config_data, f)
+        manager = ConfigManager(config_path=config_file)
+        manager.load_config()
+        return manager
+
+    def test_delete_value_existing_key(self, manager_with_config):
+        """Test deleting an existing key"""
+        # Verify key exists
+        assert manager_with_config.get_value("configuration.exclude_rules") is not None
+
+        # Delete the key
+        result = manager_with_config.delete_value("configuration.exclude_rules")
+
+        assert result is True
+        assert manager_with_config.get_value("configuration.exclude_rules") is None
+
+    def test_delete_value_nonexistent_key(self, manager_with_config):
+        """Test deleting a key that doesn't exist"""
+        result = manager_with_config.delete_value("configuration.nonexistent_key")
+
+        assert result is False
+
+    def test_delete_value_nested_key(self, manager_with_config):
+        """Test deleting a nested key"""
+        result = manager_with_config.delete_value("llm.default_model")
+
+        assert result is True
+        assert manager_with_config.get_value("llm.default_model") is None
+        # Parent should still exist
+        assert manager_with_config.get_value("llm.default_provider") == "openai"
+
+    def test_delete_value_top_level_key(self, manager_with_config):
+        """Test deleting a top-level section"""
+        result = manager_with_config.delete_value("configuration")
+
+        assert result is True
+        assert manager_with_config.get_value("configuration") is None
+
+    def test_delete_value_nonexistent_parent(self, manager_with_config):
+        """Test deleting when parent path doesn't exist"""
+        result = manager_with_config.delete_value("nonexistent.parent.key")
+
+        assert result is False
+
+    def test_delete_value_loads_config_if_needed(self, tmp_path):
+        """Test that delete_value loads config if not loaded"""
+        config_file = tmp_path / "config.toml"
+        config_data = {
+            "test": {"key": "value"}
+        }
+        with open(config_file, "wb") as f:
+            tomli_w.dump(config_data, f)
+
+        manager = ConfigManager(config_path=config_file)
+        # Don't call load_config explicitly
+
+        result = manager.delete_value("test.key")
+
+        assert result is True
+        assert manager.get_value("test.key") is None
+
+    def test_delete_value_persists_after_save(self, manager_with_config, tmp_path):
+        """Test that deleted value is not present after save and reload"""
+        manager_with_config.delete_value("configuration.exclude_rules")
+        manager_with_config.save_config()
+
+        # Create new manager and load
+        new_manager = ConfigManager(config_path=manager_with_config.config_path)
+        new_manager.load_config()
+
+        assert new_manager.get_value("configuration.exclude_rules") is None
+        # Other values should still exist
+        assert new_manager.get_value("configuration.max_fixes") == 10
+
+
+# ============================================================================
 # TEST CLASS: ConfigManager - Validate Change
 # ============================================================================
 

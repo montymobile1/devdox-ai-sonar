@@ -3,7 +3,12 @@ import difflib
 from typing import Dict, Any, Optional, List, Tuple, Union
 import logging
 
-from devdox_ai_sonar.models.sonar import SonarIssue, SonarSecurityIssue, ValidationResult
+from devdox_ai_sonar.models.sonar import (
+    SonarIssue,
+    SonarSecurityIssue,
+    ValidationResult,
+)
+
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 logger = logging.getLogger(__name__)
 
@@ -37,10 +42,7 @@ class IssueExtractor:
             ValidationResult with file paths, line range, and language
         """
         if not issues:
-            return ValidationResult(
-                is_valid=False,
-                error="No issues provided"
-            )
+            return ValidationResult(is_valid=False, error="No issues provided")
 
         try:
             # Step 1: Extract and validate file paths
@@ -48,52 +50,40 @@ class IssueExtractor:
                 issues, tmp_path
             )
 
-            file_path, line_range = _validate_and_extract_issue_info(
+            file_path, _ = _validate_and_extract_issue_info(
                 issues, project_path
             )
 
             # Step 2: Get content range from tmp file
-            line_range = await self.get_content_range(
-                file_path_tmp,
-                line_range_tmp,
-                file_path
+            line_range_result: Optional[Dict[str, Any]] =  await self.get_content_range(
+                file_path_tmp, line_range_tmp, file_path
             )
 
-            if line_range is None:
+            if line_range_result is None:
                 return ValidationResult(
-                    is_valid=False,
-                    error="Could not determine line range"
+                    is_valid=False, error="Could not determine line range"
                 )
 
             # Check for errors in line range
-            if line_range.get("error", ""):
+            if line_range_result.get("error", ""):
                 return ValidationResult(
-                    is_valid=False,
-                    error=line_range["error"]
+                    is_valid=False, error=line_range_result["error"]
                 )
-
 
             return ValidationResult(
                 is_valid=True,
                 file_path=file_path,
                 file_path_tmp=file_path_tmp,
-                line_range=line_range,
-
+                line_range=line_range_result,
             )
 
         except FileNotFoundError as e:
-            return ValidationResult(
-                is_valid=False,
-                error=f"File not found: {e}"
-            )
+            return ValidationResult(is_valid=False, error=f"File not found: {e}")
         except Exception as e:
             logger.error(f"Validation error: {e}", exc_info=True)
-            return ValidationResult(
-                is_valid=False,
-                error=f"Unexpected error: {e}"
-            )
+            return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
-    async def get_content_range(
+  async def get_content_range(
             self,
             file_path_tmp: Path,
             line_range_tmp: Dict[str, Any],
@@ -198,7 +188,7 @@ class IssueExtractor:
 
 
 def _validate_and_extract_issue_info(
-    issues: Union[List[SonarIssue], List[SonarSecurityIssue]], project_path: Path
+    issues: List[Union[SonarIssue, SonarSecurityIssue]], project_path: Path
 ) -> Tuple[Path, Dict[str, Any]]:
     """
     Validate that all issues are from the same file and extract line range.
@@ -230,7 +220,7 @@ def _validate_and_extract_issue_info(
     # Initialize range with first issue
     first_line = first_issue.first_line or 0
     last_line = first_issue.last_line or 0
-    problem_line_numbers = []
+    problem_line_numbers: List[int] = []
 
     # Validate all issues are from same file and calculate range
     for issue in issues:
@@ -244,7 +234,7 @@ def _validate_and_extract_issue_info(
         # Expand range to encompass all issues
         first_line = min(first_line, issue.first_line or 0)
         last_line = max(last_line, issue.last_line or 0)
-        problem_line_numbers.extend(issue.problem_lines)
+        problem_line_numbers.extend(issue.problem_lines or [])
 
     return file_path, {
         "first_line": first_line,
@@ -255,30 +245,28 @@ def _validate_and_extract_issue_info(
 
 
 def _find_fuzzy_match(
-        target_content: List[str],
-        actual_lines: List[str],
-        threshold: float = 0.85
+    target_content: List[str], actual_lines: List[str], threshold: float = 0.85
 ) -> Optional[Dict[str, Any]]:
     """
     Find fuzzy match allowing for minor modifications.
     Returns match with confidence score.
     """
     target_len = len(target_content)
-    best_match = None
+    best_match: Optional[Dict[str, Any]] = None
     best_ratio = 0.0
 
     for i in range(len(actual_lines) - target_len + 1):
-        candidate = actual_lines[i:i + target_len]
+        candidate = actual_lines[i : i + target_len]
 
         # Calculate similarity ratio
         ratio = difflib.SequenceMatcher(None, target_content, candidate).ratio()
 
         if ratio > best_ratio and ratio >= threshold:
             best_ratio = ratio
-            best_match = {'start': i, 'end': i + target_len}
+            best_match = {"start": i, "end": i + target_len}
 
     if best_match:
-        best_match['confidence'] = best_ratio
+        best_match["confidence"] = best_ratio
         return best_match
 
     return None
@@ -286,9 +274,7 @@ def _find_fuzzy_match(
 
 
 def _find_all_single_line_matches(
-        target_line: str,
-        actual_lines: List[str],
-        original_line_num: int
+    target_line: str, actual_lines: List[str], original_line_num: int
 ) -> List[int]:
     """
     Find all occurrences of a single line.
@@ -311,27 +297,30 @@ def _find_all_single_line_matches(
     return matches
 
 
-def _find_exact_match(target_content: List[str], actual_lines: List[str]) -> Optional[Dict[str, int]]:
+def _find_exact_match(
+    target_content: List[str], actual_lines: List[str]
+) -> Optional[Dict[str, int]]:
     """Find exact match of target content in actual file."""
     target_len = len(target_content)
     for i in range(len(actual_lines) - target_len + 1):
-        if actual_lines[i:i + target_len] == target_content:
-            return {'start': i, 'end': i + target_len}
+        if actual_lines[i : i + target_len] == target_content:
+            return {"start": i, "end": i + target_len}
 
     return None
 
+
 def _create_result(
-        match: Dict[str, int],
-        problem_lines_tmp: List[int],
-        first_line_tmp: int,
-        confidence: float,
-        match_type: str
+    match: Dict[str, int],
+    problem_lines_tmp: List[int],
+    first_line_tmp: int,
+    confidence: float,
+    match_type: str,
 ) -> Dict[str, Any]:
     """
     Create standardized result dictionary with adjusted problem lines.
     """
-    start_line = match['start'] + 1  # Convert to 1-indexed
-    end_line = match['end']  # Already correct for 1-indexed inclusive range
+    start_line = match["start"] + 1  # Convert to 1-indexed
+    end_line = match["end"]  # Already correct for 1-indexed inclusive range
 
     # Adjust problem lines based on offset
     offset = start_line - first_line_tmp
@@ -339,14 +328,13 @@ def _create_result(
 
     # Ensure problem lines are within the found range
     adjusted_problem_lines = [
-        line for line in adjusted_problem_lines
-        if start_line <= line <= end_line
+        line for line in adjusted_problem_lines if start_line <= line <= end_line
     ]
 
     return {
-        'first_line': start_line,
-        'last_line': end_line,
-        'problem_lines': adjusted_problem_lines,
-        'confidence': confidence,
-        'match_type': match_type
+        "first_line": start_line,
+        "last_line": end_line,
+        "problem_lines": adjusted_problem_lines,
+        "confidence": confidence,
+        "match_type": match_type,
     }

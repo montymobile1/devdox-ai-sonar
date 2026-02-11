@@ -1,14 +1,14 @@
-from typing import Optional, TypedDict, List, Dict,Any
+from typing import Optional, TypedDict, List, Dict, Any
 from pathlib import Path
 from enum import Enum
 from devdox_ai_sonar.models.sonar import FixSuggestion, SonarIssue
 from dataclasses import dataclass
 
 
-
 @dataclass
 class FixContext:
     """Value object containing all context needed for fix generation."""
+
     file_path: Path
     file_path_tmp: Path
     line_range: Dict[str, Any]
@@ -18,7 +18,6 @@ class FixContext:
     class_name: Optional[str]
     functions: List[Dict[str, Any]]
     context_dict: Dict[str, Any]
-
 
 
 class ConversionRisk(Enum):
