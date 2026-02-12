@@ -844,19 +844,17 @@ async def change_field(
         else:
             await manager.set_value(field, types)
     elif allow_empty:
-        # User cleared input but there was a previous value — warn and re-prompt once
-        console.print(constant.EXCLUDE_RULES_EMPTY_WARNING)
-        retry_input = smart_prompt(
-            message, default=None, choices=choices, multiple=multiple
-        )
-        retry = retry_input if retry_input else None
-        if retry:
-            if retry == constant.EXCLUDE_NONE:
-                await manager.delete_value(field)
-            else:
-                await manager.set_value(field, retry)
-            return retry
-        # User left it empty again — keep existing value as-is
+        # Empty input not allowed — loop until valid input
+        while not types:
+            console.print(constant.EXCLUDE_RULES_EMPTY_ERROR)
+            retry_input = smart_prompt(
+                message, default=default_value, choices=choices, multiple=multiple
+            )
+            types = retry_input if retry_input else None
+        if types == constant.EXCLUDE_NONE:
+           await manager.delete_value(field)
+        else:
+           await manager.set_value(field, types)
     return types
 
 
@@ -938,8 +936,12 @@ async def change_parameters(
         _ = await change_field(
             manager=manager,
             field="configuration.exclude_rules",
-            message="Rules to be excluded  (comma-separated, 'NONE' to exclude nothing, or Enter to keep current)",
-            default_value=await manager.get_value("configuration.exclude_rules"),
+            message="Rules to be excluded  (comma-separated, or NONE for no exclusions)",
+            default_value=(
+                await manager.get_value("configuration.exclude_rules")
+                if await manager.get_value("configuration.exclude_rules") is not None
+                else kwargs.get("exclude_rules", constant.EXCLUDE_NONE)
+            ),
             allow_empty=True,
         )
         manager.save_config(create_backup=False)

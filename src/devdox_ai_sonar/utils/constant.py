@@ -14,9 +14,6 @@ SWITCH_COMMANDS = "↩Switching commands.."
 FETCHING_ISSUES = "Fetching issues..."
 RETURN_TO_MAIN_MENU = "Return to main menu?"
 EXCLUDE_NONE = "NONE"
-EXCLUDE_RULES_EMPTY_WARNING = (
-    "[yellow]⚠ You cleared the excluded rules. "
-    "Enter 'NONE' to explicitly exclude nothing, "
-    "or provide valid rules to exclude. "
-    "Leaving empty again will keep the current value unchanged.[/yellow]"
+EXCLUDE_RULES_EMPTY_ERROR = (
+    "[red]✖ Please enter valid comma-separated rules or 'NONE'.[/red]"
 )
