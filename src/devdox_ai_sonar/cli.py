@@ -51,6 +51,7 @@ from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
+EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
 
 console = Console()
 
@@ -937,13 +938,16 @@ async def change_parameters(
             "Rules to be excluded  ([yellow]comma-separated[/yellow], "
             "or [bold cyan]NONE[/bold cyan] for no exclusions)"
         )
+        
+        
+        
         _ = await change_field(
             manager=manager,
-            field="configuration.exclude_rules",
+            field=EXCLUDE_RULE_CONFIG_FIELD,
             message="Exclude rules",
             default_value=(
-                await manager.get_value("configuration.exclude_rules")
-                if await manager.get_value("configuration.exclude_rules") is not None
+                await manager.get_value(EXCLUDE_RULE_CONFIG_FIELD)
+                if await manager.get_value(EXCLUDE_RULE_CONFIG_FIELD) is not None
                 else kwargs.get("exclude_rules", constant.EXCLUDE_NONE)
             ),
             allow_empty=True,
