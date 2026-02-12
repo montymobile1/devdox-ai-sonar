@@ -1,6 +1,7 @@
 """Command-line interface for SonarCloud Analyzer"""
 
 from datetime import timezone, datetime
+import sys
 from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 import asyncio
@@ -25,7 +26,11 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
-from devdox_ai_sonar.utils.file_indentation import remove_tmp_files, download_latest_version , generate_tmp_path
+from devdox_ai_sonar.utils.file_indentation import (
+    remove_tmp_files,
+    download_latest_version,
+    generate_tmp_path,
+)
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.exceptions import ValidationError
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -57,6 +62,7 @@ def async_command(f):
     def wrapper(*args, **kwargs):
         return asyncio.run(f(*args, **kwargs))
     return wrapper
+
 
 @contextmanager
 def show_progress(
@@ -241,6 +247,39 @@ async def show_command_selector_async() -> Optional[str]:
         return None
 
 
+def _fallback_command_selector() -> Optional[str]:
+    """Fallback text-based command selector when questionary is not available."""
+    console.print(
+        "\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]   DevDox AI Sonar - Command Selection          [/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n"
+    )
+
+    commands = {
+        "1": ("fix_issues", "Fix Issues - Generate and apply LLM-powered fixes"),
+        "2": (
+            "fix_security_issues",
+            "Fix Security Issues - Specialized security fixes",
+        ),
+        "3": ("analyze", "Analyze Project - Display SonarCloud analysis"),
+        "4": ("inspect", "Inspect Project - Analyze local directory structure"),
+        "5": ("exit", "Exit"),
+    }
+
+    for key, (_, desc) in commands.items():
+        console.print(f"[cyan]{key}[/cyan]. {desc}")
+
+    console.print()
+    choice = console.input("[bold yellow]Select command (1-5): [/bold yellow]").strip()
+
+    if choice in commands:
+        return commands[choice][0]
+    return None
+
 
 
 
@@ -329,7 +368,7 @@ async def _configure_sonarcloud(
         organization=sonar_config.organization,
         project=sonar_config.project,
         project_path=str(sonar_config.project_path),
-        git_url=sonar_config.git_url
+        git_url=sonar_config.git_url,
     )
 
     if not save_success:
@@ -409,117 +448,6 @@ def _handle_provider_configuration(
     return True
 
 
-def change_field(
-    manager: ConfigManager,
-    field: str,
-    message: str,
-    default_value: Optional[Union[str, List[str]]] = None,
-    choices: Optional[List[Union[str, Choice]]] = None,
-    multiple: bool = True,
-) -> Optional[Union[str, List[str]]]:
-    types_input = smart_prompt(
-        message, default=default_value, choices=choices, multiple=multiple
-    )
-
-    types = types_input if types_input else None
-
-    if types:
-        manager.set_value(field, types)
-    return types
-
-
-async def change_parameters(
-    types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
-) -> None:
-    """CLI for config management"""
-    try:
-        # Initialize all managers
-        manager, _, _, provider_manager, _, _ = _initialize_managers()
-        branch, pull_request = provider_manager.branch_or_pr_prompt()
-
-        if not branch and not pull_request:
-            console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
-            raise click.Abort()
-
-        max_fixes = await manager.get_value("configuration.max_fixes") or 0
-
-        # Max fixes
-        change_max_fix(
-            manager,
-            f"Maximum fixes to generate (0-{settings.MAX_FIXES_LIMIT})",
-            max_fixes,
-            settings.MAX_FIXES_LIMIT,
-        )
-
-        # Issue types (optional)
-        if not types:
-            _ = change_field(
-                manager=manager,
-                field="configuration.types",
-                message="Issue types (comma-separated, or press Enter to skip)",
-                default_value= await  manager.get_value("configuration.types"),
-                choices=list(InputValidator.VALID_ISSUE_TYPES),
-            )
-
-        # Severities (optional)
-        if not severity:
-            _ = change_field(
-                manager=manager,
-                field="configuration.severities",
-                message="Issue severities (comma-separated, or press Enter to skip)",
-                default_value=await manager.get_value("configuration.severities"),
-                choices=list(InputValidator.VALID_SEVERITIES),
-            )
-
-        choices = [{"name": "yes", "value": 1}, {"name": "no", "value": 0}]
-
-        formatted_choices: List[Union[str, Choice]] = [
-            Choice(title=str(choice["name"]), value=choice["value"])
-            for choice in choices
-        ]
-
-        current_apply = await manager.get_value(constant.CONFIGURATION_APPLY)
-
-        _ = change_field(
-            manager=manager,
-            field=constant.CONFIGURATION_APPLY,
-            message="Apply fixes of SonarQube (press Enter to skip)",
-            default_value=(
-                current_apply
-                if current_apply is not None
-                else kwargs.get("apply", 0)
-            ),  # optional
-            choices=formatted_choices,
-            multiple=False,
-        )
-
-        configuration_backup = await manager.get_value(constant.CONFIGURATION_BACKUP)
-        _ = change_field(
-            manager=manager,
-            field=constant.CONFIGURATION_BACKUP,
-            message="Create backup before apply fixes (press Enter to skip)",
-            default_value=(
-                configuration_backup
-                if configuration_backup is not None
-                else kwargs.get("create_backup", 0)
-            ),  # optional
-            choices=formatted_choices,
-            multiple=False,
-        )
-
-
-        _ = change_field(
-            manager=manager,
-            field="configuration.exclude_rules",
-            message="Rules to be excluded  (comma-separated, or press Enter to skip)",
-            default_value=await manager.get_value("configuration.exclude_rules"),
-        )
-        manager.save_config(create_backup=False)
-
-    except Exception as e:
-        _handle_cli_error(e)
-
-
 def change_max_fix(
     manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
 ) -> None:
@@ -557,6 +485,7 @@ def change_max_fix(
         )
 
     manager.set_value("configuration.max_fixes", new_max_fixes)
+
 
 
 def _should_stop_configuring(available_providers: list) -> bool:
@@ -795,6 +724,7 @@ async def main(  # ← Async main
         devdox_sonar                           # Interactive mode
         devdox_sonar -c fix_issues            # Run fix_issues directly
 
+
     During interactive mode:
         - Type '/' at any prompt to switch to a different command
         - Use arrow keys to navigate menus
@@ -813,20 +743,18 @@ async def main(  # ← Async main
 
     # If command specified, run it directly
     if command:
-        await _execute_command_async(ctx, command)  # ← Direct await
+        await _execute_command_async(ctx, command)
         return
 
-    await init_config()  # This is sync, that's fine
-
-    # Otherwise, enter interactive mode
-    print("line 678")
-    await _run_interactive_mode_async(ctx)  # ← Await the async version
+    await init_config()
 
 
-# ... [keep all your config functions - they're sync and that's OK] ...
+
+    await _run_interactive_mode_async(ctx)
+
+
 
 async def _run_interactive_mode_async(ctx: click.Context) -> None:
-    """Run the interactive command selection loop with command switching support."""
     while True:
         if await _execute_interactive_iteration_async(ctx):
             return
@@ -840,7 +768,7 @@ async def _execute_interactive_iteration_async(ctx: click.Context) -> bool:
         True if should exit the loop, False to continue
     """
     try:
-        print("line 699 ")
+
         return await _process_interactive_command_async(ctx)
     except SwitchCommandException:
         _handle_command_switch()
@@ -858,19 +786,41 @@ async def _process_interactive_command_async(ctx: click.Context) -> bool:
     Returns:
         True if should exit, False if should continue
     """
-    print("ine 715 ")
-    command = await show_command_selector_async()  # ← Await the async version
+
+    command = await show_command_selector_async()
 
     if _should_exit_interactive_mode(command):
         _exit_application()
         return True
 
-    await _execute_interactive_command_async(ctx, command)  # ← Await
+    await _execute_interactive_command_async(ctx, command)
 
     if not await _should_continue_to_menu():
         _exit_application()
         return True
     return False
+
+
+def _should_exit_interactive_mode(command: Optional[str]) -> bool:
+    """Check if user wants to exit interactive mode."""
+    return command is None or command == "exit"
+
+
+def _exit_application() -> None:
+    """Exit the application with goodbye message."""
+    console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
+    sys.exit(0)
+
+
+
+
+def _should_continue_to_menu() -> bool:
+    """Ask user if they want to return to main menu."""
+    result = smart_confirm(
+        constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True
+    )
+    return result
+
 
 def _handle_command_switch() -> None:
     """Handle command switching exception."""
@@ -925,9 +875,118 @@ async def _handle_interactive_error(error: Exception) -> bool:
         sys.exit(2)
 
 
-def _should_exit_interactive_mode(command: Optional[str]) -> bool:
-    """Check if user wants to exit interactive mode."""
-    return command is None or command == "exit"
+def change_field(
+    manager: ConfigManager,
+    field: str,
+    message: str,
+    default_value: Optional[Union[str, List[str]]] = None,
+    choices: Optional[List[Union[str, Choice]]] = None,
+    multiple: bool = True,
+    allow_empty: bool = False,
+) -> Optional[Union[str, List[str]]]:
+    types_input = smart_prompt(
+        message, default=default_value, choices=choices, multiple=multiple
+    )
+
+    types = types_input if types_input else None
+
+    if types:
+        manager.set_value(field, types)
+    elif allow_empty and default_value:
+        # User provided empty input but there was a previous value
+        # This means they want to clear it - delete the property from config
+        manager.delete_value(field)
+    return types
+
+
+async def change_parameters(
+        types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
+) -> None:
+    """CLI for config management"""
+    try:
+        # Initialize all managers
+        manager, _, _, provider_manager, _, _ = _initialize_managers()
+        branch, pull_request = provider_manager.branch_or_pr_prompt()
+
+        if not branch and not pull_request:
+            console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
+            raise click.Abort()
+
+        max_fixes = manager.get_value("configuration.max_fixes") or 0
+
+        # Max fixes
+        change_max_fix(
+            manager,
+            f"Maximum fixes to generate (0-{settings.MAX_FIXES_LIMIT})",
+            max_fixes,
+            settings.MAX_FIXES_LIMIT,
+        )
+        # Issue types (optional)
+        if not types:
+            _ = change_field(
+                manager=manager,
+                field="configuration.types",
+                message="Issue types (comma-separated, or press Enter to skip)",
+                default_value=await manager.get_value("configuration.types"),
+                choices=list(InputValidator.VALID_ISSUE_TYPES),
+            )
+
+        # Severities (optional)
+        if not severity:
+            _ = change_field(
+                manager=manager,
+                field="configuration.severities",
+                message="Issue severities (comma-separated, or press Enter to skip)",
+                default_value=manager.get_value("configuration.severities"),
+                choices=list(InputValidator.VALID_SEVERITIES),
+            )
+
+        choices = [{"name": "yes", "value": 1}, {"name": "no", "value": 0}]
+
+        formatted_choices: List[Union[str, Choice]] = [
+            Choice(title=str(choice["name"]), value=choice["value"])
+            for choice in choices
+        ]
+
+        current_apply = await manager.get_value(constant.CONFIGURATION_APPLY)
+        _ = change_field(
+            manager=manager,
+            field=constant.CONFIGURATION_APPLY,
+            message="Apply fixes of SonarQube (press Enter to skip)",
+            default_value=(
+                current_apply
+                if current_apply is not None
+                else kwargs.get("apply", 0)
+            ),  # optional
+            choices=formatted_choices,
+            multiple=False,
+        )
+
+        configuration_backup = await manager.get_value(constant.CONFIGURATION_BACKUP)
+        _ = change_field(
+            manager=manager,
+            field=constant.CONFIGURATION_BACKUP,
+            message="Create backup before apply fixes (press Enter to skip)",
+            default_value=(
+                configuration_backup
+                if configuration_backup is not None
+                else kwargs.get("create_backup", 0)
+            ),  # optional
+            choices=formatted_choices,
+            multiple=False,
+        )
+
+        _ = change_field(
+            manager=manager,
+            field="configuration.exclude_rules",
+            message="Rules to be excluded  (comma-separated, or press Enter to skip)",
+            default_value=await manager.get_value("configuration.exclude_rules"),
+            allow_empty=True,
+        )
+        manager.save_config(create_backup=False)
+
+    except Exception as e:
+        _handle_cli_error(e)
 
 
 def _exit_application() -> None:
@@ -947,11 +1006,9 @@ async def _should_continue_to_menu() -> bool:
 async def _execute_interactive_command_async(ctx: click.Context, command: Optional[str]) -> None:
     """Execute a command in interactive mode."""
     console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-    await _execute_command_async(ctx, command)  # ← Await
+    await _execute_command_async(ctx, command)
     console.print("\n" + "─" * 50 + "\n")
 
-
-# ... [keep your sync helper functions] ...
 
 async def _execute_command_async(ctx: click.Context, command: str) -> None:
     """Execute a specific command asynchronously."""
@@ -962,9 +1019,9 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         if command == "fix_issues":
             await _run_fix_issues(**options)
         elif command == "fix_security_issues":
-            await _run_fix_security_issues(options)
+            await _run_fix_security_issues(**options)
         elif command == "analyze":
-            await _run_analyze(options)
+            await _run_analyze(**options)
         elif command == "inspect":
             await _run_inspect()
         elif command == "add_provider":
@@ -995,6 +1052,7 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
 async def _run_fix_issues(**kwargs: Any) -> None:
     """Run the fix_issues command with command switching support."""
     console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
+
     try:
         apply_value = kwargs.get("apply", None)
         dry_run_value = 1 if kwargs.get("dry_run", False) else 0
@@ -1003,11 +1061,14 @@ async def _run_fix_issues(**kwargs: Any) -> None:
         auth_config, llm_config, parameters = await _load_and_validate_config(
             use_predefined=True
         )
+
         fix_params = display_configuration(parameters, dry_run_value, apply_value)
+
         # Confirm before proceeding
         if not await smart_confirm("Proceed with these settings?", default=True):
             console.print("[yellow]Cancelled[/yellow]")
             return
+
         # Process issues
         await _process_and_fix_issues(
             auth_config,
@@ -1063,7 +1124,7 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
         raise
 
 
-async def _run_analyze(options: Dict[str, Any]) -> None:
+async def _run_analyze(**kwargs: Any) -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
@@ -1165,7 +1226,7 @@ async def _run_inspect() -> None:
 
 
 async def _load_and_validate_config(
-        use_predefined: bool = False,
+    use_predefined: bool = False,
 ) -> Tuple[AuthConfig, LLMConfig, Dict[str, Any]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
@@ -1224,6 +1285,7 @@ def _validate_severities(severity_str: Optional[str]) -> Optional[List[str]]:
         return None
     return InputValidator.validate_severities(severity_str)
 
+
 def display_configuration(
     parameters: Dict[str, Any], dry_run: int, apply: int
 ) -> Dict[str, Any]:
@@ -1253,32 +1315,37 @@ def display_configuration(
 
     return fix_params
 
-
 async def _process_and_fix_issues(
-        auth_config: AuthConfig,
-        llm_config: LLMConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any],
-        issue_type: IssueType = IssueType.REGULAR,
+    auth_config: AuthConfig,
+    llm_config: LLMConfig,
+    branch: Optional[str],
+    pull_request: Optional[str],
+    fix_params: Dict[str, Any],
+    issue_type: IssueType = IssueType.REGULAR,
 ) -> None:
     """Process and fix issues - Refactored."""
 
     services = _initialize_fix_services(auth_config, llm_config)
 
     branch_downloaded = branch
-    if int(pull_request) > 0:
+    if pull_request and int(pull_request) > 0:
         branch_downloaded = services["analyzer"].get_branch_from_pr(
-            project_key=auth_config.project,
-            pull_request=str(pull_request))
+            project_key=auth_config.project, pull_request=str(pull_request)
+        )
 
     tmp_path = generate_tmp_path()
 
+    if not branch_downloaded:
+        console.print("[red]Could not determine branch to download[/red]")
+        raise click.Abort()
+
     console.print(f"Cloning {auth_config.project} to {tmp_path}")
-    downloaded = download_latest_version(auth_config.git_url, tmp_path, branch_downloaded)
+    downloaded = download_latest_version(
+        auth_config.git_url, tmp_path, branch_downloaded
+    )
     if not downloaded:
         console.print("Not able to download latest version")
-        return click.Abort()
+        raise click.Abort()
 
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
@@ -1296,12 +1363,14 @@ async def _process_and_fix_issues(
     total_issues = sum(len(issue_list) for issue_list in issues.values())
 
     console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    await _process_files_with_issues(issues, services, auth_config, fix_params, issue_type, Path(tmp_path))
+    await _process_files_with_issues(
+        issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
+    )
     remove_tmp_files(tmp_path)
 
 
 def _initialize_fix_services(
-        auth_config: AuthConfig, llm_config: LLMConfig
+    auth_config: AuthConfig, llm_config: LLMConfig
 ) -> Dict[str, Any]:
     """Initialize services for fixing issues."""
     console.print("[dim]Initializing services...[/dim]")
@@ -1318,12 +1387,12 @@ def _initialize_fix_services(
 
 
 async def _process_files_with_issues(
-        issues_by_file: Dict[str, List[Any]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        issue_type: IssueType,
-        tmp_path: Path
+    issues_by_file: Dict[str, List[Any]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
+    tmp_path: Path,
 ) -> None:
     """
     Process files with issues.
@@ -1344,17 +1413,22 @@ async def _process_files_with_issues(
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
         await _process_regular_issues(
-            issues_by_rule_nested, services, auth_config, fix_params, md_file_path, tmp_path
+            issues_by_rule_nested,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
         )
 
 
 async def _process_regular_issues(
-        issues_by_rule: Dict[str, Dict[str, List[Any]]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path: Path,
-        tmp_path: Path
+    issues_by_rule: Dict[str, Dict[str, List[Any]]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
+    tmp_path: Path,
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1370,20 +1444,27 @@ async def _process_regular_issues(
         )
 
         success = await _process_issues_for_rule(
-            rule_key, issues_list, services, auth_config, fix_params, md_file_path, tmp_path)
+            rule_key,
+            issues_list,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+        )
 
         if not success:
             console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
 
 
 async def _process_issues_for_rule(
-        rule_key: str,
-        issues_list: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path: Path,
-        tmp_path: Path
+    rule_key: str,
+    issues_list: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
+    tmp_path: Path,
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1404,7 +1485,7 @@ async def _process_issues_for_rule(
             issue_type=IssueType.REGULAR,
             rule_key=rule_key,
             md_file_path=md_file_path,
-            tmp_path=tmp_path
+            tmp_path=tmp_path,
         )
 
         if not await _should_continue_to_next_issue(idx, total_issues):
@@ -1414,22 +1495,26 @@ async def _process_issues_for_rule(
 
 
 async def _process_single_fix(
-        issues: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        issue_type: IssueType,
-        rule_key: str,
-        tmp_path: Path,
-        md_file_path: Optional[Path] = None,
-
+    issues: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
+    rule_key: str,
+    tmp_path: Path,
+    md_file_path: Optional[Path] = None,
 ) -> None:
     """
     Generate and handle a single fix.
     """
     fixes = await _generate_fix_for_file(
-        issues, services, auth_config, issue_type, tmp_path, rule_key, md_file_path,
-
+        issues,
+        services,
+        auth_config,
+        issue_type,
+        str(tmp_path),
+        rule_key,
+        md_file_path,
     )
 
     if fixes:
@@ -1440,12 +1525,12 @@ async def _process_single_fix(
 
 
 async def _process_security_issues(
-        issues_by_file: Dict[str, List[Any]],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
-        md_file_path: Path,
-        tmp_path: Path
+    issues_by_file: Dict[str, List[Any]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    md_file_path: Path,
+    tmp_path: Path,
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1465,10 +1550,10 @@ async def _process_security_issues(
                 issue_type=IssueType.SECURITY,
                 rule_key=file_key,
                 md_file_path=md_file_path,
-                tmp_path=tmp_path
+                tmp_path=tmp_path,
             )
 
-            if not _should_continue_to_next_issue(idx, total_files):
+            if not await _should_continue_to_next_issue(idx, total_files):
                 break
 
 
@@ -1503,37 +1588,26 @@ async def handle_fix(
 
 
 async def _generate_fix_for_file(
-        issues: List[Any],
-        services: Dict[str, Any],
-        auth_config: AuthConfig,
-        issue_type: IssueType,
-        tmp_path: str,
-        rule_name: Optional[str] = None,
-        md_file_path: Optional[Path] = None,
+    issues: List[Any],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    issue_type: IssueType,
+    tmp_path: str,
+    rule_name: Optional[str] = None,
+    md_file_path: Optional[Path] = None,
 ) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
-        if issue_type == IssueType.SECURITY:
-
-            # rule_info_dic
-            _ = _collect_rule_information(issues, services["ruler"])
-        else:
-            if not rule_name:
-                console.print("rule_name is required for non-security issues")
-                return None
-
-            ruler = services["ruler"]
-            rule_info = ruler.get_rule_by_key(rule_name)
-
-            # rule_info_dic overwritten
-            _ = {rule_name: rule_info}
+        if issue_type != IssueType.SECURITY and not rule_name:
+            console.print("rule_name is required for non-security issues")
+            return None
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
         result: Optional[List[FixSuggestion]] = await fixer.generate_fix_by_file(
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
-            tmp_path=tmp_path,
+            tmp_path=Path(tmp_path),
             file_md=file_md_str,
         )
         return result
