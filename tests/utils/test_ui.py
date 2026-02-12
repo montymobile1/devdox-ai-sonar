@@ -1,6 +1,6 @@
 import pytest
 from typing import List
-from unittest.mock import Mock, patch, MagicMock, call
+from unittest.mock import Mock, patch, MagicMock, AsyncMock, call
 
 from devdox_ai_sonar.utils.ui import (
     smart_prompt,
@@ -224,31 +224,34 @@ class TestQuestionaryTextPrompt:
     """Test cases for _questionary_text_prompt."""
 
     @patch('devdox_ai_sonar.utils.ui.questionary.text')
-    def test_text_prompt_with_default(self, mock_text):
+    async def test_text_prompt_with_default(self, mock_text):
         """Test text prompt with default value."""
-        mock_text.return_value.ask.return_value = "user_input"
+        mock_ask_async = AsyncMock(return_value="user_input")
+        mock_text.return_value.ask_async = mock_ask_async
 
-        result = _questionary_text_prompt("Enter name:", "John")
+        result = await _questionary_text_prompt("Enter name:", "John")
 
         mock_text.assert_called_once_with("Enter name:", default="John")
         assert result == "user_input"
 
     @patch('devdox_ai_sonar.utils.ui.questionary.text')
-    def test_text_prompt_without_default(self, mock_text):
+    async def test_text_prompt_without_default(self, mock_text):
         """Test text prompt without default value."""
-        mock_text.return_value.ask.return_value = "user_input"
+        mock_ask_async = AsyncMock(return_value="user_input")
+        mock_text.return_value.ask_async = mock_ask_async
 
-        result = _questionary_text_prompt("Enter name:", None)
+        result = await _questionary_text_prompt("Enter name:", None)
 
         mock_text.assert_called_once_with("Enter name:", default="")
         assert result == "user_input"
 
     @patch('devdox_ai_sonar.utils.ui.questionary.text')
-    def test_text_prompt_with_empty_default(self, mock_text):
+    async def test_text_prompt_with_empty_default(self, mock_text):
         """Test text prompt with empty string default."""
-        mock_text.return_value.ask.return_value = "user_input"
+        mock_ask_async = AsyncMock(return_value="user_input")
+        mock_text.return_value.ask_async = mock_ask_async
 
-        result = _questionary_text_prompt("Enter name:", "")
+        result = await _questionary_text_prompt("Enter name:", "")
 
         mock_text.assert_called_once_with("Enter name:", default="")
         assert result == "user_input"
@@ -258,11 +261,12 @@ class TestQuestionarySelectPrompt:
     """Test cases for _questionary_select_prompt."""
 
     @patch('devdox_ai_sonar.utils.ui.questionary.select')
-    def test_select_prompt_with_default(self, mock_select):
+    async def test_select_prompt_with_default(self, mock_select):
         """Test select prompt with default choice."""
-        mock_select.return_value.ask.return_value = "Option B"
+        mock_ask_async = AsyncMock(return_value="Option B")
+        mock_select.return_value.ask_async = mock_ask_async
 
-        result = _questionary_select_prompt(
+        result = await _questionary_select_prompt(
             "Choose:",
             ["Option A", "Option B", "Option C"],
             "Option B"
@@ -276,11 +280,12 @@ class TestQuestionarySelectPrompt:
         assert result == "Option B"
 
     @patch('devdox_ai_sonar.utils.ui.questionary.select')
-    def test_select_prompt_without_default(self, mock_select):
+    async def test_select_prompt_without_default(self, mock_select):
         """Test select prompt without default choice."""
-        mock_select.return_value.ask.return_value = "Option A"
+        mock_ask_async = AsyncMock(return_value="Option A")
+        mock_select.return_value.ask_async = mock_ask_async
 
-        result = _questionary_select_prompt(
+        result = await _questionary_select_prompt(
             "Choose:",
             ["Option A", "Option B"],
             None
@@ -298,11 +303,12 @@ class TestQuestionaryCheckboxPrompt:
     """Test cases for _questionary_checkbox_prompt."""
 
     @patch('devdox_ai_sonar.utils.ui.questionary.checkbox')
-    def test_checkbox_prompt_with_defaults(self, mock_checkbox):
+    async def test_checkbox_prompt_with_defaults(self, mock_checkbox):
         """Test checkbox prompt with default selections."""
-        mock_checkbox.return_value.ask.return_value = ["Python", "JavaScript"]
+        mock_ask_async = AsyncMock(return_value=["Python", "JavaScript"])
+        mock_checkbox.return_value.ask_async = mock_ask_async
 
-        result = _questionary_checkbox_prompt(
+        result = await _questionary_checkbox_prompt(
             "Select languages:",
             ["Python", "JavaScript", "Go", "Rust"],
             ["Python", "Go"]
@@ -331,11 +337,12 @@ class TestQuestionaryCheckboxPrompt:
         assert result == ["Python", "JavaScript"]
 
     @patch('devdox_ai_sonar.utils.ui.questionary.checkbox')
-    def test_checkbox_prompt_without_defaults(self, mock_checkbox):
+    async def test_checkbox_prompt_without_defaults(self, mock_checkbox):
         """Test checkbox prompt without default selections."""
-        mock_checkbox.return_value.ask.return_value = ["Option A"]
+        mock_ask_async = AsyncMock(return_value=["Option A"])
+        mock_checkbox.return_value.ask_async = mock_ask_async
 
-        result = _questionary_checkbox_prompt(
+        result = await _questionary_checkbox_prompt(
             "Select options:",
             ["Option A", "Option B", "Option C"],
             None
@@ -345,11 +352,12 @@ class TestQuestionaryCheckboxPrompt:
         assert result == ["Option A"]
 
     @patch('devdox_ai_sonar.utils.ui.questionary.checkbox')
-    def test_checkbox_prompt_with_empty_defaults(self, mock_checkbox):
+    async def test_checkbox_prompt_with_empty_defaults(self, mock_checkbox):
         """Test checkbox prompt with empty default list."""
-        mock_checkbox.return_value.ask.return_value = []
+        mock_ask_async = AsyncMock(return_value=[])
+        mock_checkbox.return_value.ask_async = mock_ask_async
 
-        result = _questionary_checkbox_prompt(
+        result = await _questionary_checkbox_prompt(
             "Select options:",
             ["Option A", "Option B"],
             []
@@ -365,8 +373,8 @@ class TestQuestionaryCheckboxPrompt:
 class TestPromptWithQuestionary:
     """Test cases for _prompt_with_questionary function."""
 
-    @patch('devdox_ai_sonar.utils.ui._questionary_text_prompt')
-    def test_text_prompt_when_no_choices(self, mock_text_prompt, capsys):
+    @patch('devdox_ai_sonar.utils.ui._questionary_text_prompt', new_callable=AsyncMock)
+    async def test_text_prompt_when_no_choices(self, mock_text_prompt, capsys):
         """Test routes to text prompt when no choices."""
         mock_text_prompt.return_value = "user_input"
 
@@ -378,14 +386,14 @@ class TestPromptWithQuestionary:
             multiple=False
         )
 
-        result = _prompt_with_questionary(config)
+        result = await _prompt_with_questionary(config)
 
         mock_text_prompt.assert_called_once()
         assert result == "user_input"
 
 
-    @patch('devdox_ai_sonar.utils.ui._questionary_checkbox_prompt')
-    def test_checkbox_prompt_when_multiple(self, mock_checkbox_prompt):
+    @patch('devdox_ai_sonar.utils.ui._questionary_checkbox_prompt', new_callable=AsyncMock)
+    async def test_checkbox_prompt_when_multiple(self, mock_checkbox_prompt):
         """Test routes to checkbox prompt when multiple is True."""
         mock_checkbox_prompt.return_value = ["option1", "option2"]
 
@@ -395,13 +403,13 @@ class TestPromptWithQuestionary:
             multiple=True
         )
 
-        result = _prompt_with_questionary(config)
+        result = await _prompt_with_questionary(config)
 
         mock_checkbox_prompt.assert_called_once()
         assert result == ["option1", "option2"]
 
-    @patch('devdox_ai_sonar.utils.ui._questionary_select_prompt')
-    def test_select_prompt_when_choices_not_multiple(self, mock_select_prompt):
+    @patch('devdox_ai_sonar.utils.ui._questionary_select_prompt', new_callable=AsyncMock)
+    async def test_select_prompt_when_choices_not_multiple(self, mock_select_prompt):
         """Test routes to select prompt when choices exist but not multiple."""
         mock_select_prompt.return_value = "option1"
 
@@ -411,7 +419,7 @@ class TestPromptWithQuestionary:
             multiple=False
         )
 
-        result = _prompt_with_questionary(config)
+        result = await _prompt_with_questionary(config)
 
         mock_select_prompt.assert_called_once()
         assert result == "option1"
@@ -510,9 +518,10 @@ class TestConfirmWithQuestionary:
     """Test cases for _confirm_with_questionary function."""
 
     @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
-    def test_confirm_with_default_yes(self, mock_confirm):
+    async def test_confirm_with_default_yes(self, mock_confirm):
         """Test confirmation with Yes as default."""
-        mock_confirm.return_value.ask.return_value = True  # Boolean, not string!
+        mock_ask_async = AsyncMock(return_value=True)
+        mock_confirm.return_value.ask_async = mock_ask_async
 
         config = ConfirmConfig(
             message="Continue?",
@@ -520,16 +529,17 @@ class TestConfirmWithQuestionary:
             allow_switch=True
         )
 
-        result = _confirm_with_questionary(config)
+        result = await _confirm_with_questionary(config)
 
         # Verify confirm was called with correct arguments
         mock_confirm.assert_called_once_with("Continue?", default=True)
         assert result == "yes"
 
     @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
-    def test_confirm_with_default_no(self, mock_confirm):
+    async def test_confirm_with_default_no(self, mock_confirm):
         """Test confirmation with No as default."""
-        mock_confirm.return_value.ask.return_value = False  # Boolean!
+        mock_ask_async = AsyncMock(return_value=False)
+        mock_confirm.return_value.ask_async = mock_ask_async
 
         config = ConfirmConfig(
             message="Delete?",
@@ -537,17 +547,17 @@ class TestConfirmWithQuestionary:
             allow_switch=False
         )
 
-        result = _confirm_with_questionary(config)
+        result = await _confirm_with_questionary(config)
 
         mock_confirm.assert_called_once_with("Delete?", default=False)
         assert result == "no"
 
 
     @patch('devdox_ai_sonar.utils.ui.questionary.confirm')
-    def test_confirm_basic_functionality(self, mock_confirm):
+    async def test_confirm_basic_functionality(self, mock_confirm):
         """Test confirmation basic functionality."""
-        mock_confirm.return_value.ask.return_value = "Yes"
-        mock_confirm.return_value.ask.return_value = True
+        mock_ask_async = AsyncMock(return_value=True)
+        mock_confirm.return_value.ask_async = mock_ask_async
 
         config = ConfirmConfig(
             message="Proceed?",
@@ -555,7 +565,7 @@ class TestConfirmWithQuestionary:
             allow_switch=True  # Doesn't affect questionary.confirm
         )
 
-        result = _confirm_with_questionary(config)
+        result = await _confirm_with_questionary(config)
 
         mock_confirm.assert_called_once_with("Proceed?", default=True)
         assert result == "yes"
@@ -639,39 +649,39 @@ class TestConfirmWithConsoleFallback:
 class TestSmartPrompt:
     """Integration tests for smart_prompt function."""
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_uses_questionary(self, mock_check, mock_questionary):
+    async def test_smart_prompt_uses_questionary(self, mock_check, mock_questionary):
         """Test smart_prompt uses questionary when available."""
         mock_questionary.return_value = "user_input"
 
-        result = smart_prompt("Enter value:", default="default")
+        result = await smart_prompt("Enter value:", default="default")
 
         assert result == "user_input"
         mock_questionary.assert_called_once()
         mock_check.assert_called_once_with("user_input", True)
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._prompt_with_rich_fallback')
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_falls_back_to_rich(self, mock_check, mock_rich, mock_questionary):
+    async def test_smart_prompt_falls_back_to_rich(self, mock_check, mock_rich, mock_questionary):
         """Test smart_prompt falls back to rich on ImportError."""
         mock_questionary.side_effect = ImportError("questionary not found")
         mock_rich.return_value = "fallback_input"
 
-        result = smart_prompt("Enter value:")
+        result = await smart_prompt("Enter value:")
 
         assert result == "fallback_input"
         mock_rich.assert_called_once()
         mock_check.assert_called_once_with("fallback_input", True)
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_with_choices(self, mock_check, mock_questionary):
+    async def test_smart_prompt_with_choices(self, mock_check, mock_questionary):
         """Test smart_prompt with choices."""
         mock_questionary.return_value = "option2"
 
-        result = smart_prompt(
+        result = await smart_prompt(
             "Choose:",
             choices=["option1", "option2", "option3"],
             default="option1"
@@ -679,13 +689,13 @@ class TestSmartPrompt:
 
         assert result == "option2"
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_with_multiple(self, mock_check, mock_questionary):
+    async def test_smart_prompt_with_multiple(self, mock_check, mock_questionary):
         """Test smart_prompt with multiple selection."""
         mock_questionary.return_value = ["option1", "option3"]
 
-        result = smart_prompt(
+        result = await smart_prompt(
             "Select multiple:",
             choices=["option1", "option2", "option3"],
             multiple=True
@@ -693,22 +703,22 @@ class TestSmartPrompt:
 
         assert result == ["option1", "option3"]
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
-    def test_smart_prompt_raises_switch_exception(self, mock_questionary):
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
+    async def test_smart_prompt_raises_switch_exception(self, mock_questionary):
         """Test smart_prompt raises SwitchCommandException."""
         with patch.object(constant, 'SWITCH_COMMAND_TRIGGER', '/'):
             mock_questionary.return_value = "/"
 
             with pytest.raises(SwitchCommandException):
-                smart_prompt("Enter value:", allow_switch=True)
+                await smart_prompt("Enter value:", allow_switch=True)
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_with_switch_disabled(self, mock_check, mock_questionary):
+    async def test_smart_prompt_with_switch_disabled(self, mock_check, mock_questionary):
         """Test smart_prompt with switch disabled."""
         mock_questionary.return_value = "/"
 
-        result = smart_prompt("Enter value:", allow_switch=False)
+        result = await smart_prompt("Enter value:", allow_switch=False)
 
         assert result == "/"
         mock_check.assert_called_once_with("/", False)
@@ -721,26 +731,26 @@ class TestSmartPrompt:
 class TestSmartConfirm:
     """Integration tests for smart_confirm function."""
 
-    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
     @patch('devdox_ai_sonar.utils.ui._parse_confirmation_result')
-    def test_smart_confirm_uses_questionary(self, mock_parse, mock_check, mock_questionary):
+    async def test_smart_confirm_uses_questionary(self, mock_parse, mock_check, mock_questionary):
         """Test smart_confirm uses questionary when available."""
         mock_questionary.return_value = "Yes"
         mock_parse.return_value = True
 
-        result = smart_confirm("Continue?", default=True)
+        result = await smart_confirm("Continue?", default=True)
 
         assert result is True
         mock_questionary.assert_called_once()
         mock_check.assert_called_once_with("Yes", True)
         mock_parse.assert_called_once_with("Yes", True)
 
-    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._confirm_with_console_fallback')
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
     @patch('devdox_ai_sonar.utils.ui._parse_confirmation_result')
-    def test_smart_confirm_falls_back_to_console(
+    async def test_smart_confirm_falls_back_to_console(
             self, mock_parse, mock_check, mock_console, mock_questionary
     ):
         """Test smart_confirm falls back to console on ImportError."""
@@ -748,35 +758,35 @@ class TestSmartConfirm:
         mock_console.return_value = "yes"
         mock_parse.return_value = True
 
-        result = smart_confirm("Continue?")
+        result = await smart_confirm("Continue?")
 
         assert result is True
         mock_console.assert_called_once()
 
 
 
-    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
     @patch('devdox_ai_sonar.utils.ui._parse_confirmation_result')
-    def test_smart_confirm_with_default_false(self, mock_parse, mock_check, mock_questionary):
+    async def test_smart_confirm_with_default_false(self, mock_parse, mock_check, mock_questionary):
         """Test smart_confirm with default False."""
         mock_questionary.return_value = "No"
         mock_parse.return_value = False
 
-        result = smart_confirm("Delete?", default=False)
+        result = await smart_confirm("Delete?", default=False)
 
         assert result is False
         mock_parse.assert_called_once_with("No", False)
 
-    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._confirm_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
     @patch('devdox_ai_sonar.utils.ui._parse_confirmation_result')
-    def test_smart_confirm_with_switch_disabled(self, mock_parse, mock_check, mock_questionary):
+    async def test_smart_confirm_with_switch_disabled(self, mock_parse, mock_check, mock_questionary):
         """Test smart_confirm with switch disabled."""
         mock_questionary.return_value = "Yes"
         mock_parse.return_value = True
 
-        result = smart_confirm("Proceed?", allow_switch=False)
+        result = await smart_confirm("Proceed?", allow_switch=False)
 
         assert result is True
         mock_check.assert_called_once_with("Yes", False)
@@ -789,24 +799,24 @@ class TestSmartConfirm:
 class TestEdgeCases:
     """Test edge cases and error scenarios."""
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_with_none_result(self, mock_check, mock_questionary):
+    async def test_smart_prompt_with_none_result(self, mock_check, mock_questionary):
         """Test smart_prompt handles None result (user cancelled)."""
         mock_questionary.return_value = None
 
-        result = smart_prompt("Enter value:")
+        result = await smart_prompt("Enter value:")
 
         assert result is None
         mock_check.assert_called_once_with(None, True)
 
-    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary')
+    @patch('devdox_ai_sonar.utils.ui._prompt_with_questionary', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.utils.ui._check_for_switch_command')
-    def test_smart_prompt_with_empty_string(self, mock_check, mock_questionary):
+    async def test_smart_prompt_with_empty_string(self, mock_check, mock_questionary):
         """Test smart_prompt handles empty string."""
         mock_questionary.return_value = ""
 
-        result = smart_prompt("Enter value:")
+        result = await smart_prompt("Enter value:")
 
         assert result == ""
 
