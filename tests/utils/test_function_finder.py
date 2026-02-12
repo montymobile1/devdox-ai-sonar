@@ -480,7 +480,7 @@ class TestFindFunctionImplementations:
 class TestAsyncConversionAnalyzer:
     """Tests for AsyncConversionAnalyzer.analyze()."""
 
-    def test_async_func_without_await_is_safe_to_convert(self, tmp_path):
+    async def test_async_func_without_await_is_safe_to_convert(self, tmp_path):
         """Async function with no await/async-with/async-for is safe to make sync."""
         (tmp_path / "module.py").write_text(
             "async def target():\n"
@@ -488,13 +488,13 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.current_type == "async"
         assert result.target_type == "sync"
         assert result.risk_level == ConversionRisk.SAFE
 
-    def test_async_func_with_await_is_impossible(self, tmp_path):
+    async def test_async_func_with_await_is_impossible(self, tmp_path):
         """Async function using await cannot be trivially converted to sync."""
         (tmp_path / "module.py").write_text(
             "import asyncio\n"
@@ -503,12 +503,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert any("await" in issue for issue in result.blocking_issues)
 
-    def test_async_func_with_async_with_is_impossible(self, tmp_path):
+    async def test_async_func_with_async_with_is_impossible(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "async def target():\n"
             "    async with open('f') as f:\n"
@@ -516,12 +516,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert any("async context" in issue for issue in result.blocking_issues)
 
-    def test_async_func_with_async_for_is_impossible(self, tmp_path):
+    async def test_async_func_with_async_for_is_impossible(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "async def target():\n"
             "    async for item in some_iter():\n"
@@ -531,12 +531,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert any("async iteration" in issue for issue in result.blocking_issues)
 
-    def test_async_func_with_awaited_callers_is_breaking(self, tmp_path):
+    async def test_async_func_with_awaited_callers_is_breaking(self, tmp_path):
         """If callers use await, removing async is a breaking change."""
         (tmp_path / "module.py").write_text(
             "async def target():\n"
@@ -547,22 +547,22 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.BREAKING
         assert len(result.caller_impact) > 0
 
-    def test_function_not_found_returns_impossible(self, tmp_path):
+    async def test_function_not_found_returns_impossible(self, tmp_path):
         (tmp_path / "module.py").write_text("def other():\n    pass\n")
 
         analyzer = AsyncConversionAnalyzer("nonexistent", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert result.current_type == "unknown"
         assert any("not found" in issue for issue in result.blocking_issues)
 
-    def test_sync_func_safe_to_convert_to_async(self, tmp_path):
+    async def test_sync_func_safe_to_convert_to_async(self, tmp_path):
         """Sync function with no blocking I/O and no callers is safe."""
         (tmp_path / "module.py").write_text(
             "def target():\n"
@@ -570,13 +570,13 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.current_type == "sync"
         assert result.target_type == "async"
         assert result.risk_level == ConversionRisk.SAFE
 
-    def test_sync_magic_method_cannot_be_async(self, tmp_path):
+    async def test_sync_magic_method_cannot_be_async(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "class Foo:\n"
             "    def __init__(self):\n"
@@ -584,12 +584,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("__init__", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert any("Magic method" in issue for issue in result.blocking_issues)
 
-    def test_sync_property_cannot_be_async(self, tmp_path):
+    async def test_sync_property_cannot_be_async(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "class Foo:\n"
             "    @property\n"
@@ -598,12 +598,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("value", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.IMPOSSIBLE
         assert any("Properties" in issue for issue in result.blocking_issues)
 
-    def test_sync_generator_is_breaking(self, tmp_path):
+    async def test_sync_generator_is_breaking(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "def target():\n"
             "    yield 1\n"
@@ -611,12 +611,12 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.BREAKING
         assert any("Generator" in issue for issue in result.blocking_issues)
 
-    def test_sync_func_with_blocking_io_needs_changes(self, tmp_path):
+    async def test_sync_func_with_blocking_io_needs_changes(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "import time\n"
             "def target():\n"
@@ -624,14 +624,14 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level in (
             ConversionRisk.NEEDS_CHANGES,
             ConversionRisk.BREAKING,
         )
 
-    def test_sync_func_with_non_awaited_callers_is_breaking(self, tmp_path):
+    async def test_sync_func_with_non_awaited_callers_is_breaking(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "def target():\n"
             "    return 1\n"
@@ -641,11 +641,11 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.risk_level == ConversionRisk.BREAKING
 
-    def test_handles_file_read_errors_gracefully(self, tmp_path):
+    async def test_handles_file_read_errors_gracefully(self, tmp_path):
         """Analyzer should not crash if a file can't be read."""
         (tmp_path / "good.py").write_text(
             "async def target():\n    return 1\n"
@@ -654,12 +654,12 @@ class TestAsyncConversionAnalyzer:
         bad.mkdir()  # directory pretending to be .py
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert result.function_name == "target"
         assert result.risk_level == ConversionRisk.SAFE
 
-    def test_detects_decorator_property_flag(self, tmp_path):
+    async def test_detects_decorator_property_flag(self, tmp_path):
         (tmp_path / "module.py").write_text(
             "class Svc:\n"
             "    @staticmethod\n"
@@ -668,7 +668,7 @@ class TestAsyncConversionAnalyzer:
         )
 
         analyzer = AsyncConversionAnalyzer("target", tmp_path)
-        result = analyzer.analyze()
+        result = await analyzer.analyze()
 
         assert analyzer.is_staticmethod is True
         assert result.risk_level == ConversionRisk.SAFE
