@@ -103,11 +103,6 @@ def _prompt_with_rich_fallback(config: PromptConfig) -> Union[str, List[str]]:
     Note: Rich doesn't support multiple selection, so we fall back to single select.
     """
 
-    if config.allow_switch:
-        console.print(
-            f"[dim](Type '{constant.SWITCH_COMMAND_TRIGGER}' to switch commands)[/dim]"
-        )
-
     if config.multiple:
         console.print(
             "[yellow]⚠ Multiple selection not available in fallback mode[/yellow]"
@@ -285,11 +280,6 @@ def _confirm_with_console_fallback(config: ConfirmConfig) -> str:
     Returns:
         User's input (may be empty, "y", "yes", "n", "no", or "/")
     """
-    if config.allow_switch:
-        console.print(
-            f"[dim](Type '{constant.SWITCH_COMMAND_TRIGGER}' to switch commands)[/dim]"
-        )
-
     default_value = config.default if config.default is not None else ""
     prompt = _build_console_prompt(config.message, default_value)
     return console.input(prompt).strip().lower()
