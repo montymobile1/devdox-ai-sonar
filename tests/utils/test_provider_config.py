@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import Mock, MagicMock, patch, call
+from unittest.mock import Mock, AsyncMock, MagicMock, patch, call
 from typing import List, Dict, Any, Optional
 
 from devdox_ai_sonar.utils.provider_config import (
@@ -50,12 +50,12 @@ def mock_terminal_menu():
 
 @pytest.fixture
 def mock_config_manager():
-    """Create mock config manager."""
+    """Create mock config manager with async methods."""
     manager = Mock()
-    manager.get_value = Mock(return_value=None)
-    manager.set_value = Mock()
+    manager.get_value = AsyncMock(return_value=None)
+    manager.set_value = AsyncMock()
     manager.save_config = Mock()
-    manager.update_provider = Mock()
+    manager.update_provider = AsyncMock()
     return manager
 
 
@@ -308,19 +308,19 @@ class TestConfirmDefault:
 class TestGetAvailableProviders:
     """Tests for get_available_providers method."""
 
-    def test_get_available_providers_none_configured(self, provider_config_manager, mock_config_manager):
+    async def test_get_available_providers_none_configured(self, provider_config_manager, mock_config_manager):
         """Test when no providers are configured."""
         mock_config_manager.get_value.return_value = []
 
         with patch.object(ProviderType, 'choices', return_value=["openai", "anthropic", "together"]):
-            result = provider_config_manager.get_available_providers()
+            result = await provider_config_manager.get_available_providers()
 
         assert len(result) == 3
         assert "openai" in result
         assert "anthropic" in result
         assert "together" in result
 
-    def test_get_available_providers_some_configured(self, provider_config_manager, mock_config_manager):
+    async def test_get_available_providers_some_configured(self, provider_config_manager, mock_config_manager):
         """Test when some providers are already configured."""
         existing = [
             {"name": "openai", "api_key": "key1"},
@@ -329,12 +329,12 @@ class TestGetAvailableProviders:
         mock_config_manager.get_value.return_value = existing
 
         with patch.object(ProviderType, 'choices', return_value=["openai", "anthropic", "together"]):
-            result = provider_config_manager.get_available_providers()
+            result = await provider_config_manager.get_available_providers()
 
         assert len(result) == 1
         assert result == ["together"]
 
-    def test_get_available_providers_all_configured(self, provider_config_manager, mock_config_manager):
+    async def test_get_available_providers_all_configured(self, provider_config_manager, mock_config_manager):
         """Test when all providers are configured."""
         existing = [
             {"name": "openai"},
@@ -344,16 +344,16 @@ class TestGetAvailableProviders:
         mock_config_manager.get_value.return_value = existing
 
         with patch.object(ProviderType, 'choices', return_value=["openai", "anthropic", "together"]):
-            result = provider_config_manager.get_available_providers()
+            result = await provider_config_manager.get_available_providers()
 
         assert result == []
 
-    def test_get_available_providers_null_config(self, provider_config_manager, mock_config_manager):
+    async def test_get_available_providers_null_config(self, provider_config_manager, mock_config_manager):
         """Test when config returns None."""
         mock_config_manager.get_value.return_value = None
 
         with patch.object(ProviderType, 'choices', return_value=["openai"]):
-            result = provider_config_manager.get_available_providers()
+            result = await provider_config_manager.get_available_providers()
 
         assert "openai" in result
 
@@ -361,20 +361,20 @@ class TestGetAvailableProviders:
 class TestGetDefaultProvider:
     """Tests for get_default_provider method."""
 
-    def test_get_default_provider_exists(self, provider_config_manager, mock_config_manager):
+    async def test_get_default_provider_exists(self, provider_config_manager, mock_config_manager):
         """Test when default provider is set."""
         mock_config_manager.get_value.return_value = "openai"
 
-        result = provider_config_manager.get_default_provider()
+        result = await provider_config_manager.get_default_provider()
 
         assert result == "openai"
         mock_config_manager.get_value.assert_called_once_with("llm.default_provider")
 
-    def test_get_default_provider_none(self, provider_config_manager, mock_config_manager):
+    async def test_get_default_provider_none(self, provider_config_manager, mock_config_manager):
         """Test when no default provider is set."""
         mock_config_manager.get_value.return_value = None
 
-        result = provider_config_manager.get_default_provider()
+        result = await provider_config_manager.get_default_provider()
 
         assert result is None
 
@@ -382,7 +382,7 @@ class TestGetDefaultProvider:
 class TestGetExistingProviders:
     """Tests for get_existing_providers method."""
 
-    def test_get_existing_providers_multiple(self, provider_config_manager, mock_config_manager):
+    async def test_get_existing_providers_multiple(self, provider_config_manager, mock_config_manager):
         """Test getting multiple existing providers."""
         existing = [
             {"name": "openai", "api_key": "key1"},
@@ -391,23 +391,23 @@ class TestGetExistingProviders:
         ]
         mock_config_manager.get_value.return_value = existing
 
-        result = provider_config_manager.get_existing_providers()
+        result = await provider_config_manager.get_existing_providers()
 
         assert result == ["openai", "anthropic", "together"]
 
-    def test_get_existing_providers_empty(self, provider_config_manager, mock_config_manager):
+    async def test_get_existing_providers_empty(self, provider_config_manager, mock_config_manager):
         """Test when no providers exist."""
         mock_config_manager.get_value.return_value = []
 
-        result = provider_config_manager.get_existing_providers()
+        result = await provider_config_manager.get_existing_providers()
 
         assert result == []
 
-    def test_get_existing_providers_none(self, provider_config_manager, mock_config_manager):
+    async def test_get_existing_providers_none(self, provider_config_manager, mock_config_manager):
         """Test when config returns None."""
         mock_config_manager.get_value.return_value = None
 
-        result = provider_config_manager.get_existing_providers()
+        result = await provider_config_manager.get_existing_providers()
 
         assert result == []
 
@@ -515,32 +515,32 @@ class TestUpdateExistingProvider:
     """Tests for update_existing_provider method."""
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_update_existing_provider_not_found(
+    async def test_update_existing_provider_not_found(
             self, mock_confirm, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test updating non-existent provider."""
         mock_config_manager.get_value.return_value = []
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is False
         mock_console.print.assert_called_with("[red]❌ Provider openai not found[/red]")
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_update_existing_provider_keep_all_settings(
+    async def test_update_existing_provider_keep_all_settings(
             self, mock_confirm, provider_config_manager, mock_config_manager, sample_provider_config
     ):
         """Test updating provider without changing anything."""
         mock_config_manager.get_value.return_value = [sample_provider_config]
         mock_confirm.side_effect = [False, True, False]  # Don't change API key, keep model, not default
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is False  # No updates applied
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_update_existing_provider_change_api_key(
+    async def test_update_existing_provider_change_api_key(
             self, mock_prompt_key, mock_confirm, provider_config_manager,
             mock_config_manager, sample_provider_config, mock_validator
     ):
@@ -549,14 +549,14 @@ class TestUpdateExistingProvider:
         mock_confirm.side_effect = [True, True, False]  # Change API key, keep model, not default
         mock_prompt_key.return_value = "new-api-key"
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is True
         mock_config_manager.update_provider.assert_called_once()
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
-    def test_update_existing_provider_change_model(
+    async def test_update_existing_provider_change_model(
             self, mock_select, mock_confirm, provider_config_manager,
             mock_config_manager, sample_provider_config
     ):
@@ -565,14 +565,14 @@ class TestUpdateExistingProvider:
         mock_confirm.side_effect = [False, False, False]  # Don't change API key, change model, not default
         mock_select.return_value = "gpt-3.5-turbo"
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is True
         call_args = mock_config_manager.update_provider.call_args[1]
         assert call_args['updates']['default_model'] == "gpt-3.5-turbo"
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_update_existing_provider_set_as_default(
+    async def test_update_existing_provider_set_as_default(
             self, mock_confirm, provider_config_manager,
             mock_config_manager, sample_provider_config
     ):
@@ -580,7 +580,7 @@ class TestUpdateExistingProvider:
         mock_config_manager.get_value.return_value = [sample_provider_config]
         mock_confirm.side_effect = [False, True, True]  # Don't change API key, keep model, set as default
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is True
         call_args = mock_config_manager.update_provider.call_args[1]
@@ -597,7 +597,7 @@ class TestBranchOrPrPrompt:
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    def test_branch_or_pr_prompt_select_branch(
+    async def test_branch_or_pr_prompt_select_branch(
             self, mock_prompt, mock_confirm, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -607,14 +607,14 @@ class TestBranchOrPrPrompt:
         mock_config_manager.get_value.return_value = "main"
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name', return_value="develop"):
-            branch, pr = provider_config_manager.branch_or_pr_prompt()
+            branch, pr = await provider_config_manager.branch_or_pr_prompt()
 
         assert branch == "develop"
         assert pr == 0
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    def test_branch_or_pr_prompt_select_pr(
+    async def test_branch_or_pr_prompt_select_pr(
             self, mock_prompt, mock_confirm, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -625,7 +625,7 @@ class TestBranchOrPrPrompt:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=123):
-            branch, pr = provider_config_manager.branch_or_pr_prompt()
+            branch, pr = await provider_config_manager.branch_or_pr_prompt()
 
         assert branch == ""
         assert pr == 123
@@ -636,7 +636,7 @@ class TestBranchOrPrPrompt:
 class TestBranchOrPr:
     """Tests for branch_or_pr method """
 
-    def test_branch_or_pr_returns_pr_when_clone_type_is_pr(
+    async def test_branch_or_pr_returns_pr_when_clone_type_is_pr(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when clone_type is 'pr'."""
@@ -646,12 +646,12 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: "main"
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         assert branch == ""
         assert pr == 123
 
-    def test_branch_or_pr_returns_branch_when_clone_type_is_branch(
+    async def test_branch_or_pr_returns_branch_when_clone_type_is_branch(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when clone_type is 'branch'."""
@@ -661,12 +661,12 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: "develop"
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         assert branch == "develop"
         assert pr == 0
 
-    def test_branch_or_pr_with_none_clone_type(
+    async def test_branch_or_pr_with_none_clone_type(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when clone_type is None."""
@@ -676,13 +676,13 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: "main"
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         # When clone_type is None, neither condition matches
         assert branch == "main"
         assert pr == 0
 
-    def test_branch_or_pr_with_empty_string_clone_type(
+    async def test_branch_or_pr_with_empty_string_clone_type(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when clone_type is empty string."""
@@ -692,12 +692,12 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: "feature"
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         assert branch == "feature"
         assert pr == 0
 
-    def test_branch_or_pr_with_none_default_values(
+    async def test_branch_or_pr_with_none_default_values(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when default values are None."""
@@ -707,12 +707,12 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: None
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         assert branch == ""
         assert pr is None
 
-    def test_branch_or_pr_config_keys_called_correctly(
+    async def test_branch_or_pr_config_keys_called_correctly(
             self, provider_config_manager, mock_config_manager
     ):
         """Test that correct config keys are accessed."""
@@ -722,7 +722,7 @@ class TestBranchOrPr:
             CONFIG_DEFAULT_BRANCH: "test"
         }.get(key)
 
-        provider_config_manager.branch_or_pr()
+        await provider_config_manager.branch_or_pr()
 
         # Verify all three config keys were accessed
         calls = [call(CONFIG_CLONE_TYPE), call(CONFIG_DEFAULT_PULL), call(CONFIG_DEFAULT_BRANCH)]
@@ -734,7 +734,7 @@ class TestHandleBranchSelection:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_default_branch(
+    async def test_handle_branch_selection_default_branch(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -744,14 +744,14 @@ class TestHandleBranchSelection:
         mock_confirm.return_value = False
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name', return_value="main"):
-            branch, pr = provider_config_manager._handle_branch_selection()
+            branch, pr = await provider_config_manager._handle_branch_selection()
 
         assert branch == "main"
         assert pr == 0
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_custom_branch(
+    async def test_handle_branch_selection_custom_branch(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -762,12 +762,12 @@ class TestHandleBranchSelection:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="feature/new-feature"):
-            branch, pr = provider_config_manager._handle_branch_selection()
+            branch, pr = await provider_config_manager._handle_branch_selection()
 
         assert branch == "feature/new-feature"
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    def test_handle_branch_selection_invalid_branch(
+    async def test_handle_branch_selection_invalid_branch(
             self, mock_prompt, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test branch selection with invalid branch name."""
@@ -777,7 +777,7 @@ class TestHandleBranchSelection:
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    side_effect=ValidationError("Invalid branch","branch")):
             with pytest.raises(Exception):  # Should raise click.Abort
-                provider_config_manager._handle_branch_selection()
+                await provider_config_manager._handle_branch_selection()
 
 
 
@@ -786,7 +786,7 @@ class TestHandlePullRequestSelection:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pull_request_selection_default(
+    async def test_handle_pull_request_selection_default(
             self, mock_confirm, mock_prompt, provider_config_manager, mock_config_manager
     ):
         """Test PR selection using default."""
@@ -796,14 +796,14 @@ class TestHandlePullRequestSelection:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=100):
-            branch, pr = provider_config_manager._handle_pull_request_selection()
+            branch, pr = await provider_config_manager._handle_pull_request_selection()
 
         assert branch == ""
         assert pr == 100
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pull_request_selection_custom(
+    async def test_handle_pull_request_selection_custom(
             self, mock_confirm, mock_prompt, provider_config_manager, mock_config_manager
     ):
         """Test PR selection with custom number."""
@@ -813,12 +813,12 @@ class TestHandlePullRequestSelection:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=42):
-            branch, pr = provider_config_manager._handle_pull_request_selection()
+            branch, pr = await provider_config_manager._handle_pull_request_selection()
 
         assert pr == 42
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    def test_handle_pull_request_selection_invalid(
+    async def test_handle_pull_request_selection_invalid(
             self, mock_prompt, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test PR selection with invalid number."""
@@ -828,13 +828,13 @@ class TestHandlePullRequestSelection:
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    side_effect=ValidationError("Invalid PR", "pull_request_number")):
             with pytest.raises(Exception):
-                provider_config_manager._handle_pull_request_selection()
+                await provider_config_manager._handle_pull_request_selection()
 
 
 class TestGetParams:
     """Tests for get_params method - COMPLETELY UNTESTED"""
 
-    def test_get_params_returns_configuration(
+    async def test_get_params_returns_configuration(
             self, provider_config_manager, mock_config_manager
     ):
         """Test getting sonar configuration."""
@@ -845,32 +845,32 @@ class TestGetParams:
         }
         mock_config_manager.get_value.return_value = expected_config
 
-        result = provider_config_manager.get_params()
+        result = await provider_config_manager.get_params()
 
         assert result == expected_config
         mock_config_manager.get_value.assert_called_once_with("sonar.configuration")
 
-    def test_get_params_returns_none_when_not_configured(
+    async def test_get_params_returns_none_when_not_configured(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when configuration is not set."""
         mock_config_manager.get_value.return_value = None
 
-        result = provider_config_manager.get_params()
+        result = await provider_config_manager.get_params()
 
         assert result is None
 
-    def test_get_params_returns_empty_dict(
+    async def test_get_params_returns_empty_dict(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when configuration is empty dict."""
         mock_config_manager.get_value.return_value = {}
 
-        result = provider_config_manager.get_params()
+        result = await provider_config_manager.get_params()
 
         assert result == {}
 
-    def test_get_params_with_complex_nested_config(
+    async def test_get_params_with_complex_nested_config(
             self, provider_config_manager, mock_config_manager
     ):
         """Test with complex nested configuration."""
@@ -885,7 +885,7 @@ class TestGetParams:
         }
         mock_config_manager.get_value.return_value = complex_config
 
-        result = provider_config_manager.get_params()
+        result = await provider_config_manager.get_params()
 
         assert result == complex_config
         assert result["level1"]["level2"]["level3"] == ["item1", "item2"]
@@ -1031,25 +1031,25 @@ class TestGetAvailableModels:
 class TestApplyProviderUpdates:
     """Tests for _apply_provider_updates method."""
 
-    def test_apply_provider_updates_with_changes(
+    async def test_apply_provider_updates_with_changes(
             self, provider_config_manager, mock_config_manager, sample_provider_config
     ):
         """Test applying updates when changes exist."""
         ctx = ProviderUpdateContext(sample_provider_config, "openai")
         ctx.updates = {"api_key": "new-key", "default_model": "new-model"}
 
-        result = provider_config_manager._apply_provider_updates(ctx, True)
+        result = await provider_config_manager._apply_provider_updates(ctx, True)
 
         assert result is True
         mock_config_manager.update_provider.assert_called_once()
 
-    def test_apply_provider_updates_no_changes(
+    async def test_apply_provider_updates_no_changes(
             self, provider_config_manager, mock_config_manager, sample_provider_config
     ):
         """Test when no updates to apply."""
         ctx = ProviderUpdateContext(sample_provider_config, "openai")
 
-        result = provider_config_manager._apply_provider_updates(ctx, False)
+        result = await provider_config_manager._apply_provider_updates(ctx, False)
 
         assert result is False
         mock_config_manager.update_provider.assert_not_called()
@@ -1059,11 +1059,11 @@ class TestApplyProviderUpdates:
 class TestSaveAsDefaultIfChangedConfirmFalse:
     """Tests for _save_as_default_if_changed with confirm=False parameter"""
 
-    def test_save_as_default_if_changed_no_confirm_saves_directly(
+    async def test_save_as_default_if_changed_no_confirm_saves_directly(
             self, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test that confirm=False skips user confirmation."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key="test.key",
             new_value="new_value",
             current_default="old_value",
@@ -1075,11 +1075,11 @@ class TestSaveAsDefaultIfChangedConfirmFalse:
         mock_config_manager.set_value.assert_called_once_with("test.key", "new_value")
         mock_config_manager.save_config.assert_called_once()
 
-    def test_save_as_default_if_changed_no_confirm_no_message(
+    async def test_save_as_default_if_changed_no_confirm_no_message(
             self, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test that confirm=False doesn't print success message."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key="test.key",
             new_value="new",
             current_default="old",
@@ -1092,11 +1092,11 @@ class TestSaveAsDefaultIfChangedConfirmFalse:
         saved_messages = [c for c in print_calls if "Saved" in c and "as default" in c]
         assert len(saved_messages) == 0
 
-    def test_save_as_default_if_changed_confirm_false_empty_display_name(
+    async def test_save_as_default_if_changed_confirm_false_empty_display_name(
             self, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test with confirm=False and empty display_name."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key=CONFIG_CLONE_TYPE,
             new_value="pr",
             current_default="branch",
@@ -1107,11 +1107,11 @@ class TestSaveAsDefaultIfChangedConfirmFalse:
         mock_config_manager.set_value.assert_called_once()
         mock_config_manager.save_config.assert_called_once()
 
-    def test_save_as_default_if_changed_string_comparison_numeric(
+    async def test_save_as_default_if_changed_string_comparison_numeric(
             self, provider_config_manager, mock_config_manager
     ):
         """Test string comparison with numeric values."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key="test.key",
             new_value=123,
             current_default="123",
@@ -1123,11 +1123,11 @@ class TestSaveAsDefaultIfChangedConfirmFalse:
         # Should NOT save because values are "equal"
         mock_config_manager.set_value.assert_not_called()
 
-    def test_save_as_default_if_changed_string_comparison_none(
+    async def test_save_as_default_if_changed_string_comparison_none(
             self, provider_config_manager, mock_config_manager
     ):
         """Test string comparison with None values."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key="test.key",
             new_value=None,
             current_default="None",
@@ -1138,11 +1138,11 @@ class TestSaveAsDefaultIfChangedConfirmFalse:
         # str(None) == str("None") -> True
         mock_config_manager.set_value.assert_not_called()
 
-    def test_save_as_default_if_changed_both_none(
+    async def test_save_as_default_if_changed_both_none(
             self, provider_config_manager, mock_config_manager
     ):
         """Test when both values are None."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             config_key="test.key",
             new_value=None,
             current_default=None,
@@ -1218,11 +1218,11 @@ class TestSaveAsDefaultIfChanged:
     """Tests for _save_as_default_if_changed method."""
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_save_as_default_value_unchanged(
+    async def test_save_as_default_value_unchanged(
             self, mock_confirm, provider_config_manager, mock_config_manager
     ):
         """Test when value hasn't changed."""
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             "test.key", "value", "value", "test"
         )
 
@@ -1230,26 +1230,26 @@ class TestSaveAsDefaultIfChanged:
         mock_config_manager.set_value.assert_not_called()
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_save_as_default_user_declines(
+    async def test_save_as_default_user_declines(
             self, mock_confirm, provider_config_manager, mock_config_manager
     ):
         """Test when user declines to save."""
         mock_confirm.return_value = False
 
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             "test.key", "new", "old", "test"
         )
 
         mock_config_manager.set_value.assert_not_called()
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_save_as_default_user_accepts(
+    async def test_save_as_default_user_accepts(
             self, mock_confirm, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test when user accepts to save."""
         mock_confirm.return_value = True
 
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             "test.key", "new", "old", "test value"
         )
 
@@ -1297,7 +1297,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pr_selection_with_none_default_pull(
+    async def test_handle_pr_selection_with_none_default_pull(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1308,7 +1308,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=42):
-            branch, pr = provider_config_manager._handle_pull_request_selection()
+            branch, pr = await provider_config_manager._handle_pull_request_selection()
 
         assert pr == 42
         # Should default to "0" when None
@@ -1316,7 +1316,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pr_selection_saves_default_pr(
+    async def test_handle_pr_selection_saves_default_pr(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1327,7 +1327,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=200):
-            provider_config_manager._handle_pull_request_selection()
+            await provider_config_manager._handle_pull_request_selection()
 
         # Verify PR was saved
         set_value_calls = mock_config_manager.set_value.call_args_list
@@ -1337,7 +1337,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pr_selection_saves_clone_type_to_pr(
+    async def test_handle_pr_selection_saves_clone_type_to_pr(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1348,7 +1348,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=50):
-            provider_config_manager._handle_pull_request_selection()
+            await provider_config_manager._handle_pull_request_selection()
 
         # Verify clone_type was saved to "pr"
         set_value_calls = mock_config_manager.set_value.call_args_list
@@ -1358,7 +1358,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_pr_selection_save_config_called(
+    async def test_handle_pr_selection_save_config_called(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1369,7 +1369,7 @@ class TestHandlePullRequestSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_pull_request_number',
                    return_value=1):
-            provider_config_manager._handle_pull_request_selection()
+            await provider_config_manager._handle_pull_request_selection()
 
         # save_config should be called for clone_type
         assert mock_config_manager.save_config.called
@@ -1380,7 +1380,7 @@ class TestHandleBranchSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_saves_default_branch(
+    async def test_handle_branch_selection_saves_default_branch(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1391,7 +1391,7 @@ class TestHandleBranchSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="develop"):
-            provider_config_manager._handle_branch_selection()
+            await provider_config_manager._handle_branch_selection()
 
         # Verify branch was saved
         set_value_calls = mock_config_manager.set_value.call_args_list
@@ -1401,7 +1401,7 @@ class TestHandleBranchSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_saves_clone_type(
+    async def test_handle_branch_selection_saves_clone_type(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1412,7 +1412,7 @@ class TestHandleBranchSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="feature"):
-            provider_config_manager._handle_branch_selection()
+            await provider_config_manager._handle_branch_selection()
 
         # Verify clone_type was saved
         set_value_calls = mock_config_manager.set_value.call_args_list
@@ -1422,7 +1422,7 @@ class TestHandleBranchSelectionSaveVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_save_config_called(
+    async def test_handle_branch_selection_save_config_called(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1433,7 +1433,7 @@ class TestHandleBranchSelectionSaveVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="test"):
-            provider_config_manager._handle_branch_selection()
+            await provider_config_manager._handle_branch_selection()
 
         # save_config should be called at least once for clone_type
         assert mock_config_manager.save_config.called
@@ -1454,7 +1454,7 @@ class TestErrorPathCoverage:
             provider_config_manager.configure_new_provider("openai")
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_update_existing_provider_confirm_exception(
+    async def test_update_existing_provider_confirm_exception(
             self, mock_confirm, provider_config_manager,
             mock_config_manager, sample_provider_config
     ):
@@ -1463,7 +1463,7 @@ class TestErrorPathCoverage:
         mock_confirm.side_effect = Exception("Prompt error")
 
         with pytest.raises(Exception):
-            provider_config_manager.update_existing_provider("openai")
+            await provider_config_manager.update_existing_provider("openai")
 
     def test_get_available_models_validation_failure(
             self, provider_config_manager, mock_validator, sample_provider_config
@@ -1530,7 +1530,7 @@ class TestEdgeCases:
         with pytest.raises(Exception):
             provider_config_manager.configure_new_provider("openai")
 
-    def test_branch_or_pr_with_special_clone_type_values(
+    async def test_branch_or_pr_with_special_clone_type_values(
             self, provider_config_manager, mock_config_manager
     ):
         """Test with unusual clone_type values."""
@@ -1540,13 +1540,13 @@ class TestEdgeCases:
             CONFIG_DEFAULT_BRANCH: "test"
         }.get(key)
 
-        branch, pr = provider_config_manager.branch_or_pr()
+        branch, pr = await provider_config_manager.branch_or_pr()
 
         # "PR" != "pr", so should return branch
         assert branch == "test"
         assert pr == 0
 
-    def test_get_params_with_unicode_in_config(
+    async def test_get_params_with_unicode_in_config(
             self, provider_config_manager, mock_config_manager
     ):
         """Test with unicode characters in configuration."""
@@ -1557,7 +1557,7 @@ class TestEdgeCases:
         }
         mock_config_manager.get_value.return_value = unicode_config
 
-        result = provider_config_manager.get_params()
+        result = await provider_config_manager.get_params()
 
         assert result == unicode_config
 
@@ -1583,14 +1583,14 @@ class TestEdgeCases:
         assert ctx.provider_name == "test"
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_save_as_default_very_long_display_name(
+    async def test_save_as_default_very_long_display_name(
             self, mock_confirm, provider_config_manager, mock_config_manager, mock_console
     ):
         """Test with very long display name."""
         long_name = "x" * 1000
         mock_confirm.return_value = True
 
-        provider_config_manager._save_as_default_if_changed(
+        await provider_config_manager._save_as_default_if_changed(
             "test.key", "new", "old", long_name
         )
 
@@ -1635,7 +1635,7 @@ class TestIntegration:
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_update_provider_complete_workflow_all_changes(
+    async def test_update_provider_complete_workflow_all_changes(
             self, mock_prompt_key, mock_select, mock_confirm,
             provider_config_manager, mock_config_manager,
             sample_provider_config, mock_validator
@@ -1647,7 +1647,7 @@ class TestIntegration:
         mock_prompt_key.return_value = "new-key"
         mock_select.return_value = "new-model"
 
-        result = provider_config_manager.update_existing_provider("openai")
+        result = await provider_config_manager.update_existing_provider("openai")
 
         assert result is True
         # Verify all updates were applied
@@ -1658,7 +1658,7 @@ class TestIntegration:
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
-    def test_branch_selection_saves_both_settings(
+    async def test_branch_selection_saves_both_settings(
             self, mock_prompt, mock_confirm, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1669,7 +1669,7 @@ class TestIntegration:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="new-branch"):
-            provider_config_manager._handle_branch_selection()
+            await provider_config_manager._handle_branch_selection()
 
         # Verify both settings were saved
         set_value_calls = [call[0][0] for call in mock_config_manager.set_value.call_args_list]
@@ -1704,7 +1704,7 @@ class TestConsoleOutputVerification:
 
     @patch('devdox_ai_sonar.utils.provider_config.Prompt.ask')
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_branch_selection_prints_analyzing_message(
+    async def test_handle_branch_selection_prints_analyzing_message(
             self, mock_confirm, mock_prompt, provider_config_manager,
             mock_config_manager, mock_console
     ):
@@ -1715,10 +1715,9 @@ class TestConsoleOutputVerification:
 
         with patch('devdox_ai_sonar.utils.provider_config.InputValidator.validate_branch_name',
                    return_value="feature"):
-            provider_config_manager._handle_branch_selection()
+            await provider_config_manager._handle_branch_selection()
 
         # Should print analyzing branch message
         print_calls = [str(call) for call in mock_console.print.call_args_list]
         analyzing_msgs = [c for c in print_calls if "Analyzing branch" in c]
         assert len(analyzing_msgs) >= 1
-
