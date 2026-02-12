@@ -455,7 +455,7 @@ class LLMFixer:
         max_line = max(problem_lines)
         return f"fix_L{min_line}-L{max_line}"
 
-    def _prepare_fix_context(
+    async def _prepare_fix_context(
         self,
         file_path: Path,
         line_range: Dict[str, Any],
@@ -475,9 +475,7 @@ class LLMFixer:
         """
         try:
             # Read file content
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
-                file_lines = file_content.splitlines(keepends=True)
+            file_lines = await self.file_reader.read_lines(file_path)
             language = self._get_language_from_extension(file_path.suffix)
 
             # Extract import section

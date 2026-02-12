@@ -3150,8 +3150,8 @@ class TestLoadAndValidateConfig:
                         # Verify params contain correct branch/PR
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "123"
-
-    def test_load_and_validate_config_with_predefined_branch_only(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_with_predefined_branch_only(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3189,7 +3189,8 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "feature/test"
                         assert params['pull_request'] is None
 
-    def test_load_and_validate_config_with_predefined_pr_only(
+    @pytest.mark.asyncio
+    async def test_load_and_validate_config_with_predefined_pr_only(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3221,7 +3222,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
 
-                        result = _load_and_validate_config(use_predefined=True)
+                        result = await _load_and_validate_config(use_predefined=True)
 
                         assert result is not None
                         _, _, params = result

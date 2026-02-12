@@ -83,7 +83,7 @@ class IssueExtractor:
             logger.error(f"Validation error: {e}", exc_info=True)
             return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
-  async def get_content_range(
+    async def get_content_range(
             self,
             file_path_tmp: Path,
             line_range_tmp: Dict[str, Any],

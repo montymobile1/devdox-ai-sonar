@@ -64,6 +64,19 @@ def async_command(f):
     return wrapper
 
 
+@contextmanager
+def show_progress(
+    message: str, total: Optional[int] = None
+) -> Iterator[Tuple[Progress, TaskID]]:
+    """Context manager for progress display."""
+    with Progress() as progress:
+        task = progress.add_task(message, total=total)
+        try:
+            yield progress, task
+        finally:
+            if not progress.finished:
+                progress.remove_task(task)
+
 
 def _safe_convert_pr(pull_request: Optional[str]) -> int:
     """Safely convert PR string to integer."""
@@ -268,81 +281,7 @@ def _fallback_command_selector() -> Optional[str]:
     return None
 
 
-# ============================================================================
-# MAIN ENTRY POINT
-# ============================================================================
 
-
-@click.command()
-@click.version_option(__version__)
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
-@click.option(
-    "--command",
-    "-c",
-    type=click.Choice(["fix_issues", "fix_security_issues", "analyze", "inspect"]),
-    help="Run specific command directly without interactive mode",
-)
-@click.option("--types", type=str, help="Comma-separated issue types (for fix_issues)")
-@click.option(
-    "--severity", type=str, help="Comma-separated severities (for fix_issues)"
-)
-@click.option(
-    "--max-fixes",
-    type=click.IntRange(0, settings.MAX_FIXES_LIMIT),
-    help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})",
-)
-@click.option(
-    "--apply",
-    type=click.IntRange(0, 1),
-    default=None,
-    help="Apply fixes (1 = apply, 0 = preview only)",
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
-)
-@click.pass_context
-def main(
-    ctx: click.Context,
-    verbose: bool,
-    command: Optional[str],
-    types: Optional[str],
-    severity: Optional[str],
-    max_fixes: Optional[int],
-    apply: Optional[int],
-    dry_run: bool = False,
-) -> None:
-    """
-    DevDox AI Sonar - SonarCloud Analyzer with LLM-powered fixes.
-
-    Interactive mode by default. Type '/' during any prompt to switch commands.
-
-    Examples:
-        devdox_sonar                           # Interactive mode
-        devdox_sonar -c fix_issues            # Run fix_issues directly
-
-    During interactive mode:
-        - Type '/' at any prompt to switch to a different command
-        - Use arrow keys to navigate menus
-        - Press Ctrl+C to cancel current operation
-    """
-
-    ctx.ensure_object(dict)
-    ctx.obj["verbose"] = verbose
-    ctx.obj["options"] = {
-        "types": types,
-        "severity": severity,
-        "max_fixes": max_fixes or 0,
-        "apply": apply,
-        "dry_run": dry_run,
-    }
-
-    # If command specified, run it directly
-    if command:
-        _execute_command(ctx, command)
-        return
-    init_config()
-    # Otherwise, enter interactive mode
-    _run_interactive_mode(ctx)
 
 
 def _select_existing_ui(
@@ -507,6 +446,46 @@ def _handle_provider_configuration(
         f"\n[green]✓ {provider_name.upper()} configured successfully[/green]\n"
     )
     return True
+
+
+def change_max_fix(
+    manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
+) -> None:
+    """Change maximum fixes configuration.
+
+    Args:
+        manager: Configuration manager
+        message: Prompt message
+        max_fixes: Current max fixes value
+        default_max_fixes: Default/maximum allowed value
+    """
+    max_fixes_str = smart_prompt(message, default=str(max_fixes))
+
+    try:
+        # Handle both str and List[str] return types
+        if isinstance(max_fixes_str, list):
+            # If list, take first element
+            value_str = max_fixes_str[0] if max_fixes_str else str(default_max_fixes)
+        else:
+            value_str = max_fixes_str
+
+        new_max_fixes = int(value_str)
+
+        # Validate range
+        if new_max_fixes < 1 or new_max_fixes > default_max_fixes:
+            new_max_fixes = settings.DEFAULT_MAX_FIXES
+            console.print(
+                f"[yellow]Value out of range (1-{default_max_fixes}), "
+                f"using default: {settings.DEFAULT_MAX_FIXES}[/yellow]"
+            )
+    except (ValueError, IndexError):
+        new_max_fixes = default_max_fixes
+        console.print(
+            f"[yellow]Invalid value, using default: {default_max_fixes}[/yellow]"
+        )
+
+    manager.set_value("configuration.max_fixes", new_max_fixes)
+
 
 
 def _should_stop_configuring(available_providers: list) -> bool:
@@ -764,14 +743,14 @@ async def main(  # ← Async main
 
     # If command specified, run it directly
     if command:
-        await _execute_command_async(ctx, command)  # ← Direct await
+        await _execute_command_async(ctx, command)
         return
 
-    await init_config()  # This is sync, that's fine
+    await init_config()
 
-    # Otherwise, enter interactive mode
-    print("line 678")
-    await _run_interactive_mode_async(ctx)  # ← Await the async version
+
+
+    await _run_interactive_mode_async(ctx)
 
 
 
@@ -789,7 +768,7 @@ async def _execute_interactive_iteration_async(ctx: click.Context) -> bool:
         True if should exit the loop, False to continue
     """
     try:
-        print("line 699 ")
+
         return await _process_interactive_command_async(ctx)
     except SwitchCommandException:
         _handle_command_switch()
@@ -808,13 +787,13 @@ async def _process_interactive_command_async(ctx: click.Context) -> bool:
         True if should exit, False if should continue
     """
 
-    command = await show_command_selector_async()  # ← Await the async version
+    command = await show_command_selector_async()
 
     if _should_exit_interactive_mode(command):
         _exit_application()
         return True
 
-    await _execute_interactive_command_async(ctx, command)  # ← Await
+    await _execute_interactive_command_async(ctx, command)
 
     if not await _should_continue_to_menu():
         _exit_application()
@@ -833,11 +812,6 @@ def _exit_application() -> None:
     sys.exit(0)
 
 
-def _execute_interactive_command(ctx: click.Context, command: Optional[str]) -> None:
-    """Execute a command in interactive mode."""
-    console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-    _execute_command(ctx=ctx, command=command)
-    console.print("\n" + "─" * 50 + "\n")
 
 
 def _should_continue_to_menu() -> bool:
@@ -925,8 +899,8 @@ def change_field(
     return types
 
 
-def change_parameters(
-    types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
+async def change_parameters(
+        types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
 ) -> None:
     """CLI for config management"""
     try:
@@ -953,7 +927,7 @@ def change_parameters(
                 manager=manager,
                 field="configuration.types",
                 message="Issue types (comma-separated, or press Enter to skip)",
-                default_value=manager.get_value("configuration.types"),
+                default_value=await manager.get_value("configuration.types"),
                 choices=list(InputValidator.VALID_ISSUE_TYPES),
             )
 
@@ -974,26 +948,28 @@ def change_parameters(
             for choice in choices
         ]
 
+        current_apply = await manager.get_value(constant.CONFIGURATION_APPLY)
         _ = change_field(
             manager=manager,
             field=constant.CONFIGURATION_APPLY,
             message="Apply fixes of SonarQube (press Enter to skip)",
             default_value=(
-                manager.get_value(constant.CONFIGURATION_APPLY)
-                if manager.get_value(constant.CONFIGURATION_APPLY) is not None
+                current_apply
+                if current_apply is not None
                 else kwargs.get("apply", 0)
             ),  # optional
             choices=formatted_choices,
             multiple=False,
         )
 
+        configuration_backup = await manager.get_value(constant.CONFIGURATION_BACKUP)
         _ = change_field(
             manager=manager,
             field=constant.CONFIGURATION_BACKUP,
             message="Create backup before apply fixes (press Enter to skip)",
             default_value=(
-                manager.get_value(constant.CONFIGURATION_BACKUP)
-                if manager.get_value(constant.CONFIGURATION_BACKUP) is not None
+                configuration_backup
+                if configuration_backup is not None
                 else kwargs.get("create_backup", 0)
             ),  # optional
             choices=formatted_choices,
@@ -1004,7 +980,7 @@ def change_parameters(
             manager=manager,
             field="configuration.exclude_rules",
             message="Rules to be excluded  (comma-separated, or press Enter to skip)",
-            default_value=manager.get_value("configuration.exclude_rules"),
+            default_value=await manager.get_value("configuration.exclude_rules"),
             allow_empty=True,
         )
         manager.save_config(create_backup=False)
@@ -1030,7 +1006,7 @@ async def _should_continue_to_menu() -> bool:
 async def _execute_interactive_command_async(ctx: click.Context, command: Optional[str]) -> None:
     """Execute a command in interactive mode."""
     console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-    await _execute_command_async(ctx, command)  # ← Await
+    await _execute_command_async(ctx, command)
     console.print("\n" + "─" * 50 + "\n")
 
 
@@ -1043,9 +1019,9 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         if command == "fix_issues":
             await _run_fix_issues(**options)
         elif command == "fix_security_issues":
-            await _run_fix_security_issues(options)
+            await _run_fix_security_issues(**options)
         elif command == "analyze":
-            await _run_analyze(options)
+            await _run_analyze(**options)
         elif command == "inspect":
             await _run_inspect()
         elif command == "add_provider":
@@ -1436,7 +1412,7 @@ async def _process_files_with_issues(
         issues_by_rule_nested = {
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
-       await _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule_nested,
             services,
             auth_config,
@@ -1577,7 +1553,7 @@ async def _process_security_issues(
                 tmp_path=tmp_path,
             )
 
-            if not _should_continue_to_next_issue(idx, total_files):
+            if not await _should_continue_to_next_issue(idx, total_files):
                 break
 
 
@@ -1628,7 +1604,7 @@ async def _generate_fix_for_file(
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
-        result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
+        result: Optional[List[FixSuggestion]] = await fixer.generate_fix_by_file(
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
             tmp_path=Path(tmp_path),
