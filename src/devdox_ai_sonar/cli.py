@@ -933,10 +933,14 @@ async def change_parameters(
             multiple=False,
         )
 
+        console.print(
+            "Rules to be excluded  ([yellow]comma-separated[/yellow], "
+            "or [bold cyan]NONE[/bold cyan] for no exclusions)"
+        )
         _ = await change_field(
             manager=manager,
             field="configuration.exclude_rules",
-            message="Rules to be excluded  (comma-separated, or NONE for no exclusions)",
+            message="Exclude rules",
             default_value=(
                 await manager.get_value("configuration.exclude_rules")
                 if await manager.get_value("configuration.exclude_rules") is not None
