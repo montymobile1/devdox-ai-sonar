@@ -249,31 +249,31 @@ class TestConfigServiceInitialization:
 class TestLoadAuthConfig:
     """Tests for load_auth_config method."""
 
-    def test_load_auth_config_success(self, config_service, valid_config_file_content, mock_console):
+    async def test_load_auth_config_success(self, config_service, valid_config_file_content, mock_console):
         """Test successful loading of auth config."""
         with patch('builtins.open', mock_open(read_data=json.dumps(valid_config_file_content))):
             with patch.object(Path, 'exists', return_value=True):
-                result = config_service.load_auth_config()
+                result = await config_service.load_auth_config()
 
         assert result['token'] == "squ_test_token"
         assert result['organization'] == "test-org"
         assert result['project'] == "test-project"
         assert result['project_path'] == "/test/path"
 
-    def test_load_auth_config_file_not_exists(self, config_service):
+    async def test_load_auth_config_file_not_exists(self, config_service):
         """Test loading when file doesn't exist."""
         with patch.object(Path, 'exists', return_value=False):
-            result = config_service.load_auth_config()
+            result = await config_service.load_auth_config()
 
         assert result['token'] is None
         assert result['organization'] is None
         assert result['project'] is None
 
-    def test_load_auth_config_json_decode_error(self, config_service, mock_console):
+    async def test_load_auth_config_json_decode_error(self, config_service, mock_console):
         """Test handling of JSON decode error."""
         with patch('builtins.open', mock_open(read_data="invalid json")):
             with patch.object(Path, 'exists', return_value=True):
-                result = config_service.load_auth_config()
+                result = await config_service.load_auth_config()
 
         assert result['token'] is None
         mock_console.print.assert_called_once()
@@ -319,7 +319,7 @@ class TestLoadAuthConfig:
 class TestLoadLLMConfig:
     """Tests for load_llm_config method."""
 
-    def test_load_llm_config_success(self, mock_config_manager):
+    async def test_load_llm_config_success(self, mock_config_manager):
         """Test successful loading of LLM config."""
         providers = [
             {
@@ -335,7 +335,7 @@ class TestLoadLLMConfig:
             "llm.default_model": "gpt-4"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_config_manager)
+        result = await ConfigService.load_llm_config(mock_config_manager)
 
         assert result is not None
         assert result.provider == "openai"
@@ -343,15 +343,15 @@ class TestLoadLLMConfig:
         assert result.api_key == "test-key"
         assert len(result.models) == 2
 
-    def test_load_llm_config_no_providers(self, mock_config_manager):
+    async def test_load_llm_config_no_providers(self, mock_config_manager):
         """Test loading when no providers configured."""
         mock_config_manager.get_value.return_value = None
 
-        result = ConfigService.load_llm_config(mock_config_manager)
+        result = await ConfigService.load_llm_config(mock_config_manager)
 
         assert result is None
 
-    def test_load_llm_config_empty_providers_list(self, mock_config_manager):
+    async def test_load_llm_config_empty_providers_list(self, mock_config_manager):
         """Test loading with empty providers list."""
         mock_config_manager.get_value.side_effect = lambda key: {
             "llm.providers": [],
@@ -359,11 +359,11 @@ class TestLoadLLMConfig:
             "llm.default_model": "gpt-4"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_config_manager)
+        result = await ConfigService.load_llm_config(mock_config_manager)
 
         assert result is None
 
-    def test_load_llm_config_provider_not_found(self, mock_config_manager):
+    async def test_load_llm_config_provider_not_found(self, mock_config_manager):
         """Test when default provider doesn't exist in list."""
         providers = [
             {"name": "anthropic", "api_key": "key1", "models": ["claude-3"]}
@@ -375,11 +375,11 @@ class TestLoadLLMConfig:
             "llm.default_model": "gpt-4"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_config_manager)
+        result = await ConfigService.load_llm_config(mock_config_manager)
 
         assert result is None
 
-    def test_load_llm_config_missing_models(self, mock_config_manager):
+    async def test_load_llm_config_missing_models(self, mock_config_manager):
         """Test loading config with missing models field."""
         providers = [
             {
@@ -395,7 +395,7 @@ class TestLoadLLMConfig:
             "llm.default_model": "gpt-4"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_config_manager)
+        result = await ConfigService.load_llm_config(mock_config_manager)
 
         assert result is not None
         assert result.models == []
@@ -443,7 +443,7 @@ class TestValidateAuthConfig:
         """Test validation with missing project_path."""
         valid_auth_config['project_path'] = None
 
-        result = ConfigService.validate_auth_config(valid_auth_config)
+        result =  ConfigService.validate_auth_config(valid_auth_config)
 
         assert result is False
 
@@ -451,7 +451,7 @@ class TestValidateAuthConfig:
         """Test validation with multiple missing fields."""
         config = {"token": "test"}
 
-        result = ConfigService.validate_auth_config(config)
+        result =  ConfigService.validate_auth_config(config)
 
         assert result is False
 
@@ -470,7 +470,7 @@ class TestValidateAuthConfig:
 class TestSaveConfig:
     """Tests for save_config method."""
 
-    def test_save_config_valid_token(self, config_service, mock_console):
+    async def test_save_config_valid_token(self, config_service, mock_console):
         """Test saving config with valid token."""
         with patch.object(config_service, 'save_complete_config', return_value=True) as mock_save:
             with patch('devdox_ai_sonar.services.configuration.validate_token_format', return_value=True):
@@ -897,7 +897,7 @@ class TestIntegration:
         assert loaded_config['token'] == "new_token"
         assert loaded_config['organization'] == "old_org"  # Should be preserved
 
-    def test_load_llm_config_with_real_manager(self):
+    async def test_load_llm_config_with_real_manager(self):
         """Test loading LLM config with realistic ConfigManager."""
         mock_manager = Mock()
 
@@ -920,7 +920,7 @@ class TestIntegration:
             "llm.default_model": "claude-3-opus"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_manager)
+        result = await ConfigService.load_llm_config(mock_manager)
 
         assert result is not None
         assert result.provider == "anthropic"
@@ -1356,7 +1356,7 @@ class TestJSONSerializationEdgeCases:
 class TestLoadLLMConfigEdgeCases:
     """Test load_llm_config edge cases - PARTIAL COVERAGE"""
 
-    def test_load_llm_config_with_multiple_providers_different_models(self):
+    async def test_load_llm_config_with_multiple_providers_different_models(self):
         """Test with multiple providers with different model lists."""
         mock_manager = Mock()
 
@@ -1384,14 +1384,14 @@ class TestLoadLLMConfigEdgeCases:
             "llm.default_model": "command"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_manager)
+        result = await ConfigService.load_llm_config(mock_manager)
 
         assert result is not None
         assert result.provider == "cohere"
         assert result.model == "command"
         assert len(result.models) == 2
 
-    def test_load_llm_config_provider_with_empty_name(self):
+    async def test_load_llm_config_provider_with_empty_name(self):
         """Test with provider having empty name."""
         mock_manager = Mock()
 
@@ -1409,12 +1409,12 @@ class TestLoadLLMConfigEdgeCases:
             "llm.default_model": "model1"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_manager)
+        result = await ConfigService.load_llm_config(mock_manager)
 
         # Should handle empty provider name
         assert result is not None or result is None  # Depends on implementation
 
-    def test_load_llm_config_missing_api_key_in_provider(self):
+    async def test_load_llm_config_missing_api_key_in_provider(self):
         """Test with provider missing api_key field."""
         mock_manager = Mock()
 
@@ -1432,12 +1432,12 @@ class TestLoadLLMConfigEdgeCases:
             "llm.default_model": "gpt-4"
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_manager)
+        result = await ConfigService.load_llm_config(mock_manager)
 
         assert result is not None
         assert result.api_key is None  # Should handle missing api_key
 
-    def test_load_llm_config_none_default_model(self):
+    async def test_load_llm_config_none_default_model(self):
         """Test with None default_model."""
         mock_manager = Mock()
 
@@ -1455,7 +1455,7 @@ class TestLoadLLMConfigEdgeCases:
             "llm.default_model": None
         }.get(key)
 
-        result = ConfigService.load_llm_config(mock_manager)
+        result = await ConfigService.load_llm_config(mock_manager)
 
         assert result is not None
         assert result.model is None
