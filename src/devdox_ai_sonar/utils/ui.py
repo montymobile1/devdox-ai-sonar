@@ -41,7 +41,7 @@ async def smart_prompt(
 
     try:
         result = await _prompt_with_questionary(config)
-    except ImportError as e :
+    except ImportError:
         result = _prompt_with_rich_fallback(config)
 
     _check_for_switch_command(result, allow_switch)
