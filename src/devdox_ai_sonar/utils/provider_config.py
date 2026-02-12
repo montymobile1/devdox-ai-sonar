@@ -187,7 +187,7 @@ class ProviderConfigManager:
             ctx.updates["default_model"] = ctx.current_model
 
         # Apply updates if any
-        return self._apply_provider_updates(ctx, set_as_default)
+        return await self._apply_provider_updates(ctx, set_as_default)
 
     def _handle_model_update(self, ctx: ProviderUpdateContext) -> None:
         """Handle model selection update flow."""
@@ -229,14 +229,14 @@ class ProviderConfigManager:
             return models
         return []
 
-    def _apply_provider_updates(
+    async def _apply_provider_updates(
         self, ctx: ProviderUpdateContext, set_as_default: bool
     ) -> bool:
         """Apply updates to provider configuration."""
         if not ctx.updates:
             return False
 
-        self.config_manager.update_provider(
+        await self.config_manager.update_provider(
             provider_name=ctx.provider_name,
             updates=ctx.updates,
             set_as_default=set_as_default,
@@ -310,7 +310,7 @@ class ProviderConfigManager:
         if Confirm.ask(
             "Do you want to analyze a [cyan]pull request[/cyan]?", default=False
         ):
-            return self._handle_pull_request_selection()
+            return await self._handle_pull_request_selection()
 
         return await self._handle_branch_selection()
 
@@ -323,14 +323,14 @@ class ProviderConfigManager:
             branch = InputValidator.validate_branch_name(branch_input)
             console.print(f"[green]✓[/green] Analyzing branch: [cyan]{branch}[/cyan]")
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_DEFAULT_BRANCH,
                 new_value=branch,
                 current_default=default_branch,
                 display_name=f"branch '{branch}'",
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_CLONE_TYPE,
                 new_value="branch",
                 current_default="pr",
@@ -344,7 +344,7 @@ class ProviderConfigManager:
             console.print(f"\n[red]❌ {e.message}[/red]")
             raise click.Abort()
 
-    def _handle_pull_request_selection(self) -> Tuple[str, int]:
+    async def _handle_pull_request_selection(self) -> Tuple[str, int]:
         """Handle pull request selection workflow."""
         default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         pr_default = str(default_pull) if default_pull else "0"
@@ -356,14 +356,14 @@ class ProviderConfigManager:
                 f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]"
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_DEFAULT_PULL,
                 new_value=pull_request,
                 current_default=default_pull,
                 display_name=f"PR #{pull_request}",
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_CLONE_TYPE,
                 new_value="pr",
                 current_default="branch",
@@ -377,7 +377,7 @@ class ProviderConfigManager:
             console.print(f"\n[red]❌ {e.message}[/red]")
             raise click.Abort()
 
-    def _save_as_default_if_changed(
+    async def _save_as_default_if_changed(
         self,
         config_key: str,
         new_value: Any,
@@ -393,7 +393,7 @@ class ProviderConfigManager:
         ):
             return
 
-        self.config_manager.set_value(config_key, new_value)
+        await self.config_manager.set_value(config_key, new_value)
         self.config_manager.save_config()
         if confirm:
             console.print(f"[green]✓[/green] Saved {display_name} as default")

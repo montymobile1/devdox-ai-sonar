@@ -7,7 +7,7 @@ import click
 from click.testing import CliRunner
 from devdox_ai_sonar.services.configuration import AuthConfig, LLMConfig
 from devdox_ai_sonar.utils.validator import IssueType, InputValidator
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import Mock, patch, MagicMock, AsyncMock
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.cli import (
     main,
@@ -32,11 +32,11 @@ from devdox_ai_sonar.cli import (
     change_field,
     change_max_fix,
     _exit_application,
-    _execute_interactive_command,
+    _execute_interactive_command_async,
     _should_continue_to_menu,
     _handle_command_switch,
     _handle_interactive_error,
-    _run_interactive_mode,
+    _run_interactive_mode_async,
     _collect_rule_information,
     _initialize_fix_services,
     _handle_keyboard_interrupt,
@@ -51,7 +51,7 @@ from devdox_ai_sonar.cli import (
     _generate_fix_for_file,
     _process_single_fix,
     handle_fix,
-    _execute_interactive_iteration,
+    _execute_interactive_iteration_async,
     _should_continue_to_next_issue,
     _fetch_issues_by_type,
     _display_project_header,
@@ -59,7 +59,8 @@ from devdox_ai_sonar.cli import (
     _process_security_issues,
     _process_issues_for_rule,
     _process_regular_issues,
-    download_latest_version
+    _handle_provider_configuration
+
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -70,8 +71,6 @@ from devdox_ai_sonar.models.sonar import (
     BlockType,
     CodeBlock
 )
-
-
 # ============================================================================
 # FIXTURES
 # ============================================================================
@@ -261,7 +260,7 @@ def mock_config_manager():
 def mock_provider_manager():
     """Mock ProviderConfigManager"""
     with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock:
-        mock_instance = Mock()
+        mock_instance = AsyncMock()
         mock_instance.branch_or_pr_prompt.return_value = ("main", None)
         mock_instance.branch_or_pr.return_value = ("main", None)
         mock_instance.get_available_providers.return_value = ["openai", "anthropic"]
@@ -488,11 +487,11 @@ class TestExecuteInteractiveCommand:
 
     @patch('devdox_ai_sonar.cli._execute_command')
     @patch('devdox_ai_sonar.cli.console')
-    def test_executes_command_with_context(self, mock_console, mock_execute):
+    async def test_executes_command_with_context(self, mock_console, mock_execute):
         """Test command execution with context."""
         mock_ctx = Mock(spec=click.Context)
 
-        _execute_interactive_command(mock_ctx, 'fix_issues')
+        await _execute_interactive_command_async(mock_ctx, 'fix_issues')
 
         mock_execute.assert_called_once_with(ctx=mock_ctx, command='fix_issues')
         assert mock_console.print.call_count >= 2  # Running message and separator
@@ -648,7 +647,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
     @patch('devdox_ai_sonar.cli._configure_providers_loop')
     @patch('devdox_ai_sonar.cli.change_parameters')
-    def test_init_config_first_time_success(
+    async def test_init_config_first_time_success(
             self, mock_change_params, mock_providers_loop, mock_sonar, mock_init
     ):
         """Test successful first-time initialization"""
@@ -668,7 +667,7 @@ class TestConfigurationManagement:
 
         mock_sonar.return_value = True
 
-        init_config()
+        await init_config()
 
         # Verify initialization steps
         mock_manager.create_default_config.assert_called_once()
@@ -679,7 +678,7 @@ class TestConfigurationManagement:
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._check_reconfiguration_consent')
-    def test_init_config_existing_config_no_consent(self, mock_consent, mock_init):
+    async def test_init_config_existing_config_no_consent(self, mock_consent, mock_init):
         """Test when config exists and user doesn't consent to reconfigure"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = ['openai']  # Providers exist
@@ -690,7 +689,7 @@ class TestConfigurationManagement:
 
         mock_consent.return_value = False  # User says no
 
-        init_config()
+        await init_config()
 
         # Should exit early
         mock_manager.create_default_config.assert_called_once()
@@ -703,7 +702,7 @@ class TestConfigurationManagement:
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
-    def test_init_config_no_available_providers(self, mock_sonar, mock_init):
+    async def test_init_config_no_available_providers(self, mock_sonar, mock_init):
         """Test when no providers are available"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = []
@@ -720,7 +719,7 @@ class TestConfigurationManagement:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                init_config()
+               await init_config()
 
 
     def test_check_reconfiguration_consent_existing_providers(self):
@@ -732,7 +731,7 @@ class TestConfigurationManagement:
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._configure_sonarcloud')
-    def test_init_config_sonar_configuration_fails(self, mock_sonar, mock_init):
+    async def test_init_config_sonar_configuration_fails(self, mock_sonar, mock_init):
         """Test when SonarCloud configuration fails"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = []
@@ -744,7 +743,7 @@ class TestConfigurationManagement:
         mock_sonar.return_value = False  # SonarCloud config fails
 
         with pytest.raises(click.Abort):
-            init_config()
+            await init_config()
 
     def test_init_config_existing_config(
             self, runner, mock_config_service, mock_config_manager, mock_provider_manager
@@ -766,7 +765,7 @@ class TestConfigurationManagement:
                 ctx = Mock()
                 init_config(ctx)
 
-    def test_add_provider_success(
+    async def test_add_provider_success(
         self,
         runner,
         mock_config_manager,
@@ -788,7 +787,7 @@ class TestConfigurationManagement:
             with patch('devdox_ai_sonar.cli._display_completion_message') as mock_display:
                 with patch('devdox_ai_sonar.cli._configure_providers_loop') as mock_loop:
                     # Call the function
-                    add_provider()
+                    await add_provider()
 
                     # Verify initialization
                     mock_init.assert_called_once()
@@ -808,7 +807,7 @@ class TestConfigurationManagement:
                     # Verify completion message was displayed
                     mock_display.assert_called_once()
 
-    def test_add_provider_with_error_handling(
+    async def test_add_provider_with_error_handling(
             self,
             runner,
             mock_config_manager,
@@ -832,12 +831,12 @@ class TestConfigurationManagement:
                 mock_error.side_effect = SystemExit(1)
 
                 with pytest.raises(SystemExit):
-                    add_provider()
+                    await add_provider()
 
                 # Verify error handler was called
                 mock_error.assert_called_once()
 
-    def test_configure_providers_loop_integration(
+    async def test_configure_providers_loop_integration(
             self,
             mock_config_manager,
             mock_provider_manager,
@@ -872,13 +871,13 @@ class TestConfigurationManagement:
                 # Verify provider was added to manager
                 mock_config_manager.add_provider.assert_called_once()
 
-    def test_handle_provider_configuration_success(
+    async def test_handle_provider_configuration_success(
             self,
             mock_config_manager,
             mock_provider_manager
     ):
         """Test _handle_provider_configuration helper"""
-        from devdox_ai_sonar.cli import _handle_provider_configuration
+        
 
         available_providers = ['openai', 'anthropic']
 
@@ -888,7 +887,7 @@ class TestConfigurationManagement:
         }
 
         with patch('devdox_ai_sonar.cli.console.print'):
-            result = _handle_provider_configuration(
+            result = await _handle_provider_configuration(
                 mock_provider_manager,
                 mock_config_manager,
                 'openai',
@@ -901,20 +900,20 @@ class TestConfigurationManagement:
             # Verify add_provider was called on manager
             mock_config_manager.add_provider.assert_called_once()
 
-    def test_handle_provider_configuration_failure(
+    async def test_handle_provider_configuration_failure(
             self,
             mock_config_manager,
             mock_provider_manager
     ):
         """Test _handle_provider_configuration when configuration fails"""
-        from devdox_ai_sonar.cli import _handle_provider_configuration
+        
 
         available_providers = ['openai']
 
         # Return None to simulate cancelled/failed configuration
         mock_provider_manager.configure_new_provider.return_value = None
 
-        result = _handle_provider_configuration(
+        result = await _handle_provider_configuration(
             mock_provider_manager,
             mock_config_manager,
             'openai',
@@ -927,7 +926,7 @@ class TestConfigurationManagement:
         # Verify add_provider was NOT called
         mock_config_manager.add_provider.assert_not_called()
 
-    def test_update_provider_success(
+    async def test_update_provider_success(
         self,
         runner,
         mock_config_manager,
@@ -953,7 +952,7 @@ class TestConfigurationManagement:
                         mock_select.return_value = 'openai'
 
                         # Call the function
-                        update_provider()
+                        await update_provider()
 
                         # Verify initialization
                         mock_init.assert_called_once()
@@ -980,7 +979,7 @@ class TestConfigurationManagement:
                         # Verify config was saved
                         mock_config_manager.save_config.assert_called_once_with(create_backup=False)
 
-    def test_update_provider_no_existing_providers(
+    async def test_update_provider_no_existing_providers(
             self,
             runner,
             mock_config_manager,
@@ -1003,7 +1002,7 @@ class TestConfigurationManagement:
             with patch('devdox_ai_sonar.cli.console.print') as mock_print:
                 # ✅ FIX: Use click.Abort, not SystemExit
                 with pytest.raises(click.Abort):
-                    update_provider()
+                    await update_provider()
 
                 # Verify warning message was printed
                 mock_print.assert_called()
@@ -1012,7 +1011,7 @@ class TestConfigurationManagement:
                        'add at least one provider' in call_args
 
 
-    def test_update_provider_no_existing_providers_alternative(
+    async def test_update_provider_no_existing_providers_alternative(
             self,
             runner,
             mock_config_manager,
@@ -1035,7 +1034,7 @@ class TestConfigurationManagement:
             with patch('devdox_ai_sonar.cli.console.print') as mock_print:
                 # ✅ Catch the exception and verify it's the right type
                 try:
-                    update_provider()
+                    await update_provider()
                     pytest.fail("Should have raised click.Abort")
                 except click.Abort:
                     # Expected behavior
@@ -1050,7 +1049,7 @@ class TestConfigurationManagement:
                     'Please add'
                 ])
 
-    def test_update_provider_no_existing_providers_with_error_handler(
+    async def test_update_provider_no_existing_providers_with_error_handler(
             self,
             runner,
             mock_config_manager,
@@ -1076,7 +1075,7 @@ class TestConfigurationManagement:
 
                 with patch('devdox_ai_sonar.cli.console.print'):
                     with pytest.raises(click.Abort):
-                        update_provider()
+                        await update_provider()
 
         # ========================================================================
         # Additional tests for other abort scenarios
@@ -1163,7 +1162,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_types_provided(
+    async def test_change_parameters_with_types_provided(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that types parameter skips interactive prompt for types"""
@@ -1179,7 +1178,7 @@ class TestConfigurationManagement:
         )
 
         # Call with types pre-populated
-        change_parameters(types="BUG,VULNERABILITY")
+        await change_parameters(types="BUG,VULNERABILITY")
 
         # change_field should NOT be called for types (skipped because types provided)
         types_calls = [
@@ -1194,7 +1193,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_severity_provided(
+    async def test_change_parameters_with_severity_provided(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that severity parameter skips interactive prompt for severities"""
@@ -1210,7 +1209,7 @@ class TestConfigurationManagement:
         )
 
         # Call with severity pre-populated
-        change_parameters(severity="CRITICAL,BLOCKER")
+        await change_parameters(severity="CRITICAL,BLOCKER")
 
         # change_field should NOT be called for severities
         severity_calls = [
@@ -1225,7 +1224,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_both_types_and_severity(
+    async def test_change_parameters_with_both_types_and_severity(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that both types and severity parameters skip their prompts"""
@@ -1241,7 +1240,7 @@ class TestConfigurationManagement:
         )
 
         # Call with both types and severity
-        change_parameters(types="BUG", severity="CRITICAL")
+        await change_parameters(types="BUG", severity="CRITICAL")
 
         # Neither types nor severities should be prompted
         types_calls = [
@@ -1263,7 +1262,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_apply_in_kwargs(
+    async def test_change_parameters_with_apply_in_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that apply parameter from kwargs is used as default"""
@@ -1283,7 +1282,7 @@ class TestConfigurationManagement:
         )
 
         # Call with apply in kwargs
-        change_parameters(apply=1)
+        await change_parameters(apply=1)
 
         # Find the call for CONFIGURATION_APPLY
         apply_calls = [
@@ -1300,7 +1299,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_with_create_backup_in_kwargs(
+    async def test_change_parameters_with_create_backup_in_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that create_backup parameter from kwargs is used as default"""
@@ -1320,7 +1319,7 @@ class TestConfigurationManagement:
         )
 
         # Call with create_backup in kwargs
-        change_parameters(create_backup=1)
+        await change_parameters(create_backup=1)
 
         # Find the call for CONFIGURATION_BACKUP
         backup_calls = [
@@ -1337,7 +1336,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_config_overrides_kwargs(
+    async def test_change_parameters_config_overrides_kwargs(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that config values take precedence over kwargs"""
@@ -1357,7 +1356,7 @@ class TestConfigurationManagement:
         )
 
         # Call with different values in kwargs
-        change_parameters(apply=1, create_backup=0)
+        await change_parameters(apply=1, create_backup=0)
 
         # Find the calls
         apply_calls = [
@@ -1376,7 +1375,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_types_field_with_choices(
+    async def test_change_parameters_types_field_with_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that types field is called with VALID_ISSUE_TYPES choices"""
@@ -1395,7 +1394,7 @@ class TestConfigurationManagement:
         )
 
         # Call without types parameter (should prompt)
-        change_parameters()
+        await change_parameters()
 
         # Find types field call
         types_calls = [
@@ -1413,7 +1412,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_severities_field_with_choices(
+    async def test_change_parameters_severities_field_with_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that severities field is called with VALID_SEVERITIES choices"""
@@ -1432,7 +1431,7 @@ class TestConfigurationManagement:
         )
 
         # Call without severity parameter (should prompt)
-        change_parameters()
+        await change_parameters()
 
         # Find severities field call
         severity_calls = [
@@ -1487,7 +1486,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_apply_field_with_yes_no_choices(
+    async def test_change_parameters_apply_field_with_yes_no_choices(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that apply field has yes/no choices with correct format"""
@@ -1502,7 +1501,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Find apply field call
         apply_calls = [
@@ -1561,7 +1560,7 @@ class TestConfigurationManagement:
     # ========================================================================
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_change_parameters_with_branch_only(self, mock_init):
+    async def test_change_parameters_with_branch_only(self, mock_init):
         """Test change_parameters with only branch (no PR)"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = 10
@@ -1577,11 +1576,11 @@ class TestConfigurationManagement:
         with patch('devdox_ai_sonar.cli.change_field'):
             with patch('devdox_ai_sonar.cli.change_max_fix'):
                 # Should succeed with only branch
-                change_parameters()
+                await change_parameters()
                 mock_manager.save_config.assert_called_once()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_change_parameters_with_pr_only(self, mock_init):
+    async def test_change_parameters_with_pr_only(self, mock_init):
         """Test change_parameters with only PR (no branch)"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = 10
@@ -1597,7 +1596,7 @@ class TestConfigurationManagement:
         with patch('devdox_ai_sonar.cli.change_field'):
             with patch('devdox_ai_sonar.cli.change_max_fix'):
                 # Should succeed with only PR
-                change_parameters()
+                await change_parameters()
                 mock_manager.save_config.assert_called_once()
 
 
@@ -1605,7 +1604,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_change_field(
+    async def test_change_parameters_handles_exception_in_change_field(
             self, mock_handle_error, mock_change_max, mock_change_field, mock_init
     ):
         """Test exception handling when change_field raises error"""
@@ -1623,7 +1622,7 @@ class TestConfigurationManagement:
         # Make change_field raise exception
         mock_change_field.side_effect = ValueError("Invalid input")
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
@@ -1633,7 +1632,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_save(
+    async def test_change_parameters_handles_exception_in_save(
             self, mock_handle_error, mock_change_max, mock_change_field, mock_init
     ):
         """Test exception handling when save_config fails"""
@@ -1649,7 +1648,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
@@ -1659,21 +1658,21 @@ class TestConfigurationManagement:
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli._handle_cli_error')
-    def test_change_parameters_handles_exception_in_init(
+    async def test_change_parameters_handles_exception_in_init(
             self, mock_handle_error, mock_init
     ):
         """Test exception handling when initialization fails"""
         # Make init raise exception
         mock_init.side_effect = RuntimeError("Config error")
 
-        change_parameters()
+        await change_parameters()
 
         # Should call error handler
         mock_handle_error.assert_called_once()
         assert isinstance(mock_handle_error.call_args[0][0], RuntimeError)
 
 
-    def test_change_parameters_no_branch_or_pr(
+    async def test_change_parameters_no_branch_or_pr(
             self, runner, mock_config_manager, mock_provider_manager
     ):
         """Test change_parameters without branch or PR"""
@@ -1691,7 +1690,7 @@ class TestConfigurationManagement:
 
             with pytest.raises(Exception):  # Should abort
                 ctx = Mock()
-                change_parameters(ctx)
+                await change_parameters(ctx)
 
     def test_change_parameters_invalid_pr(
             self, runner, mock_config_manager, mock_provider_manager
@@ -1826,7 +1825,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_all_values(
+    async def test_change_parameters_all_values(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test changing all parameter values"""
@@ -1843,7 +1842,7 @@ class TestConfigurationManagement:
 
         mock_change_field.return_value = None
 
-        change_parameters()
+        await change_parameters()
 
         # Should call change_max_fix and change_field multiple times
         mock_change_max.assert_called_once()
@@ -1867,7 +1866,7 @@ class TestConfigurationManagement:
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.change_field')
     @patch('devdox_ai_sonar.cli.change_max_fix')
-    def test_change_parameters_save_config(
+    async def test_change_parameters_save_config(
             self, mock_change_max, mock_change_field, mock_init
     ):
         """Test that config is saved after changes"""
@@ -1882,7 +1881,7 @@ class TestConfigurationManagement:
             mock_provider_manager, Mock(), Mock()
         )
 
-        change_parameters()
+        await change_parameters()
 
         # Should save config at end
         mock_manager.save_config.assert_called_once_with(create_backup=False)
@@ -1895,7 +1894,7 @@ class TestConfigurationManagement:
 class TestConfigureSonarCloud:
     """Tests for _configure_sonarcloud"""
 
-    def test_configure_sonarcloud_success(self):
+    async def test_configure_sonarcloud_success(self):
         """Test successful configuration"""
         mock_sonar_ui = Mock()
         mock_config_service = Mock()
@@ -1917,12 +1916,12 @@ class TestConfigureSonarCloud:
         mock_sonar_ui.configure_sonarcloud.return_value = mock_sonar_config
         mock_config_service.save_config.return_value = True
 
-        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+        result = await _configure_sonarcloud(mock_sonar_ui, mock_config_service)
 
         assert result is True
         mock_sonar_ui.display_welcome.assert_called_once()
 
-    def test_configure_sonarcloud_already_configured(self):
+    async def test_configure_sonarcloud_already_configured(self):
         """Test when already configured"""
         mock_sonar_ui = Mock()
         mock_config_service = Mock()
@@ -1935,7 +1934,7 @@ class TestConfigureSonarCloud:
         }
         mock_config_service.check_all_value_empty.return_value = False
 
-        result = _configure_sonarcloud(mock_sonar_ui, mock_config_service)
+        result = await _configure_sonarcloud(mock_sonar_ui, mock_config_service)
 
         assert result is True
         mock_sonar_ui.configure_sonarcloud.assert_not_called()
@@ -1990,13 +1989,13 @@ class TestFixIssuesCommand:
 
                     _run_fix_issues()
 
-    def test_run_fix_issues_switch_command(self):
+    async def test_run_fix_issues_switch_command(self):
         """Test fix_issues with command switch"""
         with patch('devdox_ai_sonar.cli._load_and_validate_config', side_effect=SwitchCommandException):
 
 
             with pytest.raises(SwitchCommandException):
-                _run_fix_issues()
+               await _run_fix_issues()
 
     def test_display_configuration(self):
         """Test display_configuration function"""
@@ -2103,7 +2102,7 @@ class TestFixIssuesCommand:
 class TestFixSecurityIssuesCommand:
     """Test fix_security_issues command"""
 
-    def test_run_fix_security_issues_success(
+    async def test_run_fix_security_issues_success(
             self, mock_config_service, mock_llm_config
     ):
         """Test successful security fix"""
@@ -2122,16 +2121,16 @@ class TestFixSecurityIssuesCommand:
 
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=True):
                     with pytest.raises(click.exceptions.Abort):
-                        _run_fix_security_issues()
+                        await _run_fix_security_issues()
 
-    def test_run_fix_security_issues_cancelled(self, mock_llm_config):
+    async def test_run_fix_security_issues_cancelled(self, mock_llm_config):
         """Test security fix when cancelled"""
         with patch('devdox_ai_sonar.cli._load_and_validate_config') as mock_load:
             mock_load.return_value = (Mock(), mock_llm_config, {})
 
             with patch('devdox_ai_sonar.cli.display_configuration', return_value={}):
                 with patch('devdox_ai_sonar.cli.smart_confirm', return_value=False):
-                    _run_fix_security_issues()
+                   await _run_fix_security_issues()
 
 
 class TestSecurityIssuesProcessing:
@@ -2139,7 +2138,7 @@ class TestSecurityIssuesProcessing:
 
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
-    def test_process_security_issues_single_file(
+    async def test_process_security_issues_single_file(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params
     ):
@@ -2150,7 +2149,7 @@ class TestSecurityIssuesProcessing:
             "security.py": [Mock(), Mock()]
         }
 
-        _process_security_issues(
+        await _process_security_issues(
             issues_by_file, mock_services, auth_config, fix_params,Mock(),tmp_path=Mock()
         )
 
@@ -2160,7 +2159,7 @@ class TestSecurityIssuesProcessing:
 
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
-    def test_process_security_issues_multiple_files(
+    async def test_process_security_issues_multiple_files(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params
     ):
@@ -2172,7 +2171,7 @@ class TestSecurityIssuesProcessing:
             "crypto.py": [Mock(), Mock()]
         }
 
-        _process_security_issues(
+        await _process_security_issues(
             issues_by_file, mock_services, auth_config, fix_params,Mock(), tmp_path=Mock()
         )
 
@@ -2217,7 +2216,7 @@ class TestSecurityIssuesProcessing:
         mock_single_fix.assert_not_called()
 
     @patch('devdox_ai_sonar.cli._process_issues_for_rule')
-    def test_process_rule_with_empty_issues_list(
+    async def test_process_rule_with_empty_issues_list(
             self, mock_process_rule,
             mock_services, auth_config, fix_params
     ):
@@ -2228,7 +2227,7 @@ class TestSecurityIssuesProcessing:
             "python:S1234": {"issue": []}  # Empty list
         }
         md_file_path = Mock()
-        _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
 
@@ -2288,7 +2287,7 @@ class TestRegularIssuesProcessing:
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
     @pytest.mark.skip(reason="Need update")
-    def test_process_issues_for_rule_all_issues(
+    async def test_process_issues_for_rule_all_issues(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params
     ):
@@ -2297,7 +2296,7 @@ class TestRegularIssuesProcessing:
 
         issues_list = [Mock(), Mock(), Mock()]
         md_file_path = Mock()
-        result = _process_issues_for_rule(
+        result = await _process_issues_for_rule(
             "python:S1234", issues_list,
             mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
         )
@@ -2308,7 +2307,7 @@ class TestRegularIssuesProcessing:
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
     @pytest.mark.skip(reason="Need update")
-    def test_process_issues_for_rule_continues(
+    async def test_process_issues_for_rule_continues(
             self, mock_single_fix, mock_continue,
             mock_services, auth_config, fix_params,tmp_path="/tmp/new"
     ):
@@ -2317,7 +2316,7 @@ class TestRegularIssuesProcessing:
 
         issues_list = [Mock(), Mock()]
         md_file_path = Mock()
-        result = _process_issues_for_rule(
+        result = await  _process_issues_for_rule(
             "python:S1234", issues_list,
             mock_services, auth_config, fix_params, md_file_path,tmp_path=tmp_path
         )
@@ -2952,7 +2951,7 @@ class TestFileProcessing:
                         tmp_path= Path("/tmp/new")
                     )
 
-    def test_generate_fix_for_file_success(self):
+    async def test_generate_fix_for_file_success(self):
         """Test successful fix generation"""
         issues = [Mock(rule="python:S1234")]
 
@@ -2983,7 +2982,7 @@ class TestFileProcessing:
         mock_services['fixer'].generate_fix_by_file.return_value = mock_fix
 
         with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-            result = _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"),issue_type=IssueType.SECURITY, tmp_path= Path("/tmp/new"))
+            result = await _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"),issue_type=IssueType.SECURITY, tmp_path= Path("/tmp/new"))
 
             assert result == mock_fix
 
@@ -3049,7 +3048,7 @@ class TestFileProcessing:
 class TestLoadAndValidateConfig:
     """Test configuration loading"""
 
-    def test_load_and_validate_config_success(
+    async def test_load_and_validate_config_success(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3078,12 +3077,12 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        result = _load_and_validate_config()
+                        result =await _load_and_validate_config()
 
                         assert result is not None
                         assert len(result) == 3
 
-    def test_load_and_validate_config_no_auth(self):
+    async def test_load_and_validate_config_no_auth(self):
         """Test config load without auth"""
 
         mock_auth_dict = {
@@ -3099,9 +3098,9 @@ class TestLoadAndValidateConfig:
             mock_from_dict.return_value = mock_auth_instance
 
             with pytest.raises(Exception):  # Should abort
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
-    def test_load_and_validate_config_invalid_auth(self, mock_config_service, mock_auth_dict):
+    async def test_load_and_validate_config_invalid_auth(self, mock_config_service, mock_auth_dict):
         """Test config load with invalid auth"""
 
         with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
@@ -3114,9 +3113,9 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
-    def test_load_and_validate_config_no_llm(
+    async def test_load_and_validate_config_no_llm(
             self, mock_config_service, mock_config_manager
     ):
         """Test config load without LLM config"""
@@ -3134,9 +3133,9 @@ class TestLoadAndValidateConfig:
                     mock_auth.return_value = mock_auth_instance
 
                     with pytest.raises(Exception):  # Should abort
-                        _load_and_validate_config()
+                        await _load_and_validate_config()
 
-    def test_load_and_validate_config_with_predefined_success(
+    async def test_load_and_validate_config_with_predefined_success(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3172,7 +3171,7 @@ class TestLoadAndValidateConfig:
 
 
                         # Call with use_predefined=True
-                        result = _load_and_validate_config(use_predefined=True)
+                        result = await _load_and_validate_config(use_predefined=True)
 
                         # Assertions
                         assert result is not None
@@ -3187,7 +3186,7 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "123"
 
-    def test_load_and_validate_config_with_predefined_branch_only(
+    async def test_load_and_validate_config_with_predefined_branch_only(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3218,14 +3217,14 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        result = _load_and_validate_config(use_predefined=True)
+                        result = await _load_and_validate_config(use_predefined=True)
 
                         assert result is not None
                         _, _, params = result
                         assert params['branch'] == "feature/test"
                         assert params['pull_request'] is None
 
-    def test_load_and_validate_config_with_predefined_pr_only(
+    async def test_load_and_validate_config_with_predefined_pr_only(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3257,14 +3256,14 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
 
-                        result = _load_and_validate_config(use_predefined=True)
+                        result = await _load_and_validate_config(use_predefined=True)
 
                         assert result is not None
                         _, _, params = result
                         assert params['branch'] is None
                         assert params['pull_request'] == "456"
 
-    def test_load_and_validate_config_with_predefined_no_branch_or_pr(
+    async def test_load_and_validate_config_with_predefined_no_branch_or_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3294,7 +3293,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
-                            _load_and_validate_config(use_predefined=True)
+                            await _load_and_validate_config(use_predefined=True)
 
                         # Verify correct method was attempted
                         mock_provider_manager.branch_or_pr.assert_called_once()
@@ -3303,7 +3302,7 @@ class TestLoadAndValidateConfig:
         # NEW TESTS: use_predefined=False (Prompt Mode - Explicit)
         # ========================================================================
 
-    def test_load_and_validate_config_with_prompt_explicit(
+    async def test_load_and_validate_config_with_prompt_explicit(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3334,7 +3333,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        result = _load_and_validate_config(use_predefined=False)
+                        result = await _load_and_validate_config(use_predefined=False)
 
                         assert result is not None
                         _, _, params = result
@@ -3346,7 +3345,7 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "develop"
                         assert params['pull_request'] == "789"
 
-    def test_load_and_validate_config_prompt_mode_no_branch_or_pr(
+    async def test_load_and_validate_config_prompt_mode_no_branch_or_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3378,7 +3377,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception):  # Should abort
-                            _load_and_validate_config(use_predefined=False)
+                            await _load_and_validate_config(use_predefined=False)
 
                         mock_provider_manager.branch_or_pr_prompt.assert_called_once()
 
@@ -3386,7 +3385,7 @@ class TestLoadAndValidateConfig:
         # NEW TESTS: Edge Cases and Error Scenarios
         # ========================================================================
 
-    def test_load_and_validate_config_predefined_method_raises_exception(
+    async def test_load_and_validate_config_predefined_method_raises_exception(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3418,11 +3417,11 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with pytest.raises(Exception) as exc_info:
-                            _load_and_validate_config(use_predefined=True)
+                            await _load_and_validate_config(use_predefined=True)
 
                         assert "Config error" in str(exc_info.value)
 
-    def test_load_and_validate_config_params_merge_with_existing_config(
+    async def test_load_and_validate_config_params_merge_with_existing_config(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config
     ):
@@ -3454,7 +3453,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config(use_predefined=True)
+                        _, _, params = await _load_and_validate_config(use_predefined=True)
 
                         # Verify existing config is preserved
                         assert params['max_fixes'] == 10
@@ -3463,7 +3462,7 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "100"
 
-    def test_load_and_validate_config_params_empty_dict_when_no_existing(
+    async def test_load_and_validate_config_params_empty_dict_when_no_existing(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config,mock_auth_dict
     ):
@@ -3489,7 +3488,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Should handle None gracefully and create new dict
                         assert isinstance(params, dict)
@@ -3502,7 +3501,7 @@ class TestLoadAndValidateConfig:
 
 
 
-    def test_load_and_validate_config_returns_correct_types(
+    async def test_load_and_validate_config_returns_correct_types(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3526,7 +3525,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        auth_config, llm_config, params = _load_and_validate_config(
+                        auth_config, llm_config, params = await  _load_and_validate_config(
                             use_predefined=True
                         )
 
@@ -3535,7 +3534,7 @@ class TestLoadAndValidateConfig:
                         assert llm_config is not None
                         assert isinstance(params, dict)  # Should be Dict[str, Any], not Optional[str]
 
-    def test_load_and_validate_config_console_message_loading(
+    async def test_load_and_validate_config_console_message_loading(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3560,7 +3559,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                             # Verify loading message displayed at start
                             loading_calls = [
@@ -3569,7 +3568,7 @@ class TestLoadAndValidateConfig:
                             ]
                             assert len(loading_calls) >= 1
 
-    def test_load_and_validate_config_console_message_success(
+    async def test_load_and_validate_config_console_message_success(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3594,7 +3593,7 @@ class TestLoadAndValidateConfig:
                         mock_from_dict.return_value = mock_auth_instance
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                             # Verify success message displayed at end
                             success_calls = [
@@ -3603,7 +3602,7 @@ class TestLoadAndValidateConfig:
                             ]
                             assert len(success_calls) >= 1
 
-    def test_load_and_validate_config_console_message_no_auth(
+    async def test_load_and_validate_config_console_message_no_auth(
             self, mock_config_service
     ):
         """Test console displays appropriate messages when auth not found"""
@@ -3614,14 +3613,14 @@ class TestLoadAndValidateConfig:
 
             with patch('devdox_ai_sonar.cli.console') as mock_console:
                 with pytest.raises(click.Abort):
-                    _load_and_validate_config()
+                    await _load_and_validate_config()
 
                 # Verify error messages displayed
                 calls = [str(call) for call in mock_console.print.call_args_list]
                 # Should display AUTHENTICATION_NOT_FOUND and DEVDOX_SONAR_CONFIG
                 assert len(calls) >= 2
 
-    def test_load_and_validate_config_console_message_invalid_auth(
+    async def test_load_and_validate_config_console_message_invalid_auth(
             self, mock_config_service, mock_config_manager
     ):
         """Test console displays error message for invalid auth"""
@@ -3644,7 +3643,7 @@ class TestLoadAndValidateConfig:
 
             with patch("devdox_ai_sonar.cli.AuthConfig.from_dict", return_value=mock_auth_instance):
                 with pytest.raises(click.Abort):
-                    _load_and_validate_config()
+                    await _load_and_validate_config()
 
                 # Check that some error message was printed containing our validation error
                 all_print_calls = [str(call) for call in mock_console.print.call_args_list]
@@ -3656,7 +3655,7 @@ class TestLoadAndValidateConfig:
 
 
 
-    def test_load_and_validate_config_console_message_no_llm(
+    async def test_load_and_validate_config_console_message_no_llm(
             self, mock_config_service, mock_config_manager, auth_config
     ):
         """Test console displays error when no LLM providers configured"""
@@ -3676,14 +3675,14 @@ class TestLoadAndValidateConfig:
 
                 with patch('devdox_ai_sonar.cli.console') as mock_console:
                         with pytest.raises(click.Abort):
-                            _load_and_validate_config()
+                            await _load_and_validate_config()
 
                         # Verify LLM error message
                         calls = [str(call) for call in mock_console.print.call_args_list]
                         llm_error_calls = [c for c in calls if 'LLM' in c or 'providers' in c]
                         assert len(llm_error_calls) >= 1
 
-    def test_load_and_validate_config_console_message_no_branch_pr(
+    async def test_load_and_validate_config_console_message_no_branch_pr(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3709,12 +3708,12 @@ class TestLoadAndValidateConfig:
 
                         with patch('devdox_ai_sonar.cli.console') as mock_console:
                                 with pytest.raises(click.Abort):
-                                    _load_and_validate_config()
+                                    await _load_and_validate_config()
 
                                 # Verify NO_BRANCH_OR_PR_SPECIFIED message displayed
                                 mock_console.print.assert_any_call(constant.NO_BRANCH_OR_PR_SPECIFIED)
 
-    def test_load_and_validate_config_exclude_rules_string_split(
+    async def test_load_and_validate_config_exclude_rules_string_split(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3741,14 +3740,14 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Verify exclude_rules is split into list
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 3
                         assert params['exclude_rules'] == ["python:S3776", "python:S1192", "python:S107"]
 
-    def test_load_and_validate_config_exclude_rules_single_rule(
+    async def test_load_and_validate_config_exclude_rules_single_rule(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3774,14 +3773,14 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Single rule should result in list with one element
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 1
                         assert params['exclude_rules'] == ["python:S3776"]
 
-    def test_load_and_validate_config_exclude_rules_with_spaces(
+    async def test_load_and_validate_config_exclude_rules_with_spaces(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3807,13 +3806,13 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Should preserve spaces (or you might want to strip them)
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 3
 
-    def test_load_and_validate_config_no_exclude_rules(
+    async def test_load_and_validate_config_no_exclude_rules(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3840,12 +3839,12 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # exclude_rules should not be in params or be None
                         assert 'exclude_rules' not in params or params.get('exclude_rules') is None
 
-    def test_load_and_validate_config_exclude_rules_empty_string(
+    async def test_load_and_validate_config_exclude_rules_empty_string(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3871,7 +3870,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Empty string should not be split (falsy value)
                         # Based on code: if params.get("exclude_rules")
@@ -3879,7 +3878,7 @@ class TestLoadAndValidateConfig:
                         # Empty string is falsy, so split shouldn't be called
                         assert params['exclude_rules'] == ""
 
-    def test_load_and_validate_config_exclude_rules_already_list(
+    async def test_load_and_validate_config_exclude_rules_already_list(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config,auth_config
     ):
@@ -3909,14 +3908,14 @@ class TestLoadAndValidateConfig:
                         # This might raise AttributeError: 'list' object has no attribute 'split'
                         # Need to test actual behavior
                         try:
-                            _, _, params = _load_and_validate_config()
+                            _, _, params = await _load_and_validate_config()
                             # If it doesn't raise, verify it's still a list
                             assert isinstance(params['exclude_rules'], list)
                         except AttributeError:
                             # Expected if code doesn't handle list case
                             pytest.xfail("Code doesn't handle exclude_rules as list")
 
-    def test_load_and_validate_config_params_preserves_all_existing_config(
+    async def test_load_and_validate_config_params_preserves_all_existing_config(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3949,7 +3948,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # Verify all existing config preserved
                         assert params['max_fixes'] == 10
@@ -3964,7 +3963,7 @@ class TestLoadAndValidateConfig:
                         assert params['branch'] == "main"
                         assert params['pull_request'] == "100"
 
-    def test_load_and_validate_config_params_branch_overwrites_existing(
+    async def test_load_and_validate_config_params_branch_overwrites_existing(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config, auth_config
     ):
@@ -3991,7 +3990,7 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # New values should overwrite old
                         assert params['branch'] == "new-branch"
@@ -4146,49 +4145,49 @@ class TestHandleInteractiveError:
 
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_returns_to_menu(self, mock_console, mock_confirm):
+    async def test_user_returns_to_menu(self, mock_console, mock_confirm):
         """Test user chooses to return to menu."""
         mock_confirm.return_value = True
         error = ValueError("Test error")
 
-        result = _handle_interactive_error(error)
+        result = await _handle_interactive_error(error)
 
         assert result is False
         mock_console.print.assert_called()
 
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_user_exits_after_error(self, mock_console, mock_confirm):
+    async def test_user_exits_after_error(self, mock_console, mock_confirm):
         """Test user chooses to exit after error."""
         mock_confirm.return_value = False
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+            await _handle_interactive_error(error)
 
         assert exc_info.value.code == 1
 
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_keyboard_interrupt_during_error_handling(self, mock_console, mock_confirm):
+    async def test_keyboard_interrupt_during_error_handling(self, mock_console, mock_confirm):
         """Test keyboard interrupt during error handling."""
         mock_confirm.side_effect = KeyboardInterrupt()
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+            await _handle_interactive_error(error)
 
         assert exc_info.value.code == 1
 
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli.console')
-    def test_fatal_error_during_confirmation(self, mock_console, mock_confirm):
+    async def test_fatal_error_during_confirmation(self, mock_console, mock_confirm):
         """Test fatal error during confirmation prompt."""
         mock_confirm.side_effect = RuntimeError("Fatal error")
         error = ValueError("Test error")
 
         with pytest.raises(SystemExit) as exc_info:
-            _handle_interactive_error(error)
+            await _handle_interactive_error(error)
 
         assert exc_info.value.code == 2
 
@@ -4224,21 +4223,21 @@ class TestInteractiveMode:
     """Tests for interactive mode functions"""
 
     @patch('devdox_ai_sonar.cli._process_interactive_command')
-    def test_execute_interactive_iteration_normal(self, mock_process):
+    async def test_execute_interactive_iteration_normal(self, mock_process):
         """Test normal iteration"""
         mock_process.return_value = False
 
-        result = _execute_interactive_iteration(Mock())
+        result = await _execute_interactive_iteration_async(Mock())
 
         assert result is False
 
     @patch('devdox_ai_sonar.cli._process_interactive_command')
     @patch('devdox_ai_sonar.cli._handle_command_switch')
-    def test_execute_interactive_iteration_switch(self, mock_handle, mock_process):
+    async def test_execute_interactive_iteration_switch(self, mock_handle, mock_process):
         """Test with command switch"""
         mock_process.side_effect = SwitchCommandException()
 
-        result = _execute_interactive_iteration(Mock())
+        result = await _execute_interactive_iteration_async(Mock())
 
         assert result is False
         mock_handle.assert_called_once()
@@ -4252,14 +4251,14 @@ class TestRunInteractiveMode:
 
     @patch('devdox_ai_sonar.cli.show_command_selector')
     @patch('devdox_ai_sonar.cli._exit_application')
-    def test_exits_when_no_command_selected(self, mock_exit, mock_selector):
+    async def test_exits_when_no_command_selected(self, mock_exit, mock_selector):
         """Test exits when no command selected."""
         mock_selector.return_value = None
         mock_exit.side_effect = SystemExit(0)
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+           await _run_interactive_mode_async(mock_ctx)
 
         mock_exit.assert_called_once()
 
@@ -4267,7 +4266,7 @@ class TestRunInteractiveMode:
     @patch('devdox_ai_sonar.cli._execute_interactive_command')
     @patch('devdox_ai_sonar.cli._should_continue_to_menu')
     @patch('devdox_ai_sonar.cli._exit_application')
-    def test_executes_command_and_exits(
+    async def test_executes_command_and_exits(
             self, mock_exit, mock_continue, mock_execute, mock_selector
     ):
         """Test executes command then exits."""
@@ -4277,7 +4276,7 @@ class TestRunInteractiveMode:
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+            await _run_interactive_mode_async(mock_ctx)
 
         mock_execute.assert_called_once()
         mock_exit.assert_called_once()
@@ -4285,7 +4284,7 @@ class TestRunInteractiveMode:
     @patch('devdox_ai_sonar.cli.show_command_selector')
     @patch('devdox_ai_sonar.cli._execute_interactive_command')
     @patch('devdox_ai_sonar.cli._should_continue_to_menu')
-    def test_handles_switch_command_exception(
+    async def test_handles_switch_command_exception(
             self, mock_continue, mock_execute, mock_selector
     ):
         """Test handles SwitchCommandException."""
@@ -4298,7 +4297,7 @@ class TestRunInteractiveMode:
         mock_ctx = Mock(spec=click.Context)
 
         with pytest.raises(SystemExit):
-            _run_interactive_mode(mock_ctx)
+            await _run_interactive_mode_async(mock_ctx)
 
         # Should have tried to execute twice (once raises exception, once exits)
         assert mock_selector.call_count == 2
@@ -4453,7 +4452,7 @@ class TestClickAbortPatterns:
                     update_provider()
 
     # Pattern 2: Try-except verification
-    def test_pattern_2_try_except(self, mock_setup):
+    async def test_pattern_2_try_except(self, mock_setup):
         """Pattern 2: Use try-except for more control"""
         mock_manager, mock_provider_mgr = mock_setup
 
@@ -4463,14 +4462,14 @@ class TestClickAbortPatterns:
             with patch('devdox_ai_sonar.cli.console.print'):
                 abort_raised = False
                 try:
-                    update_provider()
+                    await update_provider()
                 except click.Abort:
                     abort_raised = True
 
                 assert abort_raised, "Expected click.Abort to be raised"
 
     # Pattern 4: Check exception message
-    def test_pattern_4_exception_info(self, mock_setup):
+    async def test_pattern_4_exception_info(self, mock_setup):
         """Pattern 4: Verify exception details"""
         mock_manager, mock_provider_mgr = mock_setup
 
@@ -4479,7 +4478,7 @@ class TestClickAbortPatterns:
 
             with patch('devdox_ai_sonar.cli.console.print') as mock_print:
                 with pytest.raises(click.Abort) as exc_info:
-                    update_provider()
+                    await update_provider()
 
                 # Verify it's the right exception type
                 assert isinstance(exc_info.value, click.Abort)
@@ -4536,7 +4535,7 @@ class TestUpdateProviderComplete:
                             mock_provider_manager.update_existing_provider.assert_called_once_with('openai')
                             mock_config_manager.save_config.assert_called_once_with(create_backup=False)
 
-    def test_update_provider_no_providers_abort(
+    async def test_update_provider_no_providers_abort(
         self,
         mock_config_manager,
         mock_provider_manager
@@ -4557,9 +4556,9 @@ class TestUpdateProviderComplete:
             with patch('devdox_ai_sonar.cli.console.print'):
                 # ✅ Expect click.Abort
                 with pytest.raises(click.Abort):
-                    update_provider()
+                   await update_provider()
 
-    def test_update_provider_user_cancels_abort(
+    async def test_update_provider_user_cancels_abort(
         self,
         mock_config_manager,
         mock_provider_manager
@@ -4581,7 +4580,7 @@ class TestUpdateProviderComplete:
                 with patch('devdox_ai_sonar.cli._select_existing_ui', return_value=""):
                     # ✅ Expect click.Abort when user cancels
                     with pytest.raises(click.Abort):
-                        update_provider()
+                        await update_provider()
 
 
 class TestHandleCliError:
@@ -4605,7 +4604,7 @@ class TestLoadAndValidateConfigErrors:
     """Test error cases for _load_and_validate_config"""
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_load_config_service_returns_none(self, mock_init):
+    async def test_load_config_service_returns_none(self, mock_init):
         """Test when config service returns None"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = None
@@ -4616,11 +4615,11 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_validation_fails(self, mock_auth_config, mock_init):
+    async def test_load_config_validation_fails(self, mock_auth_config, mock_init):
         """Test when auth config validation fails"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4640,11 +4639,11 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_no_llm_config(self, mock_auth_config, mock_init):
+    async def test_load_config_no_llm_config(self, mock_auth_config, mock_init):
         """Test when LLM config is missing"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4665,11 +4664,11 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
     @patch('devdox_ai_sonar.cli.AuthConfig.from_dict')
-    def test_load_config_no_branch_or_pr(self, mock_auth_config, mock_init):
+    async def test_load_config_no_branch_or_pr(self, mock_auth_config, mock_init):
         """Test when neither branch nor PR is provided"""
         mock_config_service = Mock()
         mock_config_service.load_auth_config.return_value = {
@@ -4694,7 +4693,7 @@ class TestLoadAndValidateConfigErrors:
 
         with patch('devdox_ai_sonar.cli.console.print'):
             with pytest.raises(click.Abort):
-                _load_and_validate_config()
+                await _load_and_validate_config()
 
 
 # ============================================================================
@@ -4705,18 +4704,18 @@ class TestCommandExecutionErrors:
     """Test error scenarios in command execution"""
 
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
-    def test_run_fix_issues_config_load_fails(self, mock_load):
+    async def test_run_fix_issues_config_load_fails(self, mock_load):
         """Test fix_issues when config loading fails"""
         mock_load.side_effect = click.Abort()
 
         with pytest.raises(click.Abort):
-            _run_fix_issues()
+            await _run_fix_issues()
 
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
     @patch('devdox_ai_sonar.cli.display_configuration')
     @patch('devdox_ai_sonar.cli.smart_confirm')
     @patch('devdox_ai_sonar.cli._process_and_fix_issues')
-    def test_run_fix_issues_processing_exception(
+    async def test_run_fix_issues_processing_exception(
             self, mock_process, mock_confirm, mock_display, mock_load
     ):
         """Test fix_issues when processing raises exception"""
@@ -4732,12 +4731,12 @@ class TestCommandExecutionErrors:
         mock_process.side_effect = Exception("Processing failed")
 
         with pytest.raises(Exception, match="Processing failed"):
-            _run_fix_issues()
+           await _run_fix_issues()
 
 
     @patch('devdox_ai_sonar.cli._load_and_validate_config')
     @patch('devdox_ai_sonar.cli.SonarCloudAnalyzer')
-    def test_run_inspect_directory_not_found(self, mock_analyzer_class, mock_load):
+    async def test_run_inspect_directory_not_found(self, mock_analyzer_class, mock_load):
         """Test inspect when directory doesn't exist"""
         mock_auth = Mock()
         mock_auth.token = "test"
@@ -4751,7 +4750,7 @@ class TestCommandExecutionErrors:
         mock_analyzer_class.return_value = mock_analyzer
 
         with pytest.raises(ValueError, match="Invalid path"):
-            _run_inspect()
+            await _run_inspect()
 
 
 # ============================================================================
@@ -4838,7 +4837,7 @@ class TestConcurrentScenarios:
     """Test concurrent access scenarios"""
 
     @patch('devdox_ai_sonar.cli._initialize_managers')
-    def test_multiple_init_config_calls(self, mock_init):
+    async def test_multiple_init_config_calls(self, mock_init):
         """Test multiple simultaneous init_config calls"""
         mock_manager = Mock()
         mock_manager.get_value.return_value = ['openai']
@@ -4851,7 +4850,7 @@ class TestConcurrentScenarios:
         for _ in range(3):
             with patch('devdox_ai_sonar.cli._configure_sonarcloud', return_value=True):
                 with patch('devdox_ai_sonar.cli.change_parameters'):
-                    init_config()
+                    await init_config()
 
         # Should handle gracefully
         assert mock_init.call_count == 3
@@ -4864,7 +4863,7 @@ class TestHelperFunctions:
     @patch('devdox_ai_sonar.cli._generate_fix_for_file')
     @patch('devdox_ai_sonar.cli.handle_fix')
     @patch('devdox_ai_sonar.cli.console')
-    def test_process_single_fix_success(
+    async def test_process_single_fix_success(
             self, mock_console, mock_handle, mock_generate,
         auth_config, fix_params, sample_fix_suggestion
     ):
@@ -4877,7 +4876,7 @@ class TestHelperFunctions:
             'ruler': Mock(),
             'fixer': Mock()
         }
-        _process_single_fix(
+        await _process_single_fix(
             issues, mock_services, auth_config,
             fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )
@@ -4887,7 +4886,7 @@ class TestHelperFunctions:
 
     @patch('devdox_ai_sonar.cli._generate_fix_for_file')
     @patch('devdox_ai_sonar.cli.console')
-    def test_process_single_fix_no_fix_generated(
+    async def test_process_single_fix_no_fix_generated(
             self, mock_console, mock_generate
             ,auth_config, fix_params
     ):
@@ -4899,7 +4898,7 @@ class TestHelperFunctions:
             'ruler': Mock(),
             'fixer': Mock()
         }
-        _process_single_fix(
+        await _process_single_fix(
             issues, mock_services, auth_config,
             fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
         )

@@ -382,7 +382,7 @@ async def _configure_sonarcloud(
     return True
 
 
-def _configure_providers_loop(
+async def _configure_providers_loop(
     provider_manager: ProviderConfigManager,
     manager: ConfigManager,
     ui: ProviderConfigUI,
@@ -408,7 +408,7 @@ def _configure_providers_loop(
         if not provider_name:
             break
 
-        success = _handle_provider_configuration(
+        success = await _handle_provider_configuration(
             provider_manager, manager, provider_name, available_providers
         )
 
@@ -421,7 +421,7 @@ def _configure_providers_loop(
             break
 
 
-def _handle_provider_configuration(
+async def _handle_provider_configuration(
     provider_manager: ProviderConfigManager,
     manager: ConfigManager,
     provider_name: str,
@@ -443,7 +443,7 @@ def _handle_provider_configuration(
     if not result:
         return False
 
-    manager.add_provider(result["config"], set_as_default=result["set_as_default"])
+    await manager.add_provider(result["config"], set_as_default=result["set_as_default"])
     available_providers.remove(provider_name)
     console.print(
         f"\n[green]✓ {provider_name.upper()} configured successfully[/green]\n"
@@ -451,7 +451,7 @@ def _handle_provider_configuration(
     return True
 
 
-def change_max_fix(
+async def change_max_fix(
     manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
 ) -> None:
     """Change maximum fixes configuration.
@@ -462,7 +462,8 @@ def change_max_fix(
         max_fixes: Current max fixes value
         default_max_fixes: Default/maximum allowed value
     """
-    max_fixes_str = smart_prompt(message, default=str(max_fixes))
+
+    max_fixes_str = await  smart_prompt(message, default=str(max_fixes))
 
     try:
         # Handle both str and List[str] return types
@@ -487,7 +488,7 @@ def change_max_fix(
             f"[yellow]Invalid value, using default: {default_max_fixes}[/yellow]"
         )
 
-    manager.set_value("configuration.max_fixes", new_max_fixes)
+    await manager.set_value("configuration.max_fixes", new_max_fixes)
 
 
 
@@ -595,14 +596,14 @@ async def init_config(
             return
 
         # Configure providers
-        available_providers = provider_manager.get_available_providers()
+        available_providers = await provider_manager.get_available_providers()
         if not available_providers:
             console.print(
                 "\n[red]❌ No providers configured. Configuration incomplete.[/red]"
             )
             raise click.Abort()
 
-        _configure_providers_loop(provider_manager, manager, ui, available_providers)
+        await _configure_providers_loop(provider_manager, manager, ui, available_providers)
         manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
@@ -624,7 +625,7 @@ async def add_provider() -> None:
         # Initialize components
         manager, ui, _, provider_manager, _, _ = _initialize_managers()
         await manager.load_config()
-        available_providers = provider_manager.get_available_providers()
+        available_providers = await provider_manager.get_available_providers()
         if not available_providers:
             console.print(
                 "[yellow]⚠ All supported providers are already configured[/yellow]"
@@ -632,7 +633,7 @@ async def add_provider() -> None:
             raise click.Abort()
 
         _display_operation_header("🚀 ADD NEW PROVIDER")
-        _configure_providers_loop(provider_manager, manager, ui, available_providers)
+        await _configure_providers_loop(provider_manager, manager, ui, available_providers)
         manager.save_config(create_backup=False)
         _display_completion_message()
 
@@ -647,7 +648,7 @@ async def update_provider() -> None:
         manager, _, _, provider_manager, _, _ = _initialize_managers()
         await manager.load_config()
 
-        existing_providers = provider_manager.get_existing_providers()
+        existing_providers = await provider_manager.get_existing_providers()
         if not existing_providers:
             console.print(
                 "\n[red]❌ No providers configured. Please add at least one provider first.[/red]"
@@ -660,16 +661,16 @@ async def update_provider() -> None:
         if not chosen_provider:
             raise click.Abort()
 
-        if provider_manager.update_existing_provider(chosen_provider):
+        if await provider_manager.update_existing_provider(chosen_provider):
+
             manager.save_config(create_backup=False)
             console.print(
                 f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n"
             )
         else:
             console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
+        _display_completion_message()
 
-        _display_completion_message()
-        _display_completion_message()
 
     except Exception as e:
         _handle_cli_error(e)
@@ -878,7 +879,7 @@ async def _handle_interactive_error(error: Exception) -> bool:
         sys.exit(2)
 
 
-def change_field(
+async def change_field(
     manager: ConfigManager,
     field: str,
     message: str,
@@ -887,14 +888,14 @@ def change_field(
     multiple: bool = True,
     allow_empty: bool = False,
 ) -> Optional[Union[str, List[str]]]:
-    types_input = smart_prompt(
+    types_input = await  smart_prompt(
         message, default=default_value, choices=choices, multiple=multiple
     )
 
     types = types_input if types_input else None
 
     if types:
-        manager.set_value(field, types)
+        await manager.set_value(field, types)
     elif allow_empty and default_value:
         # User provided empty input but there was a previous value
         # This means they want to clear it - delete the property from config
@@ -909,16 +910,16 @@ async def change_parameters(
     try:
         # Initialize all managers
         manager, _, _, provider_manager, _, _ = _initialize_managers()
-        branch, pull_request = provider_manager.branch_or_pr_prompt()
+        branch, pull_request = await provider_manager.branch_or_pr_prompt()
 
         if not branch and not pull_request:
             console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
             raise click.Abort()
 
-        max_fixes = manager.get_value("configuration.max_fixes") or 0
+        max_fixes = await manager.get_value("configuration.max_fixes") or 0
 
         # Max fixes
-        change_max_fix(
+        await change_max_fix(
             manager,
             f"Maximum fixes to generate (0-{settings.MAX_FIXES_LIMIT})",
             max_fixes,
@@ -926,7 +927,7 @@ async def change_parameters(
         )
         # Issue types (optional)
         if not types:
-            _ = change_field(
+            _ = await change_field(
                 manager=manager,
                 field="configuration.types",
                 message="Issue types (comma-separated, or press Enter to skip)",
@@ -936,11 +937,11 @@ async def change_parameters(
 
         # Severities (optional)
         if not severity:
-            _ = change_field(
+            _ = await change_field(
                 manager=manager,
                 field="configuration.severities",
                 message="Issue severities (comma-separated, or press Enter to skip)",
-                default_value=manager.get_value("configuration.severities"),
+                default_value=await manager.get_value("configuration.severities"),
                 choices=list(InputValidator.VALID_SEVERITIES),
             )
 
@@ -952,7 +953,7 @@ async def change_parameters(
         ]
 
         current_apply = await manager.get_value(constant.CONFIGURATION_APPLY)
-        _ = change_field(
+        _ = await change_field(
             manager=manager,
             field=constant.CONFIGURATION_APPLY,
             message="Apply fixes of SonarQube (press Enter to skip)",
@@ -966,7 +967,7 @@ async def change_parameters(
         )
 
         configuration_backup = await manager.get_value(constant.CONFIGURATION_BACKUP)
-        _ = change_field(
+        _ = await change_field(
             manager=manager,
             field=constant.CONFIGURATION_BACKUP,
             message="Create backup before apply fixes (press Enter to skip)",
@@ -979,7 +980,7 @@ async def change_parameters(
             multiple=False,
         )
 
-        _ = change_field(
+        _ = await change_field(
             manager=manager,
             field="configuration.exclude_rules",
             message="Rules to be excluded  (comma-separated, or press Enter to skip)",
@@ -1024,7 +1025,7 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         elif command == "fix_security_issues":
             await _run_fix_security_issues(**options)
         elif command == "analyze":
-            await _run_analyze(**options)
+            await _run_analyze()
         elif command == "inspect":
             await _run_inspect()
         elif command == "add_provider":
@@ -1127,7 +1128,7 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
         raise
 
 
-async def _run_analyze(**kwargs: Any) -> None:
+async def _run_analyze() -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
@@ -1138,7 +1139,7 @@ async def _run_analyze(**kwargs: Any) -> None:
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
         # Get limit
-        limit_response = smart_prompt(
+        limit_response = await smart_prompt(
             f"Max issues to fetch (max: {settings.MAX_FIXES_LIMIT})",
             default=str(parameters.get("max_fixes", settings.MAX_FIXES_LIMIT)),
         )
@@ -1163,6 +1164,7 @@ async def _run_analyze(**kwargs: Any) -> None:
         except (ValueError, IndexError):
             console.print("[red]Invalid limit, using default[/red]")
             limit = settings.MAX_FIXES_LIMIT
+
 
         # Fetch and display results
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
