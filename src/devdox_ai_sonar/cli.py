@@ -840,10 +840,7 @@ async def change_field(
     types = types_input if types_input else None
 
     if types:
-        if types == constant.EXCLUDE_NONE:
-            await manager.delete_value(field)
-        else:
-            await manager.set_value(field, types)
+        await manager.set_value(field, types)
     elif allow_empty:
         # Empty input not allowed — loop until valid input
         while not types:
@@ -852,10 +849,7 @@ async def change_field(
                 message, default=default_value, choices=choices, multiple=multiple
             )
             types = retry_input if retry_input else None
-        if types == constant.EXCLUDE_NONE:
-           await manager.delete_value(field)
-        else:
-           await manager.set_value(field, types)
+        await manager.set_value(field, types)
     return types
 
 
@@ -1239,7 +1233,10 @@ async def _load_and_validate_config(
         raise click.Abort()
     params = await manager.get_value("configuration") or {}
     if params.get("exclude_rules"):
-        params["exclude_rules"] = str(params["exclude_rules"]).split(",")
+        if str(params["exclude_rules"]) == constant.EXCLUDE_NONE:
+            params["exclude_rules"] = []
+        else:
+            params["exclude_rules"] = str(params["exclude_rules"]).split(",")
 
     params["branch"] = branch
     params["pull_request"] = pull_request
