@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import asyncio
 
 import subprocess
 
@@ -40,6 +41,7 @@ from devdox_ai_sonar.services.rule_handler import (
     _resolve_relative_path,
 )
 from devdox_ai_sonar.services.extractor import IssueExtractor
+from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +102,7 @@ class LLMFixer:
         """
         self.provider = str(provider).lower()
         self.context_lines = context_lines
+        self.file_reader = AsyncFileReader()
         self.model = model
         self.prompt_dir = Path(__file__).parent / "prompts"
         self.template_dir = Path(__file__).parent / "templates"
@@ -123,6 +126,14 @@ class LLMFixer:
             keep_trailing_newline=True,
             autoescape=select_autoescape(["html", "xml"]),
         )
+
+    async def read_file_async(self, file_path: str) -> str:
+        """Async version."""
+        return await self.file_reader.read_text(file_path)
+
+    def read_file(self, file_path: str) -> str:
+        """Sync version (backwards compatible)."""
+        return asyncio.run(self.read_file_async(file_path))
 
     def _validate_and_configure_provider(
         self, provider: Optional[str], model: Optional[str], api_key: Optional[str]
@@ -296,7 +307,7 @@ class LLMFixer:
                 template_md = template.render(**context)
                 f.write(template_md.strip() + "\n\n")
 
-    def generate_fix_by_file(
+    async def generate_fix_by_file(
         self,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         project_path: Path,
@@ -325,11 +336,11 @@ class LLMFixer:
             return None
 
         rule_registry = RuleHandlerRegistry()
-        extractor = IssueExtractor()
+        extractor = IssueExtractor(self.file_reader)
 
         try:
             # Step 1: Validate issues and extract file information
-            validation = extractor.validate_issue_group(issues, tmp_path, project_path)
+            validation = await extractor.validate_issue_group(issues, tmp_path, project_path)
 
             if not validation.is_valid:
                 logger.error(f"Validation failed: {validation.error}")
@@ -340,7 +351,7 @@ class LLMFixer:
                 return None
 
             # Step 2: Prepare context for fix generation
-            context = self._prepare_fix_context(
+            context = await self._prepare_fix_context(
                 validation.file_path,
                 validation.line_range,
                 modified_content,
@@ -509,7 +520,7 @@ class LLMFixer:
         max_line = max(problem_lines)
         return f"fix_L{min_line}-L{max_line}"
 
-    def _prepare_fix_context(
+    async def _prepare_fix_context(
         self,
         file_path: Path,
         line_range: Dict[str, Any],
@@ -529,9 +540,7 @@ class LLMFixer:
         """
         try:
             # Read file content
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
-                file_lines = file_content.splitlines(keepends=True)
+            file_lines = await self.file_reader.read_lines(file_path)
             language = self._get_language_from_extension(file_path.suffix)
 
             # Extract import section
@@ -597,7 +606,7 @@ class LLMFixer:
             logger.error(f"Error preparing context: {e}", exc_info=True)
             return None
 
-    def apply_fixes(
+    async def apply_fixes(
         self,
         fixes: List[FixSuggestion],
         project_path: Path,
@@ -640,7 +649,7 @@ class LLMFixer:
         for file_path_str, file_fixes in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
-                success, _ = self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success, _ = await self._apply_fixes_to_file(file_path, file_fixes, dry_run)
                 if success:
                     result.successful_fixes.extend(file_fixes)
 
@@ -1612,14 +1621,14 @@ class LLMFixer:
 
         return "\n".join(indented_lines)
 
-    def _apply_fixes_to_file(
+    async def _apply_fixes_to_file(
         self, file_path: Path, fixes: List[FixSuggestion], dry_run: bool
     ) -> Tuple[bool, List[FixApplication]]:
         if dry_run:
             return True, []
 
         try:
-            lines = read_file_lines(file_path)
+            lines = await self.file_reader.read_lines(file_path)
             results = []
             for fix in fixes:
                 result, lines = apply_single_fix(lines, fix)
@@ -1734,7 +1743,7 @@ class LLMFixer:
 
         return True
 
-    def apply_fixes_with_validation(
+    async def apply_fixes_with_validation(
         self,
         fixes: List[FixSuggestion],
         issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
@@ -1812,11 +1821,10 @@ class LLMFixer:
                 # Store original content for validator fallback
                 original_content = ""
                 if file_path.exists():
-                    with open(file_path, "r", encoding="utf-8") as f:
-                        original_content = f.read()
+                    original_content = await self.read_file_async(str(file_path))
 
                 # Attempt direct application
-                success, new_fixes = self._apply_fixes_to_file(
+                success, new_fixes = await self._apply_fixes_to_file(
                     file_path, file_fixes, dry_run
                 )
 
@@ -1840,8 +1848,7 @@ class LLMFixer:
 
                         # Restore original content
                         if not dry_run and file_path.exists():
-                            with open(file_path, "w", encoding="utf-8") as f:
-                                f.write(original_content)
+                            await self.file_reader.write_text(file_path, original_content)
 
                         # Use validator to fix each problematic fix
                         for fix, issue in file_fix_pairs:
@@ -1852,10 +1859,7 @@ class LLMFixer:
                                     f".tmp{file_path.suffix}"
                                 )
                                 if file_path_tmp.exists():
-                                    with open(
-                                        file_path_tmp, "r", encoding="utf-8"
-                                    ) as f:
-                                        current_content = f.read()
+                                        current_content = await  self.read_file_async(file_path_tmp)
                                         remove_tmp_files(str(file_path_tmp))
 
                                 validation_result = validator.validate_fix(
@@ -1878,7 +1882,7 @@ class LLMFixer:
                                 ):
                                     # Apply the improved fix
                                     if validation_result.final_fix:
-                                        improved_success, _ = self._apply_fixes_to_file(
+                                        improved_success, _ = await self._apply_fixes_to_file(
                                             file_path,
                                             [validation_result.final_fix],
                                             dry_run,
@@ -2058,7 +2062,7 @@ class LLMFixer:
 
         return any(path_candidate.endswith(ext) for ext in supported_extensions)
 
-    def _prepare_context(
+    async def _prepare_context(
         self,
         file_path: Path,
         line_range: Dict[str, Any],
@@ -2085,9 +2089,8 @@ class LLMFixer:
         """
         try:
             # Read file content
-            with open(file_path, "r", encoding="utf-8") as f:
-                file_content = f.read()
-                file_lines = file_content.splitlines(keepends=True)
+            file_lines =  await self.file_reader.read_lines(file_path)
+
 
             # Extract problem line content
             # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
