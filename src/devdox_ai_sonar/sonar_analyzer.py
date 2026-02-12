@@ -238,13 +238,15 @@ class SonarCloudAnalyzer:
         }
         if statuses:
             params["issueStatuses"] = ",".join(statuses)
-        if branch != "":
+        
+        # PR takes priority over branch - if PR is provided, use it
+        if pull_request_number is not None and pull_request_number != 0:
+            params["pullRequest"] = str(pull_request_number)
+        elif branch != "":
             params["branch"] = branch
         else:
-            if pull_request_number is not None and pull_request_number != 0:
-                params["pullRequest"] = str(pull_request_number)
-            else:
-                params["branch"] = "main"
+            params["branch"] = "main"
+        
         if severities:
             params["severities"] = ",".join(severities)
         if types:
