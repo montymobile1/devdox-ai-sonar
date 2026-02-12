@@ -4,7 +4,10 @@ from datetime import timezone, datetime
 import sys
 from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
-
+import asyncio
+import functools
+import traceback
+import sys
 
 from rich.console import Console
 import inquirer
@@ -53,9 +56,26 @@ from devdox_ai_sonar.config import settings
 console = Console()
 
 
-# ============================================================================
-# EXCEPTIONS FOR COMMAND SWITCHING
-# ============================================================================
+def async_command(f):
+    """Decorator to run async functions with Click."""
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        return asyncio.run(f(*args, **kwargs))
+    return wrapper
+
+
+@contextmanager
+def show_progress(
+    message: str, total: Optional[int] = None
+) -> Iterator[Tuple[Progress, TaskID]]:
+    """Context manager for progress display."""
+    with Progress() as progress:
+        task = progress.add_task(message, total=total)
+        try:
+            yield progress, task
+        finally:
+            if not progress.finished:
+                progress.remove_task(task)
 
 
 def _safe_convert_pr(pull_request: str | int | None) -> int:
@@ -77,26 +97,50 @@ def _safe_convert_pr(pull_request: str | int | None) -> int:
         return 0
 
 
-@contextmanager
-def show_progress(
-    message: str, total: Optional[int] = None
-) -> Iterator[Tuple[Progress, TaskID]]:
-    """Context manager for progress display."""
-    with Progress() as progress:
-        task = progress.add_task(message, total=total)
-        try:
-            yield progress, task
-        finally:
-            if not progress.finished:
-                progress.remove_task(task)
+
+def _fallback_command_selector() -> Optional[str]:
+    """Fallback text-based command selector when questionary is not available."""
+    console.print(
+        "\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]   DevDox AI Sonar - Command Selection          [/bold cyan]"
+    )
+    console.print(
+        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n"
+    )
+
+    commands = {
+        "1": ("fix_issues", "Fix Issues - Generate and apply LLM-powered fixes"),
+        "2": (
+            "fix_security_issues",
+            "Fix Security Issues - Specialized security fixes",
+        ),
+        "3": ("analyze", "Analyze Project - Display SonarCloud analysis"),
+        "4": ("inspect", "Inspect Project - Analyze local directory structure"),
+        "5": ("exit", "Exit"),
+    }
+
+    for key, (_, desc) in commands.items():
+        console.print(f"[cyan]{key}[/cyan]. {desc}")
+
+    console.print()
+    choice = console.input("[bold yellow]Select command (1-5): [/bold yellow]").strip()
+
+    if choice in commands:
+        return commands[choice][0]
+    return None
+
+
+
 
 
 # ============================================================================
-# INTERACTIVE COMMAND SELECTOR (Claude Code Style)
+# INTERACTIVE COMMAND SELECTOR
 # ============================================================================
 
 
-def show_command_selector() -> Optional[str]:
+async def show_command_selector_async() -> Optional[str]:
     """
     Show an interactive command selector similar to Claude Code.
     Returns the selected command or None if cancelled.
@@ -182,14 +226,15 @@ def show_command_selector() -> Optional[str]:
     console.print()
 
     try:
-        choice = questionary.select(
+        # Use async version of questionary
+        choice = await questionary.select(
             "What would you like to do?",
             choices=[cmd["name"] for cmd in commands],
             style=custom_style,
             use_shortcuts=True,
             use_arrow_keys=True,
             use_jk_keys=True,
-        ).ask()
+        ).ask_async()  # ← Use ask_async() instead of ask()
 
         if choice is None:  # User pressed Ctrl+C
             return None
@@ -239,81 +284,7 @@ def _fallback_command_selector() -> Optional[str]:
     return None
 
 
-# ============================================================================
-# MAIN ENTRY POINT
-# ============================================================================
 
-
-@click.command()
-@click.version_option(__version__)
-@click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
-@click.option(
-    "--command",
-    "-c",
-    type=click.Choice(["fix_issues", "fix_security_issues", "analyze", "inspect"]),
-    help="Run specific command directly without interactive mode",
-)
-@click.option("--types", type=str, help="Comma-separated issue types (for fix_issues)")
-@click.option(
-    "--severity", type=str, help="Comma-separated severities (for fix_issues)"
-)
-@click.option(
-    "--max-fixes",
-    type=click.IntRange(0, settings.MAX_FIXES_LIMIT),
-    help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})",
-)
-@click.option(
-    "--apply",
-    type=click.IntRange(0, 1),
-    default=None,
-    help="Apply fixes (1 = apply, 0 = preview only)",
-)
-@click.option(
-    "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
-)
-@click.pass_context
-def main(
-    ctx: click.Context,
-    verbose: bool,
-    command: Optional[str],
-    types: Optional[str],
-    severity: Optional[str],
-    max_fixes: Optional[int],
-    apply: Optional[int],
-    dry_run: bool = False,
-) -> None:
-    """
-    DevDox AI Sonar - SonarCloud Analyzer with LLM-powered fixes.
-
-    Interactive mode by default. Type '/' during any prompt to switch commands.
-
-    Examples:
-        devdox_sonar                           # Interactive mode
-        devdox_sonar -c fix_issues            # Run fix_issues directly
-
-    During interactive mode:
-        - Type '/' at any prompt to switch to a different command
-        - Use arrow keys to navigate menus
-        - Press Ctrl+C to cancel current operation
-    """
-
-    ctx.ensure_object(dict)
-    ctx.obj["verbose"] = verbose
-    ctx.obj["options"] = {
-        "types": types,
-        "severity": severity,
-        "max_fixes": max_fixes or 0,
-        "apply": apply,
-        "dry_run": dry_run,
-    }
-
-    # If command specified, run it directly
-    if command:
-        _execute_command(ctx, command)
-        return
-    init_config()
-    # Otherwise, enter interactive mode
-    _run_interactive_mode(ctx)
 
 
 def _select_existing_ui(
@@ -368,7 +339,7 @@ def _initialize_managers() -> Tuple[
     return manager, ui, validator, provider_manager, sonar_ui, config_service
 
 
-def _configure_sonarcloud(
+async def _configure_sonarcloud(
     sonar_ui: SonarCloudConfigUI, config_service: ConfigService
 ) -> bool:
     """Configure SonarCloud settings.
@@ -381,7 +352,7 @@ def _configure_sonarcloud(
         bool: True if configuration successful, False otherwise
     """
 
-    auth_config = config_service.load_auth_config()
+    auth_config = await config_service.load_auth_config()
 
     value_exist = config_service.check_all_value_empty(auth_config)
     if not value_exist:
@@ -480,6 +451,46 @@ def _handle_provider_configuration(
     return True
 
 
+def change_max_fix(
+    manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
+) -> None:
+    """Change maximum fixes configuration.
+
+    Args:
+        manager: Configuration manager
+        message: Prompt message
+        max_fixes: Current max fixes value
+        default_max_fixes: Default/maximum allowed value
+    """
+    max_fixes_str = smart_prompt(message, default=str(max_fixes))
+
+    try:
+        # Handle both str and List[str] return types
+        if isinstance(max_fixes_str, list):
+            # If list, take first element
+            value_str = max_fixes_str[0] if max_fixes_str else str(default_max_fixes)
+        else:
+            value_str = max_fixes_str
+
+        new_max_fixes = int(value_str)
+
+        # Validate range
+        if new_max_fixes < 1 or new_max_fixes > default_max_fixes:
+            new_max_fixes = settings.DEFAULT_MAX_FIXES
+            console.print(
+                f"[yellow]Value out of range (1-{default_max_fixes}), "
+                f"using default: {settings.DEFAULT_MAX_FIXES}[/yellow]"
+            )
+    except (ValueError, IndexError):
+        new_max_fixes = default_max_fixes
+        console.print(
+            f"[yellow]Invalid value, using default: {default_max_fixes}[/yellow]"
+        )
+
+    manager.set_value("configuration.max_fixes", new_max_fixes)
+
+
+
 def _should_stop_configuring(available_providers: list) -> bool:
     """Determine if provider configuration loop should stop.
 
@@ -554,7 +565,7 @@ def _handle_cli_error(error: Exception) -> None:
 # ============================================================================
 
 
-def init_config(
+async def init_config(
     types: Optional[str] = None,
     severity: Optional[str] = None,
     max_fixes: int = 0,
@@ -568,15 +579,15 @@ def init_config(
             _initialize_managers()
         )
         manager.create_default_config()
-        manager.load_config()
+        await manager.load_config()
 
         # Check if reconfiguration is needed
-        providers = manager.get_value("llm.providers")
+        providers = await manager.get_value("llm.providers")
         if not _check_reconfiguration_consent(providers):
             return
 
         # Configure SonarCloud
-        if not _configure_sonarcloud(sonar_ui, config_service):
+        if not await _configure_sonarcloud(sonar_ui, config_service):
             raise click.Abort()
 
         # Skip provider configuration if already exists
@@ -595,7 +606,7 @@ def init_config(
         manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
-        change_parameters(
+        await change_parameters(
             types,
             severity,
             max_fixes=max_fixes,
@@ -607,12 +618,12 @@ def init_config(
         _handle_cli_error(e)
 
 
-def add_provider() -> None:
+async def add_provider() -> None:
     """CLI command for managing provider configuration"""
     try:
         # Initialize components
         manager, ui, _, provider_manager, _, _ = _initialize_managers()
-        manager.load_config()
+        await manager.load_config()
         available_providers = provider_manager.get_available_providers()
         if not available_providers:
             console.print(
@@ -629,12 +640,12 @@ def add_provider() -> None:
         _handle_cli_error(e)
 
 
-def update_provider() -> None:
+async def update_provider() -> None:
     """CLI command for managing provider configuration"""
     try:
         # Initialize components
         manager, _, _, provider_manager, _, _ = _initialize_managers()
-        manager.load_config()
+        await manager.load_config()
 
         existing_providers = provider_manager.get_existing_providers()
         if not existing_providers:
@@ -663,15 +674,96 @@ def update_provider() -> None:
     except Exception as e:
         _handle_cli_error(e)
 
+# ============================================================================
+# MAIN ENTRY POINT
+# ============================================================================
 
-def _run_interactive_mode(ctx: click.Context) -> None:
-    """Run the interactive command selection loop with command switching support."""
+
+@click.command()
+@click.version_option(__version__)
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose output")
+@click.option(
+    "--command",
+    "-c",
+    type=click.Choice(["fix_issues", "fix_security_issues", "analyze", "inspect"]),
+    help="Run specific command directly without interactive mode",
+)
+@click.option("--types", type=str, help="Comma-separated issue types (for fix_issues)")
+@click.option(
+    "--severity", type=str, help="Comma-separated severities (for fix_issues)"
+)
+@click.option(
+    "--max-fixes",
+    type=click.IntRange(0, settings.MAX_FIXES_LIMIT),
+    help=f"Maximum number of fixes (0-{settings.MAX_FIXES_LIMIT})",
+)
+@click.option(
+    "--apply",
+    type=click.IntRange(0, 1),
+    default=None,
+    help="Apply fixes (1 = apply, 0 = preview only)",
+)
+@click.option(
+    "--dry-run", is_flag=True, help="Show what would be changed without applying fixes"
+)
+@click.pass_context
+@async_command  # ← This creates the event loop
+async def main(  # ← Async main
+    ctx: click.Context,
+    verbose: bool,
+    command: Optional[str],
+    types: Optional[str],
+    severity: Optional[str],
+    max_fixes: Optional[int],
+    apply: Optional[int],
+    dry_run: bool = False,
+) -> None:
+    """
+    DevDox AI Sonar - SonarCloud Analyzer with LLM-powered fixes.
+
+    Interactive mode by default. Type '/' during any prompt to switch commands.
+
+    Examples:
+        devdox_sonar                           # Interactive mode
+        devdox_sonar -c fix_issues            # Run fix_issues directly
+
+
+    During interactive mode:
+        - Type '/' at any prompt to switch to a different command
+        - Use arrow keys to navigate menus
+        - Press Ctrl+C to cancel current operation
+    """
+
+    ctx.ensure_object(dict)
+    ctx.obj["verbose"] = verbose
+    ctx.obj["options"] = {
+        "types": types,
+        "severity": severity,
+        "max_fixes": max_fixes or 0,
+        "apply": apply,
+        "dry_run": dry_run,
+    }
+
+    # If command specified, run it directly
+    if command:
+        await _execute_command_async(ctx, command)
+        return
+
+    await init_config()
+
+
+
+    await _run_interactive_mode_async(ctx)
+
+
+
+async def _run_interactive_mode_async(ctx: click.Context) -> None:
     while True:
-        if _execute_interactive_iteration(ctx):
+        if await _execute_interactive_iteration_async(ctx):
             return
 
 
-def _execute_interactive_iteration(ctx: click.Context) -> bool:
+async def _execute_interactive_iteration_async(ctx: click.Context) -> bool:
     """
     Execute one iteration of the interactive loop.
 
@@ -679,32 +771,34 @@ def _execute_interactive_iteration(ctx: click.Context) -> bool:
         True if should exit the loop, False to continue
     """
     try:
-        return _process_interactive_command(ctx)
+
+        return await _process_interactive_command_async(ctx)
     except SwitchCommandException:
         _handle_command_switch()
         return False
     except KeyboardInterrupt:
-        return _handle_keyboard_interrupt()
+        return await _handle_keyboard_interrupt()
     except Exception as e:
-        return _handle_interactive_error(e)
+        return await _handle_interactive_error(e)
 
 
-def _process_interactive_command(ctx: click.Context) -> bool:
+async def _process_interactive_command_async(ctx: click.Context) -> bool:
     """
     Process a single interactive command.
 
     Returns:
         True if should exit, False if should continue
     """
-    command = show_command_selector()
+
+    command = await show_command_selector_async()
 
     if _should_exit_interactive_mode(command):
         _exit_application()
         return True
 
-    _execute_interactive_command(ctx, command)
+    await _execute_interactive_command_async(ctx, command)
 
-    if not _should_continue_to_menu():
+    if not await _should_continue_to_menu():
         _exit_application()
         return True
     return False
@@ -721,11 +815,6 @@ def _exit_application() -> None:
     sys.exit(0)
 
 
-def _execute_interactive_command(ctx: click.Context, command: Optional[str]) -> None:
-    """Execute a command in interactive mode."""
-    console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
-    _execute_command(ctx=ctx, command=command)
-    console.print("\n" + "─" * 50 + "\n")
 
 
 def _should_continue_to_menu() -> bool:
@@ -741,7 +830,7 @@ def _handle_command_switch() -> None:
     console.print("\n[yellow]↩ Returning to command menu...[/yellow]\n")
 
 
-def _handle_keyboard_interrupt() -> bool:
+async def _handle_keyboard_interrupt() -> bool:
     """
     Handle keyboard interrupt (Ctrl+C).
 
@@ -751,7 +840,7 @@ def _handle_keyboard_interrupt() -> bool:
     console.print("\n\n[yellow]⚠ Interrupted by user[/yellow]")
 
     try:
-        if smart_confirm("Exit application?", default=False, allow_switch=False):
+        if await  smart_confirm("Exit application?", default=False, allow_switch=False):
             sys.exit(0)
         return False
 
@@ -764,7 +853,7 @@ def _handle_keyboard_interrupt() -> bool:
         sys.exit(1)
 
 
-def _handle_interactive_error(error: Exception) -> bool:
+async def _handle_interactive_error(error: Exception) -> bool:
     """
     Handle errors in interactive mode.
 
@@ -774,7 +863,7 @@ def _handle_interactive_error(error: Exception) -> bool:
     console.print(f"\n[red]❌ Error: {str(error)}[/red]")
 
     try:
-        if not smart_confirm(
+        if not await smart_confirm(
             constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=False
         ):
             sys.exit(1)
@@ -813,8 +902,8 @@ def change_field(
     return types
 
 
-def change_parameters(
-    types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
+async def change_parameters(
+        types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
 ) -> None:
     """CLI for config management"""
     try:
@@ -835,14 +924,13 @@ def change_parameters(
             max_fixes,
             settings.MAX_FIXES_LIMIT,
         )
-
         # Issue types (optional)
         if not types:
             _ = change_field(
                 manager=manager,
                 field="configuration.types",
                 message="Issue types (comma-separated, or press Enter to skip)",
-                default_value=manager.get_value("configuration.types"),
+                default_value=await manager.get_value("configuration.types"),
                 choices=list(InputValidator.VALID_ISSUE_TYPES),
             )
 
@@ -863,26 +951,28 @@ def change_parameters(
             for choice in choices
         ]
 
+        current_apply = await manager.get_value(constant.CONFIGURATION_APPLY)
         _ = change_field(
             manager=manager,
             field=constant.CONFIGURATION_APPLY,
             message="Apply fixes of SonarQube (press Enter to skip)",
             default_value=(
-                manager.get_value(constant.CONFIGURATION_APPLY)
-                if manager.get_value(constant.CONFIGURATION_APPLY) is not None
+                current_apply
+                if current_apply is not None
                 else kwargs.get("apply", 0)
             ),  # optional
             choices=formatted_choices,
             multiple=False,
         )
 
+        configuration_backup = await manager.get_value(constant.CONFIGURATION_BACKUP)
         _ = change_field(
             manager=manager,
             field=constant.CONFIGURATION_BACKUP,
             message="Create backup before apply fixes (press Enter to skip)",
             default_value=(
-                manager.get_value(constant.CONFIGURATION_BACKUP)
-                if manager.get_value(constant.CONFIGURATION_BACKUP) is not None
+                configuration_backup
+                if configuration_backup is not None
                 else kwargs.get("create_backup", 0)
             ),  # optional
             choices=formatted_choices,
@@ -893,7 +983,7 @@ def change_parameters(
             manager=manager,
             field="configuration.exclude_rules",
             message="Rules to be excluded  (comma-separated, or press Enter to skip)",
-            default_value=manager.get_value("configuration.exclude_rules"),
+            default_value=await manager.get_value("configuration.exclude_rules"),
             allow_empty=True,
         )
         manager.save_config(create_backup=False)
@@ -902,79 +992,59 @@ def change_parameters(
         _handle_cli_error(e)
 
 
-def change_max_fix(
-    manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
-) -> None:
-    """Change maximum fixes configuration.
+def _exit_application() -> None:
+    """Exit the application with goodbye message."""
+    console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
+    sys.exit(0)
 
-    Args:
-        manager: Configuration manager
-        message: Prompt message
-        max_fixes: Current max fixes value
-        default_max_fixes: Default/maximum allowed value
-    """
-    max_fixes_str = smart_prompt(message, default=str(max_fixes))
-
-    try:
-        # Handle both str and List[str] return types
-        if isinstance(max_fixes_str, list):
-            # If list, take first element
-            value_str = max_fixes_str[0] if max_fixes_str else str(default_max_fixes)
-        else:
-            value_str = max_fixes_str
-
-        new_max_fixes = int(value_str)
-
-        # Validate range
-        if new_max_fixes < 1 or new_max_fixes > default_max_fixes:
-            new_max_fixes = settings.DEFAULT_MAX_FIXES
-            console.print(
-                f"[yellow]Value out of range (1-{default_max_fixes}), "
-                f"using default: {settings.DEFAULT_MAX_FIXES}[/yellow]"
-            )
-    except (ValueError, IndexError):
-        new_max_fixes = default_max_fixes
-        console.print(
-            f"[yellow]Invalid value, using default: {default_max_fixes}[/yellow]"
-        )
-
-    manager.set_value("configuration.max_fixes", new_max_fixes)
+async def _should_continue_to_menu() -> bool:
+    """Ask user if they want to return to main menu."""
+    result = await smart_confirm(
+        constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True
+    )
+    return result
 
 
-def _execute_command(ctx: click.Context, command: Optional[str]) -> None:
-    """Execute a specific command with command switching support."""
+
+async def _execute_interactive_command_async(ctx: click.Context, command: Optional[str]) -> None:
+    """Execute a command in interactive mode."""
+    console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
+    await _execute_command_async(ctx, command)
+    console.print("\n" + "─" * 50 + "\n")
+
+
+async def _execute_command_async(ctx: click.Context, command: str) -> None:
+    """Execute a specific command asynchronously."""
+    verbose = ctx.obj.get("verbose", False)
     options = ctx.obj.get("options", {})
 
     try:
-        command_map = {
-            "fix_issues": lambda: _run_fix_issues(**options),
-            "fix_security_issues": lambda: _run_fix_security_issues(**options),
-            "analyze": lambda: _run_analyze(**options),
-            "inspect": _run_inspect,
-            "config": lambda: init_config(**options),
-            "add_provider": add_provider,
-            "update_provider": update_provider,
-            "change_parameters": lambda: change_parameters(**options),
-        }
-
-        if command in command_map:
-            command_map[command]()
+        if command == "fix_issues":
+            await _run_fix_issues(**options)
+        elif command == "fix_security_issues":
+            await _run_fix_security_issues(**options)
+        elif command == "analyze":
+            await _run_analyze(**options)
+        elif command == "inspect":
+            await _run_inspect()
+        elif command == "add_provider":
+           await add_provider()  # Sync command
+        elif command == "update_provider":
+            await update_provider()  # Sync command
+        elif command == "change_parameters":
+           await change_parameters(**options)  # Sync command
         else:
-            console.print(f"[red]Unknown command: {command}[/red]")
-
-    except SwitchCommandException:
-        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
-        raise
-
-    except ValidationError as e:
-        console.print(f"\n[red]❌ {e.message}[/red]")
-        raise click.Abort()
+            click.echo(f"Unknown command: {command}", err=True)
+            ctx.exit(1)
 
     except Exception as e:
-        console.print(f"[red]Error: {str(e)}[/red]", markup=False)
-        if ctx.obj.get("verbose"):
-            console.print_exception()
-        raise
+        if verbose:
+            click.echo(f"Error executing command '{command}': {e}", err=True)
+            import traceback
+            traceback.print_exc()
+        else:
+            click.echo(f"Error: {e}", err=True)
+        ctx.exit(1)
 
 
 # ============================================================================
@@ -982,7 +1052,7 @@ def _execute_command(ctx: click.Context, command: Optional[str]) -> None:
 # ============================================================================
 
 
-def _run_fix_issues(**kwargs: Any) -> None:
+async def _run_fix_issues(**kwargs: Any) -> None:
     """Run the fix_issues command with command switching support."""
     console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
 
@@ -991,19 +1061,19 @@ def _run_fix_issues(**kwargs: Any) -> None:
         dry_run_value = 1 if kwargs.get("dry_run", False) else 0
 
         # Load and validate configuration
-        auth_config, llm_config, parameters = _load_and_validate_config(
+        auth_config, llm_config, parameters = await _load_and_validate_config(
             use_predefined=True
         )
 
         fix_params = display_configuration(parameters, dry_run_value, apply_value)
 
         # Confirm before proceeding
-        if not smart_confirm("Proceed with these settings?", default=True):
+        if not await smart_confirm("Proceed with these settings?", default=True):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
         # Process issues
-        _process_and_fix_issues(
+        await _process_and_fix_issues(
             auth_config,
             llm_config,
             fix_params.get("branch", ""),
@@ -1014,45 +1084,16 @@ def _run_fix_issues(**kwargs: Any) -> None:
 
     except SwitchCommandException:
         console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
+        traceback.print_exc()
         raise  # Re-raise to be caught by interactive mode loop
 
 
-def display_configuration(
-    parameters: Dict[str, Any], dry_run: int, apply: int
-) -> Dict[str, Any]:
-    console.print("[bold]Configuration:[/bold]")
-    pull_request = parameters.get("pull_request", 0)
-    branch = parameters.get("branch", "")
-    if isinstance(pull_request, int) and pull_request > 0:
-        console.print(f"  Pull Request: [cyan]{pull_request}[/cyan]")
-    elif branch:
-        console.print(f"  Branch: [cyan]{branch}[/cyan]")
-    apply_value = apply if apply is not None else parameters.get("apply", 0)
-    console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
-    console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
-    console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
-
-    fix_params = {
-        "pull_request": pull_request,
-        "branch": branch,
-        "max_fixes": parameters.get("max_fixes", 0),
-        "types_list": _validate_issue_types(parameters.get("types", "")),
-        "severities_list": _validate_severities(parameters.get("severities", "")),
-        "apply": apply_value,
-        "dry_run": dry_run,
-        "exclude_rules": parameters.get("exclude_rules", None),
-        "create_backup": 0,
-    }
-
-    return fix_params
-
-
-def _run_fix_security_issues(**kwargs: Any) -> None:
+async def _run_fix_security_issues(**kwargs: Any) -> None:
     """Run the fix_security_issues command with command switching support."""
     console.print("\n[bold cyan]🔒 Fix Security Issues[/bold cyan]\n")
 
     try:
-        auth_config, llm_config, parameters = _load_and_validate_config(
+        auth_config, llm_config, parameters = await _load_and_validate_config(
             use_predefined=True
         )
 
@@ -1068,11 +1109,11 @@ def _run_fix_security_issues(**kwargs: Any) -> None:
 
         fix_params = display_configuration(parameters, dry_run_value, apply_value)
 
-        if not smart_confirm("Proceed with security issue fixing?", default=True):
+        if not await smart_confirm("Proceed with security issue fixing?", default=True):
             console.print("[yellow]Cancelled[/yellow]")
             return
 
-        _process_and_fix_issues(
+        await _process_and_fix_issues(
             auth_config,
             llm_config,
             fix_params.get("branch", ""),
@@ -1086,13 +1127,13 @@ def _run_fix_security_issues(**kwargs: Any) -> None:
         raise
 
 
-def _run_analyze(**kwargs: Any) -> None:
+async def _run_analyze(**kwargs: Any) -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
     try:
         # Load and validate configuration
-        auth_config, _, parameters = _load_and_validate_config(use_predefined=True)
+        auth_config, _, parameters = await _load_and_validate_config(use_predefined=True)
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1144,13 +1185,13 @@ def _run_analyze(**kwargs: Any) -> None:
         raise
 
 
-def _run_inspect() -> None:
+async def _run_inspect() -> None:
     """Run the inspect command."""
     console.print("\n[bold cyan]🔍 Inspect Local Project[/bold cyan]\n")
 
     try:
         # Use helper instead of inline code
-        auth_config, _, _ = _load_and_validate_config(use_predefined=True)
+        auth_config, _, _ = await _load_and_validate_config(use_predefined=True)
 
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
         analysis = analyzer.analyze_project_directory(str(auth_config.project_path))
@@ -1187,14 +1228,14 @@ def _run_inspect() -> None:
 # ============================================================================
 
 
-def _load_and_validate_config(
+async def _load_and_validate_config(
     use_predefined: bool = False,
 ) -> Tuple[AuthConfig, LLMConfig, Dict[str, Any]]:
     """Load and validate configuration with command switching support."""
     console.print("[dim]Loading configuration...[/dim]")
     manager, _, _, provider_manager, _, config_service = _initialize_managers()
 
-    auth_config_dict = config_service.load_auth_config()
+    auth_config_dict = await config_service.load_auth_config()
 
     if not auth_config_dict:
         console.print(constant.AUTHENTICATION_NOT_FOUND)
@@ -1211,19 +1252,19 @@ def _load_and_validate_config(
         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
         raise click.Abort()
     # Load LLM config
-    llm_config = config_service.load_llm_config(manager)
+    llm_config = await config_service.load_llm_config(manager)
     if not llm_config:
         console.print("[red]❌ No LLM providers configured[/red]")
         raise click.Abort()
     if use_predefined:
-        branch, pull_request = provider_manager.branch_or_pr()
+        branch, pull_request = await provider_manager.branch_or_pr()
     else:
-        branch, pull_request = provider_manager.branch_or_pr_prompt()
+        branch, pull_request = await provider_manager.branch_or_pr_prompt()
 
     if not branch and not pull_request:
         console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
         raise click.Abort()
-    params = manager.get_value("configuration") or {}
+    params = await manager.get_value("configuration") or {}
     if params.get("exclude_rules"):
         params["exclude_rules"] = str(params["exclude_rules"]).split(",")
 
@@ -1248,7 +1289,36 @@ def _validate_severities(severity_str: Optional[str]) -> Optional[List[str]]:
     return InputValidator.validate_severities(severity_str)
 
 
-def _process_and_fix_issues(
+def display_configuration(
+    parameters: Dict[str, Any], dry_run: int, apply: int
+) -> Dict[str, Any]:
+    console.print("[bold]Configuration:[/bold]")
+    pull_request = parameters.get("pull_request", 0)
+    branch = parameters.get("branch", "")
+    if isinstance(pull_request, int) and pull_request > 0:
+        console.print(f"  Pull Request: [cyan]{pull_request}[/cyan]")
+    elif branch:
+        console.print(f"  Branch: [cyan]{branch}[/cyan]")
+    apply_value = apply if apply is not None else parameters.get("apply", 0)
+    console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
+    console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
+    console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
+
+    fix_params = {
+        "pull_request": pull_request,
+        "branch": branch,
+        "max_fixes": parameters.get("max_fixes", 0),
+        "types_list": _validate_issue_types(parameters.get("types", "")),
+        "severities_list": _validate_severities(parameters.get("severities", "")),
+        "apply": apply_value,
+        "dry_run": dry_run,
+        "exclude_rules": parameters.get("exclude_rules", None),
+        "create_backup": 0
+    }
+
+    return fix_params
+
+async def _process_and_fix_issues(
     auth_config: AuthConfig,
     llm_config: LLMConfig,
     branch: Optional[str],
@@ -1296,7 +1366,7 @@ def _process_and_fix_issues(
     total_issues = sum(len(issue_list) for issue_list in issues.values())
 
     console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    _process_files_with_issues(
+    await _process_files_with_issues(
         issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
     )
     remove_tmp_files(tmp_path)
@@ -1319,7 +1389,7 @@ def _initialize_fix_services(
     }
 
 
-def _process_files_with_issues(
+async def _process_files_with_issues(
     issues_by_file: Dict[str, List[Any]],
     services: Dict[str, Any],
     auth_config: AuthConfig,
@@ -1334,18 +1404,18 @@ def _process_files_with_issues(
     """
 
     md_file_path = (
-        Path(str(auth_config.project_path))
-        / f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+            Path(str(auth_config.project_path))
+            / f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
     )
     if issue_type == IssueType.SECURITY:
-        _process_security_issues(
+        await _process_security_issues(
             issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path
         )
     else:
         issues_by_rule_nested = {
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
-        _process_regular_issues(
+        await _process_regular_issues(
             issues_by_rule_nested,
             services,
             auth_config,
@@ -1355,7 +1425,7 @@ def _process_files_with_issues(
         )
 
 
-def _process_regular_issues(
+async def _process_regular_issues(
     issues_by_rule: Dict[str, Dict[str, List[Any]]],
     services: Dict[str, Any],
     auth_config: AuthConfig,
@@ -1376,7 +1446,7 @@ def _process_regular_issues(
             f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]"
         )
 
-        success = _process_issues_for_rule(
+        success = await _process_issues_for_rule(
             rule_key,
             issues_list,
             services,
@@ -1390,7 +1460,7 @@ def _process_regular_issues(
             console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
 
 
-def _process_issues_for_rule(
+async def _process_issues_for_rule(
     rule_key: str,
     issues_list: List[Any],
     services: Dict[str, Any],
@@ -1410,7 +1480,7 @@ def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-        _process_single_fix(
+        await _process_single_fix(
             issues=[issue],
             services=services,
             auth_config=auth_config,
@@ -1421,13 +1491,13 @@ def _process_issues_for_rule(
             tmp_path=tmp_path,
         )
 
-        if not _should_continue_to_next_issue(idx, total_issues):
+        if not await _should_continue_to_next_issue(idx, total_issues):
             return False  # Stop processing
 
     return True  # Continue to next rule
 
 
-def _process_single_fix(
+async def _process_single_fix(
     issues: List[Any],
     services: Dict[str, Any],
     auth_config: AuthConfig,
@@ -1440,7 +1510,7 @@ def _process_single_fix(
     """
     Generate and handle a single fix.
     """
-    fixes = _generate_fix_for_file(
+    fixes = await _generate_fix_for_file(
         issues,
         services,
         auth_config,
@@ -1452,12 +1522,12 @@ def _process_single_fix(
 
     if fixes:
         for fix in fixes:
-            handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
+            await handle_fix(fix, issues, services["fixer"], auth_config, fix_params)
     else:
         console.print("[yellow]No fix could be generated[/yellow]")
 
 
-def _process_security_issues(
+async def _process_security_issues(
     issues_by_file: Dict[str, List[Any]],
     services: Dict[str, Any],
     auth_config: AuthConfig,
@@ -1475,7 +1545,7 @@ def _process_security_issues(
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
         for idx_new, issue in enumerate(issues, 1):
-            _process_single_fix(
+            await _process_single_fix(
                 issues=[issue],
                 services=services,
                 auth_config=auth_config,
@@ -1486,16 +1556,16 @@ def _process_security_issues(
                 tmp_path=tmp_path,
             )
 
-            if not _should_continue_to_next_issue(idx, total_files):
+            if not await _should_continue_to_next_issue(idx, total_files):
                 break
 
 
-def handle_fix(
-    fix: FixSuggestion,
-    issues: List[Any],
-    fixer: LLMFixer,
-    auth_config: AuthConfig,
-    fix_params: Dict[str, Any],
+async def handle_fix(
+        fix: FixSuggestion,
+        issues: List[Any],
+        fixer: LLMFixer,
+        auth_config: AuthConfig,
+        fix_params: Dict[str, Any],
 ) -> None:
     """
     Handle a generated fix (apply or skip).
@@ -1504,7 +1574,7 @@ def handle_fix(
     _display_fix_preview(fix, issues)
 
     if fix_params["apply"]:
-        result = fixer.apply_fixes_with_validation(
+        result = await fixer.apply_fixes_with_validation(
             fixes=[fix],
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
@@ -1520,7 +1590,7 @@ def handle_fix(
         console.print(f"[dim]{constant.SKIPPED}[/dim]")
 
 
-def _generate_fix_for_file(
+async def _generate_fix_for_file(
     issues: List[Any],
     services: Dict[str, Any],
     auth_config: AuthConfig,
@@ -1537,7 +1607,7 @@ def _generate_fix_for_file(
 
         file_md_str = str(md_file_path) if md_file_path else ""
         fixer: Any = services["fixer"]
-        result: Optional[List[FixSuggestion]] = fixer.generate_fix_by_file(
+        result: Optional[List[FixSuggestion]] = await fixer.generate_fix_by_file(
             issues=issues,
             project_path=Path(str(auth_config.project_path)),
             tmp_path=Path(tmp_path),
@@ -1547,8 +1617,8 @@ def _generate_fix_for_file(
 
 
 def _collect_rule_information(
-    issues: List[Any],
-    ruler: RuleAnalyzer,
+        issues: List[Any],
+        ruler: RuleAnalyzer,
 ) -> Dict[str, Any]:
     """Collect rule information for all issues."""
     rule_info_list = {}
@@ -1558,12 +1628,12 @@ def _collect_rule_information(
     return rule_info_list
 
 
-def _should_continue_to_next_issue(current_idx: int, total_files: int) -> bool:
+async def _should_continue_to_next_issue(current_idx: int, total_files: int) -> bool:
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
 
-    if not smart_confirm("Continue to next issue?", default=True):
+    if not await smart_confirm("Continue to next issue?", default=True):
         console.print("[yellow]Stopped processing remaining files[/yellow]")
         return False
 
@@ -1651,12 +1721,12 @@ def _display_fix_results(result: FixResult) -> None:
 
 
 def _fetch_issues_by_type(
-    analyzer: SonarCloudAnalyzer,
-    auth_config: AuthConfig,
-    branch: Optional[str],
-    pull_request: Optional[str],
-    fix_params: Dict[str, Any],
-    issue_type: IssueType,
+        analyzer: SonarCloudAnalyzer,
+        auth_config: AuthConfig,
+        branch: Optional[str],
+        pull_request: Optional[str],
+        fix_params: Dict[str, Any],
+        issue_type: IssueType,
 ) -> Dict[str, List[Any]]:
     """Fetch issues from SonarCloud based on issue type."""
     pr_number = _safe_convert_pr(pull_request) if pull_request else 0
@@ -1681,6 +1751,8 @@ def _fetch_issues_by_type(
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
             )
+
+
 
 
 if __name__ == "__main__":

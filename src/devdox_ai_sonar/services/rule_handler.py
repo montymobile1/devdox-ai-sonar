@@ -144,7 +144,7 @@ class AsyncToSyncHandler(RuleHandler):
         """Check if this is the async-to-sync conversion rule."""
         return rule == self.RULE_ID
 
-    def generate_fixes(
+    async def generate_fixes(
         self,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         context: FixContext,
@@ -185,7 +185,7 @@ class AsyncToSyncHandler(RuleHandler):
 
             # Step 3: Analyze call sites
             analyzer = AsyncConversionAnalyzer(function_info["name"], project_path)
-            analysis = analyzer.analyze()
+            analysis = await analyzer.analyze()
 
             # Step 4: Generate code blocks for all awaited call sites
             caller_blocks = self._create_caller_blocks(analysis, function_info)

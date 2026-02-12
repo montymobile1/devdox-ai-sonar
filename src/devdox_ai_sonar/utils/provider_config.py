@@ -86,9 +86,9 @@ class ProviderConfigManager:
         self.ui = ui
         self.validator = validator
 
-    def get_available_providers(self) -> List[str]:
+    async def get_available_providers(self) -> List[str]:
         """Get list of providers not yet configured."""
-        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        existing_providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         existing_providers: List[Dict[str, Any]] = (
             existing_providers_value if existing_providers_value else []
@@ -96,9 +96,9 @@ class ProviderConfigManager:
         existing_names = {p["name"] for p in existing_providers}
         return [p for p in ProviderType.choices() if p not in existing_names]
 
-    def get_default_provider(self) -> Optional[str]:
+    async def get_default_provider(self) -> Optional[str]:
         """Get default provider name."""
-        value = self.config_manager.get_value("llm.default_provider")
+        value = await self.config_manager.get_value("llm.default_provider")
         if value is None:
             return None
         if not isinstance(value, str):
@@ -107,9 +107,9 @@ class ProviderConfigManager:
             )
         return value
 
-    def get_existing_providers(self) -> List[str]:
+    async def get_existing_providers(self) -> List[str]:
         """Get list of already configured providers."""
-        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        existing_providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         existing_providers: List[Dict[str, Any]] = (
             existing_providers_value if existing_providers_value else []
@@ -158,10 +158,10 @@ class ProviderConfigManager:
 
         return {"config": provider_config, "set_as_default": set_as_default}
 
-    def update_existing_provider(self, provider_name: str) -> bool:
+    async def update_existing_provider(self, provider_name: str) -> bool:
         """Update an existing provider's configuration."""
         # Find provider
-        providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         providers: List[Dict[str, Any]] = providers_value if providers_value else []
         provider = next((p for p in providers if p["name"] == provider_name), None)
@@ -289,21 +289,21 @@ class ProviderConfigManager:
 
         return result
 
-    def branch_or_pr(self) -> Tuple[str, int]:
+    async def branch_or_pr(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
-        clone_type = self.config_manager.get_value(CONFIG_CLONE_TYPE)
-        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
-        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
+        clone_type = await self.config_manager.get_value(CONFIG_CLONE_TYPE)
+        default_pull = await self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_branch = await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
         if clone_type == "pr":
             default_branch = ""
         else:
             default_pull = 0
         return default_branch, default_pull
 
-    def get_params(self) -> Any:
-        return self.config_manager.get_value("sonar.configuration")
+    async def get_params(self) -> Any:
+        return await self.config_manager.get_value("sonar.configuration")
 
-    def branch_or_pr_prompt(self) -> Tuple[str, int]:
+    async def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
         console.print("\n[bold]Choose what to analyze:[/bold]")
 
@@ -312,11 +312,11 @@ class ProviderConfigManager:
         ):
             return self._handle_pull_request_selection()
 
-        return self._handle_branch_selection()
+        return await self._handle_branch_selection()
 
-    def _handle_branch_selection(self) -> Tuple[str, int]:
+    async def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""
-        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
+        default_branch = await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
         branch_input = Prompt.ask("Branch name", default=default_branch)
 
         try:
