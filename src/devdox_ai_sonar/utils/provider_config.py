@@ -346,7 +346,7 @@ class ProviderConfigManager:
 
     async def _handle_pull_request_selection(self) -> Tuple[str, int]:
         """Handle pull request selection workflow."""
-        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_pull = await self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         pr_default = str(default_pull) if default_pull else "0"
         pr_input = Prompt.ask("Pull Request number", default=pr_default)
 
