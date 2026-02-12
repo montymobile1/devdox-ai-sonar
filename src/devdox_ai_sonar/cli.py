@@ -366,7 +366,7 @@ async def _configure_sonarcloud(
         console.print("[red]❌ SonarCloud configuration cancelled[/red]")
         return False
 
-    save_success = config_service.save_config(
+    save_success = await config_service.save_config(
         token=sonar_config.token,
         organization=sonar_config.organization,
         project=sonar_config.project,
