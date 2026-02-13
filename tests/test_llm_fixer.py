@@ -4914,6 +4914,44 @@ class TestWriteExplaination:
         assert "existing content" in content
         assert "new content" in content
 
+    @pytest.mark.parametrize("empty_explanation", ["", "   ", "\t\n  "])
+    def test_empty_explanation_omitted_from_markdown(self, fixer, tmp_path, empty_explanation):
+        """Test that empty or whitespace-only EXPLANATION is omitted from rendered markdown."""
+        md_file = tmp_path / "output.md"
+        fix_response = Mock()
+        fix_response.EXPLANATION = empty_explanation
+        fix_response.FIXED_CODE_BLOCKS = []
+
+        issue = Mock()
+        issue.rule = "python:S1"
+        issue.severity = "MINOR"
+        issue.message = "msg"
+        issue.file_path = "t.py"
+        issue.line = 1
+
+        fixer.write_explaination(md_file, fix_response, [issue], "code")
+        content = md_file.read_text()
+        assert "Explanation" not in content
+
+    def test_non_empty_explanation_included_in_markdown(self, fixer, tmp_path):
+        """Test that a non-empty EXPLANATION is rendered in the markdown."""
+        md_file = tmp_path / "output.md"
+        fix_response = Mock()
+        fix_response.EXPLANATION = "This fix addresses the root cause"
+        fix_response.FIXED_CODE_BLOCKS = []
+
+        issue = Mock()
+        issue.rule = "python:S1"
+        issue.severity = "MINOR"
+        issue.message = "msg"
+        issue.file_path = "t.py"
+        issue.line = 1
+
+        fixer.write_explaination(md_file, fix_response, [issue], "code")
+        content = md_file.read_text()
+        assert "Explanation" in content
+        assert "This fix addresses the root cause" in content
+
 class TestGenerateFixByFile:
     """Cover generate_fix_by_file orchestration."""
 

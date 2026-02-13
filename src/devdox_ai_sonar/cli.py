@@ -1579,13 +1579,14 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
 
     console.print("\n[bold]Changes:[/bold]")
 
-    console.print(
-        Panel(
-            fix.explanation,
-            title="Explanation of changed",
-            border_style="green",
+    if fix.explanation and fix.explanation.strip():
+        console.print(
+            Panel(
+                fix.explanation,
+                title="Explanation of changed",
+                border_style="green",
+            )
         )
-    )
 
 
 def _display_project_header(result: AnalysisResult) -> None:
