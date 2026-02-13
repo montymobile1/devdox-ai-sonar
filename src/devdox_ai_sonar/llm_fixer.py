@@ -297,7 +297,7 @@ class LLMFixer:
             # Step 3: Get appropriate handler and generate fix response
             handler = rule_registry.get_handler(issues[0].rule)
 
-            fix_response_lst = handler.generate_fixes(
+            fix_response_lst = await handler.generate_fixes(
                 issues,
                 context,
                 project_path,

@@ -4974,7 +4974,7 @@ class TestGenerateFixByFile:
 
         mock_ctx = Mock()
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = None
+        mock_handler.generate_fixes = AsyncMock(return_value=None)
         mock_handler.MOIDY_LINE_RANGE = False
 
         with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
@@ -5003,7 +5003,7 @@ class TestGenerateFixByFile:
         mock_fix_response = Mock()
         mock_fix_response.FIXED_CODE_BLOCKS = []
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = [mock_fix_response]
+        mock_handler.generate_fixes = AsyncMock(return_value=[mock_fix_response])
         mock_handler.MOIDY_LINE_RANGE = False
 
         mock_suggestion = Mock()
@@ -5068,7 +5068,7 @@ class TestGenerateFixByFile:
         mock_ctx.context_dict = {"context": "code"}
         mock_fix_response = Mock()
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = [mock_fix_response]
+        mock_handler.generate_fixes = AsyncMock(return_value=[mock_fix_response])
         mock_handler.MOIDY_LINE_RANGE = False
 
         with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
