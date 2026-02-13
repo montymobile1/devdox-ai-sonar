@@ -737,7 +737,7 @@ class LLMFixer:
 
                 return response.parsed  # type: ignore[no-any-return]
 
-            elif self.provider == "togetherai":
+            elif self.provider in ("togetherai", "openrouter"):
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -763,35 +763,7 @@ class LLMFixer:
                 print(f"Output tokens: {output_tokens}")
                 print(f"Total tokens: {total_tokens}")
 
-                return self._parse_togetherai_response(response)
-
-            elif self.provider == "openrouter":
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=8000,
-                    temperature=0.08,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "sonar_fix_response",
-                            "schema": SonarFixResponse.model_json_schema(),
-                            "strict": True,
-                        },
-                    },
-                )
-                input_tokens = response.usage.prompt_tokens
-                output_tokens = response.usage.completion_tokens
-                total_tokens = response.usage.total_tokens
-
-                print(f"Input tokens: {input_tokens}")
-                print(f"Output tokens: {output_tokens}")
-                print(f"Total tokens: {total_tokens}")
-
-                return self._parse_openrouter_response(response)
+                return self._parse_chat_completion_response(response)
             else:
                 logger.error(f"Unknown provider: {self.provider}")
                 return None
@@ -1287,23 +1259,18 @@ class LLMFixer:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
 
-    def _parse_togetherai_response(self, response: Any) -> Optional[SonarFixResponse]:
-        """Parse Together API response."""
+    def _parse_chat_completion_response(self, response: Any) -> Optional[SonarFixResponse]:
+        """Parse an OpenAI-compatible chat completion response (used by TogetherAI and OpenRouter)."""
         try:
             content = response.choices[0].message.content
             return self.parse_llm_response(content)
         except Exception as e:
-            logger.error(f"Error parsing Together response: {e}", exc_info=True)
+            logger.error(f"Error parsing {self.provider} response: {e}", exc_info=True)
             return None
 
-    def _parse_openrouter_response(self, response: Any) -> Optional[SonarFixResponse]:
-        """Parse OpenRouter API response."""
-        try:
-            content = response.choices[0].message.content
-            return self.parse_llm_response(content)
-        except Exception as e:
-            logger.error(f"Error parsing OpenRouter response: {e}", exc_info=True)
-            return None
+    # Aliases for backward compatibility and test clarity
+    _parse_togetherai_response = _parse_chat_completion_response
+    _parse_openrouter_response = _parse_chat_completion_response
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
         """Fallback extraction using regex for malformed JSON."""
