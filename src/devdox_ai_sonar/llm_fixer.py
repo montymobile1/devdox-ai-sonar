@@ -124,11 +124,11 @@ class LLMFixer:
             autoescape=select_autoescape(["html", "xml"]),
         )
 
-    async def read_file_async(self, file_path: str) -> str:
+    async def read_file_async(self, file_path: str | Path) -> str:
         """Async version."""
         return await self.file_reader.read_text(file_path)
 
-    def read_file(self, file_path: str) -> str:
+    def read_file(self, file_path: str | Path) -> str:
         """Sync version (backwards compatible)."""
         return asyncio.run(self.read_file_async(file_path))
 
