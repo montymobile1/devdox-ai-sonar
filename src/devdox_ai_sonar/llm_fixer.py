@@ -29,7 +29,6 @@ from devdox_ai_sonar.models.sonar import (
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
     write_file_lines,
-    read_file_lines,
     normalize_indentation,
     remove_tmp_files,
 )
@@ -272,7 +271,9 @@ class LLMFixer:
 
         try:
             # Step 1: Validate issues and extract file information
-            validation = await extractor.validate_issue_group(issues, tmp_path, project_path)
+            validation = await extractor.validate_issue_group(
+                issues, tmp_path, project_path
+            )
 
             if not validation.is_valid:
                 logger.error(f"Validation failed: {validation.error}")
@@ -580,7 +581,9 @@ class LLMFixer:
         for file_path_str, file_fixes in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
-                success, _ = await self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success, _ = await self._apply_fixes_to_file(
+                    file_path, file_fixes, dry_run
+                )
                 if success:
                     result.successful_fixes.extend(file_fixes)
 
@@ -1706,7 +1709,9 @@ class LLMFixer:
     async def _process_single_file(
         self,
         file_path: Path,
-        file_fix_pairs: List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]],
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
         result: FixResult,
         validator: Optional[FixValidator],
         dry_run: bool,
@@ -1728,8 +1733,13 @@ class LLMFixer:
 
         if validator:
             await self._handle_failed_fixes_with_validator(
-                file_path, file_fix_pairs, new_fixes, original_content,
-                result, validator, dry_run,
+                file_path,
+                file_fix_pairs,
+                new_fixes,
+                original_content,
+                result,
+                validator,
+                dry_run,
             )
         else:
             result.failed_fixes.extend(
@@ -1748,7 +1758,9 @@ class LLMFixer:
     async def _handle_failed_fixes_with_validator(
         self,
         file_path: Path,
-        file_fix_pairs: List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]],
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
         new_fixes: List[Any],
         original_content: str,
         result: FixResult,
@@ -1777,11 +1789,18 @@ class LLMFixer:
                     remove_tmp_files(str(file_path_tmp))
 
                 validation_result = validator.validate_fix(
-                    fix, issue, current_content, new_error_msg=reason_msg,
+                    fix,
+                    issue,
+                    current_content,
+                    new_error_msg=reason_msg,
                 )
 
                 await self._process_validation_result(
-                    validation_result, fix, file_path, result, dry_run,
+                    validation_result,
+                    fix,
+                    file_path,
+                    result,
+                    dry_run,
                 )
 
             except Exception as e:
@@ -1844,7 +1863,9 @@ class LLMFixer:
             return
 
         improved_success, _ = await self._apply_fixes_to_file(
-            file_path, [validation_result.final_fix], dry_run,
+            file_path,
+            [validation_result.final_fix],
+            dry_run,
         )
         if improved_success:
             result.successful_fixes.append(validation_result.final_fix)
@@ -1912,7 +1933,11 @@ class LLMFixer:
             try:
                 file_path = Path(file_path_str)
                 await self._process_single_file(
-                    file_path, file_fix_pairs, result, validator, dry_run,
+                    file_path,
+                    file_fix_pairs,
+                    result,
+                    validator,
+                    dry_run,
                 )
             except Exception as e:
                 result.failed_fixes.extend(
@@ -2047,8 +2072,7 @@ class LLMFixer:
         """
         try:
             # Read file content
-            file_lines =  await self.file_reader.read_lines(file_path)
-
+            file_lines = await self.file_reader.read_lines(file_path)
 
             # Extract problem line content
             # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing

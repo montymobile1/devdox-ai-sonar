@@ -316,7 +316,9 @@ class ProviderConfigManager:
 
     async def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""
-        default_branch = await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
+        default_branch = (
+            await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
+        )
         branch_input = Prompt.ask("Branch name", default=default_branch)
 
         try:

@@ -7,7 +7,6 @@ from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 import asyncio
 import functools
 import traceback
-import sys
 
 from rich.console import Console
 import inquirer
@@ -32,7 +31,6 @@ from devdox_ai_sonar.utils.file_indentation import (
     generate_tmp_path,
 )
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
-from devdox_ai_sonar.utils.exceptions import ValidationError
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
 from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig, LLMConfig
 
@@ -58,9 +56,11 @@ console = Console()
 
 def async_command(f):
     """Decorator to run async functions with Click."""
+
     @functools.wraps(f)
     def wrapper(*args, **kwargs):
         return asyncio.run(f(*args, **kwargs))
+
     return wrapper
 
 
@@ -82,10 +82,10 @@ def _safe_convert_pr(pull_request: str | int | None) -> int:
     """Safely convert PR string to integer."""
     if not pull_request:
         return 0
-    
+
     if isinstance(pull_request, int):
         return pull_request
-    
+
     try:
         pr_int = int(pull_request.strip())
         if pr_int < 0:
@@ -95,7 +95,6 @@ def _safe_convert_pr(pull_request: str | int | None) -> int:
     except (ValueError, AttributeError):
         console.print(f"[yellow]⚠ Invalid PR number '{pull_request}', using 0[/yellow]")
         return 0
-
 
 
 def _fallback_command_selector() -> Optional[str]:
@@ -130,9 +129,6 @@ def _fallback_command_selector() -> Optional[str]:
     if choice in commands:
         return commands[choice][0]
     return None
-
-
-
 
 
 # ============================================================================
@@ -282,9 +278,6 @@ def _fallback_command_selector() -> Optional[str]:
     if choice in commands:
         return commands[choice][0]
     return None
-
-
-
 
 
 def _select_existing_ui(
@@ -443,7 +436,9 @@ async def _handle_provider_configuration(
     if not result:
         return False
 
-    await manager.add_provider(result["config"], set_as_default=result["set_as_default"])
+    await manager.add_provider(
+        result["config"], set_as_default=result["set_as_default"]
+    )
     available_providers.remove(provider_name)
     console.print(
         f"\n[green]✓ {provider_name.upper()} configured successfully[/green]\n"
@@ -463,7 +458,7 @@ async def change_max_fix(
         default_max_fixes: Default/maximum allowed value
     """
 
-    max_fixes_str = await  smart_prompt(message, default=str(max_fixes))
+    max_fixes_str = await smart_prompt(message, default=str(max_fixes))
 
     try:
         # Handle both str and List[str] return types
@@ -489,7 +484,6 @@ async def change_max_fix(
         )
 
     await manager.set_value("configuration.max_fixes", new_max_fixes)
-
 
 
 def _should_stop_configuring(available_providers: list) -> bool:
@@ -603,7 +597,9 @@ async def init_config(
             )
             raise click.Abort()
 
-        await _configure_providers_loop(provider_manager, manager, ui, available_providers)
+        await _configure_providers_loop(
+            provider_manager, manager, ui, available_providers
+        )
         manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
@@ -633,7 +629,9 @@ async def add_provider() -> None:
             raise click.Abort()
 
         _display_operation_header("🚀 ADD NEW PROVIDER")
-        await _configure_providers_loop(provider_manager, manager, ui, available_providers)
+        await _configure_providers_loop(
+            provider_manager, manager, ui, available_providers
+        )
         manager.save_config(create_backup=False)
         _display_completion_message()
 
@@ -662,7 +660,6 @@ async def update_provider() -> None:
             raise click.Abort()
 
         if await provider_manager.update_existing_provider(chosen_provider):
-
             manager.save_config(create_backup=False)
             console.print(
                 f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n"
@@ -671,9 +668,9 @@ async def update_provider() -> None:
             console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
         _display_completion_message()
 
-
     except Exception as e:
         _handle_cli_error(e)
+
 
 # ============================================================================
 # MAIN ENTRY POINT
@@ -752,10 +749,7 @@ async def main(  # ← Async main
 
     await init_config()
 
-
-
     await _run_interactive_mode_async(ctx)
-
 
 
 async def _run_interactive_mode_async(ctx: click.Context) -> None:
@@ -772,7 +766,6 @@ async def _execute_interactive_iteration_async(ctx: click.Context) -> bool:
         True if should exit the loop, False to continue
     """
     try:
-
         return await _process_interactive_command_async(ctx)
     except SwitchCommandException:
         _handle_command_switch()
@@ -816,8 +809,6 @@ def _exit_application() -> None:
     sys.exit(0)
 
 
-
-
 def _should_continue_to_menu() -> bool:
     """Ask user if they want to return to main menu."""
     result = smart_confirm(
@@ -841,7 +832,7 @@ async def _handle_keyboard_interrupt() -> bool:
     console.print("\n\n[yellow]⚠ Interrupted by user[/yellow]")
 
     try:
-        if await  smart_confirm("Exit application?", default=False, allow_switch=False):
+        if await smart_confirm("Exit application?", default=False, allow_switch=False):
             sys.exit(0)
         return False
 
@@ -888,7 +879,7 @@ async def change_field(
     multiple: bool = True,
     allow_empty: bool = False,
 ) -> Optional[Union[str, List[str]]]:
-    types_input = await  smart_prompt(
+    types_input = await smart_prompt(
         message, default=default_value, choices=choices, multiple=multiple
     )
 
@@ -904,7 +895,7 @@ async def change_field(
 
 
 async def change_parameters(
-        types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
+    types: Optional[str] = None, severity: Optional[str] = None, **kwargs: Any
 ) -> None:
     """CLI for config management"""
     try:
@@ -958,9 +949,7 @@ async def change_parameters(
             field=constant.CONFIGURATION_APPLY,
             message="Apply fixes of SonarQube (press Enter to skip)",
             default_value=(
-                current_apply
-                if current_apply is not None
-                else kwargs.get("apply", 0)
+                current_apply if current_apply is not None else kwargs.get("apply", 0)
             ),  # optional
             choices=formatted_choices,
             multiple=False,
@@ -998,6 +987,7 @@ def _exit_application() -> None:
     console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
     sys.exit(0)
 
+
 async def _should_continue_to_menu() -> bool:
     """Ask user if they want to return to main menu."""
     result = await smart_confirm(
@@ -1006,8 +996,9 @@ async def _should_continue_to_menu() -> bool:
     return result
 
 
-
-async def _execute_interactive_command_async(ctx: click.Context, command: Optional[str]) -> None:
+async def _execute_interactive_command_async(
+    ctx: click.Context, command: Optional[str]
+) -> None:
     """Execute a command in interactive mode."""
     console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
     await _execute_command_async(ctx, command)
@@ -1029,11 +1020,11 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         elif command == "inspect":
             await _run_inspect()
         elif command == "add_provider":
-           await add_provider()  # Sync command
+            await add_provider()  # Sync command
         elif command == "update_provider":
             await update_provider()  # Sync command
         elif command == "change_parameters":
-           await change_parameters(**options)  # Sync command
+            await change_parameters(**options)  # Sync command
         else:
             click.echo(f"Unknown command: {command}", err=True)
             ctx.exit(1)
@@ -1042,6 +1033,7 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         if verbose:
             click.echo(f"Error executing command '{command}': {e}", err=True)
             import traceback
+
             traceback.print_exc()
         else:
             click.echo(f"Error: {e}", err=True)
@@ -1134,7 +1126,9 @@ async def _run_analyze() -> None:
 
     try:
         # Load and validate configuration
-        auth_config, _, parameters = await _load_and_validate_config(use_predefined=True)
+        auth_config, _, parameters = await _load_and_validate_config(
+            use_predefined=True
+        )
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
 
@@ -1164,7 +1158,6 @@ async def _run_analyze() -> None:
         except (ValueError, IndexError):
             console.print("[red]Invalid limit, using default[/red]")
             limit = settings.MAX_FIXES_LIMIT
-
 
         # Fetch and display results
         analyzer = SonarCloudAnalyzer(auth_config.token, auth_config.organization)
@@ -1315,10 +1308,11 @@ def display_configuration(
         "apply": apply_value,
         "dry_run": dry_run,
         "exclude_rules": parameters.get("exclude_rules", None),
-        "create_backup": 0
+        "create_backup": 0,
     }
 
     return fix_params
+
 
 async def _process_and_fix_issues(
     auth_config: AuthConfig,
@@ -1406,8 +1400,8 @@ async def _process_files_with_issues(
     """
 
     md_file_path = (
-            Path(str(auth_config.project_path))
-            / f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+        Path(str(auth_config.project_path))
+        / f"CHANGES_{issue_type.value.upper()}_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
@@ -1563,11 +1557,11 @@ async def _process_security_issues(
 
 
 async def handle_fix(
-        fix: FixSuggestion,
-        issues: List[Any],
-        fixer: LLMFixer,
-        auth_config: AuthConfig,
-        fix_params: Dict[str, Any],
+    fix: FixSuggestion,
+    issues: List[Any],
+    fixer: LLMFixer,
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
 ) -> None:
     """
     Handle a generated fix (apply or skip).
@@ -1619,8 +1613,8 @@ async def _generate_fix_for_file(
 
 
 def _collect_rule_information(
-        issues: List[Any],
-        ruler: RuleAnalyzer,
+    issues: List[Any],
+    ruler: RuleAnalyzer,
 ) -> Dict[str, Any]:
     """Collect rule information for all issues."""
     rule_info_list = {}
@@ -1723,12 +1717,12 @@ def _display_fix_results(result: FixResult) -> None:
 
 
 def _fetch_issues_by_type(
-        analyzer: SonarCloudAnalyzer,
-        auth_config: AuthConfig,
-        branch: Optional[str],
-        pull_request: Optional[str],
-        fix_params: Dict[str, Any],
-        issue_type: IssueType,
+    analyzer: SonarCloudAnalyzer,
+    auth_config: AuthConfig,
+    branch: Optional[str],
+    pull_request: Optional[str],
+    fix_params: Dict[str, Any],
+    issue_type: IssueType,
 ) -> Dict[str, List[Any]]:
     """Fetch issues from SonarCloud based on issue type."""
     pr_number = _safe_convert_pr(pull_request) if pull_request else 0
@@ -1753,8 +1747,6 @@ def _fetch_issues_by_type(
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
             )
-
-
 
 
 if __name__ == "__main__":

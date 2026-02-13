@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-import tomli
 import tomli_w
 import tomlkit
 from pydantic import BaseModel
@@ -86,7 +85,9 @@ class ConfigManager:
 
         return value
 
-    async def set_value(self, key_path: str, new_value: Any, validate: bool = True) -> None:
+    async def set_value(
+        self, key_path: str, new_value: Any, validate: bool = True
+    ) -> None:
         """
         Set a value in config using dot notation
         Example: set_value('llm.default_provider', 'anthropic')

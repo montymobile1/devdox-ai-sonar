@@ -147,7 +147,9 @@ async def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]
         config.default if isinstance(config.default, str) else None
     )
 
-    return await _questionary_select_prompt(display_message, config.choices, select_default)
+    return await _questionary_select_prompt(
+        display_message, config.choices, select_default
+    )
 
 
 async def _questionary_select_prompt(
@@ -175,7 +177,9 @@ async def _questionary_select_prompt(
     else:
         default = ""
 
-    result = await questionary.select(message, choices=choices, default=default).ask_async()
+    result = await questionary.select(
+        message, choices=choices, default=default
+    ).ask_async()
     # Ensure we return a string, not Any
     return str(result) if result is not None else ""
 
@@ -266,7 +270,9 @@ async def _confirm_with_questionary(config: ConfirmConfig) -> str:
     """
     import questionary
 
-    result = await questionary.confirm(config.message, default=config.default).ask_async()
+    result = await questionary.confirm(
+        config.message, default=config.default
+    ).ask_async()
     if result:
         return "yes"
     return "no"
