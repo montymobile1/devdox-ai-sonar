@@ -842,7 +842,7 @@ async def change_field(
     elif allow_empty and default_value:
         # User provided empty input but there was a previous value
         # This means they want to clear it - delete the property from config
-        manager.delete_value(field)
+        await manager.delete_value(field)
     return types
 
 

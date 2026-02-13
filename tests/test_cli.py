@@ -255,7 +255,7 @@ def mock_config_manager():
         # Sync methods must be Mock() to avoid returning coroutines
         mock_instance.save_config = Mock(return_value=None)
         mock_instance.create_default_config = Mock(return_value=None)
-        mock_instance.delete_value = Mock(return_value=None)
+        mock_instance.delete_value = AsyncMock(return_value=None)
         mock_instance.validate_change = Mock(return_value=None)
         mock_instance.create_backup = Mock(return_value=None)
         mock.return_value = mock_instance
@@ -658,7 +658,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = []  # No providers yet
         mock_manager.create_default_config.return_value = None
         mock_manager.load_config.return_value = None
@@ -691,7 +691,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = ['openai']  # Providers exist
 
         mock_init.return_value = (
@@ -717,7 +717,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = []
 
         mock_provider_manager = AsyncMock()
@@ -747,7 +747,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = []
 
         mock_init.return_value = (
@@ -1183,7 +1183,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1217,7 +1217,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1251,7 +1251,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1292,7 +1292,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: None,  # Not in config
@@ -1332,7 +1332,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: None,
@@ -1372,7 +1372,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             constant.CONFIGURATION_APPLY: 0,  # In config
@@ -1414,7 +1414,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.types": "BUG,CODE_SMELL",
@@ -1454,7 +1454,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.severities": "CRITICAL,BLOCKER",
@@ -1494,7 +1494,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.severities": "CRITICAL,BLOCKER",
@@ -1534,7 +1534,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1574,7 +1574,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.side_effect = lambda key: {
             "configuration.max_fixes": 10,
             "configuration.exclude_rules": "python:S3776,python:S1192",
@@ -1612,7 +1612,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1635,7 +1635,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1664,7 +1664,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1695,7 +1695,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock(side_effect=IOError("Cannot write to file"))
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1890,7 +1890,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -1934,7 +1934,7 @@ class TestConfigurationManagement:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = 10
 
         mock_provider_manager = AsyncMock()
@@ -4412,7 +4412,7 @@ class TestClickAbortPatterns:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.load_config.return_value = None
 
         mock_provider_mgr = AsyncMock()
@@ -4480,7 +4480,7 @@ class TestUpdateProviderComplete:
         manager = AsyncMock()
         manager.save_config = Mock()
         manager.create_default_config = Mock()
-        manager.delete_value = Mock()
+        manager.delete_value = AsyncMock()
         manager.load_config.return_value = None
         manager.save_config.return_value = None
         return manager
@@ -4501,7 +4501,7 @@ class TestUpdateProviderComplete:
         mock_config_manager = AsyncMock()
         mock_config_manager.save_config = Mock()
         mock_config_manager.create_default_config = Mock()
-        mock_config_manager.delete_value = Mock()
+        mock_config_manager.delete_value = AsyncMock()
         mock_config_manager.load_config.return_value = None
         mock_config_manager.save_config.return_value = None
         mock_provider_manager = AsyncMock()
@@ -4823,7 +4823,7 @@ class TestConcurrentScenarios:
         mock_manager = AsyncMock()
         mock_manager.save_config = Mock()
         mock_manager.create_default_config = Mock()
-        mock_manager.delete_value = Mock()
+        mock_manager.delete_value = AsyncMock()
         mock_manager.get_value.return_value = ['openai']
 
         mock_init.return_value = (
