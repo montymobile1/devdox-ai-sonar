@@ -3,7 +3,7 @@
 import aiofiles
 from pathlib import Path
 import tomli
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import asyncio
 import json
 from concurrent.futures import ThreadPoolExecutor
@@ -32,11 +32,12 @@ class AsyncFileReader:
         async with aiofiles.open(file_path, "r", encoding="utf-8") as f:
             return await f.readlines()
 
-    async def read_json_file(self, file_path: str | Path) -> Optional[dict]:
+    async def read_json_file(self, file_path: str | Path) -> Optional[Dict[str, Any]]:
         """Read JSON file asynchronously."""
         try:
             content = await self.read_text(file_path)
-            return json.loads(content)
+            parsed: Dict[str, Any] = json.loads(content)
+            return parsed
         except json.JSONDecodeError:
             return None
 

@@ -71,7 +71,8 @@ dev = [
     "pre-commit==3.0.0",
     "twine==4.0.0",
     "build==0.10.0",
-    "ruff==0.14.7"
+    "ruff==0.14.7",
+    "types-aiofiles==25.1.0.20251011"
 ]
 
 [project.scripts]
