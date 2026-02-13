@@ -1259,7 +1259,9 @@ class LLMFixer:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
 
-    def _parse_chat_completion_response(self, response: Any) -> Optional[SonarFixResponse]:
+    def _parse_chat_completion_response(
+        self, response: Any
+    ) -> Optional[SonarFixResponse]:
         """Parse an OpenAI-compatible chat completion response (used by TogetherAI and OpenRouter)."""
         try:
             content = response.choices[0].message.content
