@@ -54,11 +54,11 @@ from devdox_ai_sonar.config import settings
 console = Console()
 
 
-def async_command(f):
+def async_command(f: Any) -> Any:
     """Decorator to run async functions with Click."""
 
     @functools.wraps(f)
-    def wrapper(*args, **kwargs):
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
         return asyncio.run(f(*args, **kwargs))
 
     return wrapper
@@ -244,40 +244,6 @@ async def show_command_selector_async() -> Optional[str]:
 
     except KeyboardInterrupt:
         return None
-
-
-def _fallback_command_selector() -> Optional[str]:
-    """Fallback text-based command selector when questionary is not available."""
-    console.print(
-        "\n[bold cyan]═══════════════════════════════════════════════[/bold cyan]"
-    )
-    console.print(
-        "[bold cyan]   DevDox AI Sonar - Command Selection          [/bold cyan]"
-    )
-    console.print(
-        "[bold cyan]═══════════════════════════════════════════════[/bold cyan]\n"
-    )
-
-    commands = {
-        "1": ("fix_issues", "Fix Issues - Generate and apply LLM-powered fixes"),
-        "2": (
-            "fix_security_issues",
-            "Fix Security Issues - Specialized security fixes",
-        ),
-        "3": ("analyze", "Analyze Project - Display SonarCloud analysis"),
-        "4": ("inspect", "Inspect Project - Analyze local directory structure"),
-        "5": ("exit", "Exit"),
-    }
-
-    for key, (_, desc) in commands.items():
-        console.print(f"[cyan]{key}[/cyan]. {desc}")
-
-    console.print()
-    choice = console.input("[bold yellow]Select command (1-5): [/bold yellow]").strip()
-
-    if choice in commands:
-        return commands[choice][0]
-    return None
 
 
 def _select_existing_ui(
@@ -803,20 +769,6 @@ def _should_exit_interactive_mode(command: Optional[str]) -> bool:
     return command is None or command == "exit"
 
 
-def _exit_application() -> None:
-    """Exit the application with goodbye message."""
-    console.print("\n[cyan]👋 Thank you for using DevDox AI Sonar![/cyan]")
-    sys.exit(0)
-
-
-def _should_continue_to_menu() -> bool:
-    """Ask user if they want to return to main menu."""
-    result = smart_confirm(
-        constant.RETURN_TO_MAIN_MENU, default=True, allow_switch=True
-    )
-    return result
-
-
 def _handle_command_switch() -> None:
     """Handle command switching exception."""
     console.print("\n[yellow]↩ Returning to command menu...[/yellow]\n")
@@ -1000,6 +952,8 @@ async def _execute_interactive_command_async(
     ctx: click.Context, command: Optional[str]
 ) -> None:
     """Execute a command in interactive mode."""
+    if command is None:
+        return
     console.print(f"\n[bold green]▶ Running: {command}[/bold green]\n")
     await _execute_command_async(ctx, command)
     console.print("\n" + "─" * 50 + "\n")

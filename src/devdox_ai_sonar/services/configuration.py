@@ -115,6 +115,8 @@ class ConfigService:
         try:
             if self.sonar_path.exists():
                 config = await self.file_reader.read_json_file(self.sonar_path)
+                if config is None:
+                    return empty_config
                 return {
                     "token": config.get("SONAR_TOKEN"),
                     "organization": config.get("SONAR_ORG"),
