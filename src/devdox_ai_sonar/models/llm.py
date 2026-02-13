@@ -17,6 +17,7 @@ class ProviderType(str, Enum):
     OPENAI = "openai"
     GEMINI = "gemini"
     TOGETHERAI = "togetherai"
+    OPENROUTER = "openrouter"
 
     @classmethod
     def choices(cls) -> List[str]:
@@ -130,6 +131,36 @@ class ProviderValidator:
                 f"Validation error: {str(e)}"
             )
 
+    @staticmethod
+    def validate_openrouter(api_key: str) -> ProviderValidationResult:
+        """Validate OpenRouter API key and fetch available models."""
+        if not api_key or not api_key.strip():
+            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
+
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+            )
+            models = client.models.list().data
+            model_list = [model.id for model in models]
+
+            if not model_list:
+                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
+
+            return ProviderValidationResult.success_result(model_list)
+
+        except openai.AuthenticationError:
+            return ProviderValidationResult.failure_result(
+                "Invalid API key - authentication failed"
+            )
+        except openai.APIError as e:
+            return ProviderValidationResult.failure_result(f"API error: {str(e)}")
+        except Exception as e:
+            return ProviderValidationResult.failure_result(
+                f"Unexpected error: {str(e)}"
+            )
+
     @classmethod
     def validate(cls, provider: ProviderType, api_key: str) -> ProviderValidationResult:
         """Validate API key for any provider type."""
@@ -137,6 +168,7 @@ class ProviderValidator:
             ProviderType.OPENAI: cls.validate_openai,
             ProviderType.GEMINI: cls.validate_gemini,
             ProviderType.TOGETHERAI: cls.validate_togetherai,
+            ProviderType.OPENROUTER: cls.validate_openrouter,
         }
 
         validator = validators.get(provider)

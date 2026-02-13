@@ -23,12 +23,14 @@ class TestProviderType:
         assert ProviderType.OPENAI.value == "openai"
         assert ProviderType.GEMINI.value == "gemini"
         assert ProviderType.TOGETHERAI.value == "togetherai"
+        assert ProviderType.OPENROUTER.value == "openrouter"
 
     def test_provider_type_from_string(self):
         """Test creating ProviderType from string"""
         assert ProviderType("openai") == ProviderType.OPENAI
         assert ProviderType("gemini") == ProviderType.GEMINI
         assert ProviderType("togetherai") == ProviderType.TOGETHERAI
+        assert ProviderType("openrouter") == ProviderType.OPENROUTER
 
     def test_provider_type_choices(self):
         """Test choices() class method"""
@@ -38,7 +40,8 @@ class TestProviderType:
         assert "openai" in choices
         assert "gemini" in choices
         assert "togetherai" in choices
-        assert len(choices) == 3
+        assert "openrouter" in choices
+        assert len(choices) == 4
 
     def test_provider_type_choices_all_strings(self):
         """Test all choices are strings"""
@@ -50,10 +53,11 @@ class TestProviderType:
         """Test iterating over provider types"""
         providers = list(ProviderType)
 
-        assert len(providers) == 3
+        assert len(providers) == 4
         assert ProviderType.OPENAI in providers
         assert ProviderType.GEMINI in providers
         assert ProviderType.TOGETHERAI in providers
+        assert ProviderType.OPENROUTER in providers
 
     def test_provider_type_equality(self):
         """Test provider type equality"""
@@ -387,6 +391,118 @@ class TestProviderValidatorTogetherAI:
 
 
 # ============================================================================
+# TEST CLASS: ProviderValidator - OpenRouter
+# ============================================================================
+
+class TestProviderValidatorOpenRouter:
+    """Test ProviderValidator OpenRouter validation"""
+
+    def test_validate_openrouter_empty_key(self):
+        """Test OpenRouter validation with empty API key"""
+        result = ProviderValidator.validate_openrouter("")
+
+        assert result.success is False
+        assert "empty" in result.error_message.lower()
+
+    def test_validate_openrouter_whitespace_key(self):
+        """Test OpenRouter validation with whitespace-only key"""
+        result = ProviderValidator.validate_openrouter("   ")
+
+        assert result.success is False
+        assert "empty" in result.error_message.lower()
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_success(self, mock_openai):
+        """Test successful OpenRouter validation"""
+        mock_client = Mock()
+        mock_model = Mock()
+        mock_model.id = "anthropic/claude-sonnet-4"
+        mock_client.models.list.return_value.data = [mock_model]
+        mock_openai.return_value = mock_client
+
+        result = ProviderValidator.validate_openrouter("test-key")
+
+        assert result.success is True
+        assert "anthropic/claude-sonnet-4" in result.models
+        assert result.error_message is None
+        mock_openai.assert_called_once_with(
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+        )
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_multiple_models(self, mock_openai):
+        """Test OpenRouter validation returns multiple models"""
+        mock_client = Mock()
+        models_data = [Mock(id=f"provider/model-{i}") for i in range(5)]
+        mock_client.models.list.return_value.data = models_data
+        mock_openai.return_value = mock_client
+
+        result = ProviderValidator.validate_openrouter("test-key")
+
+        assert result.success is True
+        assert len(result.models) == 5
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_no_models(self, mock_openai):
+        """Test OpenRouter validation with no models"""
+        mock_client = Mock()
+        mock_client.models.list.return_value.data = []
+        mock_openai.return_value = mock_client
+
+        result = ProviderValidator.validate_openrouter("test-key")
+
+        assert result.success is False
+        assert "No models found" in result.error_message
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_authentication_error(self, mock_openai_class):
+        """Test OpenRouter authentication error"""
+        mock_client = Mock()
+        mock_response = Mock(status_code=401)
+        error = openai.AuthenticationError(
+            "Invalid key",
+            response=mock_response,
+            body=None,
+        )
+        mock_client.models.list.side_effect = error
+        mock_openai_class.return_value = mock_client
+
+        result = ProviderValidator.validate_openrouter("invalid-key")
+
+        assert result.success is False
+        assert "authentication failed" in result.error_message.lower()
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_api_error(self, mock_openai):
+        """Test OpenRouter API error"""
+        mock_client = Mock()
+        mock_request = Mock()
+        error = openai.APIError(
+            "Server error",
+            request=mock_request,
+            body=None,
+        )
+        mock_client.models.list.side_effect = error
+        mock_openai.return_value = mock_client
+
+        result = ProviderValidator.validate_openrouter("test-key")
+
+        assert result.success is False
+        assert "API error" in result.error_message
+
+    @patch('devdox_ai_sonar.models.llm.OpenAI')
+    def test_validate_openrouter_unexpected_error(self, mock_openai):
+        """Test OpenRouter validation with unexpected error"""
+        mock_openai.side_effect = Exception("Unexpected error")
+
+        result = ProviderValidator.validate_openrouter("test-key")
+
+        assert result.success is False
+        assert "Unexpected error" in result.error_message
+
+
+# ============================================================================
 # TEST CLASS: ProviderValidator - Generic validate()
 # ============================================================================
 
@@ -420,6 +536,16 @@ class TestProviderValidatorGeneric:
         result = ProviderValidator.validate(ProviderType.TOGETHERAI, "test-key")
 
         mock_validate.assert_called_once_with("test-key")
+
+    @patch.object(ProviderValidator, 'validate_openrouter')
+    def test_validate_routes_to_openrouter(self, mock_validate):
+        """Test validate() routes to validate_openrouter"""
+        mock_validate.return_value = ProviderValidationResult.success_result(["model"])
+
+        result = ProviderValidator.validate(ProviderType.OPENROUTER, "test-key")
+
+        mock_validate.assert_called_once_with("test-key")
+        assert result.success is True
 
     def test_validate_unknown_provider(self):
         """Test validate() with unknown provider"""
