@@ -256,8 +256,7 @@ class ConfigService:
             }
 
             # Write to file
-            with open(self.sonar_path, "w") as f:
-                json.dump(new_config, f, indent=2)
+            await self.file_reader.write_text(self.sonar_path, json.dumps(new_config, indent=2))
 
             # Set secure permissions (Unix/Linux/macOS only)
             try:
