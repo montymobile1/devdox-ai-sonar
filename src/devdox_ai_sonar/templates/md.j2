@@ -18,10 +18,12 @@
 
 ---
 
+{% if explanation and explanation.strip() -%}
 ### 🧠 Explanation
 {{ explanation | replace('###', '\n###') | trim }}
 
 ---
+{% endif %}
 
 ### 🎯 Impact Assessment
 - **Risk Level:** {{ "Low" if severity == "Severity.MINOR" else "Medium" if severity == "Severity.MAJOR" else "High" }}
