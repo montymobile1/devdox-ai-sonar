@@ -3,8 +3,8 @@ requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "devdox_ai_sonar"
-version = "0.0.1"
+name = "devdox_sonar"
+version = "0.0.1-beta"
 description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -46,7 +46,7 @@ dependencies = [
     "autopep8==2.3.2",
     "pathlib2==2.3.0",
     "GitPython==3.1.46",
-    "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
+    "together==2.1.1",
     "Jinja2==3.1.6",
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
@@ -61,16 +61,18 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest==7.0.0",
+    "pytest==8.4.2",
     "black==25.11.0",
     "isort==5.12.0",
     "flake8==7.3.0",
     "pytest-cov==7.0.0",
+    "pytest-asyncio==0.26.0",
     "mypy==1.0.0",
     "pre-commit==3.0.0",
     "twine==4.0.0",
     "build==0.10.0",
-    "ruff==0.14.7"
+    "ruff==0.14.7",
+    "types-aiofiles==25.1.0.20251011"
 ]
 
 [project.scripts]
@@ -91,7 +93,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88
@@ -117,7 +119,7 @@ multi_line_output = 3
 line_length = 88
 
 [tool.mypy]
-packages = ["devdox_ai_sonar"]
+packages = ["devdox_sonar"]
 mypy_path = "src"
 python_version = "3.12"
 warn_return_any = true
@@ -137,6 +139,7 @@ strict_equality = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v"
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["src"]

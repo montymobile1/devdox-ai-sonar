@@ -7,6 +7,7 @@ import json
 from rich.console import Console
 
 from devdox_ai_sonar.models.llm_config import ConfigManager
+from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 
 @dataclass
@@ -92,10 +93,11 @@ class ConfigService:
 
     def __init__(self, sonar_path: Path = Path("sonar.toml")):
         self.sonar_path = sonar_path
+        self.file_reader = AsyncFileReader()
 
         self.config: Optional[Dict[str, Any]] = None
 
-    def load_auth_config(self) -> Dict[str, Optional[str]]:
+    async def load_auth_config(self) -> Dict[str, Optional[str]]:
         """
         Load authentication configuration from auth.json file.
 
@@ -112,15 +114,16 @@ class ConfigService:
         }
         try:
             if self.sonar_path.exists():
-                with open(self.sonar_path, "r") as f:
-                    config = json.load(f)
-                    return {
-                        "token": config.get("SONAR_TOKEN"),
-                        "organization": config.get("SONAR_ORG"),
-                        "project": config.get("SONAR_PROJ"),
-                        "project_path": config.get("PROJECT_PATH"),
-                        "git_url": config.get("GIT_URL"),
-                    }
+                config = await self.file_reader.read_json_file(self.sonar_path)
+                if config is None:
+                    return empty_config
+                return {
+                    "token": config.get("SONAR_TOKEN"),
+                    "organization": config.get("SONAR_ORG"),
+                    "project": config.get("SONAR_PROJ"),
+                    "project_path": config.get("PROJECT_PATH"),
+                    "git_url": config.get("GIT_URL"),
+                }
         except (json.JSONDecodeError, IOError) as e:
             console.print(f"[yellow]Warning: Could not read auth.json: {e}[/yellow]")
             return empty_config
@@ -128,15 +131,15 @@ class ConfigService:
         return empty_config
 
     @staticmethod
-    def load_llm_config(manager: ConfigManager) -> Optional[LLMConfig]:
+    async def load_llm_config(manager: ConfigManager) -> Optional[LLMConfig]:
         """Load and validate LLM configuration"""
 
-        providers = manager.get_value("llm.providers")
+        providers = await manager.get_value("llm.providers")
         if not providers:
             return None
 
-        default_provider = manager.get_value("llm.default_provider")
-        default_model = manager.get_value("llm.default_model")
+        default_provider = await manager.get_value("llm.default_provider")
+        default_model = await manager.get_value("llm.default_model")
         provider_config = next(
             (p for p in providers if p.get("name") == default_provider), None
         )
@@ -163,7 +166,7 @@ class ConfigService:
             return False
         return True
 
-    def save_config(
+    async def save_config(
         self,
         token: str,
         organization: str,
@@ -182,13 +185,13 @@ class ConfigService:
         ):
             console.print("[red]Cancelled[/red]")
             return False
-        success = self.save_complete_config(
+        success = await self.save_complete_config(
             token, organization, project, project_path, git_url
         )
 
         return success
 
-    def save_complete_config(
+    async def save_complete_config(
         self,
         token: str,
         organization: Optional[str] = None,
@@ -223,7 +226,7 @@ class ConfigService:
         try:
             # Load existing config if merging
             if merge and self.sonar_path.exists():
-                existing_config = self.load_auth_config()
+                existing_config = await self.load_auth_config()
             else:
                 existing_config = {
                     "token": None,
@@ -255,8 +258,9 @@ class ConfigService:
             }
 
             # Write to file
-            with open(self.sonar_path, "w") as f:
-                json.dump(new_config, f, indent=2)
+            await self.file_reader.write_text(
+                self.sonar_path, json.dumps(new_config, indent=2)
+            )
 
             # Set secure permissions (Unix/Linux/macOS only)
             try:

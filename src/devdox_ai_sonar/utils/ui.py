@@ -13,7 +13,7 @@ from devdox_ai_sonar.utils import constant
 console = Console()
 
 
-def smart_prompt(
+async def smart_prompt(
     message: str,
     default: Optional[Union[str, List[str]]] = None,
     choices: Optional[List[Union[str, Choice]]] = None,
@@ -40,7 +40,7 @@ def smart_prompt(
     config = PromptConfig(message, default, choice_strings, allow_switch, multiple)
 
     try:
-        result = _prompt_with_questionary(config)
+        result = await _prompt_with_questionary(config)
     except ImportError:
         result = _prompt_with_rich_fallback(config)
 
@@ -121,7 +121,7 @@ def _prompt_with_rich_fallback(config: PromptConfig) -> Union[str, List[str]]:
     return Prompt.ask(config.message, default=default_value)
 
 
-def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
+async def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
     """
     Execute prompt using questionary library.
 
@@ -133,24 +133,26 @@ def _prompt_with_questionary(config: PromptConfig) -> Union[str, List[str]]:
     if not config.choices:
         text_default: str = config.default if isinstance(config.default, str) else ""
 
-        return _questionary_text_prompt(display_message, text_default)
+        return await _questionary_text_prompt(display_message, text_default)
 
     if config.multiple:
         checkbox_default: Optional[List[str]] = (
             config.default if isinstance(config.default, list) else None
         )
 
-        return _questionary_checkbox_prompt(
+        return await _questionary_checkbox_prompt(
             display_message, config.choices, checkbox_default
         )
     select_default: Optional[str] = (
         config.default if isinstance(config.default, str) else None
     )
 
-    return _questionary_select_prompt(display_message, config.choices, select_default)
+    return await _questionary_select_prompt(
+        display_message, config.choices, select_default
+    )
 
 
-def _questionary_select_prompt(
+async def _questionary_select_prompt(
     message: str,
     choices: List[str],
     default_value: Optional[str] = None,
@@ -175,12 +177,14 @@ def _questionary_select_prompt(
     else:
         default = ""
 
-    result = questionary.select(message, choices=choices, default=default).ask()
+    result = await questionary.select(
+        message, choices=choices, default=default
+    ).ask_async()
     # Ensure we return a string, not Any
     return str(result) if result is not None else ""
 
 
-def _questionary_text_prompt(
+async def _questionary_text_prompt(
     message: str,
     default_value: Optional[str] = None,
 ) -> str:
@@ -194,13 +198,14 @@ def _questionary_text_prompt(
     Returns:
         User input as string
     """
-    result = questionary.text(message, default=default_value or "").ask()
+
+    result = await questionary.text(message, default=default_value or "").ask_async()
 
     # Ensure we return a string, not Any
     return str(result) if result is not None else ""
 
 
-def _questionary_checkbox_prompt(
+async def _questionary_checkbox_prompt(
     message: str, choices: List[str], default_value: Optional[List[str]] = None
 ) -> List[str]:
     """
@@ -231,7 +236,7 @@ def _questionary_checkbox_prompt(
 
         choice_objects.append(choice_obj)
 
-    result = questionary.checkbox(message, choices=choice_objects).ask()
+    result = await questionary.checkbox(message, choices=choice_objects).ask_async()
 
     # Ensure we always return a list, never None
 
@@ -254,7 +259,7 @@ def _parse_default_choices(default: Optional[List[str]]) -> Set[str]:
     return {choice.strip() for choice in default if choice and choice.strip()}
 
 
-def _confirm_with_questionary(config: ConfirmConfig) -> str:
+async def _confirm_with_questionary(config: ConfirmConfig) -> str:
     """
     Execute confirmation using questionary library.
 
@@ -265,7 +270,9 @@ def _confirm_with_questionary(config: ConfirmConfig) -> str:
     """
     import questionary
 
-    result = questionary.confirm(config.message, default=config.default).ask()
+    result = await questionary.confirm(
+        config.message, default=config.default
+    ).ask_async()
     if result:
         return "yes"
     return "no"
@@ -319,7 +326,7 @@ def _parse_confirmation_result(result: Optional[str], default: bool) -> bool:
     return result_lower in ("y", "yes")
 
 
-def smart_confirm(
+async def smart_confirm(
     message: str, default: bool = True, allow_switch: bool = True
 ) -> bool:
     """
@@ -339,7 +346,7 @@ def smart_confirm(
     config = ConfirmConfig(message, default, allow_switch)
 
     try:
-        result = _confirm_with_questionary(config)
+        result = await _confirm_with_questionary(config)
 
     except ImportError:
         result = _confirm_with_console_fallback(config)

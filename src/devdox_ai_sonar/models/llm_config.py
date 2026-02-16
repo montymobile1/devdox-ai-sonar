@@ -1,12 +1,12 @@
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-import tomli
 import tomli_w
 import tomlkit
 from pydantic import BaseModel
 import shutil
 from datetime import datetime
 from devdox_ai_sonar.models.sonar import SonarType
+from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 failed_load_config = "Failed to load configuration"
 
@@ -29,6 +29,7 @@ class ConfigManager:
     def __init__(self, config_path: Path = Path("config.toml")):
         self.config_path = config_path
         self.config: Optional[Dict[str, Any]] = None
+        self.file_reader = AsyncFileReader()
 
     def create_backup(self) -> Optional[Path]:
         """Create backup of existing config file"""
@@ -52,7 +53,7 @@ class ConfigManager:
         with open(self.config_path, "wb") as f:
             tomli_w.dump(self.DEFAULT_CONFIG, f)
 
-    def load_config(self) -> Dict[str, Any]:
+    async def load_config(self) -> Dict[str, Any]:
         """Load and parse config file"""
         if not self.config_path.exists():
             raise FileNotFoundError(
@@ -60,18 +61,20 @@ class ConfigManager:
                 f"Run with --create-config to create a default configuration."
             )
 
-        with open(self.config_path, "rb") as f:
-            self.config = tomli.load(f)
-
+        self.config = await self.file_reader.read_toml_file(self.config_path)
+        if self.config is None:
+            raise FileNotFoundError(
+                f"Config file is empty or invalid: {self.config_path}"
+            )
         return self.config
 
-    def get_value(self, key_path: str) -> Any:
+    async def get_value(self, key_path: str) -> Any:
         """
         Get a value from config using dot notation
         Example: 'llm.default_provider' or 'git.clone_options.clone_type'
         """
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         keys = key_path.split(".")
         value = self.config
@@ -86,13 +89,15 @@ class ConfigManager:
 
         return value
 
-    def set_value(self, key_path: str, new_value: Any, validate: bool = True) -> None:
+    async def set_value(
+        self, key_path: str, new_value: Any, validate: bool = True
+    ) -> None:
         """
         Set a value in config using dot notation
         Example: set_value('llm.default_provider', 'anthropic')
         """
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -125,7 +130,7 @@ class ConfigManager:
                     + "\n".join(f"  - {issue}" for issue in issues)
                 )
 
-    def delete_value(self, key_path: str) -> bool:
+    async def delete_value(self, key_path: str) -> bool:
         """
         Delete a value from config using dot notation.
         Example: delete_value('configuration.exclude_rules')
@@ -134,7 +139,7 @@ class ConfigManager:
             True if the key was deleted, False if it didn't exist
         """
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -146,9 +151,10 @@ class ConfigManager:
         for key in keys[:-1]:
             if key not in current:
                 return False
-            current = current[key]
-            if not isinstance(current, dict):
+            value = current[key]
+            if not isinstance(value, dict):
                 return False
+            current = value
 
         # Delete the final key if it exists
         if keys[-1] in current:
@@ -206,7 +212,7 @@ class ConfigManager:
 
         return len(issues) == 0, issues
 
-    def update_provider(
+    async def update_provider(
         self, provider_name: str, updates: Dict[str, Any], set_as_default: bool = False
     ) -> None:
         """
@@ -218,7 +224,7 @@ class ConfigManager:
             set_as_default: Whether to set this as the default provider
         """
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -248,12 +254,12 @@ class ConfigManager:
             self.config["llm"]["default_provider"] = provider_name
             self.config["llm"]["default_model"] = provider["default_model"]
 
-    def add_provider(
+    async def add_provider(
         self, provider_config: Dict[str, Any], set_as_default: bool = False
     ) -> None:
         """Add a new provider to the configuration"""
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -297,10 +303,10 @@ class ConfigManager:
             self.config["llm"]["default_provider"] = provider_name
             self.config["llm"]["default_model"] = provider_config.get("default_model")
 
-    def remove_provider(self, provider_name: str) -> None:
+    async def remove_provider(self, provider_name: str) -> None:
         """Remove a provider from the configuration"""
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -323,10 +329,10 @@ class ConfigManager:
         if len(llm_config["providers"]) == original_count:
             raise ValueError(f"Provider '{provider_name}' not found")
 
-    def list_providers(self) -> List[Dict[str, Any]]:
+    async def list_providers(self) -> List[Dict[str, Any]]:
         """List all configured providers"""
         if not self.config:
-            self.load_config()
+            await self.load_config()
         if not self.config:
             raise RuntimeError(failed_load_config)
 
@@ -334,10 +340,10 @@ class ConfigManager:
         providers: List[Dict[str, Any]] = llm_config.get("providers", [])
         return providers
 
-    def show_provider(self, provider_name: str) -> Dict[str, Any]:
+    async def show_provider(self, provider_name: str) -> Dict[str, Any]:
         """Show details of a specific provider"""
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)

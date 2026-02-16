@@ -86,9 +86,9 @@ class ProviderConfigManager:
         self.ui = ui
         self.validator = validator
 
-    def get_available_providers(self) -> List[str]:
+    async def get_available_providers(self) -> List[str]:
         """Get list of providers not yet configured."""
-        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        existing_providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         existing_providers: List[Dict[str, Any]] = (
             existing_providers_value if existing_providers_value else []
@@ -96,9 +96,9 @@ class ProviderConfigManager:
         existing_names = {p["name"] for p in existing_providers}
         return [p for p in ProviderType.choices() if p not in existing_names]
 
-    def get_default_provider(self) -> Optional[str]:
+    async def get_default_provider(self) -> Optional[str]:
         """Get default provider name."""
-        value = self.config_manager.get_value("llm.default_provider")
+        value = await self.config_manager.get_value("llm.default_provider")
         if value is None:
             return None
         if not isinstance(value, str):
@@ -107,9 +107,9 @@ class ProviderConfigManager:
             )
         return value
 
-    def get_existing_providers(self) -> List[str]:
+    async def get_existing_providers(self) -> List[str]:
         """Get list of already configured providers."""
-        existing_providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        existing_providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         existing_providers: List[Dict[str, Any]] = (
             existing_providers_value if existing_providers_value else []
@@ -158,10 +158,10 @@ class ProviderConfigManager:
 
         return {"config": provider_config, "set_as_default": set_as_default}
 
-    def update_existing_provider(self, provider_name: str) -> bool:
+    async def update_existing_provider(self, provider_name: str) -> bool:
         """Update an existing provider's configuration."""
         # Find provider
-        providers_value = self.config_manager.get_value(CONFIG_PROVIDERS)
+        providers_value = await self.config_manager.get_value(CONFIG_PROVIDERS)
 
         providers: List[Dict[str, Any]] = providers_value if providers_value else []
         provider = next((p for p in providers if p["name"] == provider_name), None)
@@ -187,7 +187,7 @@ class ProviderConfigManager:
             ctx.updates["default_model"] = ctx.current_model
 
         # Apply updates if any
-        return self._apply_provider_updates(ctx, set_as_default)
+        return await self._apply_provider_updates(ctx, set_as_default)
 
     def _handle_model_update(self, ctx: ProviderUpdateContext) -> None:
         """Handle model selection update flow."""
@@ -229,14 +229,14 @@ class ProviderConfigManager:
             return models
         return []
 
-    def _apply_provider_updates(
+    async def _apply_provider_updates(
         self, ctx: ProviderUpdateContext, set_as_default: bool
     ) -> bool:
         """Apply updates to provider configuration."""
         if not ctx.updates:
             return False
 
-        self.config_manager.update_provider(
+        await self.config_manager.update_provider(
             provider_name=ctx.provider_name,
             updates=ctx.updates,
             set_as_default=set_as_default,
@@ -289,48 +289,50 @@ class ProviderConfigManager:
 
         return result
 
-    def branch_or_pr(self) -> Tuple[str, int]:
+    async def branch_or_pr(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
-        clone_type = self.config_manager.get_value(CONFIG_CLONE_TYPE)
-        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
-        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
+        clone_type = await self.config_manager.get_value(CONFIG_CLONE_TYPE)
+        default_pull = await self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_branch = await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH)
         if clone_type == "pr":
             default_branch = ""
         else:
             default_pull = 0
         return default_branch, default_pull
 
-    def get_params(self) -> Any:
-        return self.config_manager.get_value("sonar.configuration")
+    async def get_params(self) -> Any:
+        return await self.config_manager.get_value("sonar.configuration")
 
-    def branch_or_pr_prompt(self) -> Tuple[str, int]:
+    async def branch_or_pr_prompt(self) -> Tuple[str, int]:
         """Prompt user for branch or PR number"""
         console.print("\n[bold]Choose what to analyze:[/bold]")
 
         if Confirm.ask(
             "Do you want to analyze a [cyan]pull request[/cyan]?", default=False
         ):
-            return self._handle_pull_request_selection()
+            return await self._handle_pull_request_selection()
 
-        return self._handle_branch_selection()
+        return await self._handle_branch_selection()
 
-    def _handle_branch_selection(self) -> Tuple[str, int]:
+    async def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""
-        default_branch = self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
+        default_branch = (
+            await self.config_manager.get_value(CONFIG_DEFAULT_BRANCH) or "main"
+        )
         branch_input = Prompt.ask("Branch name", default=default_branch)
 
         try:
             branch = InputValidator.validate_branch_name(branch_input)
             console.print(f"[green]✓[/green] Analyzing branch: [cyan]{branch}[/cyan]")
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_DEFAULT_BRANCH,
                 new_value=branch,
                 current_default=default_branch,
                 display_name=f"branch '{branch}'",
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_CLONE_TYPE,
                 new_value="branch",
                 current_default="pr",
@@ -344,9 +346,9 @@ class ProviderConfigManager:
             console.print(f"\n[red]❌ {e.message}[/red]")
             raise click.Abort()
 
-    def _handle_pull_request_selection(self) -> Tuple[str, int]:
+    async def _handle_pull_request_selection(self) -> Tuple[str, int]:
         """Handle pull request selection workflow."""
-        default_pull = self.config_manager.get_value(CONFIG_DEFAULT_PULL)
+        default_pull = await self.config_manager.get_value(CONFIG_DEFAULT_PULL)
         pr_default = str(default_pull) if default_pull else "0"
         pr_input = Prompt.ask("Pull Request number", default=pr_default)
 
@@ -356,14 +358,14 @@ class ProviderConfigManager:
                 f"[green]✓[/green] Analyzing PR: [cyan]#{pull_request}[/cyan]"
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_DEFAULT_PULL,
                 new_value=pull_request,
                 current_default=default_pull,
                 display_name=f"PR #{pull_request}",
             )
 
-            self._save_as_default_if_changed(
+            await self._save_as_default_if_changed(
                 config_key=CONFIG_CLONE_TYPE,
                 new_value="pr",
                 current_default="branch",
@@ -377,7 +379,7 @@ class ProviderConfigManager:
             console.print(f"\n[red]❌ {e.message}[/red]")
             raise click.Abort()
 
-    def _save_as_default_if_changed(
+    async def _save_as_default_if_changed(
         self,
         config_key: str,
         new_value: Any,
@@ -393,7 +395,7 @@ class ProviderConfigManager:
         ):
             return
 
-        self.config_manager.set_value(config_key, new_value)
+        await self.config_manager.set_value(config_key, new_value)
         self.config_manager.save_config()
         if confirm:
             console.print(f"[green]✓[/green] Saved {display_name} as default")

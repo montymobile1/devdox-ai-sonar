@@ -6,7 +6,7 @@ A powerful CLI tool and Python library that analyzes SonarCloud issues and gener
 
 - 🔍 **Fetch SonarCloud Issues**: Retrieve issues from SonarCloud projects with filtering capabilities
 - 📊 **Project Analytics**: Get comprehensive project metrics and quality insights
-- 🤖 **AI-Powered Fixes**: Generate intelligent fix suggestions using OpenAI, Google Gemini, TogetherAI, or OpenRouter LLMs
+- 🤖 **AI-Powered Fixes**: Generate intelligent fix suggestions using OpenAI, Anthropic, or Google Gemini LLMs
 - 🛠️ **Automated Application**: Apply fixes directly to your codebase with backup support
 - 📁 **Project Inspection**: Analyze local project structure and configuration
 - 🎯 **Interactive CLI**: Claude Code-style interactive interface with rich output formatting
@@ -16,10 +16,9 @@ A powerful CLI tool and Python library that analyzes SonarCloud issues and gener
 - ⚙️ **Flexible Configuration**: Interactive configuration management for providers and SonarCloud
 - 🚫 **Rule Exclusions**: Exclude specific SonarQube rules from analysis
 
-
 ## Installation
 ```bash
-pip install devdox_sonar
+pip install devdox_ai_sonar
 ```
 
 ### Development Installation
@@ -33,7 +32,7 @@ pip install -e ".[dev]"
 
 - Python 3.9+
 - SonarCloud authentication token
-- LLM API key (OpenAI, Google Gemini, TogetherAI, or OpenRouter)
+- LLM API key (OpenAI, Anthropic, or Google Gemini)
 
 ## Quick Start
 
@@ -46,7 +45,7 @@ devdox_sonar
 
 This will guide you through:
 1. SonarCloud configuration (token, organization, project)
-2. LLM provider setup (OpenAI, Gemini, TogetherAI, or OpenRouter)
+2. LLM provider setup (OpenAI, Anthropic, or Gemini)
 3. Analysis parameters (issue types, severities, max fixes)
 
 ### 2. Direct Command Execution
@@ -126,10 +125,9 @@ devdox_sonar -c add_provider
 ```
 
 **Supported Providers:**
-- OpenAI (GPT-4, GPT-4o, GPT-4 Turbo)
-- Google Gemini (Gemini Pro, Gemini Flash)
-- TogetherAI (Mixtral, Llama, and other open-source models)
-- OpenRouter (Access 400+ models from multiple providers via a single API)
+- OpenAI (GPT-4, GPT-4 Turbo, GPT-3.5)
+- Anthropic (Claude 3.5 Sonnet, Claude 3 Opus)
+- Google Gemini (Gemini Pro, Gemini Ultra)
 
 #### `update_provider`
 
@@ -263,9 +261,8 @@ Alternatively, use environment variables:
 ```bash
 export SONAR_TOKEN="your_sonarcloud_token"
 export OPENAI_API_KEY="your_openai_api_key"
+export ANTHROPIC_API_KEY="your_anthropic_api_key"
 export GEMINI_API_KEY="your_gemini_api_key"
-export TOGETHER_API_KEY="your_togetherai_api_key"
-export OPENROUTER_API_KEY="your_openrouter_api_key"
 ```
 
 ### SonarCloud Setup
@@ -280,19 +277,13 @@ export OPENROUTER_API_KEY="your_openrouter_api_key"
 - Sign up: https://platform.openai.com
 - Recommended models: `gpt-4o`, `gpt-4-turbo`
 
+#### Anthropic
+- Sign up: https://console.anthropic.com
+- Recommended models: `claude-3-5-sonnet-20241022`, `claude-3-opus-20240229`
+
 #### Google Gemini
-- Sign up: https://ai.google.dev
-- Recommended models: `gemini-2.5-flash`, `gemini-pro`
-
-#### TogetherAI
-- Sign up: https://www.together.ai
-- Recommended models: `mixtral-8x7b`, `meta-llama/Llama-3-70b`
-
-#### OpenRouter
-- Sign up: https://openrouter.ai
-- Provides access to 400+ models from multiple providers (OpenAI, Anthropic, Google, Meta, etc.) via a single API key
-- Recommended models: `anthropic/claude-sonnet-4`, `openai/gpt-4o`, `google/gemini-2.5-flash`
-- Model names use `provider/model-name` format
+- Sign up: https://makersuite.google.com
+- Recommended models: `gemini-pro`, `gemini-ultra`
 
 ## Rule Exclusions
 
@@ -307,9 +298,9 @@ devdox_sonar -c change_parameters
 
 ### Via Configuration File
 
-Add to `~/devdox/config.yaml`:
+Add to `~/.devdox_sonar_config.yaml`:
 ```yaml
-configuration[config.toml](../../../devdox/config.toml):
+configura[config.toml](../../../devdox/config.toml)tion:
   exclude_rules: "python:S7503,python:S7493,python:S107"
 ```
 
@@ -434,6 +425,14 @@ Enable verbose output:
 devdox_sonar --verbose -c fix_issues
 ```
 
+### Reset Configuration
+
+Delete configuration files and reconfigure:
+```bash
+rm ~/.devdox_sonar_auth.json
+rm ~/.devdox_sonar_config.yaml
+devdox_sonar
+```
 
 ## Development
 
@@ -536,5 +535,5 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 - Built with [Rich](https://github.com/Textualize/rich) for beautiful terminal output
 - Uses [Questionary](https://github.com/tmbo/questionary) for interactive prompts
-- Powered by OpenAI, Google Gemini, TogetherAI, and OpenRouter LLMs
+- Powered by OpenAI, Anthropic, and Google Gemini LLMs
 - Integrates with SonarCloud for code quality analysis

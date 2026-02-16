@@ -2,6 +2,7 @@ from typing import Optional, Dict, Any, List, Tuple, Union
 import ast
 from pathlib import Path
 from devdox_ai_sonar.models.file_structures import ConversionRisk, ConversionAnalysis
+from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 import logging
 
 logger = logging.getLogger(__name__)
@@ -449,6 +450,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
     def __init__(self, target_function: str, codebase_root: Path):
         self.target_function = target_function
         self.codebase_root = codebase_root
+        self.file_reader = AsyncFileReader()
 
         # Analysis results
         self.function_node: Optional[Union[ast.FunctionDef, ast.AsyncFunctionDef]] = (
@@ -480,10 +482,10 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         self.in_target_function: bool = False
         self.current_class: Optional[str] = None
 
-    def analyze(self) -> ConversionAnalysis:
+    async def analyze(self) -> ConversionAnalysis:
         """Main analysis entry point."""
         # Step 1: Find the function definition
-        self._find_function_definition()
+        await self._find_function_definition()
 
         if not self.function_node:
             return ConversionAnalysis(
@@ -502,17 +504,16 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         self._analyze_function_body()
 
         # Step 3: Find all callers
-        self._find_all_callers()
+        await self._find_all_callers()
 
         # Step 4: Determine conversion feasibility
         return self._generate_analysis()
 
-    def _find_function_definition(self) -> None:
+    async def _find_function_definition(self) -> None:
         """Locate the function definition in the codebase."""
         for file_path in self.codebase_root.rglob("*.py"):
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = await self.file_reader.read_text(file_path)
 
                 tree = ast.parse(content, filename=str(file_path))
                 self.current_file = str(file_path)
@@ -660,12 +661,11 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
         # This is a simplified check - full implementation would need parent tracking
         return False
 
-    def _find_all_callers(self) -> None:
+    async def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
         for file_path in self.codebase_root.rglob("*.py"):
             try:
-                with open(file_path, "r", encoding="utf-8") as f:
-                    content = f.read()
+                content = await self.file_reader.read_text(file_path)
 
                 tree = ast.parse(content, filename=str(file_path))
                 self._find_callers_in_tree(tree, str(file_path))
