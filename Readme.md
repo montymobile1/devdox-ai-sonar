@@ -298,9 +298,9 @@ devdox_sonar -c change_parameters
 
 ### Via Configuration File
 
-Add to `~/.config.yaml`:
+Add to `~/devdox/config.yaml`:
 ```yaml
-configura[config.toml](../../../devdox/config.toml)tion:
+configuration[config.toml](../../../devdox/config.toml):
   exclude_rules: "python:S7503,python:S7493,python:S107"
 ```
 
