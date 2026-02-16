@@ -16,6 +16,7 @@ A powerful CLI tool and Python library that analyzes SonarCloud issues and gener
 - ⚙️ **Flexible Configuration**: Interactive configuration management for providers and SonarCloud
 - 🚫 **Rule Exclusions**: Exclude specific SonarQube rules from analysis
 
+
 ## Installation
 ```bash
 pip install devdox_sonar
