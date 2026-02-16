@@ -3,7 +3,7 @@ requires = ["setuptools>=80.9.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "devdox_ai_sonar"
+name = "devdox_sonar"
 version = "0.0.1"
 description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
 readme = "README.md"
@@ -93,7 +93,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
 
 [tool.black]
 line-length = 88
@@ -119,7 +119,7 @@ multi_line_output = 3
 line_length = 88
 
 [tool.mypy]
-packages = ["devdox_ai_sonar"]
+packages = ["devdox_sonar"]
 mypy_path = "src"
 python_version = "3.12"
 warn_return_any = true
