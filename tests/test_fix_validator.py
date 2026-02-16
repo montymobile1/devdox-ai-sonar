@@ -1445,5 +1445,183 @@ class TestFormatSearchReplaceContent:
         assert result == "Search/Replace Operations:\n\n"
 
 
+class TestOpenRouterInitializationValidator:
+    """Test OpenRouter provider specific initialization for FixValidator."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_initialization_with_api_key(self, mock_openai):
+        """Test OpenRouter provider initialization with explicit API key."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+        validator = FixValidator(provider="openrouter", api_key="test-openrouter-key")
+
+        assert validator.provider == "openrouter"
+        assert validator.model == "anthropic/claude-sonnet-4"
+        assert validator.api_key == "test-openrouter-key"
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_client_created_with_correct_params(self, mock_openai):
+        """Test OpenRouter client is created with base_url and default_headers."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+        FixValidator(provider="openrouter", api_key="test-key")
+
+        mock_openai.OpenAI.assert_called_once_with(
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_custom_model(self, mock_openai):
+        """Test OpenRouter initialization with a custom model."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+        validator = FixValidator(
+            provider="openrouter",
+            model="meta-llama/llama-3-70b",
+            api_key="test-key",
+        )
+
+        assert validator.model == "meta-llama/llama-3-70b"
+
+    @patch.dict("os.environ", {"OPENROUTER_API_KEY": "env-openrouter-key"}, clear=True)
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_api_key_from_env(self, mock_openai):
+        """Test API key is loaded from OPENROUTER_API_KEY environment variable."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+        validator = FixValidator(provider="openrouter", api_key=None)
+
+        assert validator.api_key == "env-openrouter-key"
+
+    @patch.dict("os.environ", {}, clear=True)
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_missing_api_key_raises(self, mock_openai):
+        """Test error when no API key is provided and env var is not set."""
+        with pytest.raises(ValueError, match="OpenRouter API key not provided"):
+            FixValidator(provider="openrouter", api_key=None)
+
+    @patch("devdox_ai_sonar.fix_validator.HAS_OPENAI", False)
+    def test_openrouter_missing_library_raises(self):
+        """Test error when OpenAI library is not installed."""
+        with pytest.raises(ImportError, match="OpenAI library not installed"):
+            FixValidator(provider="openrouter", api_key="test-key")
+
+
+class TestOpenRouterValidatorDispatch:
+    """Test that OpenRouter is properly wired into the validator dispatch."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_llm_validator_routes_to_openrouter(self, mock_openai):
+        """Test that _call_llm_validator dispatches to _call_openrouter_validator."""
+        mock_openai.OpenAI.return_value = MagicMock()
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        with patch.object(
+            validator, "_call_openrouter_validator", return_value=None
+        ) as mock_call:
+            validator._call_llm_validator("test prompt")
+            mock_call.assert_called_once_with("test prompt")
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_openrouter_validator_calls_chat_completions(self, mock_openai):
+        """Test that _call_openrouter_validator uses chat.completions.create."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+        validator._call_openrouter_validator("test prompt")
+
+        mock_client.chat.completions.create.assert_called_once()
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        assert call_kwargs["model"] == "anthropic/claude-sonnet-4"
+        assert call_kwargs["max_tokens"] == 8000
+        assert call_kwargs["temperature"] == 0.1
+        assert call_kwargs["response_format"]["type"] == "json_schema"
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_openrouter_validator_sends_system_and_user_messages(self, mock_openai):
+        """Test that the correct system and user messages are sent."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+        validator._call_openrouter_validator("my prompt text")
+
+        call_kwargs = mock_client.chat.completions.create.call_args[1]
+        messages = call_kwargs["messages"]
+        assert len(messages) == 2
+        assert messages[0]["role"] == "system"
+        assert "senior software engineer" in messages[0]["content"]
+        assert messages[1]["role"] == "user"
+        assert messages[1]["content"] == "my prompt text"
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_openrouter_validator_invalid_json_raises(self, mock_openai):
+        """Test that invalid JSON response raises ValueError."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "not valid json"
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            validator._call_openrouter_validator("test prompt")
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_openrouter_validator_schema_validation_failure(self, mock_openai):
+        """Test that valid JSON but invalid schema raises ValueError."""
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = '{"unexpected_field": "value"}'
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        with pytest.raises(ValueError, match="Schema validation failed"):
+            validator._call_openrouter_validator("test prompt")
+
+
+class TestOpenRouterProviderIntegration:
+    """Test OpenRouter end-to-end fix validation flow."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_validate_fix_llm_error(
+        self, mock_openai, sample_fix, sample_issue, sample_file_content
+    ):
+        """Test that LLM errors during validation are handled gracefully."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create.side_effect = Exception(
+            "OpenRouter API Error"
+        )
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
+
+        assert result.status == ValidationStatus.NEEDS_REVIEW
+        assert "Validation failed" in result.explanation
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_openrouter_error_message_includes_openrouter(self, mock_openai):
+        """Test that unsupported provider error message lists openrouter."""
+        with pytest.raises(ValueError, match="openrouter"):
+            FixValidator(provider="invalid_provider", api_key="test-key")
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
