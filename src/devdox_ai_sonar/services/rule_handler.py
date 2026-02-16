@@ -106,7 +106,7 @@ class RuleHandler(ABC):
         pass
 
     @abstractmethod
-    def generate_fixes(
+    async def generate_fixes(
         self,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         context: FixContext,
@@ -390,7 +390,7 @@ class CognitiveComplexityHandler(RuleHandler):
         """Check if this is a cognitive complexity rule."""
         return rule == self.RULE_ID
 
-    def generate_fixes(
+    async def generate_fixes(
         self,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         context: FixContext,
@@ -441,7 +441,7 @@ class DefaultRuleHandler(RuleHandler):
         """Default handler accepts any rule."""
         return True
 
-    def generate_fixes(
+    async def generate_fixes(
         self,
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         context: FixContext,

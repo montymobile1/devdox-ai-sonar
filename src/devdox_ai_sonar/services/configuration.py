@@ -115,13 +115,15 @@ class ConfigService:
         try:
             if self.sonar_path.exists():
                 config = await self.file_reader.read_json_file(self.sonar_path)
+                if config is None:
+                    return empty_config
                 return {
-                        "token": config.get("SONAR_TOKEN"),
-                        "organization": config.get("SONAR_ORG"),
-                        "project": config.get("SONAR_PROJ"),
-                        "project_path": config.get("PROJECT_PATH"),
-                        "git_url": config.get("GIT_URL"),
-                    }
+                    "token": config.get("SONAR_TOKEN"),
+                    "organization": config.get("SONAR_ORG"),
+                    "project": config.get("SONAR_PROJ"),
+                    "project_path": config.get("PROJECT_PATH"),
+                    "git_url": config.get("GIT_URL"),
+                }
         except (json.JSONDecodeError, IOError) as e:
             console.print(f"[yellow]Warning: Could not read auth.json: {e}[/yellow]")
             return empty_config
@@ -256,8 +258,9 @@ class ConfigService:
             }
 
             # Write to file
-            with open(self.sonar_path, "w") as f:
-                json.dump(new_config, f, indent=2)
+            await self.file_reader.write_text(
+                self.sonar_path, json.dumps(new_config, indent=2)
+            )
 
             # Set secure permissions (Unix/Linux/macOS only)
             try:

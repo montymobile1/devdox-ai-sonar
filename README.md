@@ -16,10 +16,9 @@ A powerful CLI tool and Python library that analyzes SonarCloud issues and gener
 - ⚙️ **Flexible Configuration**: Interactive configuration management for providers and SonarCloud
 - 🚫 **Rule Exclusions**: Exclude specific SonarQube rules from analysis
 
-
 ## Installation
 ```bash
-pip install devdox_sonar
+pip install devdox_ai_sonar
 ```
 
 ### Development Installation
@@ -299,9 +298,9 @@ devdox_sonar -c change_parameters
 
 ### Via Configuration File
 
-Add to `~/devdox/config.yaml`:
+Add to `~/.devdox_sonar_config.yaml`:
 ```yaml
-configuration[config.toml](../../../devdox/config.toml):
+configura[config.toml](../../../devdox/config.toml)tion:
   exclude_rules: "python:S7503,python:S7493,python:S107"
 ```
 
@@ -426,6 +425,14 @@ Enable verbose output:
 devdox_sonar --verbose -c fix_issues
 ```
 
+### Reset Configuration
+
+Delete configuration files and reconfigure:
+```bash
+rm ~/.devdox_sonar_auth.json
+rm ~/.devdox_sonar_config.yaml
+devdox_sonar
+```
 
 ## Development
 
@@ -521,3 +528,12 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Support
 
 - **Issues**: https://github.com/montymobile1/devdox-ai-sonar/issues
+
+
+
+## Acknowledgments
+
+- Built with [Rich](https://github.com/Textualize/rich) for beautiful terminal output
+- Uses [Questionary](https://github.com/tmbo/questionary) for interactive prompts
+- Powered by OpenAI, Anthropic, and Google Gemini LLMs
+- Integrates with SonarCloud for code quality analysis

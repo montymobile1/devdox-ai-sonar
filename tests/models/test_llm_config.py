@@ -419,20 +419,20 @@ class TestConfigManagerDeleteValue:
         assert await manager_with_config.get_value("configuration.exclude_rules") is not None
 
         # Delete the key
-        result = manager_with_config.delete_value("configuration.exclude_rules")
+        result = await manager_with_config.delete_value("configuration.exclude_rules")
 
         assert result is True
         assert await manager_with_config.get_value("configuration.exclude_rules") is None
 
     async def test_delete_value_nonexistent_key(self, manager_with_config):
         """Test deleting a key that doesn't exist"""
-        result = manager_with_config.delete_value("configuration.nonexistent_key")
+        result = await manager_with_config.delete_value("configuration.nonexistent_key")
 
         assert result is False
 
     async def test_delete_value_nested_key(self, manager_with_config):
         """Test deleting a nested key"""
-        result = manager_with_config.delete_value("llm.default_model")
+        result = await manager_with_config.delete_value("llm.default_model")
 
         assert result is True
         assert await manager_with_config.get_value("llm.default_model") is None
@@ -441,14 +441,14 @@ class TestConfigManagerDeleteValue:
 
     async def test_delete_value_top_level_key(self, manager_with_config):
         """Test deleting a top-level section"""
-        result = manager_with_config.delete_value("configuration")
+        result = await manager_with_config.delete_value("configuration")
 
         assert result is True
         assert await manager_with_config.get_value("configuration") is None
 
-    def test_delete_value_nonexistent_parent(self, manager_with_config):
+    async def test_delete_value_nonexistent_parent(self, manager_with_config):
         """Test deleting when parent path doesn't exist"""
-        result = manager_with_config.delete_value("nonexistent.parent.key")
+        result = await manager_with_config.delete_value("nonexistent.parent.key")
 
         assert result is False
 
@@ -465,14 +465,14 @@ class TestConfigManagerDeleteValue:
         # load_config is now async, so we must call it explicitly
         await manager.load_config()
 
-        result = manager.delete_value("test.key")
+        result = await manager.delete_value("test.key")
 
         assert result is True
         assert await manager.get_value("test.key") is None
 
     async def test_delete_value_persists_after_save(self, manager_with_config, tmp_path):
         """Test that deleted value is not present after save and reload"""
-        manager_with_config.delete_value("configuration.exclude_rules")
+        await manager_with_config.delete_value("configuration.exclude_rules")
         manager_with_config.save_config()
 
         # Create new manager and load
