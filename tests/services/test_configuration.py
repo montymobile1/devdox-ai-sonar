@@ -2,7 +2,7 @@
 
 import os
 import pytest
-from unittest.mock import Mock, MagicMock, AsyncMock, patch, mock_open, call
+from unittest.mock import Mock, MagicMock, AsyncMock, patch, call
 from pathlib import Path
 from typing import Dict, Any, Optional
 import json
@@ -561,7 +561,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_new_file(self, config_service, mock_console):
         """Test saving to new file."""
-        with patch('builtins.open', mock_open()) as mock_file:
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock) as mock_write:
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod'):
                     result = await config_service.save_complete_config(
@@ -573,7 +573,7 @@ class TestSaveCompleteConfig:
                     )
 
         assert result is True
-        mock_file.assert_called_once()
+        mock_write.assert_called_once()
         mock_console.print.assert_called()
         assert "saved" in str(mock_console.print.call_args).lower()
 
@@ -587,7 +587,7 @@ class TestSaveCompleteConfig:
             "git_url": "https://github.com/test-org/test-project.git"
         }
 
-        with patch('builtins.open', mock_open(read_data=json.dumps(valid_config_file_content))) as mock_file:
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock) as mock_write:
             with patch.object(Path, 'exists', return_value=True):
                 with patch.object(config_service, 'load_auth_config', new_callable=AsyncMock, return_value=existing_config):
                     with patch.object(Path, 'chmod'):
@@ -598,11 +598,11 @@ class TestSaveCompleteConfig:
 
         assert result is True
         # Verify file was written
-        assert mock_file().write.called
+        assert mock_write.called
 
     async def test_save_complete_config_overwrite_mode(self, config_service, mock_console):
         """Test overwriting existing config."""
-        with patch('builtins.open', mock_open()) as mock_file:
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=True):
                 with patch.object(Path, 'chmod'):
                     result = await config_service.save_complete_config(
@@ -626,7 +626,7 @@ class TestSaveCompleteConfig:
             "git_url":"https://github.com/test-org/test-project.git"
         }
 
-        with patch('builtins.open', mock_open()) as mock_file:
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=True):
                 with patch.object(config_service, 'load_auth_config', new_callable=AsyncMock, return_value=existing_config):
                     with patch.object(Path, 'chmod'):
@@ -640,7 +640,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_chmod_success(self, config_service, mock_console):
         """Test successful chmod on Unix."""
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod') as mock_chmod:
                     result = await config_service.save_complete_config(
@@ -652,7 +652,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_chmod_fails_windows(self, config_service, mock_console):
         """Test chmod failure on Windows (NotImplementedError)."""
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod', side_effect=NotImplementedError()):
                     result = await config_service.save_complete_config(
@@ -664,7 +664,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_chmod_os_error(self, config_service, mock_console):
         """Test chmod OS error."""
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod', side_effect=OSError("Permission denied")):
                     result = await config_service.save_complete_config(
@@ -676,7 +676,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_io_error(self, config_service, mock_console):
         """Test IO error during save."""
-        with patch('builtins.open', side_effect=IOError("Write error")):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock, side_effect=IOError("Write error")):
             with patch.object(Path, 'exists', return_value=False):
                 result = await config_service.save_complete_config(
                     "token", "org", "project", "/path"
@@ -688,7 +688,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_permission_error(self, config_service, mock_console):
         """Test permission error during save."""
-        with patch('builtins.open', side_effect=PermissionError("Access denied")):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock, side_effect=PermissionError("Access denied")):
             with patch.object(Path, 'exists', return_value=False):
                 result = await config_service.save_complete_config(
                     "token", "org", "project", "/path"
@@ -699,7 +699,7 @@ class TestSaveCompleteConfig:
 
     async def test_save_complete_config_none_values(self, config_service, mock_console):
         """Test saving with None values for optional fields."""
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod'):
                     result = await config_service.save_complete_config(
@@ -823,7 +823,7 @@ class TestEdgeCases:
         long_token = "squ_" + "a" * 1000
         long_path = "/very/" * 100 + "long/path"
 
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod'):
                     result = await config_service.save_complete_config(
@@ -1563,13 +1563,7 @@ class TestSaveCompleteConfigComplexScenarios:
         """Test merging when existing file is corrupted."""
         config_service = ConfigService()
 
-        with patch('builtins.open', mock_open()) as mock_file:
-            # First call (read) returns corrupt data, second call (write) succeeds
-            mock_file.side_effect = [
-                mock_open(read_data="corrupt json").return_value,
-                mock_open().return_value
-            ]
-
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=True):
                 with patch.object(config_service, 'load_auth_config', new_callable=AsyncMock, return_value={}):
                     with patch.object(Path, 'chmod'):
@@ -1586,7 +1580,7 @@ class TestSaveCompleteConfigComplexScenarios:
         """Test saving all None values without merge."""
         config_service = ConfigService()
 
-        with patch('builtins.open', mock_open()):
+        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
             with patch.object(Path, 'exists', return_value=False):
                 with patch.object(Path, 'chmod'):
                     result = await config_service.save_complete_config(

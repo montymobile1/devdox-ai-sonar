@@ -16,13 +16,8 @@ logger = logging.getLogger(__name__)
 class IssueExtractor:
     """Validates issue groups and extracts file information."""
 
-    def __init__(
-            self,
-            file_reader: AsyncFileReader
-    ):
+    def __init__(self, file_reader: AsyncFileReader):
         self.file_reader = file_reader
-
-
 
     async def validate_issue_group(
         self,
@@ -82,8 +77,7 @@ class IssueExtractor:
             return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
     async def get_content_range(
-        self,
-        file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path
+        self, file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path
     ) -> Optional[Dict[str, Any]]:
         if not file_path_tmp.exists():
             raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
@@ -95,7 +89,11 @@ class IssueExtractor:
         last_line_tmp = line_range_tmp.get("last_line")
         problem_lines_tmp = line_range_tmp.get("problem_lines", [])
 
-        if first_line_tmp is None or last_line_tmp is None or len(problem_lines_tmp) == 0:
+        if (
+            first_line_tmp is None
+            or last_line_tmp is None
+            or len(problem_lines_tmp) == 0
+        ):
             raise ValueError("line_range_tmp must contain 'first_line' and 'last_line'")
 
         min_problem_line = min(problem_lines_tmp)
@@ -106,10 +104,11 @@ class IssueExtractor:
         tmp_lines = await self.file_reader.read_lines(file_path_tmp)
         actual_lines = await self.file_reader.read_lines(file_path)
 
-
         # Extract target content from temp file (1-indexed to 0-indexed)
         start_idx = first_line_tmp - 1
-        end_idx = last_line_tmp  # last_line is inclusive, so we don't subtract 1 for slice
+        end_idx = (
+            last_line_tmp  # last_line is inclusive, so we don't subtract 1 for slice
+        )
 
         if start_idx < 0 or end_idx > len(tmp_lines):
             raise ValueError(
@@ -180,6 +179,7 @@ class IssueExtractor:
             "match_type": "not_found",
             "error": f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file {file_path}",
         }
+
 
 def _validate_and_extract_issue_info(
     issues: List[Union[SonarIssue, SonarSecurityIssue]], project_path: Path

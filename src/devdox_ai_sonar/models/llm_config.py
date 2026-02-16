@@ -1,6 +1,5 @@
 from pathlib import Path
 from typing import Optional, Dict, Any, List
-import tomli
 import tomli_w
 import tomlkit
 from pydantic import BaseModel
@@ -63,6 +62,10 @@ class ConfigManager:
             )
 
         self.config = await self.file_reader.read_toml_file(self.config_path)
+        if self.config is None:
+            raise FileNotFoundError(
+                f"Config file is empty or invalid: {self.config_path}"
+            )
         return self.config
 
     async def get_value(self, key_path: str) -> Any:
@@ -86,7 +89,9 @@ class ConfigManager:
 
         return value
 
-    async def set_value(self, key_path: str, new_value: Any, validate: bool = True) -> None:
+    async def set_value(
+        self, key_path: str, new_value: Any, validate: bool = True
+    ) -> None:
         """
         Set a value in config using dot notation
         Example: set_value('llm.default_provider', 'anthropic')
@@ -125,7 +130,7 @@ class ConfigManager:
                     + "\n".join(f"  - {issue}" for issue in issues)
                 )
 
-    def delete_value(self, key_path: str) -> bool:
+    async def delete_value(self, key_path: str) -> bool:
         """
         Delete a value from config using dot notation.
         Example: delete_value('configuration.exclude_rules')
@@ -134,7 +139,7 @@ class ConfigManager:
             True if the key was deleted, False if it didn't exist
         """
         if not self.config:
-            self.load_config()
+            await self.load_config()
 
         if not self.config:
             raise RuntimeError(failed_load_config)
@@ -146,9 +151,10 @@ class ConfigManager:
         for key in keys[:-1]:
             if key not in current:
                 return False
-            current = current[key]
-            if not isinstance(current, dict):
+            value = current[key]
+            if not isinstance(value, dict):
                 return False
+            current = value
 
         # Delete the final key if it exists
         if keys[-1] in current:

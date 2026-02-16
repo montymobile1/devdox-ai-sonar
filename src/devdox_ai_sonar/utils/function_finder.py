@@ -515,7 +515,6 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
             try:
                 content = await self.file_reader.read_text(file_path)
 
-
                 tree = ast.parse(content, filename=str(file_path))
                 self.current_file = str(file_path)
 

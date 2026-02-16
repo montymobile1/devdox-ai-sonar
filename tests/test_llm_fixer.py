@@ -5064,7 +5064,7 @@ class TestGenerateFixByFile:
 
         mock_ctx = Mock()
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = None
+        mock_handler.generate_fixes = AsyncMock(return_value=None)
         mock_handler.MOIDY_LINE_RANGE = False
 
         with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
@@ -5093,7 +5093,7 @@ class TestGenerateFixByFile:
         mock_fix_response = Mock()
         mock_fix_response.FIXED_CODE_BLOCKS = []
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = [mock_fix_response]
+        mock_handler.generate_fixes = AsyncMock(return_value=[mock_fix_response])
         mock_handler.MOIDY_LINE_RANGE = False
 
         mock_suggestion = Mock()
@@ -5158,7 +5158,7 @@ class TestGenerateFixByFile:
         mock_ctx.context_dict = {"context": "code"}
         mock_fix_response = Mock()
         mock_handler = Mock()
-        mock_handler.generate_fixes.return_value = [mock_fix_response]
+        mock_handler.generate_fixes = AsyncMock(return_value=[mock_fix_response])
         mock_handler.MOIDY_LINE_RANGE = False
 
         with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
@@ -5996,4 +5996,397 @@ class TestPrepareContext:
         fixer.file_reader.read_lines = AsyncMock(side_effect=RuntimeError("boom"))
         result = await fixer._prepare_context(py_file, line_range, "", 5, "python")
         assert result is None
+
+
+# ============================================================================
+# Tests for extracted sub-methods of apply_fixes_with_validation
+# ============================================================================
+
+
+class TestCreateBackupIfNeeded:
+    """Tests for _create_backup_if_needed."""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def test_creates_backup_when_requested_and_not_dry_run(self, fixer, tmp_path):
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        with patch.object(fixer, "_create_backup", return_value=tmp_path / "bak") as mock_backup:
+            fixer._create_backup_if_needed(result, tmp_path, create_backup=True, dry_run=False)
+        mock_backup.assert_called_once_with(tmp_path)
+        assert result.backup_created is True
+        assert result.backup_path == tmp_path / "bak"
+
+    def test_skips_backup_on_dry_run(self, fixer, tmp_path):
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        with patch.object(fixer, "_create_backup") as mock_backup:
+            fixer._create_backup_if_needed(result, tmp_path, create_backup=True, dry_run=True)
+        mock_backup.assert_not_called()
+        assert result.backup_created is False
+
+    def test_skips_backup_when_not_requested(self, fixer, tmp_path):
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        with patch.object(fixer, "_create_backup") as mock_backup:
+            fixer._create_backup_if_needed(result, tmp_path, create_backup=False, dry_run=False)
+        mock_backup.assert_not_called()
+        assert result.backup_created is False
+
+
+class TestGroupFixesByFile:
+    """Tests for _group_fixes_by_file."""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def _make_fix(self, issue_key="k"):
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = issue_key
+        fix.file_path = "test.py"
+        fix.original_code = "x"
+        return fix
+
+    def _make_issue(self):
+        return SonarIssue(
+            key="k", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="msg", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1,
+        )
+
+    def test_groups_fixes_by_file_path(self, fixer, tmp_path):
+        fix1 = self._make_fix("k1")
+        fix2 = self._make_fix("k2")
+        issue1 = self._make_issue()
+        issue2 = self._make_issue()
+
+        with patch.object(fixer, "_get_file_from_fix", side_effect=["file_a.py", "file_a.py"]):
+            result = fixer._group_fixes_by_file([fix1, fix2], [issue1, issue2], tmp_path)
+
+        assert "file_a.py" in result
+        assert len(result["file_a.py"]) == 2
+
+    def test_excludes_fixes_with_no_file(self, fixer, tmp_path):
+        fix1 = self._make_fix("k1")
+        fix2 = self._make_fix("k2")
+        issue1 = self._make_issue()
+        issue2 = self._make_issue()
+
+        with patch.object(fixer, "_get_file_from_fix", side_effect=["file_a.py", None]):
+            result = fixer._group_fixes_by_file([fix1, fix2], [issue1, issue2], tmp_path)
+
+        assert len(result) == 1
+        assert len(result["file_a.py"]) == 1
+
+    def test_empty_input(self, fixer, tmp_path):
+        result = fixer._group_fixes_by_file([], [], tmp_path)
+        assert result == {}
+
+
+class TestProcessSingleFile:
+    """Tests for _process_single_file."""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def _make_fix(self, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.file_path = str(tmp_path / "test.py")
+        fix.issue_key = "k"
+        fix.original_code = "x = 1"
+        return fix
+
+    def _make_issue(self):
+        return SonarIssue(
+            key="k", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="msg", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1,
+        )
+
+    async def test_direct_success_extends_result(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(True, [])):
+            await fixer._process_single_file(py_file, [(fix, issue)], result, None, False)
+
+        assert len(result.successful_fixes) == 1
+
+    async def test_direct_failure_delegates_to_validator(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        failed_result = Mock()
+        failed_result.success = False
+        failed_result.reason = "syntax error"
+
+        mock_validator = Mock()
+        mock_val_result = Mock()
+        mock_val_result.status = ValidationStatus.APPROVED
+        mock_validator.validate_fix.return_value = mock_val_result
+
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(False, [failed_result])), \
+             patch.object(fixer, "_handle_failed_fixes_with_validator", new_callable=AsyncMock) as mock_handle:
+            await fixer._process_single_file(py_file, [(fix, issue)], result, mock_validator, False)
+
+        mock_handle.assert_called_once()
+
+    async def test_direct_failure_no_validator_marks_failed(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        failed_result = Mock()
+        failed_result.success = False
+        failed_result.reason = "error"
+
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(False, [failed_result])):
+            await fixer._process_single_file(py_file, [(fix, issue)], result, None, False)
+
+        assert len(result.failed_fixes) == 1
+        assert "no validator" in result.failed_fixes[0]["error"]
+
+    async def test_reads_original_content_for_existing_file(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("original\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="original\n") as mock_read, \
+             patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(True, [])):
+            await fixer._process_single_file(py_file, [(fix, issue)], result, None, False)
+
+        mock_read.assert_called_once_with(str(py_file))
+
+
+class TestHandleFailedFixesWithValidator:
+    """Tests for _handle_failed_fixes_with_validator."""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def _make_fix(self, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.file_path = str(tmp_path / "test.py")
+        fix.issue_key = "k"
+        fix.original_code = "x = 1"
+        return fix
+
+    def _make_issue(self):
+        return SonarIssue(
+            key="k", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="msg", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1,
+        )
+
+    async def test_restores_original_content(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        failed_app = Mock()
+        failed_app.reason = "syntax error"
+
+        mock_validator = Mock()
+        mock_val_result = Mock()
+        mock_val_result.status = ValidationStatus.APPROVED
+        mock_validator.validate_fix.return_value = mock_val_result
+
+        mock_write = AsyncMock()
+        with patch.object(fixer.file_reader, "write_text", mock_write), \
+             patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="x = 1\n"):
+            await fixer._handle_failed_fixes_with_validator(
+                py_file, [(fix, issue)], [failed_app], "original content",
+                result, mock_validator, dry_run=False,
+            )
+
+        mock_write.assert_called_once_with(py_file, "original content")
+
+    async def test_collects_reasons_from_new_fixes(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        app1 = Mock()
+        app1.reason = "error A"
+        app2 = Mock()
+        app2.reason = None
+        app3 = Mock()
+        app3.reason = "error B"
+
+        mock_validator = Mock()
+        mock_val_result = Mock()
+        mock_val_result.status = ValidationStatus.APPROVED
+        mock_validator.validate_fix.return_value = mock_val_result
+
+        with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="x = 1\n"):
+            await fixer._handle_failed_fixes_with_validator(
+                py_file, [(fix, issue)], [app1, app2, app3], "original",
+                result, mock_validator, dry_run=False,
+            )
+
+        # Verify reason_msg passed to validate_fix contains "error A" and "error B"
+        call_kwargs = mock_validator.validate_fix.call_args
+        assert "error A" in call_kwargs.kwargs.get("new_error_msg", call_kwargs[0][-1] if len(call_kwargs[0]) > 3 else "")
+
+    async def test_reads_tmp_file_if_exists(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+        tmp_file = py_file.with_suffix(".tmp.py")
+        tmp_file.write_text("modified content\n")
+
+        fix = self._make_fix(tmp_path)
+        issue = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+
+        failed_app = Mock()
+        failed_app.reason = "error"
+
+        mock_validator = Mock()
+        mock_val_result = Mock()
+        mock_val_result.status = ValidationStatus.APPROVED
+        mock_validator.validate_fix.return_value = mock_val_result
+
+        with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="modified content\n"), \
+             patch("devdox_ai_sonar.llm_fixer.remove_tmp_files") as mock_rm:
+            await fixer._handle_failed_fixes_with_validator(
+                py_file, [(fix, issue)], [failed_app], "original",
+                result, mock_validator, dry_run=False,
+            )
+
+        mock_rm.assert_called_once()
+
+    async def test_exception_in_single_fix_does_not_abort_others(self, fixer, tmp_path):
+        py_file = tmp_path / "test.py"
+        py_file.write_text("x = 1\n")
+
+        fix1 = self._make_fix(tmp_path)
+        fix1.issue_key = "k1"
+        fix2 = self._make_fix(tmp_path)
+        fix2.issue_key = "k2"
+        issue1 = self._make_issue()
+        issue2 = self._make_issue()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=2)
+
+        failed_app = Mock()
+        failed_app.reason = "error"
+
+        mock_validator = Mock()
+        mock_val_result = Mock()
+        mock_val_result.status = ValidationStatus.APPROVED
+        # First call raises, second succeeds
+        mock_validator.validate_fix.side_effect = [Exception("crash"), mock_val_result]
+
+        with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="x = 1\n"):
+            await fixer._handle_failed_fixes_with_validator(
+                py_file, [(fix1, issue1), (fix2, issue2)], [failed_app], "original",
+                result, mock_validator, dry_run=False,
+            )
+
+        assert len(result.failed_fixes) == 1
+        assert "Validator error" in result.failed_fixes[0]["error"]
+        assert len(result.successful_fixes) == 1
+
+
+class TestProcessValidationResult:
+    """Tests for _process_validation_result."""
+
+    @pytest.fixture
+    def fixer(self, mock_openai_client):
+        return LLMFixer(provider="openai", api_key="test-key")
+
+    def _make_fix(self):
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "k"
+        fix.original_code = "x = 1"
+        return fix
+
+    async def test_approved_appends_to_successful(self, fixer, tmp_path):
+        fix = self._make_fix()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.APPROVED
+
+        await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.successful_fixes) == 1
+        assert result.successful_fixes[0] is fix
+
+    async def test_rejected_appends_to_failed(self, fixer, tmp_path):
+        fix = self._make_fix()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.REJECTED
+        val_result.explanation = "bad fix"
+
+        await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.failed_fixes) == 1
+        assert "Rejected" in result.failed_fixes[0]["error"]
+
+    async def test_needs_review_appends_to_failed(self, fixer, tmp_path):
+        fix = self._make_fix()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.NEEDS_REVIEW
+        val_result.explanation = "check this"
+
+        await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.failed_fixes) == 1
+        assert "manual review" in result.failed_fixes[0]["error"]
+
+    async def test_modified_with_final_fix_success(self, fixer, tmp_path):
+        fix = self._make_fix()
+        improved_fix = Mock()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.MODIFIED
+        val_result.final_fix = improved_fix
+
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(True, [])):
+            await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.successful_fixes) == 1
+        assert result.successful_fixes[0] is improved_fix
+
+    async def test_modified_with_final_fix_reapply_fails(self, fixer, tmp_path):
+        fix = self._make_fix()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.MODIFIED
+        val_result.final_fix = Mock()
+
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(False, [])):
+            await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.failed_fixes) == 1
+        assert "still failed" in result.failed_fixes[0]["error"]
+
+    async def test_modified_no_final_fix(self, fixer, tmp_path):
+        fix = self._make_fix()
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        val_result = Mock()
+        val_result.status = ValidationStatus.MODIFIED
+        val_result.final_fix = None
+
+        await fixer._process_validation_result(val_result, fix, tmp_path / "t.py", result, False)
+
+        assert len(result.failed_fixes) == 1
+        assert "no improved fix" in result.failed_fixes[0]["error"]
 

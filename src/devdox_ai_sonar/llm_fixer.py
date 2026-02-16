@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import asyncio
+from collections import defaultdict
 
 import subprocess
 
@@ -28,7 +29,6 @@ from devdox_ai_sonar.models.sonar import (
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
     write_file_lines,
-    read_file_lines,
     normalize_indentation,
     remove_tmp_files,
 )
@@ -124,11 +124,11 @@ class LLMFixer:
             autoescape=select_autoescape(["html", "xml"]),
         )
 
-    async def read_file_async(self, file_path: str) -> str:
+    async def read_file_async(self, file_path: str | Path) -> str:
         """Async version."""
         return await self.file_reader.read_text(file_path)
 
-    def read_file(self, file_path: str) -> str:
+    def read_file(self, file_path: str | Path) -> str:
         """Sync version (backwards compatible)."""
         return asyncio.run(self.read_file_async(file_path))
 
@@ -297,7 +297,9 @@ class LLMFixer:
 
         try:
             # Step 1: Validate issues and extract file information
-            validation = await extractor.validate_issue_group(issues, tmp_path, project_path)
+            validation = await extractor.validate_issue_group(
+                issues, tmp_path, project_path
+            )
 
             if not validation.is_valid:
                 logger.error(f"Validation failed: {validation.error}")
@@ -321,7 +323,7 @@ class LLMFixer:
             # Step 3: Get appropriate handler and generate fix response
             handler = rule_registry.get_handler(issues[0].rule)
 
-            fix_response_lst = handler.generate_fixes(
+            fix_response_lst = await handler.generate_fixes(
                 issues,
                 context,
                 project_path,
@@ -605,7 +607,9 @@ class LLMFixer:
         for file_path_str, file_fixes in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
-                success, _ = await self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+                success, _ = await self._apply_fixes_to_file(
+                    file_path, file_fixes, dry_run
+                )
                 if success:
                     result.successful_fixes.extend(file_fixes)
 
@@ -1705,6 +1709,206 @@ class LLMFixer:
 
         return True
 
+    def _create_backup_if_needed(
+        self,
+        result: FixResult,
+        project_path: Path,
+        create_backup: bool,
+        dry_run: bool,
+    ) -> None:
+        """Conditionally create a project backup and update the result."""
+        if create_backup and not dry_run:
+            backup_path = self._create_backup(project_path)
+            result.backup_created = True
+            result.backup_path = backup_path
+
+    def _group_fixes_by_file(
+        self,
+        fixes: List[FixSuggestion],
+        issues: Sequence[Union[SonarIssue, SonarSecurityIssue]],
+        project_path: Path,
+    ) -> Dict[str, List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]]]:
+        """Group fix/issue pairs by resolved file path."""
+        fixes_by_file: Dict[
+            str, List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]]
+        ] = defaultdict(list)
+        for fix, issue in zip(fixes, issues):
+            file_key = self._get_file_from_fix(fix, project_path)
+            if file_key:
+                fixes_by_file[file_key].append((fix, issue))
+        return dict(fixes_by_file)
+
+    async def _process_single_file(
+        self,
+        file_path: Path,
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
+        result: FixResult,
+        validator: Optional[FixValidator],
+        dry_run: bool,
+    ) -> None:
+        """Process all fixes for a single file: try direct application, fall back to validator."""
+        file_fixes = [fix for fix, _ in file_fix_pairs]
+
+        original_content = ""
+        if file_path.exists():
+            original_content = await self.read_file_async(str(file_path))
+
+        success, new_fixes = await self._apply_fixes_to_file(
+            file_path, file_fixes, dry_run
+        )
+
+        if success:
+            result.successful_fixes.extend(file_fixes)
+            return
+
+        if validator:
+            await self._handle_failed_fixes_with_validator(
+                file_path,
+                file_fix_pairs,
+                new_fixes,
+                original_content,
+                result,
+                validator,
+                dry_run,
+            )
+        else:
+            result.failed_fixes.extend(
+                [
+                    {
+                        "fix": fix,
+                        "error": "Direct application failed and no validator available",
+                    }
+                    for fix in file_fixes
+                ]
+            )
+            logger.error(
+                f"✗ Failed to apply fixes to {file_path} (no validator fallback)"
+            )
+
+    async def _handle_failed_fixes_with_validator(
+        self,
+        file_path: Path,
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
+        new_fixes: List[Any],
+        original_content: str,
+        result: FixResult,
+        validator: FixValidator,
+        dry_run: bool,
+    ) -> None:
+        """Handle validator fallback when direct fix application fails."""
+        reason_msg = ", ".join(
+            fix_app.reason for fix_app in new_fixes if fix_app.reason is not None
+        )
+
+        logger.warning(
+            f"Direct fix application failed for {file_path}. "
+            f"Trying AI validator fallback to fix {reason_msg}..."
+        )
+
+        if not dry_run and file_path.exists():
+            await self.file_reader.write_text(file_path, original_content)
+
+        for fix, issue in file_fix_pairs:
+            try:
+                current_content = original_content
+                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
+                if file_path_tmp.exists():
+                    current_content = await self.read_file_async(file_path_tmp)
+                    remove_tmp_files(str(file_path_tmp))
+
+                validation_result = validator.validate_fix(
+                    fix,
+                    issue,
+                    current_content,
+                    new_error_msg=reason_msg,
+                )
+
+                await self._process_validation_result(
+                    validation_result,
+                    fix,
+                    file_path,
+                    result,
+                    dry_run,
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Error in validator fallback for fix {fix.issue_key}: {e}",
+                    exc_info=True,
+                )
+                result.failed_fixes.append(
+                    {"fix": fix, "error": f"Validator error: {str(e)}"}
+                )
+
+    async def _process_validation_result(
+        self,
+        validation_result: Any,
+        fix: FixSuggestion,
+        file_path: Path,
+        result: FixResult,
+        dry_run: bool,
+    ) -> None:
+        """Dispatch on validation status and update the result accordingly."""
+        status = validation_result.status
+
+        if status == ValidationStatus.APPROVED:
+            result.successful_fixes.append(fix)
+            return
+
+        if status == ValidationStatus.REJECTED:
+            logger.warning(
+                f"✗ Fix {fix.issue_key} REJECTED by validator: "
+                f"{validation_result.explanation}"
+            )
+            result.failed_fixes.append(
+                {
+                    "fix": fix,
+                    "error": f"Rejected by validator: {validation_result.explanation}",
+                }
+            )
+            return
+
+        if status == ValidationStatus.NEEDS_REVIEW:
+            logger.warning(
+                f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.explanation}"
+            )
+            result.failed_fixes.append(
+                {
+                    "fix": fix,
+                    "error": f"Needs manual review: {validation_result.explanation}",
+                }
+            )
+            return
+
+        # MODIFIED
+        if not validation_result.final_fix:
+            result.failed_fixes.append(
+                {
+                    "fix": fix,
+                    "error": "Validator marked as MODIFIED but provided no improved fix",
+                }
+            )
+            return
+
+        improved_success, _ = await self._apply_fixes_to_file(
+            file_path,
+            [validation_result.final_fix],
+            dry_run,
+        )
+        if improved_success:
+            result.successful_fixes.append(validation_result.final_fix)
+        else:
+            result.failed_fixes.append(
+                {
+                    "fix": fix,
+                    "error": "Validator improved fix but application still failed",
+                }
+            )
+
     async def apply_fixes_with_validation(
         self,
         fixes: List[FixSuggestion],
@@ -1742,16 +1946,10 @@ class LLMFixer:
         Returns:
             FixResult with detailed application results
         """
-
         result = FixResult(project_path=project_path, total_fixes_attempted=len(fixes))
 
-        # Create backup if requested
-        if create_backup and not dry_run:
-            backup_path = self._create_backup(project_path)
-            result.backup_created = True
-            result.backup_path = backup_path
+        self._create_backup_if_needed(result, project_path, create_backup, dry_run)
 
-        # Initialize validator if needed (but don't use it upfront)
         validator = None
         if use_validator:
             validator = FixValidator(
@@ -1761,163 +1959,18 @@ class LLMFixer:
                 min_confidence_threshold=min_confidence,
             )
 
-        # Group fixes by file for efficient processing
-        fixes_by_file: Dict[
-            str, List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]]
-        ] = {}
-        for fix, issue in zip(fixes, issues):
-            file_key = self._get_file_from_fix(fix, project_path)
-            if file_key:
-                if file_key not in fixes_by_file:
-                    fixes_by_file[file_key] = []
-                fixes_by_file[file_key].append((fix, issue))
+        fixes_by_file = self._group_fixes_by_file(fixes, issues, project_path)
 
-        # Apply fixes file by file
         for file_path_str, file_fix_pairs in fixes_by_file.items():
             try:
                 file_path = Path(file_path_str)
-                file_fixes = [fix for fix, _ in file_fix_pairs]
-
-                # STEP 1: Try to apply fixes directly
-
-                # Store original content for validator fallback
-                original_content = ""
-                if file_path.exists():
-                    original_content = await self.read_file_async(str(file_path))
-
-                # Attempt direct application
-                success, new_fixes = await self._apply_fixes_to_file(
-                    file_path, file_fixes, dry_run
+                await self._process_single_file(
+                    file_path,
+                    file_fix_pairs,
+                    result,
+                    validator,
+                    dry_run,
                 )
-
-                if success:
-                    # Direct application succeeded
-                    result.successful_fixes.extend(file_fixes)
-
-                else:
-                    # STEP 2: Direct application failed, try AI validator fallback
-                    if use_validator and validator:
-                        reason_list = []
-                        for fix_app in new_fixes:
-                            if fix_app.reason is not None:
-                                reason_list.append(fix_app.reason)
-
-                        reason_msg = ", ".join(reason_list)
-
-                        logger.warning(
-                            f"Direct fix application failed for {file_path}. Trying AI validator fallback to fix {reason_msg}..."
-                        )
-
-                        # Restore original content
-                        if not dry_run and file_path.exists():
-                            await self.file_reader.write_text(file_path, original_content)
-
-                        # Use validator to fix each problematic fix
-                        for fix, issue in file_fix_pairs:
-                            try:
-                                # Get current file content (may have been modified by previous validator fixes)
-                                current_content = original_content
-                                file_path_tmp = file_path.with_suffix(
-                                    f".tmp{file_path.suffix}"
-                                )
-                                if file_path_tmp.exists():
-                                        current_content = await  self.read_file_async(file_path_tmp)
-                                        remove_tmp_files(str(file_path_tmp))
-
-                                validation_result = validator.validate_fix(
-                                    fix,
-                                    issue,
-                                    current_content,
-                                    new_error_msg=reason_msg,
-                                )
-
-                                # Log validation decision
-                                if (
-                                    validation_result.status
-                                    == ValidationStatus.APPROVED
-                                ):
-                                    result.successful_fixes.append(fix)
-
-                                elif (
-                                    validation_result.status
-                                    == ValidationStatus.MODIFIED
-                                ):
-                                    # Apply the improved fix
-                                    if validation_result.final_fix:
-                                        improved_success, _ = await self._apply_fixes_to_file(
-                                            file_path,
-                                            [validation_result.final_fix],
-                                            dry_run,
-                                        )
-                                        if improved_success:
-                                            result.successful_fixes.append(
-                                                validation_result.final_fix
-                                            )
-
-                                        else:
-                                            result.failed_fixes.append(
-                                                {
-                                                    "fix": fix,
-                                                    "error": "Validator improved fix but application still failed",
-                                                }
-                                            )
-                                    else:
-                                        result.failed_fixes.append(
-                                            {
-                                                "fix": fix,
-                                                "error": "Validator marked as MODIFIED but provided no improved fix",
-                                            }
-                                        )
-
-                                elif (
-                                    validation_result.status
-                                    == ValidationStatus.REJECTED
-                                ):
-                                    logger.warning(
-                                        f"✗ Fix {fix.issue_key} REJECTED by validator: {validation_result.explanation}"
-                                    )
-                                    result.failed_fixes.append(
-                                        {
-                                            "fix": fix,
-                                            "error": f"Rejected by validator: {validation_result.explanation}",
-                                        }
-                                    )
-
-                                else:  # NEEDS_REVIEW
-                                    logger.warning(
-                                        f"? Fix {fix.issue_key} NEEDS_REVIEW: {validation_result.explanation}"
-                                    )
-                                    result.failed_fixes.append(
-                                        {
-                                            "fix": fix,
-                                            "error": f"Needs manual review: {validation_result.explanation}",
-                                        }
-                                    )
-
-                            except Exception as e:
-                                logger.error(
-                                    f"Error in validator fallback for fix {fix.issue_key}: {e}",
-                                    exc_info=True,
-                                )
-                                result.failed_fixes.append(
-                                    {"fix": fix, "error": f"Validator error: {str(e)}"}
-                                )
-
-                    else:
-                        # No validator available, mark all as failed
-                        result.failed_fixes.extend(
-                            [
-                                {
-                                    "fix": fix,
-                                    "error": "Direct application failed and no validator available",
-                                }
-                                for fix in file_fixes
-                            ]
-                        )
-                        logger.error(
-                            f"✗ Failed to apply fixes to {file_path} (no validator fallback)"
-                        )
-
             except Exception as e:
                 result.failed_fixes.extend(
                     [{"fix": fix, "error": str(e)} for fix, _ in file_fix_pairs]
@@ -2051,8 +2104,7 @@ class LLMFixer:
         """
         try:
             # Read file content
-            file_lines =  await self.file_reader.read_lines(file_path)
-
+            file_lines = await self.file_reader.read_lines(file_path)
 
             # Extract problem line content
             # CRITICAL: SonarCloud uses 1-based line numbers, Python uses 0-based indexing
