@@ -452,11 +452,8 @@ class FixValidator:
             if self.provider == "gemini":
                 return self._call_gemini_validator(prompt)
 
-            if self.provider == "togetherai":
-                return self._call_togetherai_validator(prompt)
-
-            if self.provider == "openrouter":
-                return self._call_openrouter_validator(prompt)
+            if self.provider in ("togetherai", "openrouter"):
+                return self._call_openai_compatible_validator(prompt)
 
             return None
 
@@ -494,46 +491,10 @@ class FixValidator:
 
         return cast(Optional[SonarFixResponse], response.output_parsed)
 
-    def _call_togetherai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software engineer and security expert "
-                        "specializing in code review."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=8000,
-            temperature=0.1,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "sonar_fix_response",
-                    "schema": SonarFixResponse.model_json_schema(),
-                    "strict": True,
-                },
-            },
-        )
-        response_json = response.choices[0].message.content
-
-        try:
-            # Parse JSON
-            data = json.loads(response_json)
-
-            # Validate with Pydantic
-            return SonarFixResponse(**data)
-
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}")
-
-        except ValidationError as e:
-            raise ValueError(f"Schema validation failed: {e}")
-
-    def _call_openrouter_validator(self, prompt: str) -> Optional[SonarFixResponse]:
+    def _call_openai_compatible_validator(
+        self, prompt: str
+    ) -> Optional[SonarFixResponse]:
+        """Call an OpenAI-compatible validator (used by TogetherAI and OpenRouter)."""
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -568,3 +529,7 @@ class FixValidator:
 
         except ValidationError as e:
             raise ValueError(f"Schema validation failed: {e}")
+
+    # Aliases for backward compatibility and test clarity
+    _call_togetherai_validator = _call_openai_compatible_validator
+    _call_openrouter_validator = _call_openai_compatible_validator

@@ -28,14 +28,16 @@ from devdox_ai_sonar.models.sonar import (
 
 @pytest.fixture
 def sample_code_block():
-    return CodeBlock(block_name="test",
-                     start_line="1",
-                     end_line="10",
-                     has_changes=True,
-                     change_type=ChangeType.FULL_CODE,
-                     block_type=BlockType.FUNCTION,
-                     context="new_code"
-                     )
+    return CodeBlock(
+        block_name="test",
+        start_line="1",
+        end_line="10",
+        has_changes=True,
+        change_type=ChangeType.FULL_CODE,
+        block_type=BlockType.FUNCTION,
+        context="new_code",
+    )
+
 
 @pytest.fixture
 def sample_issue():
@@ -67,7 +69,7 @@ def sample_fix(sample_code_block):
         file_path="src/test.py",
         line_number=10,
         last_line_number=11,
-        fixed_code_blocks=[sample_code_block]
+        fixed_code_blocks=[sample_code_block],
     )
 
 
@@ -155,13 +157,19 @@ class TestFixValidatorInitialization:
 
         assert validator.min_confidence_threshold == 0.8
 
+
 @pytest.mark.skip(reason="Need update")
 class TestValidateFix:
     """Test fix validation."""
 
     @patch("devdox_ai_sonar.fix_validator.openai")
     def test_validate_fix_approved(
-        self, mock_openai, sample_fix, sample_issue, sample_file_content, sample_code_block
+        self,
+        mock_openai,
+        sample_fix,
+        sample_issue,
+        sample_file_content,
+        sample_code_block,
     ):
         """Test validation when fix is approved."""
 
@@ -213,7 +221,7 @@ class TestValidateFix:
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
-        validator = FixValidator(provider="openai", api_key="test-key",model="gpt-4o")
+        validator = FixValidator(provider="openai", api_key="test-key", model="gpt-4o")
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
@@ -335,8 +343,6 @@ def function2():
 
         assert "function2" in context["full_context"]
         assert context["issue_start"] == 6
-
-
 
 
 class TestValidationResultProperties:
@@ -491,7 +497,9 @@ class TestPromptGeneration:
             "issue_end": 10,
         }
 
-        prompt = validator._create_validation_prompt(sample_fix, sample_issue, context,"")
+        prompt = validator._create_validation_prompt(
+            sample_fix, sample_issue, context, ""
+        )
 
         # Check Issue details
         assert sample_issue.rule in prompt
@@ -832,7 +840,7 @@ class TestRegexParsingEdgeCases:
         mock_response = MagicMock()
         mock_response.choices[
             0
-        ].message.content =  """{
+        ].message.content = """{
 "IMPROVED_FIX": "",
 
 "CONFIDENCE": "0.95",
@@ -1003,6 +1011,7 @@ CONCERNS: Multiple issues
 # HIGH PRIORITY: Validation Response Edge Cases
 # ==============================================================================
 
+
 @pytest.mark.skip(reason="Need update")
 class TestValidationResponseEdgeCases:
     """Test edge cases in validation responses."""
@@ -1030,7 +1039,9 @@ class TestValidationResponseEdgeCases:
         """Test response with only STATUS field."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices[0].message.content = '{ "IMPROVED_FIX": "", "CONFIDENCE": "0.7", "PLACEMENT":"SIBLING", "IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."}'
+        mock_response.choices[0].message.content = (
+            '{ "IMPROVED_FIX": "", "CONFIDENCE": "0.7", "PLACEMENT":"SIBLING", "IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."}'
+        )
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
@@ -1146,7 +1157,6 @@ class TestContextExtractionBoundaries:
 # ==============================================================================
 
 
-
 class TestAdditionalEdgeCases:
     """Test additional edge cases for comprehensive coverage."""
 
@@ -1176,9 +1186,7 @@ class TestAdditionalEdgeCases:
         # Malformed response that causes parsing error
         response_text = None  # This should cause an error
 
-        result = validator._parse_validation_response(
-            response_text, sample_fix
-        )
+        result = validator._parse_validation_response(response_text, sample_fix)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
         assert "Failed to parse" in result.explanation
@@ -1400,9 +1408,7 @@ class TestFormatSearchReplaceContent:
             change_type=ChangeType.SEARCH_REPLACE,
             block_type=BlockType.FUNCTION,
             replacements=[
-                SearchReplace(
-                    search=r"\bawait\s+", replace="", is_regex=True, count=1
-                ),
+                SearchReplace(search=r"\bawait\s+", replace="", is_regex=True, count=1),
             ],
         )
         result = _format_search_replace_content(block)
@@ -1512,33 +1518,53 @@ class TestOpenRouterInitializationValidator:
             FixValidator(provider="openrouter", api_key="test-key")
 
 
-class TestOpenRouterValidatorDispatch:
-    """Test that OpenRouter is properly wired into the validator dispatch."""
+class TestOpenAICompatibleValidatorDispatch:
+    """Test that OpenAI-compatible providers are properly wired into the validator dispatch."""
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_call_llm_validator_routes_to_openrouter(self, mock_openai):
-        """Test that _call_llm_validator dispatches to _call_openrouter_validator."""
+    def test_call_llm_validator_routes_openrouter_to_openai_compatible(
+        self, mock_openai
+    ):
+        """Test that _call_llm_validator dispatches to _call_openai_compatible_validator for openrouter."""
         mock_openai.OpenAI.return_value = MagicMock()
 
         validator = FixValidator(provider="openrouter", api_key="test-key")
 
         with patch.object(
-            validator, "_call_openrouter_validator", return_value=None
+            validator, "_call_openai_compatible_validator", return_value=None
+        ) as mock_call:
+            validator._call_llm_validator("test prompt")
+            mock_call.assert_called_once_with("test prompt")
+
+    @patch("devdox_ai_sonar.fix_validator.Together")
+    @patch("devdox_ai_sonar.fix_validator.HAS_TOGETHER", True)
+    def test_call_llm_validator_routes_togetherai_to_openai_compatible(
+        self, mock_together
+    ):
+        """Test that _call_llm_validator dispatches to _call_openai_compatible_validator for togetherai."""
+        mock_together.return_value = MagicMock()
+
+        validator = FixValidator(provider="togetherai", api_key="test-key")
+
+        with patch.object(
+            validator, "_call_openai_compatible_validator", return_value=None
         ) as mock_call:
             validator._call_llm_validator("test prompt")
             mock_call.assert_called_once_with("test prompt")
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_call_openrouter_validator_calls_chat_completions(self, mock_openai):
-        """Test that _call_openrouter_validator uses chat.completions.create."""
+    def test_call_openai_compatible_validator_calls_chat_completions(self, mock_openai):
+        """Test that _call_openai_compatible_validator uses chat.completions.create."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices[0].message.content = '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        mock_response.choices[0].message.content = (
+            '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        )
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
         validator = FixValidator(provider="openrouter", api_key="test-key")
-        validator._call_openrouter_validator("test prompt")
+        validator._call_openai_compatible_validator("test prompt")
 
         mock_client.chat.completions.create.assert_called_once()
         call_kwargs = mock_client.chat.completions.create.call_args[1]
@@ -1548,16 +1574,20 @@ class TestOpenRouterValidatorDispatch:
         assert call_kwargs["response_format"]["type"] == "json_schema"
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_call_openrouter_validator_sends_system_and_user_messages(self, mock_openai):
+    def test_call_openai_compatible_validator_sends_system_and_user_messages(
+        self, mock_openai
+    ):
         """Test that the correct system and user messages are sent."""
         mock_client = MagicMock()
         mock_response = MagicMock()
-        mock_response.choices[0].message.content = '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        mock_response.choices[0].message.content = (
+            '{"FIXED_CODE_BLOCKS": [{"block_name": "fix", "start_line": 1, "end_line": 2, "has_changes": true, "change_type": "FULL_CODE", "block_type": "function", "context": "def fix(): pass"}], "EXPLANATION": "ok", "CONFIDENCE": 0.9, "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING"}'
+        )
         mock_client.chat.completions.create.return_value = mock_response
         mock_openai.OpenAI.return_value = mock_client
 
         validator = FixValidator(provider="openrouter", api_key="test-key")
-        validator._call_openrouter_validator("my prompt text")
+        validator._call_openai_compatible_validator("my prompt text")
 
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         messages = call_kwargs["messages"]
@@ -1568,7 +1598,7 @@ class TestOpenRouterValidatorDispatch:
         assert messages[1]["content"] == "my prompt text"
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_call_openrouter_validator_invalid_json_raises(self, mock_openai):
+    def test_call_openai_compatible_validator_invalid_json_raises(self, mock_openai):
         """Test that invalid JSON response raises ValueError."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -1579,10 +1609,12 @@ class TestOpenRouterValidatorDispatch:
         validator = FixValidator(provider="openrouter", api_key="test-key")
 
         with pytest.raises(ValueError, match="Invalid JSON"):
-            validator._call_openrouter_validator("test prompt")
+            validator._call_openai_compatible_validator("test prompt")
 
     @patch("devdox_ai_sonar.fix_validator.openai")
-    def test_call_openrouter_validator_schema_validation_failure(self, mock_openai):
+    def test_call_openai_compatible_validator_schema_validation_failure(
+        self, mock_openai
+    ):
         """Test that valid JSON but invalid schema raises ValueError."""
         mock_client = MagicMock()
         mock_response = MagicMock()
@@ -1593,7 +1625,7 @@ class TestOpenRouterValidatorDispatch:
         validator = FixValidator(provider="openrouter", api_key="test-key")
 
         with pytest.raises(ValueError, match="Schema validation failed"):
-            validator._call_openrouter_validator("test prompt")
+            validator._call_openai_compatible_validator("test prompt")
 
 
 class TestOpenRouterProviderIntegration:
