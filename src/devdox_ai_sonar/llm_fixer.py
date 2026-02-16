@@ -223,9 +223,10 @@ class LLMFixer:
     def write_explaination(
         self,
         file_md: Path,
-        fix_response: SonarFixResponse,
+        fix_response_lst: List[SonarFixResponse],
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         original_code: Dict[str, Any],
+        project_path: Optional[Path] = None,
     ) -> None:
         # Ensure parent directory exists
         file_md.parent.mkdir(parents=True, exist_ok=True)
@@ -233,6 +234,26 @@ class LLMFixer:
         # Create file if it does not exist
         if not file_md.exists():
             file_md.touch()
+
+        # Consolidate all code blocks from all responses for documentation
+        all_code_blocks = []
+        for resp in fix_response_lst:
+            all_code_blocks.extend(resp.FIXED_CODE_BLOCKS)
+
+        # Create display copies with relative file paths (avoid mutating originals)
+        display_blocks = []
+        for block in all_code_blocks:
+            if block.file_path and project_path:
+                try:
+                    relative = str(Path(block.file_path).relative_to(project_path))
+                except ValueError:
+                    relative = block.file_path
+                display_blocks.append(block.model_copy(update={"file_path": relative}))
+            else:
+                display_blocks.append(block)
+
+        # Use explanation from the last (main) response
+        main_response = fix_response_lst[-1]
 
         with open(file_md, mode="a", encoding="utf-8") as f:
             for issue in issues:
@@ -243,9 +264,7 @@ class LLMFixer:
                 file_path = getattr(issue, "file_path", "Unknown file")
                 line = getattr(issue, "line", "N/A")
 
-                explanation = fix_response.EXPLANATION
-
-                suggestion = fix_response.FIXED_CODE_BLOCKS
+                explanation = main_response.EXPLANATION
 
                 template = self.jinja_env_templates.get_template("md.j2")
 
@@ -257,7 +276,7 @@ class LLMFixer:
                     "file_path": file_path,
                     "line": line,
                     "explanation": explanation,
-                    "suggestion": suggestion,
+                    "suggestion": display_blocks,
                     "original_code": original_code,
                 }
                 # Render enhanced content
@@ -350,9 +369,10 @@ class LLMFixer:
             if file_md:
                 self.write_explaination(
                     project_path / file_md,
-                    fix_response_lst[-1],
+                    fix_response_lst,
                     issues,
                     context.context_dict,
+                    project_path=project_path,
                 )
 
             logger.info(f"Generated fix for {len(issues)} issue(s)")

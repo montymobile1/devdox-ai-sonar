@@ -1283,7 +1283,7 @@ class TestWriteExplaination:
 
         original_code = "print('Hello World')"
 
-        fixer.write_explaination(file_md, fix_response, [sample_sonar_issue], original_code)
+        fixer.write_explaination(file_md, [fix_response], [sample_sonar_issue], original_code)
 
         # Assertions
         assert file_md.exists(), "Output file should be created"
@@ -1344,7 +1344,7 @@ class TestWriteExplaination:
             "fixed_code": "Common fix"
         }
 
-        fixer.write_explaination(file_md, fix_response, issues, "")
+        fixer.write_explaination(file_md, [fix_response], issues, "")
 
         content = file_md.read_text()
         assert "python:S1234" in content
@@ -1361,7 +1361,7 @@ class TestWriteExplaination:
             "fixed_code": "cursor.execute('SELECT * FROM users WHERE id = ?', (user_id,))"
         }
 
-        fixer.write_explaination(file_md, fix_response, [sample_security_issue], "")
+        fixer.write_explaination(file_md, [fix_response], [sample_security_issue], "")
 
         assert file_md.exists()
         content = file_md.read_text()
@@ -1381,7 +1381,7 @@ class TestWriteExplaination:
             "fixed_code": "New fix"
         }
 
-        fixer.write_explaination(file_md, fix_response, [sample_sonar_issue], "")
+        fixer.write_explaination(file_md, [fix_response], [sample_sonar_issue], "")
 
         content = file_md.read_text()
         assert "# Existing Content" in content
@@ -1400,7 +1400,7 @@ class TestWriteExplaination:
             "fixed_code": "No fix needed"
         }
 
-        fixer.write_explaination(file_md, fix_response, [], "")
+        fixer.write_explaination(file_md, [fix_response], [], "")
 
         # File should be created but contain no issue entries
         assert file_md.exists()
@@ -1425,7 +1425,7 @@ class TestWriteExplaination:
             "fixed_code": "Test fix"
         }
 
-        fixer.write_explaination(file_md, fix_response, [issue], "")
+        fixer.write_explaination(file_md, [fix_response], [issue], "")
 
         content = file_md.read_text()
         # Should use default values from getattr
@@ -1441,7 +1441,7 @@ class TestWriteExplaination:
         # Empty fix_response
         fix_response = {}
 
-        fixer.write_explaination(file_md, fix_response, [sample_sonar_issue], "")
+        fixer.write_explaination(file_md, [fix_response], [sample_sonar_issue], "")
 
         content = file_md.read_text()
         assert "No explanation provided" in content
@@ -1457,7 +1457,7 @@ class TestWriteExplaination:
             "fixed_code": "Test"
         }
 
-        fixer.write_explaination(file_md, fix_response, [sample_sonar_issue], "")
+        fixer.write_explaination(file_md, [fix_response], [sample_sonar_issue], "")
 
         assert file_md.exists()
         assert file_md.parent.exists()
@@ -1484,7 +1484,7 @@ class TestWriteExplaination:
             "fixed_code": "código_español = 'ñ'"
         }
 
-        fixer.write_explaination(file_md, fix_response, [issue], "")
+        fixer.write_explaination(file_md, [fix_response], [issue], "")
 
         content = file_md.read_text(encoding="utf-8")
         assert "你好世界" in content
@@ -1513,7 +1513,7 @@ class TestWriteExplaination:
             "fixed_code": "C" * 10000
         }
 
-        fixer.write_explaination(file_md, fix_response, [issue], "")
+        fixer.write_explaination(file_md, [fix_response], [issue], "")
 
         assert file_md.exists()
         content = file_md.read_text()
@@ -1553,7 +1553,7 @@ class TestWriteExplaination:
 
         try:
             with pytest.raises(PermissionError):
-                fixer.write_explaination(file_md, fix_response, [issue], "")
+                fixer.write_explaination(file_md, [fix_response], [issue], "")
         finally:
             # Restore permissions for cleanup
             os.chmod(file_md.parent, 0o755)
@@ -1586,7 +1586,7 @@ class TestWriteExplaination:
         }
 
         with pytest.raises((ValueError, OSError, FileNotFoundError)):
-            fixer.write_explaination(file_md, fix_response, [issue], "")
+            fixer.write_explaination(file_md, [fix_response], [issue], "")
 
     # ============================================================================
     # TEST CASES - CONCURRENT ACCESS
@@ -1617,7 +1617,7 @@ class TestWriteExplaination:
                 "fixed_code": f"Fix {issue_num}"
             }
 
-            fixer.write_explaination(file_md, fix_response, [issue], "")
+            fixer.write_explaination(file_md, [fix_response], [issue], "")
 
         threads = [threading.Thread(target=write_issue, args=(i,)) for i in range(5)]
         for thread in threads:
@@ -1664,7 +1664,7 @@ class TestWriteExplaination:
         }
 
         start = time.time()
-        fixer.write_explaination(file_md, fix_response, issues, "")
+        fixer.write_explaination(file_md, [fix_response], issues, "")
         duration = time.time() - start
 
         assert file_md.exists()
@@ -1701,7 +1701,7 @@ class TestWriteExplaination:
     """
         }
 
-        fixer.write_explaination(file_md, fix_response, [sample_sonar_issue], original_code)
+        fixer.write_explaination(file_md, [fix_response], [sample_sonar_issue], original_code)
 
         assert file_md.exists()
         content = file_md.read_text()
@@ -2880,7 +2880,7 @@ Hope this helps!
 
         try:
             with pytest.raises((PermissionError, OSError)):
-                fixer.write_explaination(file_md, mock_fix_response, [issue], "")
+                fixer.write_explaination(file_md, [mock_fix_response], [issue], "")
         finally:
             file_md.parent.chmod(0o755)
 
@@ -4983,7 +4983,7 @@ class TestWriteExplaination:
         fixer.jinja_env_templates = Mock()
         fixer.jinja_env_templates.get_template.return_value = mock_template
 
-        fixer.write_explaination(md_file, fix_response, [issue], "original code")
+        fixer.write_explaination(md_file, [fix_response], [issue], "original code")
 
         assert md_file.exists()
         content = md_file.read_text()
@@ -5001,7 +5001,7 @@ class TestWriteExplaination:
         fixer.jinja_env_templates = Mock()
         fixer.jinja_env_templates.get_template.return_value = mock_template
 
-        fixer.write_explaination(md_file, fix_response, [], "code")
+        fixer.write_explaination(md_file, [fix_response], [], "code")
         assert md_file.parent.exists()
 
     def test_appends_to_existing_file(self, fixer, tmp_path):
@@ -5025,7 +5025,7 @@ class TestWriteExplaination:
         fixer.jinja_env_templates = Mock()
         fixer.jinja_env_templates.get_template.return_value = mock_template
 
-        fixer.write_explaination(md_file, fix_response, [issue], "code")
+        fixer.write_explaination(md_file, [fix_response], [issue], "code")
         content = md_file.read_text()
         assert "existing content" in content
         assert "new content" in content
@@ -5045,7 +5045,7 @@ class TestWriteExplaination:
         issue.file_path = "t.py"
         issue.line = 1
 
-        fixer.write_explaination(md_file, fix_response, [issue], "code")
+        fixer.write_explaination(md_file, [fix_response], [issue], "code")
         content = md_file.read_text()
         assert "Explanation" not in content
 
@@ -5063,10 +5063,177 @@ class TestWriteExplaination:
         issue.file_path = "t.py"
         issue.line = 1
 
-        fixer.write_explaination(md_file, fix_response, [issue], "code")
+        fixer.write_explaination(md_file, [fix_response], [issue], "code")
         content = md_file.read_text()
         assert "Explanation" in content
         assert "This fix addresses the root cause" in content
+
+    def test_consolidates_all_response_code_blocks(self, fixer, tmp_path):
+        """All code blocks from multiple SonarFixResponses appear in markdown."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        md_file = tmp_path / "output.md"
+
+        block1 = CodeBlock(
+            block_name="build_greeting",
+            start_line=10, end_line=11,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+        )
+        block2 = CodeBlock(
+            block_name="build_greeting",
+            start_line=14, end_line=14,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/proj/main.py",
+        )
+        block3 = CodeBlock(
+            block_name="build_greeting",
+            start_line=10, end_line=10,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/proj/api/routes/items.py",
+        )
+
+        resp_main = Mock()
+        resp_main.EXPLANATION = "Converting async to sync"
+        resp_main.FIXED_CODE_BLOCKS = [block1]
+
+        resp_caller1 = Mock()
+        resp_caller1.EXPLANATION = ""
+        resp_caller1.FIXED_CODE_BLOCKS = [block2]
+
+        resp_caller2 = Mock()
+        resp_caller2.EXPLANATION = ""
+        resp_caller2.FIXED_CODE_BLOCKS = [block3]
+
+        issue = Mock()
+        issue.rule = "python:S7503"
+        issue.severity = "MINOR"
+        issue.message = "Async function without await"
+        issue.file_path = "services/bad_async.py"
+        issue.line = 10
+
+        fixer.write_explaination(
+            md_file,
+            [resp_caller1, resp_caller2, resp_main],
+            [issue],
+            "original code",
+            project_path=Path("/proj"),
+        )
+
+        content = md_file.read_text()
+        # All three blocks should be rendered
+        assert content.count("build_greeting") >= 3
+        # External file paths should appear as relative
+        assert "main.py" in content
+        assert "api/routes/items.py" in content
+
+    def test_file_paths_converted_to_relative(self, fixer, tmp_path):
+        """Absolute file paths are converted to relative when project_path is given."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        md_file = tmp_path / "output.md"
+
+        block = CodeBlock(
+            block_name="my_func",
+            start_line=5, end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/home/user/project/src/foo.py",
+        )
+
+        resp = Mock()
+        resp.EXPLANATION = "Fix"
+        resp.FIXED_CODE_BLOCKS = [block]
+
+        issue = Mock()
+        issue.rule = "python:S7503"
+        issue.severity = "MINOR"
+        issue.message = "msg"
+        issue.file_path = "src/foo.py"
+        issue.line = 5
+
+        fixer.write_explaination(
+            md_file, [resp], [issue], "code",
+            project_path=Path("/home/user/project"),
+        )
+
+        content = md_file.read_text()
+        assert "src/foo.py" in content
+        assert "/home/user/project/src/foo.py" not in content
+
+    def test_no_file_path_renders_without_dash(self, fixer, tmp_path):
+        """Code blocks without file_path render headers without the em-dash."""
+        md_file = tmp_path / "output.md"
+
+        block = Mock()
+        block.file_path = None
+        block.block_name = "my_func"
+        block.start_line = 1
+        block.end_line = 2
+        block.changes = None
+        block.context = None
+        block.replacements = None
+
+        resp = Mock()
+        resp.EXPLANATION = "Fix"
+        resp.FIXED_CODE_BLOCKS = [block]
+
+        issue = Mock()
+        issue.rule = "python:S1234"
+        issue.severity = "MINOR"
+        issue.message = "msg"
+        issue.file_path = "test.py"
+        issue.line = 1
+
+        fixer.write_explaination(md_file, [resp], [issue], "code")
+
+        content = md_file.read_text()
+        assert "my_func" in content
+        # Should NOT have the file_path em-dash pattern
+        assert "\u2014 `" not in content
+
+    def test_original_code_blocks_not_mutated(self, fixer, tmp_path):
+        """Original CodeBlock objects should not have their file_path mutated."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        md_file = tmp_path / "output.md"
+        original_path = "/home/user/project/src/foo.py"
+
+        block = CodeBlock(
+            block_name="my_func",
+            start_line=5,
+            end_line=5,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path=original_path,
+        )
+
+        resp = Mock()
+        resp.EXPLANATION = "Fix"
+        resp.FIXED_CODE_BLOCKS = [block]
+
+        issue = Mock()
+        issue.rule = "python:S7503"
+        issue.severity = "MINOR"
+        issue.message = "msg"
+        issue.file_path = "src/foo.py"
+        issue.line = 5
+
+        fixer.write_explaination(
+            md_file, [resp], [issue], "code",
+            project_path=Path("/home/user/project"),
+        )
+
+        # Original block's file_path should be unchanged
+        assert block.file_path == original_path
+
 
 class TestGenerateFixByFile:
     """Cover generate_fix_by_file orchestration."""
