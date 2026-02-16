@@ -5235,6 +5235,301 @@ class TestWriteExplaination:
         assert block.file_path == original_path
 
 
+class TestConvertRegexToDiff:
+    """Tests for LLMFixer._convert_regex_to_diff."""
+
+    def test_converts_regex_block_to_diff(self, tmp_path):
+        """Regex SearchReplace block is converted to DIFF with actual source."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "test.py"
+        source_file.write_text("    msg = await build_greeting('root')\n")
+
+        block = CodeBlock(
+            block_name="build_greeting",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(
+                    search=r"\bawait\s+(?=build_greeting\s*\()",
+                    replace="",
+                    is_regex=True,
+                )
+            ],
+        )
+
+        file_cache: dict = {}
+        result = LLMFixer._convert_regex_to_diff(block, file_cache)
+
+        assert result["change_type"] == ChangeType.DIFF
+        assert result["replacements"] is None
+        assert len(result["changes"]) == 1
+        assert "await" in result["changes"][0].old
+        assert "await" not in result["changes"][0].new
+        assert "build_greeting" in result["changes"][0].new
+
+    def test_non_regex_block_returns_empty(self):
+        """Non-regex SearchReplace block returns empty dict."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path="/some/file.py",
+            replacements=[
+                SearchReplace(search="old_text", replace="new_text", is_regex=False)
+            ],
+        )
+
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result == {}
+
+    def test_diff_block_returns_empty(self):
+        """DIFF block (not SEARCH_REPLACE) returns empty dict."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/some/file.py",
+        )
+
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result == {}
+
+    def test_missing_file_returns_empty(self):
+        """Missing source file returns empty dict (graceful fallback)."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path="/nonexistent/path/file.py",
+            replacements=[
+                SearchReplace(search=r"\bawait\s+", replace="", is_regex=True)
+            ],
+        )
+
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result == {}
+
+    def test_line_out_of_range_returns_empty(self, tmp_path):
+        """Line number beyond file length returns empty dict."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "short.py"
+        source_file.write_text("line1\n")
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=999, end_line=999,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(search=r"\bawait\s+", replace="", is_regex=True)
+            ],
+        )
+
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result == {}
+
+    def test_caches_file_reads(self, tmp_path):
+        """File content is cached — same path is only read once."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "cached.py"
+        source_file.write_text("msg = await func()\n")
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(search=r"\bawait\s+(?=func\s*\()", replace="", is_regex=True)
+            ],
+        )
+
+        file_cache: dict = {}
+        LLMFixer._convert_regex_to_diff(block, file_cache)
+
+        assert str(source_file) in file_cache
+        # Second call reuses cache — delete file to prove it
+        source_file.unlink()
+        result = LLMFixer._convert_regex_to_diff(block, file_cache)
+        assert result["change_type"] == ChangeType.DIFF
+
+
+class TestBuildDisplayBlocks:
+    """Tests for LLMFixer._build_display_blocks."""
+
+    def test_converts_absolute_paths_to_relative(self):
+        """Absolute file paths are made relative to project_path."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/home/user/project/src/foo.py",
+        )
+
+        result = LLMFixer._build_display_blocks(
+            [block], project_path=Path("/home/user/project")
+        )
+
+        assert len(result) == 1
+        assert result[0].file_path == "src/foo.py"
+
+    def test_no_project_path_keeps_original(self):
+        """Without project_path, file paths are unchanged."""
+        from devdox_ai_sonar.models.sonar import CodeBlock, ChangeType, BlockType
+
+        block = CodeBlock(
+            block_name="func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path="/abs/path/file.py",
+        )
+
+        result = LLMFixer._build_display_blocks([block])
+
+        assert result[0].file_path == "/abs/path/file.py"
+
+    def test_regex_blocks_converted_to_diff(self, tmp_path):
+        """Regex SearchReplace blocks are converted to DIFF in display output."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "test.py"
+        source_file.write_text("x = await my_func()\n")
+
+        block = CodeBlock(
+            block_name="my_func",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(
+                    search=r"\bawait\s+(?=my_func\s*\()",
+                    replace="",
+                    is_regex=True,
+                )
+            ],
+        )
+
+        result = LLMFixer._build_display_blocks([block], project_path=tmp_path)
+
+        assert len(result) == 1
+        assert result[0].change_type == ChangeType.DIFF
+        assert result[0].changes[0].old == "x = await my_func()"
+        assert result[0].changes[0].new == "x = my_func()"
+
+    def test_mixed_blocks(self, tmp_path):
+        """Handles a mix of DIFF and SearchReplace blocks correctly."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "test.py"
+        source_file.write_text("result = await greet()\n")
+
+        diff_block = CodeBlock(
+            block_name="greet",
+            start_line=5, end_line=6,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            file_path=str(tmp_path / "other.py"),
+        )
+        regex_block = CodeBlock(
+            block_name="greet",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(
+                    search=r"\bawait\s+(?=greet\s*\()",
+                    replace="",
+                    is_regex=True,
+                )
+            ],
+        )
+
+        result = LLMFixer._build_display_blocks(
+            [diff_block, regex_block], project_path=tmp_path
+        )
+
+        assert len(result) == 2
+        assert result[0].change_type == ChangeType.DIFF  # unchanged
+        assert result[1].change_type == ChangeType.DIFF  # converted
+
+    def test_does_not_mutate_originals(self, tmp_path):
+        """Original CodeBlock objects are not modified."""
+        from devdox_ai_sonar.models.sonar import (
+            CodeBlock, ChangeType, BlockType, SearchReplace,
+        )
+
+        source_file = tmp_path / "test.py"
+        source_file.write_text("val = await fn()\n")
+
+        block = CodeBlock(
+            block_name="fn",
+            start_line=1, end_line=1,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            file_path=str(source_file),
+            replacements=[
+                SearchReplace(
+                    search=r"\bawait\s+(?=fn\s*\()",
+                    replace="",
+                    is_regex=True,
+                )
+            ],
+        )
+
+        LLMFixer._build_display_blocks([block], project_path=tmp_path)
+
+        assert block.change_type == ChangeType.SEARCH_REPLACE
+        assert block.replacements is not None
+
+
 class TestGenerateFixByFile:
     """Cover generate_fix_by_file orchestration."""
 
