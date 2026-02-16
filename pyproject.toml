@@ -46,7 +46,7 @@ dependencies = [
     "autopep8==2.3.2",
     "pathlib2==2.3.0",
     "GitPython==3.1.46",
-    "together @ git+https://github.com/togethercomputer/together-py.git@v2.0.0-alpha.10",
+    "together==2.1.1",
     "Jinja2==3.1.6",
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
