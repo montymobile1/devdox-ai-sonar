@@ -390,3 +390,33 @@ class TestAwaitRemovalKnownLimitations:
         """'await(foo())' with no space — not valid Python await syntax,
         and \\s+ requires at least one space."""
         assert apply_removal("await(foo())", "foo") == "await(foo())"
+
+
+class TestCreateFunctionDefinitionBlock:
+    """Tests for AsyncToSyncHandler._create_function_definition_block."""
+
+    def test_file_path_set_on_code_block(self):
+        """Function definition block should have file_path set."""
+        from pathlib import Path
+        from unittest.mock import Mock
+        from devdox_ai_sonar.services.rule_handler import AsyncToSyncHandler
+
+        handler = AsyncToSyncHandler()
+        function_info = {
+            "found": True,
+            "name": "build_greeting",
+            "definition": "async def build_greeting(name: str) -> str:",
+            "start_line": 0,
+        }
+        context = Mock()
+        context.context_dict = {
+            "functions": [{"name": "build_greeting", "start_line": 10}],
+        }
+        file_path = Path("/home/user/project/services/bad_async.py")
+
+        block = handler._create_function_definition_block(
+            function_info, context, file_path
+        )
+
+        assert block.file_path == str(file_path)
+        assert block.block_name == "build_greeting"

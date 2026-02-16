@@ -38,7 +38,7 @@
 {%- if suggestion and suggestion|length > 0 %}
 {%- for code_block in suggestion %}
 
-#### 📝 {{ code_block.block_name }} (Lines {{ code_block.start_line }}–{{ code_block.end_line }})
+#### 📝 {{ code_block.block_name }} (Lines {{ code_block.start_line }}–{{ code_block.end_line }}){% if code_block.file_path %} — `{{ code_block.file_path }}`{% endif %}
 
 {%- if code_block.context %}
 ```python
