@@ -76,6 +76,13 @@ def mock_together_client():
 
 
 @pytest.fixture
+def mock_openrouter_client():
+    """Mock OpenRouter client (uses OpenAI SDK with custom base_url)"""
+    with patch('devdox_ai_sonar.llm_fixer.openai.OpenAI') as mock:
+        yield mock
+
+
+@pytest.fixture
 def sample_issue():
     """Create sample SonarIssue"""
     return SonarIssue(
@@ -259,6 +266,46 @@ class TestLLMFixerInitialization:
         
         assert fixer.api_key == "env-together-key"
     
+    def test_init_openrouter_with_api_key(self, mock_openrouter_client):
+        """Test OpenRouter initialization with API key"""
+        fixer = LLMFixer(
+            provider="openrouter",
+            model="anthropic/claude-sonnet-4",
+            api_key="test-openrouter-key"
+        )
+
+        assert fixer.provider == "openrouter"
+        assert fixer.model == "anthropic/claude-sonnet-4"
+        assert fixer.api_key == "test-openrouter-key"
+        mock_openrouter_client.assert_called_once_with(
+            api_key="test-openrouter-key",
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
+
+    def test_init_openrouter_from_env(self, mock_openrouter_client, monkeypatch):
+        """Test OpenRouter initialization from environment variable"""
+        monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter-key")
+
+        fixer = LLMFixer(provider="openrouter")
+
+        assert fixer.api_key == "env-openrouter-key"
+
+    def test_init_openrouter_missing_key(self, mock_openrouter_client):
+        """Test OpenRouter initialization without API key raises error"""
+        with patch.dict(os.environ, {}, clear=True):
+            with pytest.raises(ValueError) as exc_info:
+                LLMFixer(provider="openrouter")
+            assert "OpenRouter API key not provided" in str(exc_info.value)
+
+    def test_init_openrouter_default_model(self, mock_openrouter_client):
+        """Test OpenRouter uses default model when not specified"""
+        fixer = LLMFixer(provider="openrouter", api_key="test-key")
+        assert fixer.model == "anthropic/claude-sonnet-4"
+
     def test_init_unsupported_provider(self):
         """Test initialization with unsupported provider"""
         with pytest.raises(ValueError) as exc_info:
@@ -343,10 +390,34 @@ class TestProviderConfiguration:
         """Test Together client is created correctly"""
         mock_instance = Mock()
         mock_together_client.return_value = mock_instance
-        
+
         fixer = LLMFixer(provider="togetherai", api_key="test-key")
-        
+
         assert fixer.client == mock_instance
+
+    def test_openrouter_import_error_handling(self):
+        """Test handling when OpenAI library is not installed (affects OpenRouter)"""
+        with patch('devdox_ai_sonar.llm_fixer.HAS_OPENAI', False):
+            with pytest.raises(ImportError) as exc_info:
+                LLMFixer(provider="openrouter", api_key="key")
+            assert "OpenAI library not installed" in str(exc_info.value)
+
+    def test_configure_openrouter_client_creation(self, mock_openrouter_client):
+        """Test OpenRouter client is created correctly"""
+        mock_instance = Mock()
+        mock_openrouter_client.return_value = mock_instance
+
+        fixer = LLMFixer(provider="openrouter", api_key="test-key")
+
+        assert fixer.client == mock_instance
+        mock_openrouter_client.assert_called_once_with(
+            api_key="test-key",
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
 
 class TestContextExtraction:
     """Test context extraction from code files"""
@@ -4827,6 +4898,25 @@ class TestImportGuards:
                 fixer = LLMFixer.__new__(LLMFixer)
                 fixer._configure_gemini(None, "key")
 
+    def test_openrouter_import_missing_raises(self):
+        """When openai is not installed, configuring openrouter should raise ImportError."""
+        with patch("devdox_ai_sonar.llm_fixer.HAS_OPENAI", False):
+            with pytest.raises(ImportError, match="OpenAI library"):
+                fixer = LLMFixer.__new__(LLMFixer)
+                fixer._configure_openrouter(None, "key")
+
+class TestConfigureOpenrouterMissingKey:
+    """Cover missing API key raises ValueError for OpenRouter."""
+
+    def test_openrouter_no_key_raises(self):
+        with patch("devdox_ai_sonar.llm_fixer.HAS_OPENAI", True), \
+             patch("devdox_ai_sonar.llm_fixer.openai.OpenAI"), \
+             patch.dict(os.environ, {}, clear=True):
+            fixer = LLMFixer.__new__(LLMFixer)
+            os.environ.pop("OPENROUTER_API_KEY", None)
+            with pytest.raises(ValueError, match="OpenRouter API key"):
+                fixer._configure_openrouter(None, None)
+
 class TestConfigureTogetheraiMissingKey:
     """Cover line 144 - missing API key raises ValueError."""
 
@@ -5266,6 +5356,29 @@ class TestParseProviderResponses:
         response = Mock()
         response.choices = []  # IndexError
         result = fixer._parse_togetherai_response(response)
+        assert result is None
+
+    def test_parse_openrouter_response_success(self, fixer):
+        """Successful openrouter parse."""
+        response = Mock()
+        response.choices = [Mock()]
+        response.choices[0].message.content = json.dumps({
+            "IMPORT_BLOCK": "",
+            "FIXED_CODE_BLOCKS": [{"block_name": "f", "start_line": 1,
+                                    "end_line": 2, "has_changes": True,
+                                    "change_type": "FULL_CODE",
+                                    "block_type": "module", "context": "x"}],
+            "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING",
+            "EXPLANATION": "fix", "CONFIDENCE": 0.9
+        })
+        result = fixer._parse_openrouter_response(response)
+        assert result is not None
+
+    def test_parse_openrouter_response_exception(self, fixer):
+        """Exception path in openrouter parse."""
+        response = Mock()
+        response.choices = []  # IndexError
+        result = fixer._parse_openrouter_response(response)
         assert result is None
 
     def test_extract_using_regex_fallback_exception(self, fixer):

@@ -708,7 +708,8 @@ class TestValidatorConstants:
         assert "openai" in InputValidator.VALID_LLM_PROVIDERS
         assert "gemini" in InputValidator.VALID_LLM_PROVIDERS
         assert "togetherai" in InputValidator.VALID_LLM_PROVIDERS
-        assert len(InputValidator.VALID_LLM_PROVIDERS) == 3
+        assert "openrouter" in InputValidator.VALID_LLM_PROVIDERS
+        assert len(InputValidator.VALID_LLM_PROVIDERS) == 4
 
     def test_invalid_branch_chars_constant(self):
         """Test INVALID_BRANCH_CHARS constant."""

@@ -131,9 +131,11 @@ class LLMFixer:
             self._configure_openai(model, api_key)
         elif provider == "gemini":
             self._configure_gemini(model, api_key)
+        elif provider == "openrouter":
+            self._configure_openrouter(model, api_key)
         else:
             raise ValueError(
-                f"Unsupported provider: {provider}. Use 'openai' or 'gemini' or 'togetherai'"
+                f"Unsupported provider: {provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'"
             )
 
     def _configure_togetherai(
@@ -182,6 +184,30 @@ class LLMFixer:
             )
 
         self.client = genai.Client(api_key=self.api_key)
+
+    def _configure_openrouter(
+        self, model: Optional[str], api_key: Optional[str]
+    ) -> None:
+        if not HAS_OPENAI:
+            raise ImportError(
+                "OpenAI library not installed. Install with: pip install openai"
+            )
+
+        self.model = model or "anthropic/claude-sonnet-4"
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
+            )
+
+        self.client = openai.OpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
 
     def write_explaination(
         self,
@@ -711,7 +737,7 @@ class LLMFixer:
 
                 return response.parsed  # type: ignore[no-any-return]
 
-            elif self.provider == "togetherai":
+            elif self.provider in ("togetherai", "openrouter"):
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=[
@@ -737,7 +763,7 @@ class LLMFixer:
                 print(f"Output tokens: {output_tokens}")
                 print(f"Total tokens: {total_tokens}")
 
-                return self._parse_togetherai_response(response)
+                return self._parse_chat_completion_response(response)
             else:
                 logger.error(f"Unknown provider: {self.provider}")
                 return None
@@ -1233,14 +1259,20 @@ class LLMFixer:
             logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
             return None
 
-    def _parse_togetherai_response(self, response: Any) -> Optional[SonarFixResponse]:
-        """Parse Together API response."""
+    def _parse_chat_completion_response(
+        self, response: Any
+    ) -> Optional[SonarFixResponse]:
+        """Parse an OpenAI-compatible chat completion response (used by TogetherAI and OpenRouter)."""
         try:
             content = response.choices[0].message.content
             return self.parse_llm_response(content)
         except Exception as e:
-            logger.error(f"Error parsing Together response: {e}", exc_info=True)
+            logger.error(f"Error parsing {self.provider} response: {e}", exc_info=True)
             return None
+
+    # Aliases for backward compatibility and test clarity
+    _parse_togetherai_response = _parse_chat_completion_response
+    _parse_openrouter_response = _parse_chat_completion_response
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
         """Fallback extraction using regex for malformed JSON."""

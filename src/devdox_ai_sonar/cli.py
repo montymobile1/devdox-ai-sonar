@@ -62,10 +62,10 @@ def _safe_convert_pr(pull_request: str | int | None) -> int:
     """Safely convert PR string to integer."""
     if not pull_request:
         return 0
-    
+
     if isinstance(pull_request, int):
         return pull_request
-    
+
     try:
         pr_int = int(pull_request.strip())
         if pr_int < 0:

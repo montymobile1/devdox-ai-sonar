@@ -25,7 +25,7 @@ class InputValidator:
     # Constants for validation
     VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL"}
     VALID_SEVERITIES: Set[str] = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"}
-    VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai"}
+    VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai", "openrouter"}
 
     # Git branch name invalid characters
     INVALID_BRANCH_CHARS: Set[str] = {

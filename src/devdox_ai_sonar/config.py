@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     API_KEY: str = ""  # Fallback for backward compatibility
     OPENAI_API_KEY: str = ""
     GEMINI_API_KEY: str = ""
+    OPENROUTER_API_KEY: str = ""
     LLM_PROVIDER: str = "LLM_PROVIDER"
     LLM_MODEL: str = "gemini-2.5-flash"
 

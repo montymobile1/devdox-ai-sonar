@@ -178,9 +178,11 @@ class FixValidator:
             self._setup_open_ai(model, api_key)
         elif self.provider == "gemini":
             self._setup_gemini(model, api_key)
+        elif self.provider == "openrouter":
+            self._setup_openrouter(model, api_key)
         else:
             raise ValueError(
-                f"Unsupported provider: {self.provider}. Use 'openai' or 'gemini' or 'togetherai'."
+                f"Unsupported provider: {self.provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'."
             )
 
     def _setup_together_ai(self, model: Optional[str], api_key: Optional[str]) -> None:
@@ -221,6 +223,26 @@ class FixValidator:
                 "Gemini API key not provided. Set GEMINI_API_KEY environment variable."
             )
         self.client = genai.Client(api_key=self.api_key)
+
+    def _setup_openrouter(self, model: Optional[str], api_key: Optional[str]) -> None:
+        if not HAS_OPENAI:
+            raise ImportError(
+                "OpenAI library not installed. Install with: pip install openai"
+            )
+        self.model = model or "anthropic/claude-sonnet-4"
+        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+        if not self.api_key:
+            raise ValueError(
+                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
+            )
+        self.client = openai.OpenAI(
+            api_key=self.api_key,
+            base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
 
     def validate_fix(
         self,
@@ -430,8 +452,8 @@ class FixValidator:
             if self.provider == "gemini":
                 return self._call_gemini_validator(prompt)
 
-            if self.provider == "togetherai":
-                return self._call_togetherai_validator(prompt)
+            if self.provider in ("togetherai", "openrouter"):
+                return self._call_openai_compatible_validator(prompt)
 
             return None
 
@@ -469,7 +491,10 @@ class FixValidator:
 
         return cast(Optional[SonarFixResponse], response.output_parsed)
 
-    def _call_togetherai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
+    def _call_openai_compatible_validator(
+        self, prompt: str
+    ) -> Optional[SonarFixResponse]:
+        """Call an OpenAI-compatible validator (used by TogetherAI and OpenRouter)."""
         response = self.client.chat.completions.create(
             model=self.model,
             messages=[
@@ -496,10 +521,7 @@ class FixValidator:
         response_json = response.choices[0].message.content
 
         try:
-            # Parse JSON
             data = json.loads(response_json)
-
-            # Validate with Pydantic
             return SonarFixResponse(**data)
 
         except json.JSONDecodeError as e:
@@ -507,3 +529,7 @@ class FixValidator:
 
         except ValidationError as e:
             raise ValueError(f"Schema validation failed: {e}")
+
+    # Aliases for backward compatibility and test clarity
+    _call_togetherai_validator = _call_openai_compatible_validator
+    _call_openrouter_validator = _call_openai_compatible_validator

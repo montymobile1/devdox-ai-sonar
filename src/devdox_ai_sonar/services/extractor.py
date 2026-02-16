@@ -41,9 +41,7 @@ class IssueExtractor:
                 issues, tmp_path
             )
 
-            file_path, _ = _validate_and_extract_issue_info(
-                issues, project_path
-            )
+            file_path, _ = _validate_and_extract_issue_info(issues, project_path)
 
             # Step 2: Get content range from tmp file
             line_range_result: Optional[Dict[str, Any]] = get_content_range(
