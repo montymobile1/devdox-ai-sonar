@@ -46,12 +46,24 @@
 ```
 {%- elif code_block.changes %}
 {%- for change_code in code_block.changes %}
+{%- if change_code.old %}
 
+**Original:**
+```python
+{{ change_code.old | trim }}
+```
+
+**Fixed:**
+```python
+{{ change_code.new | trim }}
+```
+{%- else %}
 
 **Fixes:**
 ```python
 {{ change_code.new | trim }}
 ```
+{%- endif %}
 {%- endfor %}
 {%- elif code_block.replacements %}
 {%- for change_code in code_block.replacements %}

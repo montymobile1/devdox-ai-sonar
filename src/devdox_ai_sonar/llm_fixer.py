@@ -23,6 +23,9 @@ from devdox_ai_sonar.models.sonar import (
     FixResult,
     SonarFixResponse,
     CodeBlock,
+    ChangeType,
+    ChangeAction,
+    LineChange,
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
@@ -203,15 +206,62 @@ class LLMFixer:
         for resp in fix_response_lst:
             all_code_blocks.extend(resp.FIXED_CODE_BLOCKS)
 
-        # Create display copies with relative file paths (avoid mutating originals)
+        # Create display copies: resolve relative paths and convert regex
+        # SearchReplace blocks to human-readable DIFF blocks with actual code
         display_blocks = []
+        file_cache: Dict[str, List[str]] = {}
         for block in all_code_blocks:
+            updates: Dict[str, Any] = {}
+
+            # Convert absolute file paths to relative
             if block.file_path and project_path:
                 try:
-                    relative = str(Path(block.file_path).relative_to(project_path))
+                    updates["file_path"] = str(
+                        Path(block.file_path).relative_to(project_path)
+                    )
                 except ValueError:
-                    relative = block.file_path
-                display_blocks.append(block.model_copy(update={"file_path": relative}))
+                    pass
+
+            # Convert regex SearchReplace blocks to DIFF with actual source lines
+            if (
+                block.change_type == ChangeType.SEARCH_REPLACE
+                and block.replacements
+                and any(r.is_regex for r in block.replacements)
+                and block.file_path
+            ):
+                try:
+                    abs_path = block.file_path
+                    if abs_path not in file_cache:
+                        file_cache[abs_path] = (
+                            Path(abs_path).read_text(encoding="utf-8").splitlines()
+                        )
+                    lines = file_cache[abs_path]
+                    if 0 < block.start_line <= len(lines):
+                        source_line = lines[block.start_line - 1]
+                        fixed_line = source_line
+                        for repl in block.replacements:
+                            if repl.is_regex:
+                                fixed_line = re.sub(
+                                    repl.search,
+                                    repl.replace,
+                                    fixed_line,
+                                    count=repl.count or 0,
+                                )
+                        updates["change_type"] = ChangeType.DIFF
+                        updates["replacements"] = None
+                        updates["changes"] = [
+                            LineChange(
+                                line=block.start_line,
+                                action=ChangeAction.REPLACE,
+                                old=source_line.strip(),
+                                new=fixed_line.strip(),
+                            )
+                        ]
+                except (FileNotFoundError, IndexError, OSError):
+                    pass  # Fall through — show raw pattern as fallback
+
+            if updates:
+                display_blocks.append(block.model_copy(update=updates))
             else:
                 display_blocks.append(block)
 
