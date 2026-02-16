@@ -2,7 +2,7 @@
 DevDox AI Sonar - AI-powered Sonar fix issues
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.1-beta"
 __author__ = "Hayat Bourgi"
 __email__ = "hayat.bourgi@montyholding.com"
 
