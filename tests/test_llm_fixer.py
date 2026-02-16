@@ -3938,7 +3938,7 @@ class TestCallLlmList:
             context_dict={
                 "start_line": 1, "end_line": 5,
                 "context": "def foo(): pass",
-                "new_context": [{"context": "def foo(): pass"}],
+                "new_context": [{"context": "def foo(): pass","start_line": 1, "end_line": 5,}],
                 "problem_line_content": {1: "def foo(): pass\n"},
             },
         )
@@ -3981,7 +3981,7 @@ class TestCallLlmList:
             import_section={"start_line": 0, "end_line": 0, "content": "", "has_imports": False},
             class_name=None, functions=[],
             context_dict={"start_line": 1, "end_line": 5, "context": "code",
-                          "new_context": [{"context": "code"}],
+                          "new_context": [{"context": "code","start_line": 1, "end_line": 5}],
                           "problem_line_content": {1: "code\n"}},
         )
         issue = SonarIssue(
@@ -4018,7 +4018,7 @@ class TestCallLlmList:
             import_section={"start_line": 0, "end_line": 0, "content": "", "has_imports": False},
             class_name=None, functions=[],
             context_dict={"start_line": 1, "end_line": 5, "context": "code",
-                          "new_context": [{"context": "code"}],
+                          "new_context": [{"context": "code","start_line": 1, "end_line": 5}],
                           "problem_line_content": {1: "code\n"}},
         )
         issue = SonarIssue(
@@ -5230,8 +5230,8 @@ class TestCallLlmUnknownProvider:
             line_range={}, code_content="code", language="python",
             import_section={"start_line": 0, "end_line": 0, "content": "", "has_imports": False},
             class_name=None, functions=[],
-            context_dict={"start_line": 1, "end_line": 5, "context": "code",
-                          "new_context": [{"context": "code"}],
+            context_dict={ "context": "code",
+                          "new_context": [{"context": "code","start_line": 1, "end_line": 5}],
                           "problem_line_content": {1: "code\n"}},
         )
         issue = SonarIssue(
