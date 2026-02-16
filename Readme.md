@@ -512,6 +512,10 @@ devdox_sonar -c fix_security_issues --dry-run
 devdox_sonar -c fix_security_issues --apply 1
 ```
 
+## License
+
+MIT License - see [LICENSE](LICENSE) file for details.
+
 
 
 ## Support
