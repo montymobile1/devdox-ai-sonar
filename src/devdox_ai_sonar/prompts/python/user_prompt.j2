@@ -29,7 +29,7 @@ Fix {{ language }} SonarQube issue. Preserve all original logic.
 
 
 ## CODE (Lines numbered as NNNN| content)
-{% for func in context['new_context'] %}
+{% for func in context.context_dict['new_context']%}
 ### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
 ```{{ language }}
 {% set code_lines = func['context'].split('\n') %}
