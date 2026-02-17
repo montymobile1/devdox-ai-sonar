@@ -114,6 +114,38 @@ class TmpCloneManager:
         return False
 
 
+def _try_remove_stale_entry(
+    entry: Path, now: float, max_age_seconds: int
+) -> bool:
+    """Check if a directory entry is a stale devdox_*_test dir and remove it.
+
+    Args:
+        entry: Directory entry to evaluate.
+        now: Current timestamp (seconds since epoch).
+        max_age_seconds: Age threshold — entries older than this are removed.
+
+    Returns:
+        True if the entry was identified as stale and successfully removed.
+    """
+    if not entry.is_dir():
+        return False
+    if not (entry.name.startswith("devdox_") and entry.name.endswith("_test")):
+        return False
+    try:
+        age = now - entry.stat().st_mtime
+    except OSError:
+        return False
+    if age < max_age_seconds:
+        return False
+    try:
+        shutil.rmtree(entry)
+        logger.info(f"Removed orphaned temp directory: {entry} (age: {age:.0f}s)")
+        return True
+    except OSError:
+        logger.warning(f"Failed to remove orphaned temp directory: {entry}")
+        return False
+
+
 def sweep_orphaned_tmp_dirs(
     max_age_seconds: int = 3600,
     tmp_dir: Optional[str] = None,
@@ -142,26 +174,8 @@ def sweep_orphaned_tmp_dirs(
 
     try:
         for entry in scan_dir.iterdir():
-            if not entry.is_dir():
-                continue
-            if not (entry.name.startswith("devdox_") and entry.name.endswith("_test")):
-                continue
-
-            try:
-                age = now - entry.stat().st_mtime
-            except OSError:
-                continue
-
-            if age < max_age_seconds:
-                continue
-
-            try:
-                shutil.rmtree(entry)
+            if _try_remove_stale_entry(entry, now, max_age_seconds):
                 removed += 1
-                logger.info(f"Removed orphaned temp directory: {entry} (age: {age:.0f}s)")
-            except OSError:
-                logger.warning(f"Failed to remove orphaned temp directory: {entry}")
-
     except OSError:
         logger.warning(f"Failed to scan temp directory: {scan_dir}")
 

@@ -57,6 +57,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_delete_action,
     TmpCloneManager,
     sweep_orphaned_tmp_dirs,
+    _try_remove_stale_entry,
     cleanup_tmp_py_file,
     _CLEANUP_TMP_PY_ENABLED,
 )
@@ -3006,6 +3007,97 @@ class TestTmpCloneManager:
         manager = TmpCloneManager()
         assert manager._path_factory is generate_tmp_path
         assert manager._cleanup_fn is remove_tmp_files
+
+
+# ============================================================================
+# Test _try_remove_stale_entry
+# ============================================================================
+
+
+class TestTryRemoveStaleEntry:
+    """Test suite for the _try_remove_stale_entry helper."""
+
+    def test_removes_stale_matching_directory(self, tmp_path):
+        """Stale devdox_*_test directory is removed and returns True."""
+        stale = tmp_path / "devdox_abc_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        result = _try_remove_stale_entry(stale, time.time(), 3600)
+
+        assert result is True
+        assert not stale.exists()
+
+    def test_skips_regular_file(self, tmp_path):
+        """Non-directory entries are ignored."""
+        f = tmp_path / "devdox_abc_test"
+        f.write_text("not a dir")
+        old_time = time.time() - 7200
+        os.utime(f, (old_time, old_time))
+
+        result = _try_remove_stale_entry(f, time.time(), 3600)
+
+        assert result is False
+        assert f.exists()
+
+    def test_skips_non_matching_name(self, tmp_path):
+        """Directories that don't match devdox_*_test pattern are ignored."""
+        d = tmp_path / "other_dir"
+        d.mkdir()
+        old_time = time.time() - 7200
+        os.utime(d, (old_time, old_time))
+
+        result = _try_remove_stale_entry(d, time.time(), 3600)
+
+        assert result is False
+        assert d.exists()
+
+    def test_skips_fresh_directory(self, tmp_path):
+        """Matching directory below the age threshold is left alone."""
+        fresh = tmp_path / "devdox_fresh_test"
+        fresh.mkdir()
+        # mtime is now — well within any threshold
+
+        result = _try_remove_stale_entry(fresh, time.time(), 3600)
+
+        assert result is False
+        assert fresh.exists()
+
+    def test_returns_false_on_stat_oserror(self, tmp_path):
+        """OSError from stat() is handled gracefully."""
+        entry = tmp_path / "devdox_broken_test"
+        entry.mkdir()
+
+        original_stat = Path.stat
+        call_count = 0
+
+        def stat_side_effect(self, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call is from is_dir() — let it through
+            if call_count == 1:
+                return original_stat(self, *args, **kwargs)
+            raise OSError("Permission denied")
+
+        with patch.object(Path, "stat", stat_side_effect):
+            result = _try_remove_stale_entry(entry, time.time(), 3600)
+
+        assert result is False
+
+    def test_returns_false_on_rmtree_oserror(self, tmp_path):
+        """OSError from rmtree() is handled gracefully."""
+        stale = tmp_path / "devdox_locked_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.shutil.rmtree",
+                    side_effect=OSError("Permission denied")):
+            result = _try_remove_stale_entry(stale, time.time(), 3600)
+
+        assert result is False
+        assert stale.exists()
 
 
 # ============================================================================
