@@ -2884,7 +2884,58 @@ class TestDisplayFunctions:
             with patch('devdox_ai_sonar.cli.Panel'):
                 _display_fix_preview(fix, [Mock()])
 
+    @pytest.mark.parametrize("empty_explanation", ["", "   ", "\t\n  "])
+    def test_display_fix_preview_empty_explanation_hides_panel(self, empty_explanation):
+        """Test that empty or whitespace-only explanation does not render a Panel"""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            original_code="old",
+            fixed_code="new",
+            explanation=empty_explanation,
+            confidence=0.95,
+            llm_model="a",
+            file_path="test.py",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(block_name="test",
+                                         start_line="1",
+                                         end_line="10",
+                                         has_changes=True,
+                                         change_type=ChangeType.FULL_CODE,
+                                         block_type=BlockType.MODULE,
+                                         context="new_code")]
+        )
 
+        with patch('devdox_ai_sonar.cli.console') as mock_console:
+            with patch('devdox_ai_sonar.cli.Panel') as mock_panel:
+                _display_fix_preview(fix, [Mock()])
+                mock_panel.assert_not_called()
+
+    def test_display_fix_preview_with_explanation_shows_panel(self):
+        """Test that a non-empty explanation renders the Panel"""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            original_code="old",
+            fixed_code="new",
+            explanation="This fix addresses the issue by...",
+            confidence=0.95,
+            llm_model="a",
+            file_path="test.py",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(block_name="test",
+                                         start_line="1",
+                                         end_line="10",
+                                         has_changes=True,
+                                         change_type=ChangeType.FULL_CODE,
+                                         block_type=BlockType.MODULE,
+                                         context="new_code")]
+        )
+
+        with patch('devdox_ai_sonar.cli.console') as mock_console:
+            with patch('devdox_ai_sonar.cli.Panel') as mock_panel:
+                _display_fix_preview(fix, [Mock()])
+                mock_panel.assert_called_once()
 
     def test_display_analysis_results_with_metrics(self, sample_analysis_result):
         """Test displaying results with metrics"""

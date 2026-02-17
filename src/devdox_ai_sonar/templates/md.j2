@@ -18,10 +18,12 @@
 
 ---
 
+{% if explanation and explanation.strip() -%}
 ### 🧠 Explanation
 {{ explanation | replace('###', '\n###') | trim }}
 
 ---
+{% endif %}
 
 ### 🎯 Impact Assessment
 - **Risk Level:** {{ "Low" if severity == "Severity.MINOR" else "Medium" if severity == "Severity.MAJOR" else "High" }}
@@ -36,7 +38,7 @@
 {%- if suggestion and suggestion|length > 0 %}
 {%- for code_block in suggestion %}
 
-#### 📝 {{ code_block.block_name }} (Lines {{ code_block.start_line }}–{{ code_block.end_line }})
+#### 📝 {{ code_block.block_name }} (Lines {{ code_block.start_line }}–{{ code_block.end_line }}){% if code_block.file_path %} — `{{ code_block.file_path }}`{% endif %}
 
 {%- if code_block.context %}
 ```python
@@ -44,12 +46,24 @@
 ```
 {%- elif code_block.changes %}
 {%- for change_code in code_block.changes %}
+{%- if change_code.old %}
 
+**Original:**
+```python
+{{ change_code.old | trim }}
+```
+
+**Fixed:**
+```python
+{{ change_code.new | trim }}
+```
+{%- else %}
 
 **Fixes:**
 ```python
 {{ change_code.new | trim }}
 ```
+{%- endif %}
 {%- endfor %}
 {%- elif code_block.replacements %}
 {%- for change_code in code_block.replacements %}
