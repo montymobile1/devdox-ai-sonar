@@ -845,7 +845,7 @@ async def change_field(
         # Empty input not allowed — loop until valid input
         while not types:
             console.print(constant.EXCLUDE_RULES_EMPTY_ERROR)
-            retry_input = smart_prompt(
+            retry_input = await smart_prompt(
                 message, default=default_value, choices=choices, multiple=multiple
             )
             types = retry_input if retry_input else None

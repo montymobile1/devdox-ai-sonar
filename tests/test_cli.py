@@ -1827,10 +1827,10 @@ class TestConfigurationManagement:
                 "configuration.exclude_rules", "python:S9999"
             )
 
-    def test_change_field_none_directly_stores_none(self, mock_config_manager):
+    async def test_change_field_none_directly_stores_none(self, mock_config_manager):
         """Test change_field stores NONE value when user enters NONE on first prompt"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', return_value=constant.EXCLUDE_NONE):
-            result = change_field(
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=constant.EXCLUDE_NONE)):
+            result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
@@ -1843,11 +1843,11 @@ class TestConfigurationManagement:
                 "configuration.exclude_rules", constant.EXCLUDE_NONE
             )
 
-    def test_change_field_empty_shows_error_then_accepts_rules(self, mock_config_manager):
+    async def test_change_field_empty_shows_error_then_accepts_rules(self, mock_config_manager):
         """Test empty input shows error, re-prompts with default, then accepts rules"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', side_effect=[None, "python:S5678"]), \
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, "python:S5678"])), \
              patch('devdox_ai_sonar.cli.console') as mock_console:
-            result = change_field(
+            result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
@@ -1861,11 +1861,11 @@ class TestConfigurationManagement:
                 "configuration.exclude_rules", "python:S5678"
             )
 
-    def test_change_field_empty_shows_error_then_accepts_none(self, mock_config_manager):
+    async def test_change_field_empty_shows_error_then_accepts_none(self, mock_config_manager):
         """Test empty input shows error, re-prompts with default, then stores NONE"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', side_effect=[None, constant.EXCLUDE_NONE]), \
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, constant.EXCLUDE_NONE])), \
              patch('devdox_ai_sonar.cli.console') as mock_console:
-            result = change_field(
+            result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
@@ -1879,11 +1879,11 @@ class TestConfigurationManagement:
                 "configuration.exclude_rules", constant.EXCLUDE_NONE
             )
 
-    def test_change_field_multiple_empties_loops_until_valid(self, mock_config_manager):
+    async def test_change_field_multiple_empties_loops_until_valid(self, mock_config_manager):
         """Test multiple empty inputs loop with errors until valid input provided"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', side_effect=[None, None, None, "python:S1234"]), \
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, None, None, "python:S1234"])), \
              patch('devdox_ai_sonar.cli.console') as mock_console:
-            result = change_field(
+            result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
@@ -1898,10 +1898,10 @@ class TestConfigurationManagement:
                 "configuration.exclude_rules", "python:S1234"
             )
 
-    def test_change_field_none_default_accept_stores_none(self, mock_config_manager):
+    async def test_change_field_none_default_accept_stores_none(self, mock_config_manager):
         """Test NONE default accepted via Enter (smart_prompt returns NONE) stores NONE"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', return_value=constant.EXCLUDE_NONE):
-            result = change_field(
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=constant.EXCLUDE_NONE)):
+            result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
@@ -4020,13 +4020,13 @@ class TestLoadAndValidateConfig:
                         mock_auth_instance.validate.return_value = (True, None)
                         mock_from_dict.return_value = mock_auth_instance
 
-                        _, _, params = _load_and_validate_config()
+                        _, _, params = await _load_and_validate_config()
 
                         # NONE value should be converted to empty list
                         assert isinstance(params['exclude_rules'], list)
                         assert len(params['exclude_rules']) == 0
 
-    def test_load_and_validate_config_exclude_rules_already_list(
+    async def test_load_and_validate_config_exclude_rules_already_list(
             self, mock_config_service, mock_config_manager,
             mock_provider_manager, mock_llm_config,auth_config
     ):
