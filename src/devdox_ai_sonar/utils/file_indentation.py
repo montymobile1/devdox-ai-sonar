@@ -5,7 +5,8 @@ import tempfile
 import time
 import re
 from git import Repo
-from typing import List, Optional, Tuple
+from types import TracebackType
+from typing import Callable, List, Optional, Tuple, Union
 import logging
 from devdox_ai_sonar.models.file_structures import (
     LineRange,
@@ -93,10 +94,10 @@ class TmpCloneManager:
 
     def __init__(
         self,
-        path_factory=generate_tmp_path,
-        cleanup_fn=remove_tmp_files,
-        on_cleanup=None,
-    ):
+        path_factory: Callable[[], str] = generate_tmp_path,
+        cleanup_fn: Callable[[str], bool] = remove_tmp_files,
+        on_cleanup: Optional[Callable[[str], None]] = None,
+    ) -> None:
         self._path_factory = path_factory
         self._cleanup_fn = cleanup_fn
         self._on_cleanup = on_cleanup
@@ -104,9 +105,15 @@ class TmpCloneManager:
 
     async def __aenter__(self) -> Path:
         self._tmp_path = self._path_factory()
+        assert self._tmp_path is not None
         return Path(self._tmp_path)
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> bool:
         try:
             if self._tmp_path:
                 if self._on_cleanup:
@@ -151,7 +158,7 @@ def _try_remove_stale_entry(entry: Path, now: float, max_age_seconds: int) -> bo
 def sweep_orphaned_tmp_dirs(
     max_age_seconds: int = 3600,
     tmp_dir: Optional[str] = None,
-    on_status=None,
+    on_status: Optional[Callable[[str], None]] = None,
 ) -> int:
     """Remove orphaned devdox_*_test directories older than max_age_seconds.
 
@@ -196,7 +203,9 @@ def sweep_orphaned_tmp_dirs(
 _CLEANUP_TMP_PY_ENABLED = True
 
 
-def cleanup_tmp_py_file(file_path, enabled: Optional[bool] = None) -> bool:
+def cleanup_tmp_py_file(
+    file_path: Union[str, Path], enabled: Optional[bool] = None
+) -> bool:
     """Remove a .tmp.py intermediate validation file.
 
     Controlled by a two-level gate:
