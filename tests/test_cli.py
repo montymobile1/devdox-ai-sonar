@@ -5541,17 +5541,21 @@ class TestRunAnalyzeFlow:
 class TestProcessAndFixIssuesFlow:
     """Test PR branch-fetching in _process_and_fix_issues."""
 
-    @patch('devdox_ai_sonar.cli.remove_tmp_files')
-    @patch('devdox_ai_sonar.cli.generate_tmp_path', return_value=Path("/tmp/clone"))
+    @patch('devdox_ai_sonar.cli.TmpCloneManager')
     @patch('devdox_ai_sonar.cli.download_latest_version', return_value=True)
     @patch('devdox_ai_sonar.cli._fetch_issues_by_type', return_value={})
     @patch('devdox_ai_sonar.cli._initialize_fix_services')
     @patch('devdox_ai_sonar.cli.console')
     async def test_fetches_branch_from_pr(
-        self, mock_console, mock_init_svc, mock_fetch, mock_download, mock_tmp,
-        mock_remove
+        self, mock_console, mock_init_svc, mock_fetch, mock_download,
+        mock_tmp_cls
     ):
         """Line 1286: pull_request > 0 → calls get_branch_from_pr."""
+        # Set up TmpCloneManager as async context manager
+        mock_mgr = AsyncMock()
+        mock_mgr.__aenter__.return_value = Path("/tmp/clone")
+        mock_tmp_cls.return_value = mock_mgr
+
         mock_analyzer = Mock()
         mock_analyzer.get_branch_from_pr.return_value = "feature-branch"
 
