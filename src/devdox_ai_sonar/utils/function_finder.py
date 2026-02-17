@@ -1,12 +1,17 @@
 from typing import Optional, Dict, Any, List, Tuple, Union
 import ast
-import re
+import regex
 from pathlib import Path
 from devdox_ai_sonar.models.file_structures import ConversionRisk, ConversionAnalysis
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 import logging
 
 logger = logging.getLogger(__name__)
+
+_SNAKE_LOWER_UPPER = regex.compile(r'([a-z0-9])([A-Z])')
+_SNAKE_ACRONYM = regex.compile(r'(?>([A-Z]+))([A-Z][a-z])')  # atomic group on acronym
+
+_MAX_IDENTIFIER_LENGTH = 256
 
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
@@ -344,9 +349,15 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         print(f"Syntax error: {e}")
         return []
 
-def to_snake_case(text: str) -> str:
-    text = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', text)
-    text = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', text)
+def to_snake_case(name: str) -> str:
+    if not name:
+        raise ValueError("Identifier name must not be empty.")
+    if len(name) > _MAX_IDENTIFIER_LENGTH:
+        raise ValueError(
+            f"Identifier name exceeds maximum allowed length of {_MAX_IDENTIFIER_LENGTH}."
+        )
+    text = _SNAKE_LOWER_UPPER.sub(r'\1_\2', name)
+    text = _SNAKE_ACRONYM.sub(r'\1_\2', text)
     return text.lower()
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
