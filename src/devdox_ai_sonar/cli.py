@@ -711,9 +711,7 @@ async def main(  # ← Async main
     }
 
     # Sweep orphaned temp directories from previous crashed runs
-    sweep_orphaned_tmp_dirs(
-        on_status=lambda msg: console.print(f"[dim]{msg}[/dim]")
-    )
+    sweep_orphaned_tmp_dirs(on_status=lambda msg: console.print(f"[dim]{msg}[/dim]"))
 
     # If command specified, run it directly
     if command:
@@ -1320,7 +1318,9 @@ async def _process_and_fix_issues(
     # Orphaned temp dirs (from SIGKILL/OOM) are cleaned by
     # sweep_orphaned_tmp_dirs() at CLI startup.
     async with TmpCloneManager(
-        on_cleanup=lambda p: console.print(f"[dim]Cleaning up temporary files: {p}[/dim]")
+        on_cleanup=lambda p: console.print(
+            f"[dim]Cleaning up temporary files: {p}[/dim]"
+        )
     ) as tmp_path:
         console.print(f"Cloning {auth_config.project} to {tmp_path}")
         downloaded = download_latest_version(
@@ -1332,7 +1332,12 @@ async def _process_and_fix_issues(
 
         # Fetch issues based on type
         issues = _fetch_issues_by_type(
-            services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
+            services["analyzer"],
+            auth_config,
+            branch,
+            pull_request,
+            fix_params,
+            issue_type,
         )
         if not issues:
             msg = (

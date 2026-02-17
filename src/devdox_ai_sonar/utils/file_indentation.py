@@ -91,8 +91,12 @@ class TmpCloneManager:
     Dependencies are injectable for testability.
     """
 
-    def __init__(self, path_factory=generate_tmp_path, cleanup_fn=remove_tmp_files,
-                 on_cleanup=None):
+    def __init__(
+        self,
+        path_factory=generate_tmp_path,
+        cleanup_fn=remove_tmp_files,
+        on_cleanup=None,
+    ):
         self._path_factory = path_factory
         self._cleanup_fn = cleanup_fn
         self._on_cleanup = on_cleanup
@@ -114,9 +118,7 @@ class TmpCloneManager:
         return False
 
 
-def _try_remove_stale_entry(
-    entry: Path, now: float, max_age_seconds: int
-) -> bool:
+def _try_remove_stale_entry(entry: Path, now: float, max_age_seconds: int) -> bool:
     """Check if a directory entry is a stale devdox_*_test dir and remove it.
 
     Args:
