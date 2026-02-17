@@ -28,6 +28,7 @@ from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.utils.file_indentation import (
     download_latest_version,
     TmpCloneManager,
+    sweep_orphaned_tmp_dirs,
 )
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -709,6 +710,11 @@ async def main(  # ← Async main
         "dry_run": dry_run,
     }
 
+    # Sweep orphaned temp directories from previous crashed runs
+    sweep_orphaned_tmp_dirs(
+        on_status=lambda msg: console.print(f"[dim]{msg}[/dim]")
+    )
+
     # If command specified, run it directly
     if command:
         await _execute_command_async(ctx, command)
@@ -1311,11 +1317,8 @@ async def _process_and_fix_issues(
         console.print("[red]Could not determine branch to download[/red]")
         raise click.Abort()
 
-    # TODO: Add startup sweep for orphaned devdox_*_test dirs on disk.
-    # TmpCloneManager guarantees cleanup for normal exits and exceptions,
-    # but SIGKILL / OOM kills bypass __aexit__. A future startup routine
-    # should scan the system temp dir for stale devdox_*_test directories
-    # (e.g., older than 1 hour) and remove them.
+    # Orphaned temp dirs (from SIGKILL/OOM) are cleaned by
+    # sweep_orphaned_tmp_dirs() at CLI startup.
     async with TmpCloneManager(
         on_cleanup=lambda p: console.print(f"[dim]Cleaning up temporary files: {p}[/dim]")
     ) as tmp_path:

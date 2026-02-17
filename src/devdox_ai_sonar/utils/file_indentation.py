@@ -2,6 +2,7 @@ from pathlib import Path
 import asyncio
 import shutil
 import tempfile
+import time
 import re
 from git import Repo
 from typing import List, Optional, Tuple
@@ -111,6 +112,69 @@ class TmpCloneManager:
         except Exception:
             logger.exception(f"Cleanup failed for {self._tmp_path}")
         return False
+
+
+def sweep_orphaned_tmp_dirs(
+    max_age_seconds: int = 3600,
+    tmp_dir: Optional[str] = None,
+    on_status=None,
+) -> int:
+    """Remove orphaned devdox_*_test directories older than max_age_seconds.
+
+    Scans the system temp directory for directories matching the pattern
+    created by generate_tmp_path(). Directories older than the threshold
+    are assumed to be orphaned (from SIGKILL, OOM, or crashes) and removed.
+
+    Args:
+        max_age_seconds: Age threshold in seconds (default: 1 hour).
+        tmp_dir: Directory to scan (default: system temp dir via tempfile.gettempdir()).
+        on_status: Optional callback for status messages, e.g. console.print.
+
+    Returns:
+        Number of directories removed.
+    """
+    scan_dir = Path(tmp_dir) if tmp_dir else Path(tempfile.gettempdir())
+    now = time.time()
+    removed = 0
+
+    if on_status:
+        on_status(f"Scanning for orphaned temporary directories in {scan_dir}...")
+
+    try:
+        for entry in scan_dir.iterdir():
+            if not entry.is_dir():
+                continue
+            if not (entry.name.startswith("devdox_") and entry.name.endswith("_test")):
+                continue
+
+            try:
+                age = now - entry.stat().st_mtime
+            except OSError:
+                continue
+
+            if age < max_age_seconds:
+                continue
+
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+                logger.info(f"Removed orphaned temp directory: {entry} (age: {age:.0f}s)")
+            except OSError:
+                logger.warning(f"Failed to remove orphaned temp directory: {entry}")
+
+    except OSError:
+        logger.warning(f"Failed to scan temp directory: {scan_dir}")
+
+    if on_status:
+        if removed > 0:
+            on_status(
+                f"Removed {removed} orphaned temporary "
+                f"director{'y' if removed == 1 else 'ies'}."
+            )
+        else:
+            on_status("No orphaned temporary directories found.")
+
+    return removed
 
 
 def download_latest_version(

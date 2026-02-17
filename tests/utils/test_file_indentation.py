@@ -9,6 +9,7 @@ from typing import List
 from unittest.mock import Mock, patch, mock_open, MagicMock, AsyncMock
 import click
 import tempfile
+import time
 import shutil
 
 # Import the functions to test
@@ -55,6 +56,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_insert_action,
     _apply_delete_action,
     TmpCloneManager,
+    sweep_orphaned_tmp_dirs,
 )
 
 
@@ -3002,6 +3004,150 @@ class TestTmpCloneManager:
         manager = TmpCloneManager()
         assert manager._path_factory is generate_tmp_path
         assert manager._cleanup_fn is remove_tmp_files
+
+
+# ============================================================================
+# Test sweep_orphaned_tmp_dirs
+# ============================================================================
+
+
+class TestSweepOrphanedTmpDirs:
+    """Test suite for sweep_orphaned_tmp_dirs function."""
+
+    def test_removes_stale_directories(self, tmp_path):
+        """Test that directories older than max_age are removed."""
+        # Create 2 stale dirs matching the pattern
+        stale1 = tmp_path / "devdox_aaa_test"
+        stale2 = tmp_path / "devdox_bbb_test"
+        stale1.mkdir()
+        stale2.mkdir()
+
+        # Set mtime to 2 hours ago
+        old_time = time.time() - 7200
+        os.utime(stale1, (old_time, old_time))
+        os.utime(stale2, (old_time, old_time))
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 2
+        assert not stale1.exists()
+        assert not stale2.exists()
+
+    def test_preserves_fresh_directories(self, tmp_path):
+        """Test that recent directories are NOT removed (might be in use)."""
+        fresh = tmp_path / "devdox_fresh_test"
+        fresh.mkdir()
+        # mtime is now — well within any reasonable threshold
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 0
+        assert fresh.exists()
+
+    def test_ignores_non_matching_directories(self, tmp_path):
+        """Test that dirs without devdox_ prefix or _test suffix are untouched."""
+        other1 = tmp_path / "some_other_dir"
+        other2 = tmp_path / "devdox_no_suffix"
+        other3 = tmp_path / "no_prefix_test"
+        other1.mkdir()
+        other2.mkdir()
+        other3.mkdir()
+
+        # Make them all stale
+        old_time = time.time() - 7200
+        for d in [other1, other2, other3]:
+            os.utime(d, (old_time, old_time))
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 0
+        assert other1.exists()
+        assert other2.exists()
+        assert other3.exists()
+
+    def test_handles_empty_directory(self, tmp_path):
+        """Test scanning an empty directory returns 0."""
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+        assert removed == 0
+
+    def test_on_status_callback_called(self, tmp_path):
+        """Test that on_status receives scan and result messages."""
+        mock_status = Mock()
+
+        sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path), on_status=mock_status
+        )
+
+        assert mock_status.call_count == 2
+        # First call: scanning message
+        assert "Scanning" in mock_status.call_args_list[0][0][0]
+        # Second call: result message
+        assert "No orphaned" in mock_status.call_args_list[1][0][0]
+
+    def test_on_status_reports_removal_count(self, tmp_path):
+        """Test that on_status reports correct removal count."""
+        mock_status = Mock()
+
+        stale = tmp_path / "devdox_stale_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path), on_status=mock_status
+        )
+
+        result_msg = mock_status.call_args_list[1][0][0]
+        assert "Removed 1" in result_msg
+        assert "directory" in result_msg
+
+    def test_custom_max_age(self, tmp_path):
+        """Test that max_age_seconds threshold is respected."""
+        target = tmp_path / "devdox_mid_test"
+        target.mkdir()
+
+        # Set mtime to 120 seconds ago
+        mid_time = time.time() - 120
+        os.utime(target, (mid_time, mid_time))
+
+        # With 300s threshold, 120s-old dir should be preserved
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=300, tmp_dir=str(tmp_path)
+        )
+        assert removed == 0
+        assert target.exists()
+
+        # With 60s threshold, 120s-old dir should be removed
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=60, tmp_dir=str(tmp_path)
+        )
+        assert removed == 1
+        assert not target.exists()
+
+    def test_handles_permission_error_gracefully(self, tmp_path):
+        """Test that rmtree failure doesn't crash the sweep."""
+        stale = tmp_path / "devdox_perm_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.shutil.rmtree",
+                    side_effect=OSError("Permission denied")):
+            removed = sweep_orphaned_tmp_dirs(
+                max_age_seconds=3600, tmp_dir=str(tmp_path)
+            )
+
+        assert removed == 0
+        # Directory still exists because rmtree was mocked to fail
+        assert stale.exists()
 
 
 # ============================================================================
