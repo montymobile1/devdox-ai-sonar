@@ -2210,7 +2210,7 @@ class TestSecurityIssuesProcessing:
         mock_continue.return_value = False  # Stop after first
 
         issues_by_file = {
-            "security.py": [Mock(), Mock()]
+            "security.py": [Mock(file="security.py"), Mock(file="security.py")]
         }
 
         await _process_security_issues(
@@ -2231,8 +2231,8 @@ class TestSecurityIssuesProcessing:
         mock_continue.side_effect = [True, False]  # Continue first, stop second
 
         issues_by_file = {
-            "auth.py": [Mock()],
-            "crypto.py": [Mock(), Mock()]
+            "auth.py": [Mock(file="auth.py")],
+            "crypto.py": [Mock(file="crypto.py"), Mock(file="crypto.py")]
         }
 
         await _process_security_issues(
@@ -2935,7 +2935,7 @@ class TestFileProcessing:
 
     async def test_process_files_with_issues_basic(self):
         """Test basic file processing"""
-        issues_by_file = {"test.py": [Mock(rule="python:S1234")]}
+        issues_by_file = {"module.py": [Mock(rule="python:S1234", file="module.py")]}
 
         mock_fixer = AsyncMock()
         mock_fixer.generate_fix_by_file.return_value = None
