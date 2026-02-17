@@ -6,7 +6,8 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError
 from typing import List
 
-from unittest.mock import Mock, patch, mock_open, MagicMock
+from unittest.mock import Mock, patch, mock_open, MagicMock, AsyncMock
+import click
 import tempfile
 import shutil
 
@@ -53,6 +54,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_replace_action,
     _apply_insert_action,
     _apply_delete_action,
+    TmpCloneManager,
 )
 
 
@@ -2921,6 +2923,85 @@ class TestGenerateTmpPath:
 
         # Cleanup
         shutil.rmtree(path)
+
+
+# ============================================================================
+# Test TmpCloneManager
+# ============================================================================
+
+
+class TestTmpCloneManager:
+    """Test suite for TmpCloneManager async context manager."""
+
+    async def test_normal_exit_calls_cleanup(self):
+        """Test that cleanup_fn is called on normal exit."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as tmp_path:
+            assert tmp_path == Path("/tmp/devdox_abc_test")
+
+        mock_factory.assert_called_once()
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_exception_calls_cleanup(self):
+        """Test that cleanup_fn is called even when body raises."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        with pytest.raises(ValueError, match="boom"):
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                raise ValueError("boom")
+
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_click_abort_calls_cleanup(self):
+        """Test cleanup on click.Abort (BaseException subclass)."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        with pytest.raises(click.Abort):
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                raise click.Abort()
+
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_cleanup_failure_logged_not_raised(self):
+        """Test that cleanup failure is logged but does not propagate."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(side_effect=OSError("Permission denied"))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.logger") as mock_logger:
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                pass
+
+            mock_logger.exception.assert_called_once()
+            assert "Cleanup failed" in mock_logger.exception.call_args[0][0]
+
+    async def test_cleanup_failure_preserves_original_exception(self):
+        """Test that when body raises AND cleanup fails, the original exception propagates."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(side_effect=OSError("Permission denied"))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.logger"):
+            with pytest.raises(RuntimeError, match="original"):
+                async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                    raise RuntimeError("original")
+
+    async def test_returns_path_object(self):
+        """Test that __aenter__ returns a Path, not str."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock()
+
+        async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as result:
+            assert isinstance(result, Path)
+            assert str(result) == "/tmp/devdox_abc_test"
+
+    async def test_default_factories(self):
+        """Test that defaults use generate_tmp_path and remove_tmp_files."""
+        manager = TmpCloneManager()
+        assert manager._path_factory is generate_tmp_path
+        assert manager._cleanup_fn is remove_tmp_files
 
 
 # ============================================================================

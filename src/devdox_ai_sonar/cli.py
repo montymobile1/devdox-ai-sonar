@@ -26,9 +26,8 @@ from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.utils.file_indentation import (
-    remove_tmp_files,
     download_latest_version,
-    generate_tmp_path,
+    TmpCloneManager,
 )
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -1307,40 +1306,46 @@ async def _process_and_fix_issues(
             project_key=auth_config.project, pull_request=pull_request
         )
 
-    tmp_path = generate_tmp_path()
-
+    # Fail fast: validate branch before allocating resources
     if not branch_downloaded:
         console.print("[red]Could not determine branch to download[/red]")
         raise click.Abort()
 
-    console.print(f"Cloning {auth_config.project} to {tmp_path}")
-    downloaded = download_latest_version(
-        auth_config.git_url, tmp_path, branch_downloaded
-    )
-    if not downloaded:
-        console.print("Not able to download latest version")
-        raise click.Abort()
-
-    # Fetch issues based on type
-    issues = _fetch_issues_by_type(
-        services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
-    )
-    if not issues:
-        msg = (
-            "No fixable security issues found"
-            if issue_type == IssueType.SECURITY
-            else "No fixable issues found"
+    # TODO: Add startup sweep for orphaned devdox_*_test dirs on disk.
+    # TmpCloneManager guarantees cleanup for normal exits and exceptions,
+    # but SIGKILL / OOM kills bypass __aexit__. A future startup routine
+    # should scan the system temp dir for stale devdox_*_test directories
+    # (e.g., older than 1 hour) and remove them.
+    async with TmpCloneManager(
+        on_cleanup=lambda p: console.print(f"[dim]Cleaning up temporary files: {p}[/dim]")
+    ) as tmp_path:
+        console.print(f"Cloning {auth_config.project} to {tmp_path}")
+        downloaded = download_latest_version(
+            auth_config.git_url, str(tmp_path), branch_downloaded
         )
-        console.print(f"[yellow]{msg}[/yellow]")
-        remove_tmp_files(tmp_path)
-        return
-    total_issues = sum(len(issue_list) for issue_list in issues.values())
+        if not downloaded:
+            console.print("Not able to download latest version")
+            raise click.Abort()
 
-    console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    await _process_files_with_issues(
-        issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
-    )
-    remove_tmp_files(tmp_path)
+        # Fetch issues based on type
+        issues = _fetch_issues_by_type(
+            services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
+        )
+        if not issues:
+            msg = (
+                "No fixable security issues found"
+                if issue_type == IssueType.SECURITY
+                else "No fixable issues found"
+            )
+            console.print(f"[yellow]{msg}[/yellow]")
+            return  # __aexit__ handles cleanup
+
+        total_issues = sum(len(issue_list) for issue_list in issues.values())
+
+        console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
+        await _process_files_with_issues(
+            issues, services, auth_config, fix_params, issue_type, tmp_path
+        )
 
 
 def _initialize_fix_services(

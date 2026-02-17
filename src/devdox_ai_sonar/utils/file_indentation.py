@@ -1,4 +1,5 @@
 from pathlib import Path
+import asyncio
 import shutil
 import tempfile
 import re
@@ -80,6 +81,36 @@ def generate_tmp_path() -> str:
         dir=None,  # Uses system temp dir (respects TMPDIR env var)
     )
     return tmp_dir
+
+
+class TmpCloneManager:
+    """Async context manager for temporary directory lifecycle.
+
+    Guarantees cleanup via __aexit__ on all exit paths (success, exception, abort).
+    Dependencies are injectable for testability.
+    """
+
+    def __init__(self, path_factory=generate_tmp_path, cleanup_fn=remove_tmp_files,
+                 on_cleanup=None):
+        self._path_factory = path_factory
+        self._cleanup_fn = cleanup_fn
+        self._on_cleanup = on_cleanup
+        self._tmp_path: Optional[str] = None
+
+    async def __aenter__(self) -> Path:
+        self._tmp_path = self._path_factory()
+        return Path(self._tmp_path)
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if self._tmp_path:
+                if self._on_cleanup:
+                    self._on_cleanup(self._tmp_path)
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
+        except Exception:
+            logger.exception(f"Cleanup failed for {self._tmp_path}")
+        return False
 
 
 def download_latest_version(
