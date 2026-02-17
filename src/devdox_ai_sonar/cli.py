@@ -46,6 +46,7 @@ from devdox_ai_sonar.utils.provider_config import (
 )
 
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
+from devdox_ai_sonar.utils.file_filter import is_file_processable
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
@@ -1430,6 +1431,19 @@ async def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
+        if issue.file and not is_file_processable(
+            issue.file,
+            allowed_suffixes=[".py"],
+            excluded_suffixes=[],
+            allowed_prefixes=[],
+            excluded_prefixes=["test_"],
+        ):
+            console.print(
+                f"[dim]Skipping {issue.file} "
+                f"(only .py files excluding test_ are processed)[/dim]"
+            )
+            continue
+
         await _process_single_fix(
             issues=[issue],
             services=services,
@@ -1495,6 +1509,19 @@ async def _process_security_issues(
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
         for idx_new, issue in enumerate(issues, 1):
+            if issue.file and not is_file_processable(
+                issue.file,
+                allowed_suffixes=[".py"],
+                excluded_suffixes=[],
+                allowed_prefixes=[],
+                excluded_prefixes=["test_"],
+            ):
+                console.print(
+                    f"[dim]Skipping {issue.file} "
+                    f"(only .py files excluding test_ are processed)[/dim]"
+                )
+                continue
+
             await _process_single_fix(
                 issues=[issue],
                 services=services,
