@@ -95,6 +95,12 @@ ARG_RENAME_PATTERN = r"(\b{func_name}\s*\([\s\S]*?\b){old_arg}\s*="
 class RuleHandler(ABC):
     """Abstract base class for rule-specific fix handlers."""
 
+    # Subclasses must declare whether they modify the line range
+    MOIDY_LINE_RANGE: bool = False
+
+    # Subclasses should set this to the LLM model identifier, or leave as None
+    model: Optional[str] = None
+
     @abstractmethod
     def can_handle(self, rule: str) -> bool:
         """
@@ -131,21 +137,101 @@ class RuleHandler(ABC):
         """
         pass
 
+    def _generate_fix_key(self, problem_lines: List[Any]) -> str:
+        """
+        Generate a unique key for the fix based on problem lines.
+
+        Subclasses may override this if a different key strategy is needed.
+        """
+        return "-".join(str(line) for line in problem_lines) if problem_lines else ""
+
+    def _build_fix_suggestion(
+        self,
+        fix_response_list: List[SonarFixResponse],
+        context: FixContext,
+        file_path: Path,
+        project_path: Path,
+        line_range: Dict[str, Any],
+    ) -> List[FixSuggestion]:
+        """
+        Build FixSuggestion objects from a SonarFixResponse list.
+
+        Handles cases where code blocks target different files than the original issue,
+        overriding file_path and line numbers accordingly.
+
+        Args:
+            fix_response_list: List of responses from the handler with code blocks
+            context: Fix context for the original issue
+            file_path: Original file path (from the issue)
+            project_path: Project root
+            line_range: Line range dictionary for the original issue
+
+        Returns:
+            List of FixSuggestion objects ready for application
+        """
+        lst_suggestion = []
+
+        for fix_response_single in fix_response_list:
+            code_blocks = fix_response_single.FIXED_CODE_BLOCKS
+
+            (
+                effective_file_path,
+                effective_start_line,
+                effective_sonar_line,
+                effective_last_line,
+            ) = _resolve_effective_values(
+                code_blocks,
+                file_path,
+                context,
+                line_range,
+                modify_line_range=self.MOIDY_LINE_RANGE,
+            )
+
+            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
+
+            lst_suggestion.append(
+                FixSuggestion(
+                    issue_key=self._generate_fix_key(
+                        line_range.get("problem_lines", [])
+                    ),
+                    original_code=context.code_content,
+                    fixed_code_blocks=code_blocks,
+                    fixed_code="",
+                    import_block_code=fix_response_single.IMPORT_BLOCK,
+                    helper_code=fix_response_single.NEW_HELPER_CODE,
+                    placement_helper=fix_response_single.PLACEMENT,
+                    explanation=fix_response_single.EXPLANATION,
+                    confidence=fix_response_single.CONFIDENCE,
+                    llm_model=self.model or "unknown",
+                    rule_description="",
+                    file_path=relative_file_path,
+                    line_number=effective_start_line,
+                    sonar_line_number=effective_sonar_line,
+                    end_import_block_code=context.context_dict.get(
+                        "import_section", {}
+                    ).get("end_line", 0),
+                    last_line_number=effective_last_line,
+                )
+            )
+
+        logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
+        return lst_suggestion
+
+
 class ConvenationNameHandler(RuleHandler):
     """
-       Handler for python:S117 - Local variable and function parameter names
-       should comply with a naming convention (snake_case).
+    Handler for python:S117 - Local variable and function parameter names
+    should comply with a naming convention (snake_case).
 
-       This handler identifies function parameters that violate the naming convention
-       and generates fixes to rename them to snake_case across both the function
-       definition and all known call sites in the project.
+    This handler identifies function parameters that violate the naming convention
+    and generates fixes to rename them to snake_case across both the function
+    definition and all known call sites in the project.
     """
 
     RULE_ID = "python:S117"
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
-        """Check if this is the async-to-sync conversion rule."""
         return rule == self.RULE_ID
 
     async def generate_fixes(
@@ -184,62 +270,53 @@ class ConvenationNameHandler(RuleHandler):
             code_blocks = []
             response_lst = []
 
+            # Step 1: Find all function implementations
+            function_info = find_function_implementations(
+                project_path, context.functions[0]['name']
+            )
 
-
-            # Step 1: Detect function type
-            function_info = find_function_implementations(project_path,context.functions[0]['name'])
-
-
-            if len(function_info.get("definitions"))==0 :
+            if not function_info.get("definitions"):
                 logger.warning("Could not detect function type for async conversion")
                 return None
 
-            function_definition = function_info.get("definitions")
+            # Step 2: Identify parameters to rename in the affected file
             args_to_be_changed = {}
-            for definition in function_definition:
-
-                if Path(definition['file'])==file_path:
-
+            for definition in function_info["definitions"]:
+                if Path(definition['file']) == file_path:
                     for arg in definition["args"]:
                         new_arg = to_snake_case(arg)
                         if new_arg != arg:
                             args_to_be_changed[arg] = new_arg
-
-
-                            function_block = self._change_function_definition_block(
-                                definition, context, arg, new_arg
+                            code_blocks.append(
+                                self._change_function_definition_block(
+                                    definition, context, arg, new_arg
+                                )
                             )
-                            code_blocks.append(function_block)
 
-
-            caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
-
-
-            if len(code_blocks)==0:
+            if not code_blocks:
                 return None
 
-            for blocks in caller_blocks:
-
+            # Step 3: Build caller blocks for cross-file call sites
+            caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
+            for block in caller_blocks:
                 response_lst.append(
-                        SonarFixResponse(
-                            IMPORT_BLOCK="",
-                            FIXED_CODE_BLOCKS=[blocks],
-                            NEW_HELPER_CODE="",
-                            PLACEMENT="SIBLING",
-                            EXPLANATION="",
-                            CONFIDENCE=0.95,
-                        )
+                    SonarFixResponse(
+                        IMPORT_BLOCK="",
+                        FIXED_CODE_BLOCKS=[block],
+                        NEW_HELPER_CODE="",
+                        PLACEMENT="SIBLING",
+                        EXPLANATION="",
+                        CONFIDENCE=0.95,
+                    )
                 )
-            # Step 5: Build unified response
+
             explanation = (
-                        f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
-                        f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
-                        f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
-                        f"This satisfies python:S117, which requires all local variables and function "
-                        f"parameters to follow the snake_case naming convention."
+                f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
+                f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
+                f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
+                f"This satisfies python:S117, which requires all local variables and function "
+                f"parameters to follow the snake_case naming convention."
             )
-
-
 
             logger.info(
                 f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
@@ -257,59 +334,56 @@ class ConvenationNameHandler(RuleHandler):
             )
 
             return response_lst
+
         except Exception as e:
             print(f"Error in ConventationName: {e}")
             logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
             return None
 
     def _change_function_definition_block(
-        self, function_info: Dict[str, Any], context: FixContext, arg_name: str, new_arg_name: str
+        self,
+        function_info: Dict[str, Any],
+        context: FixContext,
+        arg_name: str,
+        new_arg_name: str,
     ) -> CodeBlock:
         """
-                Build a CodeBlock that renames a single parameter in the function definition.
+        Build a CodeBlock that renames a single parameter in the function definition.
 
-                Replaces all occurrences of ``arg_name`` with ``new_arg_name`` in the
-                original function definition context, and computes the correct start/end
-                line numbers accounting for any decorators above the function.
+        Replaces all occurrences of ``arg_name`` with ``new_arg_name`` in the
+        original function definition context, and computes the correct start/end
+        line numbers accounting for any decorators above the function.
 
-                Args:
-                    function_info: Parsed metadata for the function (line number, decorators, etc.).
-                    context:       Fix context providing the raw source of the definition.
-                    arg_name:      The parameter name that violates the naming convention.
-                    new_arg_name:  The snake_case replacement for the parameter name.
+        Args:
+            function_info: Parsed metadata for the function (line number, decorators, etc.).
+            context:       Fix context providing the raw source of the definition.
+            arg_name:      The parameter name that violates the naming convention.
+            new_arg_name:  The snake_case replacement for the parameter name.
 
-                Returns:
-                    A CodeBlock targeting the function definition with the rename applied.
-            """
-
-        # Extract the original definition
+        Returns:
+            A CodeBlock targeting the function definition with the rename applied.
+        """
         original_def = context.context_dict['new_context'][0]['context']
         num_lines = len(original_def.strip().split('\n'))
-
-
         new_def = original_def.replace(arg_name, new_arg_name)
 
-        start_line = 0
-
-
-
-        # Calculate actual line number
-        actual_start_line = start_line + function_info["line"]  - len(function_info["decorators"])
-
+        actual_start_line = function_info["line"] - len(function_info["decorators"])
         end_line = actual_start_line + num_lines
 
         return CodeBlock(
             block_name=function_info["function"],
             start_line=actual_start_line,
-            end_line=end_line ,
+            end_line=end_line,
             has_changes=True,
             change_type=ChangeType.FULL_CODE,
             block_type=BlockType.FUNCTION,
-            context=new_def
+            context=new_def,
         )
 
     def _create_caller_blocks(
-            self, args_to_be_changed: Dict[str, str], function_info: Dict[str, Any]
+        self,
+        args_to_be_changed: Dict[str, str],
+        function_info: Dict[str, Any],
     ) -> List[CodeBlock]:
         """
         Build CodeBlocks to rename keyword arguments at all call sites.
@@ -326,110 +400,38 @@ class ConvenationNameHandler(RuleHandler):
 
         Returns:
             List of CodeBlock objects, one per (call site × renamed argument) pair.
-            Each block carries the file path of the call site so cross-file fixes
-            can be routed to a separate SonarFixResponse.
         """
-
         blocks = []
+        func_name = function_info["definitions"][0]["function"]
+        num_args = len(function_info["definitions"][0]["args"])
 
         for caller in function_info['calls']:
-
-            func_name = function_info["definitions"][0]["function"]
-            # Build code block for removing 'await'
-            for old_arg_name, arg_after in args_to_be_changed.items():
-
-                block = CodeBlock(
-                    block_name=func_name,
-                    start_line=caller["line"],
-                    end_line=caller["line"]+len(function_info["definitions"][0]["args"])+1,#take scenario that each arg on line
-                    has_changes=True,
-                    change_type=ChangeType.SEARCH_REPLACE,
-                    block_type=BlockType.FUNCTION,
-                    replacements=[
-                        SearchReplace(
-                            search=ARG_RENAME_PATTERN.format(
-                                func_name=re.escape(func_name),
-                                old_arg=re.escape(old_arg_name),
-                            ),
-                            replace=r"\1" + f"{arg_after}=",
-                            is_regex=True,
-                            count=None,
-                        )
-                    ],
-                    file_path=caller["file"],
+            for old_arg_name, new_arg_name in args_to_be_changed.items():
+                blocks.append(
+                    CodeBlock(
+                        block_name=func_name,
+                        start_line=caller["line"],
+                        end_line=caller["line"] + num_args + 1,
+                        has_changes=True,
+                        change_type=ChangeType.SEARCH_REPLACE,
+                        block_type=BlockType.FUNCTION,
+                        replacements=[
+                            SearchReplace(
+                                search=ARG_RENAME_PATTERN.format(
+                                    func_name=re.escape(func_name),
+                                    old_arg=re.escape(old_arg_name),
+                                ),
+                                replace=r"\1" + f"{new_arg_name}=",
+                                is_regex=True,
+                                count=None,
+                            )
+                        ],
+                        file_path=caller["file"],
+                    )
                 )
-
-                blocks.append(block)
 
         return blocks
 
-    def _build_fix_suggestion(
-        self,
-        fix_response_list: List[SonarFixResponse],
-        context: FixContext,
-        file_path: Path,
-        project_path: Path,
-        line_range: Dict[str, Any],
-    ) -> List[FixSuggestion]:
-        """
-        Build FixSuggestion objects from SonarFixResponse list.
-
-        Handles cases where code blocks target different files than the original issue,
-        overriding file_path and line numbers accordingly.
-
-        Args:
-            fix_response_list: List of responses from handler with code blocks
-            context: Fix context for the original issue
-            file_path: Original file path (from the issue)
-            project_path: Project root
-            line_range: Line range dictionary for the original issue
-
-        Returns:
-            List of FixSuggestion objects ready for application
-        """
-        lst_suggestion = []
-
-        for fix_response_single in fix_response_list:
-            code_blocks = fix_response_single.FIXED_CODE_BLOCKS
-
-            (
-                effective_file_path,
-                effective_start_line,
-                effective_sonar_line,
-                effective_last_line,
-            ) = _resolve_effective_values(code_blocks, file_path, context, line_range)
-
-            relative_file_path = _resolve_relative_path(
-                effective_file_path, project_path
-            )
-
-            lst_suggestion.append(
-                FixSuggestion(
-                    issue_key=self._generate_fix_key(  # type: ignore[attr-defined]
-                        line_range.get("problem_lines", [])
-                    ),
-                    original_code=context.code_content,
-                    fixed_code_blocks=code_blocks,
-                    fixed_code="",
-                    import_block_code=fix_response_single.IMPORT_BLOCK,
-                    helper_code=fix_response_single.NEW_HELPER_CODE,
-                    placement_helper=fix_response_single.PLACEMENT,
-                    explanation=fix_response_single.EXPLANATION,
-                    confidence=fix_response_single.CONFIDENCE,
-                    llm_model=self.model or "unknown",  # type: ignore[attr-defined]
-                    rule_description="",
-                    file_path=relative_file_path,
-                    line_number=effective_start_line,
-                    sonar_line_number=effective_sonar_line,
-                    end_import_block_code=context.context_dict.get(
-                        "import_section", {}
-                    ).get("end_line", 0),
-                    last_line_number=effective_last_line,
-                )
-            )
-
-        logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
-        return lst_suggestion
 
 class AsyncToSyncHandler(RuleHandler):
     """
@@ -443,7 +445,6 @@ class AsyncToSyncHandler(RuleHandler):
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
-        """Check if this is the async-to-sync conversion rule."""
         return rule == self.RULE_ID
 
     async def generate_fixes(
@@ -480,38 +481,36 @@ class AsyncToSyncHandler(RuleHandler):
                 return None
 
             # Step 2: Build code block for function definition
-            function_block = self._create_function_definition_block(
-                function_info, context
+            code_blocks.append(
+                self._create_function_definition_block(function_info, context)
             )
-            code_blocks.append(function_block)
 
-            #Step 3: Analyze call sites
+            # Step 3: Analyze call sites
             analyzer = AsyncConversionAnalyzer(function_info["name"], project_path)
             analysis = await analyzer.analyze()
 
             # Step 4: Generate code blocks for all awaited call sites
+            explanation = (
+                f"Converting async function '{function_info['name']}' to sync:\n"
+                f"- Removed 'async' keyword from function definition\n"
+                f"- Removed 'await' from {{caller_count}} call site(s)"
+            )
+
             caller_blocks = self._create_caller_blocks(analysis, function_info)
-            for blocks in caller_blocks:
-                if blocks.file_path == file_path:
-                    code_blocks.append(blocks)
+            for block in caller_blocks:
+                if block.file_path == file_path:
+                    code_blocks.append(block)
                 else:
                     response_lst.append(
                         SonarFixResponse(
                             IMPORT_BLOCK="",
-                            FIXED_CODE_BLOCKS=[blocks],
+                            FIXED_CODE_BLOCKS=[block],
                             NEW_HELPER_CODE="",
                             PLACEMENT="SIBLING",
                             EXPLANATION="",
                             CONFIDENCE=0.95,
                         )
                     )
-
-                    # Step 5: Build unified response
-                explanation = (
-                    f"Converting async function '{function_info['name']}' to sync:\n"
-                    f"- Removed 'async' keyword from function definition\n"
-                    f"- Removed 'await' from {len(caller_blocks)} call site(s)"
-                )
 
             logger.info(
                 f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
@@ -523,36 +522,33 @@ class AsyncToSyncHandler(RuleHandler):
                     FIXED_CODE_BLOCKS=code_blocks,
                     NEW_HELPER_CODE="",
                     PLACEMENT="SIBLING",
-                    EXPLANATION=explanation,
+                    EXPLANATION=explanation.format(caller_count=len(caller_blocks)),
                     CONFIDENCE=0.95,
                 )
             )
 
             return response_lst
+
         except Exception as e:
             print(f"Error in AsyncToSyncHandler: {e}")
             logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
             return None
 
     def _create_function_definition_block(
-        self, function_info: Dict[str, Any], context: FixContext
+        self,
+        function_info: Dict[str, Any],
+        context: FixContext,
     ) -> CodeBlock:
         """Create code block for the function definition (remove 'async' keyword)."""
-
-        # Extract the original definition
         original_def = function_info["definition"]
         new_def = original_def.replace("async def", "def")
 
-        # Find function start line in context
-        function_names = context.context_dict.get("functions", [])
         start_line = 0
-
-        for func in function_names:
+        for func in context.context_dict.get("functions", []):
             if func["name"] == function_info["name"]:
                 start_line = func["start_line"]
                 break
 
-        # Calculate actual line number
         actual_line = start_line + function_info["start_line"]
 
         return CodeBlock(
@@ -573,108 +569,40 @@ class AsyncToSyncHandler(RuleHandler):
         )
 
     def _create_caller_blocks(
-        self, analysis: Any, function_info: Dict[str, Any]
+        self,
+        analysis: Any,
+        function_info: Dict[str, Any],
     ) -> List[CodeBlock]:
         """Create code blocks for all call sites that use 'await'."""
-
         blocks = []
 
         for caller in analysis.caller_impact:
             if not caller.get("awaited"):
                 continue  # Only fix awaited calls
 
-            # Build code block for removing 'await'
-            block = CodeBlock(
-                block_name=function_info["name"],
-                start_line=caller["line"],
-                end_line=caller["line"],
-                has_changes=True,
-                change_type=ChangeType.SEARCH_REPLACE,
-                block_type=BlockType.FUNCTION,
-                replacements=[
-                    SearchReplace(
-                        search=AWAIT_REMOVAL_PATTERN.format(
-                            func_name=re.escape(function_info["name"])
-                        ),
-                        replace="",
-                        is_regex=True,
-                        count=None,
-                    )
-                ],
-                file_path=caller["file"],
-            )
-
-            blocks.append(block)
-
-        return blocks
-
-    def _build_fix_suggestion(
-        self,
-        fix_response_list: List[SonarFixResponse],
-        context: FixContext,
-        file_path: Path,
-        project_path: Path,
-        line_range: Dict[str, Any],
-    ) -> List[FixSuggestion]:
-        """
-        Build FixSuggestion objects from SonarFixResponse list.
-
-        Handles cases where code blocks target different files than the original issue,
-        overriding file_path and line numbers accordingly.
-
-        Args:
-            fix_response_list: List of responses from handler with code blocks
-            context: Fix context for the original issue
-            file_path: Original file path (from the issue)
-            project_path: Project root
-            line_range: Line range dictionary for the original issue
-
-        Returns:
-            List of FixSuggestion objects ready for application
-        """
-        lst_suggestion = []
-
-        for fix_response_single in fix_response_list:
-            code_blocks = fix_response_single.FIXED_CODE_BLOCKS
-
-            (
-                effective_file_path,
-                effective_start_line,
-                effective_sonar_line,
-                effective_last_line,
-            ) = _resolve_effective_values(code_blocks, file_path, context, line_range)
-
-            relative_file_path = _resolve_relative_path(
-                effective_file_path, project_path
-            )
-
-            lst_suggestion.append(
-                FixSuggestion(
-                    issue_key=self._generate_fix_key(  # type: ignore[attr-defined]
-                        line_range.get("problem_lines", [])
-                    ),
-                    original_code=context.code_content,
-                    fixed_code_blocks=code_blocks,
-                    fixed_code="",
-                    import_block_code=fix_response_single.IMPORT_BLOCK,
-                    helper_code=fix_response_single.NEW_HELPER_CODE,
-                    placement_helper=fix_response_single.PLACEMENT,
-                    explanation=fix_response_single.EXPLANATION,
-                    confidence=fix_response_single.CONFIDENCE,
-                    llm_model=self.model or "unknown",  # type: ignore[attr-defined]
-                    rule_description="",
-                    file_path=relative_file_path,
-                    line_number=effective_start_line,
-                    sonar_line_number=effective_sonar_line,
-                    end_import_block_code=context.context_dict.get(
-                        "import_section", {}
-                    ).get("end_line", 0),
-                    last_line_number=effective_last_line,
+            blocks.append(
+                CodeBlock(
+                    block_name=function_info["name"],
+                    start_line=caller["line"],
+                    end_line=caller["line"],
+                    has_changes=True,
+                    change_type=ChangeType.SEARCH_REPLACE,
+                    block_type=BlockType.FUNCTION,
+                    replacements=[
+                        SearchReplace(
+                            search=AWAIT_REMOVAL_PATTERN.format(
+                                func_name=re.escape(function_info["name"])
+                            ),
+                            replace="",
+                            is_regex=True,
+                            count=None,
+                        )
+                    ],
+                    file_path=caller["file"],
                 )
             )
 
-        logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
-        return lst_suggestion
+        return blocks
 
 
 class CognitiveComplexityHandler(RuleHandler):
@@ -688,7 +616,6 @@ class CognitiveComplexityHandler(RuleHandler):
     MOIDY_LINE_RANGE = False
 
     def can_handle(self, rule: str) -> bool:
-        """Check if this is a cognitive complexity rule."""
         return rule == self.RULE_ID
 
     async def generate_fixes(
@@ -703,24 +630,19 @@ class CognitiveComplexityHandler(RuleHandler):
         Generate fixes for cognitive complexity issues.
 
         This delegates to the LLM with specialized refactoring prompts.
-
-        Returns:
-            SonarFixResponse with refactored code blocks
         """
         if not llm_caller:
             logger.error("LLM caller required for cognitive complexity fixes")
             return None
 
         try:
-            # Use specialized refactoring template
             fix_response = llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,
-                {},  # rule_info will be populated by caller
+                {},
                 error_message="",
             )
-
             return [fix_response]
 
         except Exception as e:
@@ -732,8 +654,8 @@ class DefaultRuleHandler(RuleHandler):
     """
     Default handler for standard SonarCloud rules.
 
-    This handler uses the LLM with general-purpose fixing prompts
-    for rules that don't require specialized logic.
+    Uses the LLM with general-purpose fixing prompts for rules that don't
+    require specialized logic.
     """
 
     MOIDY_LINE_RANGE = False
@@ -750,32 +672,19 @@ class DefaultRuleHandler(RuleHandler):
         file_path: Path,
         llm_caller: Any,
     ) -> Optional[List[SonarFixResponse]]:
-        """
-        Generate fixes using standard LLM approach.
-
-        Args:
-            issues: Issues to fix
-            context: Fix context
-            project_path: Project root
-            llm_caller: LLM client instance
-
-        Returns:
-            SonarFixResponse object or None if generation fails
-        """
+        """Generate fixes using standard LLM approach."""
         if not llm_caller:
             logger.error("LLM caller required for default rule handling")
             return None
 
         try:
-            # Use standard fixing approach
             fix_response = llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,
-                {},  # rule_info populated by caller
+                {},
                 error_message="",
             )
-
             return [fix_response]
 
         except Exception as e:
@@ -809,7 +718,6 @@ class RuleHandlerRegistry:
             priority: Position in handler chain (default: before catch-all)
         """
         if priority < 0:
-            # Insert before DefaultRuleHandler (last position)
             self.handlers.insert(len(self.handlers) - 1, handler)
         else:
             self.handlers.insert(priority, handler)
@@ -829,6 +737,5 @@ class RuleHandlerRegistry:
                 logger.debug(f"Using {handler.__class__.__name__} for rule {rule}")
                 return handler
 
-        # Should never reach here due to DefaultRuleHandler
         logger.warning(f"No handler found for rule {rule}, using default")
         return self.handlers[-1]
