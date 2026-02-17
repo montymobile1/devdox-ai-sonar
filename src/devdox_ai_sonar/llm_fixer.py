@@ -33,7 +33,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
     write_file_lines,
     normalize_indentation,
-    remove_tmp_files,
+    cleanup_tmp_py_file,
 )
 from devdox_ai_sonar.services.rule_handler import (
     RuleHandlerRegistry,
@@ -1686,13 +1686,13 @@ class LLMFixer:
 
                 write_file_lines(file_path_tmp, lines)
                 validate, msg = self.check_python_interpreter(file_path_tmp)
+                cleanup_tmp_py_file(file_path_tmp)
                 result.success = validate
                 result.reason = msg or ""
 
                 results.append(result)
                 if result.success:
                     write_file_lines(file_path, lines)
-                    remove_tmp_files(str(file_path_tmp))
 
             return all(r.success for r in results), results
 
@@ -1897,7 +1897,7 @@ class LLMFixer:
                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
                 if file_path_tmp.exists():
                     current_content = await self.read_file_async(file_path_tmp)
-                    remove_tmp_files(str(file_path_tmp))
+                    cleanup_tmp_py_file(file_path_tmp)
 
                 validation_result = validator.validate_fix(
                     fix,

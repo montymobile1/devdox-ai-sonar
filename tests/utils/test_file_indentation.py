@@ -57,6 +57,8 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_delete_action,
     TmpCloneManager,
     sweep_orphaned_tmp_dirs,
+    cleanup_tmp_py_file,
+    _CLEANUP_TMP_PY_ENABLED,
 )
 
 
@@ -3148,6 +3150,77 @@ class TestSweepOrphanedTmpDirs:
         assert removed == 0
         # Directory still exists because rmtree was mocked to fail
         assert stale.exists()
+
+
+# ============================================================================
+# Test cleanup_tmp_py_file
+# ============================================================================
+class TestCleanupTmpPyFile:
+    """Test suite for the gated .tmp.py cleanup function."""
+
+    def test_removes_file_when_enabled(self, tmp_path):
+        """Default behaviour: module flag is True, enabled=None → file removed."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is True
+        assert not tmp_file.exists()
+
+    def test_skips_when_module_flag_disabled(self, tmp_path):
+        """When module-level gate is False and no override, file stays."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch(
+            "devdox_ai_sonar.utils.file_indentation._CLEANUP_TMP_PY_ENABLED", False
+        ):
+            result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is False
+        assert tmp_file.exists()
+
+    def test_field_enabled_overrides_module_disabled(self, tmp_path):
+        """enabled=True takes precedence over module flag=False."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch(
+            "devdox_ai_sonar.utils.file_indentation._CLEANUP_TMP_PY_ENABLED", False
+        ):
+            result = cleanup_tmp_py_file(tmp_file, enabled=True)
+
+        assert result is True
+        assert not tmp_file.exists()
+
+    def test_field_disabled_overrides_module_enabled(self, tmp_path):
+        """enabled=False takes precedence over module flag=True."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        result = cleanup_tmp_py_file(tmp_file, enabled=False)
+
+        assert result is False
+        assert tmp_file.exists()
+
+    def test_nonexistent_file_returns_false(self, tmp_path):
+        """Calling on a non-existent path returns False without error."""
+        nonexistent = tmp_path / "nope.tmp.py"
+
+        result = cleanup_tmp_py_file(nonexistent)
+
+        assert result is False
+
+    def test_handles_oserror_gracefully(self, tmp_path):
+        """OSError during unlink is caught, returns False."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+            result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is False
 
 
 # ============================================================================

@@ -177,6 +177,42 @@ def sweep_orphaned_tmp_dirs(
     return removed
 
 
+_CLEANUP_TMP_PY_ENABLED = True
+
+
+def cleanup_tmp_py_file(file_path, enabled: Optional[bool] = None) -> bool:
+    """Remove a .tmp.py intermediate validation file.
+
+    Controlled by a two-level gate:
+      - enabled parameter (when not None) takes precedence
+      - _CLEANUP_TMP_PY_ENABLED module constant is the fallback
+
+    When the gate is closed (False), the file is left on disk.
+    This allows a future feature to retain .tmp.py files for review.
+
+    Args:
+        file_path: Path to the .tmp.py file.
+        enabled: Override the module-level gate. None = use module default.
+
+    Returns:
+        True if file was removed, False if skipped or file didn't exist.
+    """
+    should_cleanup = enabled if enabled is not None else _CLEANUP_TMP_PY_ENABLED
+    if not should_cleanup:
+        return False
+
+    path = Path(file_path)
+    if not path.exists():
+        return False
+
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        logger.warning(f"Failed to remove tmp py file: {path}")
+        return False
+
+
 def download_latest_version(
     repo_url: str, repo_path: str, branch: str
 ) -> Optional[Repo]:
