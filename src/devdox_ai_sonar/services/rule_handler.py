@@ -482,7 +482,7 @@ class AsyncToSyncHandler(RuleHandler):
 
             # Step 2: Build code block for function definition
             code_blocks.append(
-                self._create_function_definition_block(function_info, context)
+                self._create_function_definition_block(function_info, context, file_path)
             )
 
             # Step 3: Analyze call sites
@@ -538,6 +538,7 @@ class AsyncToSyncHandler(RuleHandler):
         self,
         function_info: Dict[str, Any],
         context: FixContext,
+        file_path: Path,
     ) -> CodeBlock:
         """Create code block for the function definition (remove 'async' keyword)."""
         original_def = function_info["definition"]
@@ -566,6 +567,7 @@ class AsyncToSyncHandler(RuleHandler):
                     new=new_def,
                 )
             ],
+            file_path=str(file_path),
         )
 
     def _create_caller_blocks(

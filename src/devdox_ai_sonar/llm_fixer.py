@@ -25,6 +25,9 @@ from devdox_ai_sonar.models.sonar import (
     FixResult,
     SonarFixResponse,
     CodeBlock,
+    ChangeType,
+    ChangeAction,
+    LineChange,
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
@@ -220,47 +223,122 @@ class LLMFixer:
             },
         )
 
+    @staticmethod
+    def _convert_regex_to_diff(
+        block: CodeBlock, file_cache: Dict[str, List[str]]
+    ) -> Dict[str, Any]:
+        """Convert a regex SearchReplace block to a DIFF with actual source code.
+
+        Reads the real source line from disk, applies the regex, and returns
+        a dict of updates for model_copy (change_type, changes, replacements).
+        Returns an empty dict if conversion is not applicable or fails.
+        """
+        if not (
+            block.change_type == ChangeType.SEARCH_REPLACE
+            and block.replacements
+            and any(r.is_regex for r in block.replacements)
+            and block.file_path
+        ):
+            return {}
+
+        try:
+            abs_path = block.file_path
+            if abs_path not in file_cache:
+                file_cache[abs_path] = (
+                    Path(abs_path).read_text(encoding="utf-8").splitlines()
+                )
+            lines = file_cache[abs_path]
+            if not (0 < block.start_line <= len(lines)):
+                return {}
+
+            source_line = lines[block.start_line - 1]
+            fixed_line = source_line
+            for repl in block.replacements:
+                if repl.is_regex:
+                    fixed_line = re.sub(
+                        repl.search, repl.replace, fixed_line, count=repl.count or 0
+                    )
+            return {
+                "change_type": ChangeType.DIFF,
+                "replacements": None,
+                "changes": [
+                    LineChange(
+                        line=block.start_line,
+                        action=ChangeAction.REPLACE,
+                        old=source_line.strip(),
+                        new=fixed_line.strip(),
+                    )
+                ],
+            }
+        except (IndexError, OSError):
+            return {}
+
+    @staticmethod
+    def _build_display_blocks(
+        all_code_blocks: List[CodeBlock],
+        project_path: Optional[Path] = None,
+    ) -> List[CodeBlock]:
+        """Create documentation-friendly display copies of code blocks.
+
+        Converts absolute file paths to project-relative paths and replaces
+        regex SearchReplace blocks with human-readable DIFF blocks showing
+        actual before/after source code. Original blocks are not mutated.
+        """
+        display_blocks = []
+        file_cache: Dict[str, List[str]] = {}
+
+        for block in all_code_blocks:
+            updates: Dict[str, Any] = {}
+
+            if block.file_path and project_path:
+                try:
+                    updates["file_path"] = str(
+                        Path(block.file_path).relative_to(project_path)
+                    )
+                except ValueError:
+                    pass
+
+            updates.update(LLMFixer._convert_regex_to_diff(block, file_cache))
+
+            if updates:
+                display_blocks.append(block.model_copy(update=updates))
+            else:
+                display_blocks.append(block)
+
+        return display_blocks
+
     def write_explaination(
         self,
         file_md: Path,
-        fix_response: SonarFixResponse,
+        fix_response_lst: List[SonarFixResponse],
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         original_code: Dict[str, Any],
+        project_path: Optional[Path] = None,
     ) -> None:
-        # Ensure parent directory exists
         file_md.parent.mkdir(parents=True, exist_ok=True)
-
-        # Create file if it does not exist
         if not file_md.exists():
             file_md.touch()
 
+        all_code_blocks = []
+        for resp in fix_response_lst:
+            all_code_blocks.extend(resp.FIXED_CODE_BLOCKS)
+
+        display_blocks = self._build_display_blocks(all_code_blocks, project_path)
+        explanation = fix_response_lst[-1].EXPLANATION
+        template = self.jinja_env_templates.get_template("md.j2")
+
         with open(file_md, mode="a", encoding="utf-8") as f:
             for issue in issues:
-                rule = getattr(issue, "rule", "Unknown rule")
-                severity = getattr(issue, "severity", "")
-                message = getattr(issue, "message", "No message provided")
-
-                file_path = getattr(issue, "file_path", "Unknown file")
-                line = getattr(issue, "line", "N/A")
-
-                explanation = fix_response.EXPLANATION
-
-                suggestion = fix_response.FIXED_CODE_BLOCKS
-
-                template = self.jinja_env_templates.get_template("md.j2")
-
-                # Prepare context for template
                 context = {
-                    "rule": rule,
-                    "severity": severity,
-                    "message": message,
-                    "file_path": file_path,
-                    "line": line,
+                    "rule": getattr(issue, "rule", "Unknown rule"),
+                    "severity": getattr(issue, "severity", ""),
+                    "message": getattr(issue, "message", "No message provided"),
+                    "file_path": getattr(issue, "file_path", "Unknown file"),
+                    "line": getattr(issue, "line", "N/A"),
                     "explanation": explanation,
-                    "suggestion": suggestion,
+                    "suggestion": display_blocks,
                     "original_code": original_code,
                 }
-                # Render enhanced content
                 template_md = template.render(**context)
                 f.write(template_md.strip() + "\n\n")
 
@@ -350,9 +428,10 @@ class LLMFixer:
             if file_md:
                 self.write_explaination(
                     project_path / file_md,
-                    fix_response_lst[-1],
+                    fix_response_lst,
                     issues,
                     context.context_dict,
+                    project_path=project_path,
                 )
 
             logger.info(f"Generated fix for {len(issues)} issue(s)")

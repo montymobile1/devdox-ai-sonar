@@ -1054,11 +1054,34 @@ class TestAsyncToSyncHelpers:
             "definition": "async def my_func():",
             "start_line": 0,
         }
-        block = self.handler._create_function_definition_block(func_info, context)
+        file_path = Path("/project/src/module.py")
+        block = self.handler._create_function_definition_block(func_info, context, file_path)
         assert block.change_type == ChangeType.DIFF
         assert len(block.changes) == 1
         assert block.changes[0].old == "async def my_func():"
         assert block.changes[0].new == "def my_func():"
+
+    def test_file_path_set_on_code_block(self):
+        """Function definition block should have file_path set."""
+        handler = AsyncToSyncHandler()
+        function_info = {
+            "found": True,
+            "name": "build_greeting",
+            "definition": "async def build_greeting(name: str) -> str:",
+            "start_line": 0,
+        }
+        context = Mock()
+        context.context_dict = {
+            "functions": [{"name": "build_greeting", "start_line": 10}],
+        }
+        file_path = Path("/home/user/project/services/bad_async.py")
+
+        block = handler._create_function_definition_block(
+            function_info, context, file_path
+        )
+
+        assert block.file_path == str(file_path)
+        assert block.block_name == "build_greeting"
 
     def test_caller_block_uses_await_pattern(self):
         analysis = Mock()
