@@ -1,4 +1,5 @@
 
+import asyncio
 import pytest
 from pathlib import Path
 import os
@@ -2981,7 +2982,7 @@ class TestTmpCloneManager:
                 pass
 
             mock_logger.exception.assert_called_once()
-            assert "Cleanup failed" in mock_logger.exception.call_args[0][0]
+            assert "Failed to clean up temporary directory" in mock_logger.exception.call_args[0][0]
 
     async def test_cleanup_failure_preserves_original_exception(self):
         """Test that when body raises AND cleanup fails, the original exception propagates."""

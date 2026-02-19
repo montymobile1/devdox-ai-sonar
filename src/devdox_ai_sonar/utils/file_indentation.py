@@ -1,6 +1,9 @@
 from pathlib import Path
 import asyncio
+import os
+import stat
 import shutil
+import sys
 import tempfile
 import time
 import re
@@ -23,6 +26,18 @@ from devdox_ai_sonar.models.sonar import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _handle_remove_readonly(
+    func: Callable[..., object], path: str, exc_info: object
+) -> None:
+    """Handle read-only files during shutil.rmtree (Windows/macOS compatibility).
+
+    Git creates read-only files in .git/objects/. On Windows (and occasionally
+    macOS), shutil.rmtree fails on these unless we chmod first.
+    """
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    func(path)
 
 
 def remove_tmp_files(relative_path: str) -> bool:
@@ -60,11 +75,9 @@ def remove_tmp_files(relative_path: str) -> bool:
 
         # Remove based on type
         if resolved_path.is_file():
-            resolved_path.unlink()  # ✅ Remove file
-            print("File removed successfully")
+            resolved_path.unlink()
         elif resolved_path.is_dir():
-            shutil.rmtree(resolved_path)  # ✅ Remove directory tree
-            print("Remove directory tree")
+            shutil.rmtree(resolved_path, onerror=_handle_remove_readonly)
         else:
             raise ValueError(f"Path is neither file nor directory: {resolved_path}")
 
@@ -114,14 +127,37 @@ class TmpCloneManager:
         exc_val: Optional[BaseException],
         exc_tb: Optional[TracebackType],
     ) -> bool:
+        if not self._tmp_path:
+            return False
+
+        # Notify callback first (best-effort, must not block cleanup)
+        if self._on_cleanup:
+            try:
+                self._on_cleanup(self._tmp_path)
+            except Exception:
+                logger.exception(
+                    f"on_cleanup callback failed for: {self._tmp_path}"
+                )
+
+        # Run cleanup — catch BaseException so CancelledError (Python 3.9+)
+        # does not skip deletion.
         try:
-            if self._tmp_path:
-                if self._on_cleanup:
-                    self._on_cleanup(self._tmp_path)
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
-        except Exception:
-            logger.exception(f"Cleanup failed for {self._tmp_path}")
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
+        except BaseException:
+            # Executor await was interrupted (CancelledError, KeyboardInterrupt,
+            # etc.) or cleanup_fn raised. Fall back to synchronous removal so
+            # the temp directory is not leaked.
+            try:
+                self._cleanup_fn(self._tmp_path)
+            except Exception:
+                logger.exception(
+                    f"Failed to clean up temporary directory: {self._tmp_path}"
+                )
+                print(
+                    f"Warning: could not remove temporary directory: {self._tmp_path}",
+                    file=sys.stderr,
+                )
         return False
 
 
