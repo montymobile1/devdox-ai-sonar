@@ -8,11 +8,102 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_SNAKE_LOWER_UPPER = regex.compile(r'([a-z0-9])([A-Z])')
-_SNAKE_ACRONYM = regex.compile(r'(?>([A-Z]+))([A-Z][a-z])')  # atomic group on acronym
+_SNAKE_LOWER_UPPER = regex.compile(r"([a-z0-9])([A-Z])")
+_SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on acronym
 
 _MAX_IDENTIFIER_LENGTH = 256
 
+def _collect_used_names(func_node: ast.FunctionDef) -> set[str]:
+    """Collect all Name references inside the function body (excluding the signature)."""
+    used = set()
+    for node in ast.walk(ast.Module(body=func_node.body, type_ignores=[])):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        # Also catch attribute access on a param: self.x, cls.method()
+        elif isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name):
+                used.add(node.value.id)
+    return used
+
+def _extract_all_args(args: ast.arguments) -> List[str]:
+    """Extract all argument names from a function signature."""
+    all_args = []
+
+    # Regular positional args: def f(a, b)
+    all_args.extend(arg.arg for arg in args.args)
+
+    # *args
+    if args.vararg:
+        all_args.append(f"*{args.vararg.arg}")
+
+    # Keyword-only args (after *args): def f(*args, key=val)
+    all_args.extend(arg.arg for arg in args.kwonlyargs)
+
+    # **kwargs
+    if args.kwarg:
+        all_args.append(f"**{args.kwarg.arg}")
+
+    return all_args
+
+def _is_param_used_at_callsite(
+
+    param: str,
+    param_index: int,
+    call_sites: List[Dict],
+) -> bool:
+    """
+    Check if a parameter is used at any call site either:
+      1. As a keyword argument: f(param=value)
+      2. Positionally by index: f(a, b, c)  ← param at position `param_index`
+
+    Args:
+        param:       The parameter name to check.
+        param_index: The 0-based index of this param in the function signature.
+        call_sites:  List of call site dicts from find_function_implementations.
+
+    Returns:
+        True if the param is passed (by name or position) at any call site.
+    """
+    for call in call_sites:
+        file_path = call.get("file", "")
+        line_number = call.get("line", 0)
+
+        try:
+            source = Path(file_path).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if node.lineno != line_number:
+                    continue
+
+                # Scenario 1: Explicit keyword argument — f(param=value)
+                for keyword in node.keywords:
+                    if keyword.arg == param:
+                        logger.debug(
+                            "Param '%s' found as kwarg at %s:%s",
+                            param, file_path, line_number,
+                        )
+                        return True
+
+                # Scenario 2: Positional argument — f(a, b, c)
+                # param_index accounts for 'self'/'cls' being stripped already,
+                # so we check if a positional arg exists at that index.
+                positional_args = node.args  # list of positional ast nodes
+                if param_index < len(positional_args):
+                    logger.debug(
+                        "Param '%s' (index %d) found positionally at %s:%s",
+                        param, param_index, file_path, line_number,
+                    )
+                    return True
+
+        except Exception as e:
+            logger.warning(
+                "Could not inspect call site %s:%s — %s", file_path, line_number, e
+            )
+
+    return False
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
 # ============================================================================
@@ -236,7 +327,20 @@ class FunctionLocator(ast.NodeVisitor):
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
     ) -> None:
         """Track function definitions."""
+        unused_args = []
+        EXEMPT = {"self", "cls","*args","**kwargs"}
         if node.name == self.target_function:
+            used_names = _collect_used_names(node)
+            args =  _extract_all_args(node.args)
+
+            for param in args:
+                if param in EXEMPT:
+                    continue
+                is_used = param in used_names
+
+                if not is_used:
+                    unused_args.append(param)
+
             self.definitions.append(
                 {
                     "file": self.current_file,
@@ -248,7 +352,8 @@ class FunctionLocator(ast.NodeVisitor):
                         d.id if isinstance(d, ast.Name) else str(d)
                         for d in node.decorator_list
                     ],
-                    "args": [arg.arg for arg in node.args.args],
+                    "args":args,
+                    "unused_args":unused_args,
                     "is_async": isinstance(node, ast.AsyncFunctionDef),
                 }
             )
@@ -269,11 +374,8 @@ class FunctionLocator(ast.NodeVisitor):
         """Track function calls."""
         func_name = None
 
-        # Direct function call: function_a()
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
-
-        # Method call: obj.function_a()
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
 
@@ -284,6 +386,11 @@ class FunctionLocator(ast.NodeVisitor):
                     "line": node.lineno,
                     "col": node.col_offset,
                     "context": self._get_context(node),
+                    "kwargs": [
+                        kw.arg
+                        for kw in node.keywords
+                        if kw.arg is not None
+                    ],
                 }
             )
 
@@ -356,8 +463,8 @@ def to_snake_case(name: str) -> str:
         raise ValueError(
             f"Identifier name exceeds maximum allowed length of {_MAX_IDENTIFIER_LENGTH}."
         )
-    text = _SNAKE_LOWER_UPPER.sub(r'\1_\2', name)
-    text = _SNAKE_ACRONYM.sub(r'\1_\2', text)
+    text = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
+    text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
     return text.lower()
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
@@ -444,7 +551,6 @@ def find_function_implementations(
         "*.egg-info",
         "site-packages",
     }
-
 
     for file_path in directory.rglob("*"):
         if any(excluded in file_path.parts for excluded in exclude_dirs):
@@ -703,8 +809,17 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
     async def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
         exclude_dirs = {
-            "venv", ".venv", "env", ".env", "node_modules", "__pycache__",
-            ".git", ".tox", ".mypy_cache", ".pytest_cache", "site-packages",
+            "venv",
+            ".venv",
+            "env",
+            ".env",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "site-packages",
         }
 
         for file_path in self.codebase_root.rglob("*.py"):
@@ -746,7 +861,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
 
     def _check_if_awaited_in_context(
         self,
-        call_node: ast.Call, # NOSONAR
+        call_node: ast.Call,  # NOSONAR
         tree: ast.AST,
     ) -> bool:
         """Check if a call is awaited by examining parent nodes."""

@@ -21,7 +21,8 @@ from devdox_ai_sonar.utils.function_finder import (
     detect_original_function_type,
     find_function_implementations,
     AsyncConversionAnalyzer,
-    to_snake_case
+    _is_param_used_at_callsite,
+    to_snake_case,
 )
 
 logger = logging.getLogger(__name__)
@@ -187,7 +188,9 @@ class RuleHandler(ABC):
                 modify_line_range=self.MOIDY_LINE_RANGE,
             )
 
-            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
+            relative_file_path = _resolve_relative_path(
+                effective_file_path, project_path
+            )
 
             lst_suggestion.append(
                 FixSuggestion(
@@ -228,117 +231,307 @@ class ConvenationNameHandler(RuleHandler):
     definition and all known call sites in the project.
     """
 
-    RULE_ID = "python:S117"
+    RULE_ID = ["python:S117", "python:S1172"]
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
-        return rule == self.RULE_ID
+        return rule in self.RULE_ID
 
     async def generate_fixes(
-        self,
-        issues: List[Union[SonarIssue, SonarSecurityIssue]],
-        context: FixContext,
-        project_path: Path,
-        file_path: Path,
-        llm_caller: Any = None,
+            self,
+            issues: List[Union[SonarIssue, SonarSecurityIssue]],
+            context: FixContext,
+            project_path: Path,
+            file_path: Path,
+            llm_caller: Any = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
-        Generate fixes for parameter naming convention violations (python:S117).
+        Generate fixes for parameter naming/usage violations.
 
-        Strategy:
-        1. Locate all function definitions in the project matching the issue context.
-        2. For each definition in the affected file, identify parameters that are
-           not snake_case and compute their renamed equivalents.
-        3. Build code blocks to update:
-           a. The function definition — rename the offending parameter(s).
-           b. All call sites — update keyword argument usage to match new names.
-        4. Group code blocks by file: same-file changes are bundled into one
-           SonarFixResponse; cross-file changes each get their own response.
-
-        Args:
-            issues:       List of Sonar issues for this rule (python:S117).
-            context:      Fix context including the surrounding code and metadata.
-            project_path: Root of the project, used to scan for call sites.
-            file_path:    Path to the file containing the violating definition.
-            llm_caller:   Optional LLM caller (unused for this rule).
-
-        Returns:
-            A list of SonarFixResponse objects covering the definition and all
-            impacted call sites, or None if no actionable fixes can be generated.
+        - python:S117  → Rename non-snake_case parameters in definition + call sites.
+        - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
         """
         try:
-            code_blocks = []
-            response_lst = []
 
-            # Step 1: Find all function implementations
             function_info = find_function_implementations(
-                project_path, context.functions[0]['name']
+                project_path, context.functions[0]["name"]
             )
 
             if not function_info.get("definitions"):
-                logger.warning("Could not detect function type for async conversion")
+                logger.warning("Could not find function definitions for %s", context.functions[0]["name"])
                 return None
 
-            # Step 2: Identify parameters to rename in the affected file
-            args_to_be_changed = {}
-            for definition in function_info["definitions"]:
-                if Path(definition['file']) == file_path:
-                    for arg in definition["args"]:
-                        new_arg = to_snake_case(arg)
-                        if new_arg != arg:
-                            args_to_be_changed[arg] = new_arg
-                            code_blocks.append(
-                                self._change_function_definition_block(
-                                    definition, context, arg, new_arg
-                                )
-                            )
+            for issue in issues:
 
-            if not code_blocks:
-                return None
+                if issue.rule == "python:S117":
+                    return self._fix_naming_convention(function_info, context, file_path)
+                elif issue.rule == "python:S1172":
+                    return await self._fix_unused_parameters(function_info, context, file_path, project_path)
 
-            # Step 3: Build caller blocks for cross-file call sites
-            caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
-            for block in caller_blocks:
-                response_lst.append(
-                    SonarFixResponse(
-                        IMPORT_BLOCK="",
-                        FIXED_CODE_BLOCKS=[block],
-                        NEW_HELPER_CODE="",
-                        PLACEMENT="SIBLING",
-                        EXPLANATION="",
-                        CONFIDENCE=0.95,
-                    )
+            return None
+
+        except Exception as e:
+            logger.error("Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True)
+            return None
+
+    async def _fix_unused_parameters(
+            self,
+            function_info: Dict,
+            context: FixContext,
+            file_path: Path,
+            project_path: Path,
+    ) -> Optional[List[SonarFixResponse]]:
+        code_blocks = []
+        response_lst = []
+        args_safe_to_remove = []
+
+        for definition in function_info["definitions"]:
+            if Path(definition["file"]) != file_path:
+                continue
+
+            unused_args = definition.get("unused_args", [])
+            all_args = definition.get("args", [])
+
+            for param in unused_args:
+                if param.startswith("_"):
+                    logger.debug("Skipping intentionally unused param: %s", param)
+                    continue
+
+                # Get 0-based index of this param in the full signature
+                # Strip self/cls offset for call site positional matching
+                clean_args = [a.lstrip("*") for a in all_args]
+                has_self = clean_args[0] in ("self", "cls") if clean_args else False
+
+                try:
+                    raw_index = clean_args.index(param)
+                except ValueError:
+                    logger.warning("Param '%s' not found in args list %s", param, clean_args)
+                    continue
+
+                # Callers don't pass self/cls, so subtract 1 for positional matching
+                callsite_index = raw_index - 1 if has_self else raw_index
+
+                used_at_callsite = _is_param_used_at_callsite(
+                    param, callsite_index, function_info["calls"]
                 )
 
-            explanation = (
-                f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
-                f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
-                f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
-                f"This satisfies python:S117, which requires all local variables and function "
-                f"parameters to follow the snake_case naming convention."
-            )
+                if not used_at_callsite:
+                    args_safe_to_remove.append(param)
 
-            logger.info(
-                f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
-            )
+                    logger.info(
+                        "Param '%s' (index %d) unused in body and at all call sites — safe to remove",
+                        param, callsite_index,
+                    )
+                else:
+                    logger.info(
+                        "Param '%s' is unused in body but IS used at call sites — skipping",
+                        param,
+                    )
 
+        if not args_safe_to_remove:
+            logger.info("No safely removable unused parameters found for S1172")
+            return None
+
+        for definition in function_info["definitions"]:
+            if Path(definition["file"]) == file_path:
+                for param in args_safe_to_remove:
+                    code_blocks.append(
+                        self._remove_parameter_block(definition, context, param)
+                    )
+
+        if not code_blocks:
+            return None
+
+        explanation = (
+            f"Removed unused parameter(s) {args_safe_to_remove} "
+            f"from '{context.functions[0]['name']}'. "
+            f"These parameters were never referenced inside the function body "
+            f"and never passed (positionally or by keyword) at any call site. "
+            f"This satisfies python:S1172 (unused function parameters)."
+        )
+
+        logger.info("Generated %d block(s) for S1172 unused param removal", len(code_blocks))
+
+        response_lst.append(
+            SonarFixResponse(
+                IMPORT_BLOCK="",
+                FIXED_CODE_BLOCKS=code_blocks,
+                NEW_HELPER_CODE="",
+                PLACEMENT="SIBLING",
+                EXPLANATION=explanation,
+                CONFIDENCE=0.90,
+            )
+        )
+
+        return response_lst
+
+    def _remove_parameter_block(
+            self,
+            definition: Dict,
+            context: FixContext,
+            param: str,
+    ) -> CodeBlock:
+        """
+        Build a CodeBlock that removes a single unused parameter from a function definition.
+
+        Strategy:
+            1. Parse the function signature from the definition's source line range.
+            2. Strip the target parameter (and its default value if any) from the signature.
+            3. Return a CodeBlock replacing the old signature with the cleaned one.
+
+        Args:
+            definition: Function definition dict from find_function_implementations.
+            context:    FixContext with surrounding code metadata.
+            param:      The parameter name to remove.
+
+        Returns:
+            A CodeBlock with the corrected function signature.
+        """
+        file_path = Path(definition["file"])
+        source = file_path.read_text(encoding="utf-8")
+        source_lines = source.splitlines()
+
+        # Extract the full signature (may span multiple lines)
+        start_line = definition["line"] - 1  # Convert to 0-indexed
+        signature_lines = []
+
+        for i in range(start_line, len(source_lines)):
+            line = source_lines[i]
+            signature_lines.append(line)
+            if line.rstrip().endswith(":"):
+                break
+
+        original_signature = "\n".join(signature_lines)
+        cleaned_signature = self._remove_param_from_signature(original_signature, param)
+
+        return CodeBlock(
+            block_name="test",
+            file_path=str(file_path),
+            block_type=BlockType.FUNCTION,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            start_line=definition["line"],
+            end_line=definition["line"] + len(signature_lines) - 1,
+
+            context=cleaned_signature,
+
+        )
+
+    def _remove_param_from_signature(self, signature: str, param: str) -> str:
+        """
+        Remove a parameter and its default value from a function signature string.
+
+        Handles all forms:
+            - Plain:          param
+            - Typed:          param: int
+            - Defaulted:      param=None
+            - Typed+Default:  param: int = 2
+            - vararg:         *param
+            - kwarg:          **param
+
+        Args:
+            signature: The raw function signature string (possibly multi-line).
+            param:     The bare parameter name to remove (no * or **).
+
+        Returns:
+            The signature with the parameter removed and trailing commas cleaned up.
+        """
+        import re
+
+        # Match any of: **param, *param, param — with optional type annotation and default
+        # Covers: param, param=val, param: Type, param: Type = val
+        pattern = re.compile(
+            r"""
+            \*{0,2}             # optional * or **
+            \b""" + re.escape(param) + r"""\b
+            (?:\s*:\s*[^,=)]+)? # optional type annotation:  : SomeType
+            (?:\s*=\s*[^,)]+)?  # optional default value:     = some_value
+            \s*,?\s*            # trailing comma + whitespace
+            """,
+            re.VERBOSE,
+        )
+
+        cleaned = pattern.sub("", signature)
+
+        # Clean up any leading comma left behind when removing the first param
+        # e.g. "(, remaining_param)" → "(remaining_param)"
+        cleaned = re.sub(r"\(\s*,\s*", "(", cleaned)
+
+        # Clean up double commas from middle removal
+        # e.g. "(a, , b)" → "(a, b)"
+        cleaned = re.sub(r",\s*,", ",", cleaned)
+
+        # Clean up trailing comma before closing paren
+        # e.g. "(a, b, )" → "(a, b)"
+        cleaned = re.sub(r",\s*\)", ")", cleaned)
+
+        return cleaned
+
+    def _fix_naming_convention(
+            self,
+            function_info: Dict,
+            context: FixContext,
+            file_path: Path,
+    ) -> Optional[List[SonarFixResponse]]:
+        """
+        S117: Rename non-snake_case parameters in the function definition
+        and update all keyword argument call sites accordingly.
+        """
+        code_blocks = []
+        response_lst = []
+        args_to_be_changed = {}
+
+        for definition in function_info["definitions"]:
+            if Path(definition['file']) == file_path:
+                for arg in definition["args"]:
+                    new_arg = to_snake_case(arg)
+                    if new_arg != arg:
+                        args_to_be_changed[arg] = new_arg
+                        code_blocks.append(
+                            self._change_function_definition_block(
+                                definition, context, arg, new_arg
+                            )
+                        )
+
+        if not code_blocks:
+            return None
+
+        caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
+        for block in caller_blocks:
             response_lst.append(
                 SonarFixResponse(
                     IMPORT_BLOCK="",
-                    FIXED_CODE_BLOCKS=code_blocks,
+                    FIXED_CODE_BLOCKS=[block],
                     NEW_HELPER_CODE="",
                     PLACEMENT="SIBLING",
-                    EXPLANATION=explanation,
+                    EXPLANATION="",
                     CONFIDENCE=0.95,
                 )
             )
 
-            return response_lst
+        explanation = (
+            f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
+            f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
+            f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
+            f"This satisfies python:S117, which requires all local variables and function "
+            f"parameters to follow the snake_case naming convention."
+        )
 
-        except Exception as e:
-            print(f"Error in ConventationName: {e}")
-            logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
-            return None
+        logger.info("Generated %d definition block(s) for S117 rename", len(code_blocks))
+
+        response_lst.append(
+            SonarFixResponse(
+                IMPORT_BLOCK="",
+                FIXED_CODE_BLOCKS=code_blocks,
+                NEW_HELPER_CODE="",
+                PLACEMENT="SIBLING",
+                EXPLANATION=explanation,
+                CONFIDENCE=0.95,
+            )
+        )
+
+        return response_lst
+
 
     def _change_function_definition_block(
         self,
@@ -363,8 +556,8 @@ class ConvenationNameHandler(RuleHandler):
         Returns:
             A CodeBlock targeting the function definition with the rename applied.
         """
-        original_def = context.context_dict['new_context'][0]['context']
-        num_lines = len(original_def.strip().split('\n'))
+        original_def = context.context_dict["new_context"][0]["context"]
+        num_lines = len(original_def.strip().split("\n"))
         new_def = original_def.replace(arg_name, new_arg_name)
 
         actual_start_line = function_info["line"] - len(function_info["decorators"])
@@ -405,7 +598,7 @@ class ConvenationNameHandler(RuleHandler):
         func_name = function_info["definitions"][0]["function"]
         num_args = len(function_info["definitions"][0]["args"])
 
-        for caller in function_info['calls']:
+        for caller in function_info["calls"]:
             for old_arg_name, new_arg_name in args_to_be_changed.items():
                 blocks.append(
                     CodeBlock(
@@ -482,7 +675,9 @@ class AsyncToSyncHandler(RuleHandler):
 
             # Step 2: Build code block for function definition
             code_blocks.append(
-                self._create_function_definition_block(function_info, context, file_path)
+                self._create_function_definition_block(
+                    function_info, context, file_path
+                )
             )
 
             # Step 3: Analyze call sites
