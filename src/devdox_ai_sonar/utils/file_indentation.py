@@ -144,7 +144,7 @@ class TmpCloneManager:
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
-        except BaseException:
+        except BaseException:  # NOSONAR — intentional, cleanup must catch all interrupts including CancelledError, KeyboardInterrupt, SystemExit
             # Executor await was interrupted (CancelledError, KeyboardInterrupt,
             # etc.) or cleanup_fn raised. Fall back to synchronous removal so
             # the temp directory is not leaked.
