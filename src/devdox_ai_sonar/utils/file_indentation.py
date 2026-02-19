@@ -586,7 +586,7 @@ def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]
         lines, block.replacements, start_idx, end_idx
     ):
         # Strategy 2: Fall back to multiline replacement
-        _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
+       _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
 
     return lines
 
@@ -772,7 +772,6 @@ def find_line_by_content(lines: list[str], content: str, start_line: int) -> int
 def apply_single_code_block(
     lines: List[str], block: CodeBlock
 ) -> Tuple[List[str], int]:
-    print("block.change_type ", block.change_type)
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 

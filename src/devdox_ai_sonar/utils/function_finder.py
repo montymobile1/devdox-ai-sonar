@@ -1,11 +1,17 @@
 from typing import Optional, Dict, Any, List, Tuple, Union
 import ast
+import regex
 from pathlib import Path
 from devdox_ai_sonar.models.file_structures import ConversionRisk, ConversionAnalysis
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 import logging
 
 logger = logging.getLogger(__name__)
+
+_SNAKE_LOWER_UPPER = regex.compile(r'([a-z0-9])([A-Z])')
+_SNAKE_ACRONYM = regex.compile(r'(?>([A-Z]+))([A-Z][a-z])')  # atomic group on acronym
+
+_MAX_IDENTIFIER_LENGTH = 256
 
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
@@ -343,6 +349,16 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         print(f"Syntax error: {e}")
         return []
 
+def to_snake_case(name: str) -> str:
+    if not name:
+        raise ValueError("Identifier name must not be empty.")
+    if len(name) > _MAX_IDENTIFIER_LENGTH:
+        raise ValueError(
+            f"Identifier name exceeds maximum allowed length of {_MAX_IDENTIFIER_LENGTH}."
+        )
+    text = _SNAKE_LOWER_UPPER.sub(r'\1_\2', name)
+    text = _SNAKE_ACRONYM.sub(r'\1_\2', text)
+    return text.lower()
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
     """
@@ -408,8 +424,31 @@ def find_function_implementations(
 
     # results
     _ = {"definitions": [], "calls": []}
+    # Directories to exclude
+    exclude_dirs = {
+        "venv",
+        ".venv",
+        "env",
+        ".env",
+        "node_modules",
+        "__pycache__",
+        ".git",
+        ".tox",
+        ".nox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".eggs",
+        "*.egg-info",
+        "site-packages",
+    }
+
 
     for file_path in directory.rglob("*"):
+        if any(excluded in file_path.parts for excluded in exclude_dirs):
+            continue
         if file_path.suffix not in extensions:
             continue
 
@@ -663,8 +702,16 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
 
     async def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
+        exclude_dirs = {
+            "venv", ".venv", "env", ".env", "node_modules", "__pycache__",
+            ".git", ".tox", ".mypy_cache", ".pytest_cache", "site-packages",
+        }
+
         for file_path in self.codebase_root.rglob("*.py"):
             try:
+                if any(excluded in file_path.parts for excluded in exclude_dirs):
+                    continue
+
                 content = await self.file_reader.read_text(file_path)
 
                 tree = ast.parse(content, filename=str(file_path))
