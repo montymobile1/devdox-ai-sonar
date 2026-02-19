@@ -121,7 +121,7 @@ class TmpCloneManager:
         assert self._tmp_path is not None
         return Path(self._tmp_path)
 
-    async def __aexit__(
+    async def __aexit__(  # NOSONAR — always returning False is intentional; in __aexit__ protocol, False means "do not suppress exceptions"
         self,
         exc_type: Optional[type[BaseException]],
         exc_val: Optional[BaseException],
