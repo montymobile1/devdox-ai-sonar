@@ -358,7 +358,10 @@ def to_snake_case(name: str) -> str:
         )
     text: str = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
     text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
-    return text.lower()
+    # str() wraps regex.sub() output because the `regex` library ships no
+    # type stubs — mypy sees the return as Any instead of str. Without this,
+    # mypy raises [no-any-return]. Do not remove.
+    return str(text.lower())
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
     """
