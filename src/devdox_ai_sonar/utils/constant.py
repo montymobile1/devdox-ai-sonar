@@ -13,3 +13,7 @@ SKIPPED = "Skipped"
 SWITCH_COMMANDS = "↩Switching commands.."
 FETCHING_ISSUES = "Fetching issues..."
 RETURN_TO_MAIN_MENU = "Return to main menu?"
+EXCLUDE_NONE = "NONE"
+EXCLUDE_RULES_EMPTY_ERROR = (
+    "[red]✖ Please enter valid comma-separated rules or 'NONE'.[/red]"
+)

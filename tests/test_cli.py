@@ -1797,53 +1797,22 @@ class TestConfigurationManagement:
             assert result is None
             mock_config_manager.set_value.assert_not_called()
 
-    async def test_change_field_allow_empty_clears_value(self, mock_config_manager):
-        """Test change_field with allow_empty=True clears value when input is empty"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=None)):
-            result = await change_field(
-                mock_config_manager,
-                "configuration.exclude_rules",
-                "Enter rules:",
-                default_value="python:S1234",  # Has existing value
-                allow_empty=True
-            )
-
-            assert result is None
-            mock_config_manager.delete_value.assert_called_once_with("configuration.exclude_rules")
-            mock_config_manager.set_value.assert_not_called()
-
-    async def test_change_field_allow_empty_no_default_does_nothing(self, mock_config_manager):
-        """Test change_field with allow_empty=True but no default value does nothing"""
-        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=None)):
-            result = await change_field(
-                mock_config_manager,
-                "configuration.exclude_rules",
-                "Enter rules:",
-                default_value=None,  # No existing value
-                allow_empty=True
-            )
-
-            assert result is None
-            mock_config_manager.delete_value.assert_not_called()
-            mock_config_manager.set_value.assert_not_called()
-
     async def test_change_field_allow_empty_false_preserves_value(self, mock_config_manager):
-        """Test change_field with allow_empty=False (default) preserves existing value"""
+        """Test change_field with allow_empty=False (default) preserves existing value on empty input"""
         with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=None)):
             result = await change_field(
                 mock_config_manager,
                 "configuration.exclude_rules",
                 "Enter rules:",
                 default_value="python:S1234",
-                allow_empty=False  # Explicit default
+                allow_empty=False
             )
 
             assert result is None
-            mock_config_manager.delete_value.assert_not_called()
             mock_config_manager.set_value.assert_not_called()
 
-    async def test_change_field_allow_empty_with_new_value_sets_value(self, mock_config_manager):
-        """Test change_field with allow_empty=True but user provides value sets it"""
+    async def test_change_field_allow_empty_valid_rules_directly(self, mock_config_manager):
+        """Test change_field with allow_empty=True accepts valid rules on first prompt"""
         with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value="python:S9999")):
             result = await change_field(
                 mock_config_manager,
@@ -1854,8 +1823,96 @@ class TestConfigurationManagement:
             )
 
             assert result == "python:S9999"
-            mock_config_manager.set_value.assert_called_once()
-            mock_config_manager.delete_value.assert_not_called()
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", "python:S9999"
+            )
+
+    async def test_change_field_none_directly_stores_none(self, mock_config_manager):
+        """Test change_field stores NONE value when user enters NONE on first prompt"""
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=constant.EXCLUDE_NONE)):
+            result = await change_field(
+                mock_config_manager,
+                "configuration.exclude_rules",
+                "Enter rules:",
+                default_value="python:S1234",
+                allow_empty=True
+            )
+
+            assert result == constant.EXCLUDE_NONE
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", constant.EXCLUDE_NONE
+            )
+
+    async def test_change_field_empty_shows_error_then_accepts_rules(self, mock_config_manager):
+        """Test empty input shows error, re-prompts with default, then accepts rules"""
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, "python:S5678"])), \
+             patch('devdox_ai_sonar.cli.console') as mock_console:
+            result = await change_field(
+                mock_config_manager,
+                "configuration.exclude_rules",
+                "Enter rules:",
+                default_value="python:S1234",
+                allow_empty=True
+            )
+
+            assert result == "python:S5678"
+            mock_console.print.assert_called_once_with(constant.EXCLUDE_RULES_EMPTY_ERROR)
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", "python:S5678"
+            )
+
+    async def test_change_field_empty_shows_error_then_accepts_none(self, mock_config_manager):
+        """Test empty input shows error, re-prompts with default, then stores NONE"""
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, constant.EXCLUDE_NONE])), \
+             patch('devdox_ai_sonar.cli.console') as mock_console:
+            result = await change_field(
+                mock_config_manager,
+                "configuration.exclude_rules",
+                "Enter rules:",
+                default_value="python:S1234",
+                allow_empty=True
+            )
+
+            assert result == constant.EXCLUDE_NONE
+            mock_console.print.assert_called_once_with(constant.EXCLUDE_RULES_EMPTY_ERROR)
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", constant.EXCLUDE_NONE
+            )
+
+    async def test_change_field_multiple_empties_loops_until_valid(self, mock_config_manager):
+        """Test multiple empty inputs loop with errors until valid input provided"""
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(side_effect=[None, None, None, "python:S1234"])), \
+             patch('devdox_ai_sonar.cli.console') as mock_console:
+            result = await change_field(
+                mock_config_manager,
+                "configuration.exclude_rules",
+                "Enter rules:",
+                default_value=constant.EXCLUDE_NONE,
+                allow_empty=True
+            )
+
+            assert result == "python:S1234"
+            assert mock_console.print.call_count == 3
+            mock_console.print.assert_called_with(constant.EXCLUDE_RULES_EMPTY_ERROR)
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", "python:S1234"
+            )
+
+    async def test_change_field_none_default_accept_stores_none(self, mock_config_manager):
+        """Test NONE default accepted via Enter (smart_prompt returns NONE) stores NONE"""
+        with patch('devdox_ai_sonar.cli.smart_prompt', new=AsyncMock(return_value=constant.EXCLUDE_NONE)):
+            result = await change_field(
+                mock_config_manager,
+                "configuration.exclude_rules",
+                "Enter rules:",
+                default_value=constant.EXCLUDE_NONE,
+                allow_empty=True
+            )
+
+            assert result == constant.EXCLUDE_NONE
+            mock_config_manager.set_value.assert_called_once_with(
+                "configuration.exclude_rules", constant.EXCLUDE_NONE
+            )
 
     async def test_change_max_fix_valid(self, mock_config_manager):
         """Test change_max_fix with valid value"""
@@ -3936,6 +3993,38 @@ class TestLoadAndValidateConfig:
                         assert 'exclude_rules' in params
                         # Empty string is falsy, so split shouldn't be called
                         assert params['exclude_rules'] == ""
+
+    async def test_load_and_validate_config_exclude_rules_none_becomes_empty_list(
+            self, mock_config_service, mock_config_manager,
+            mock_provider_manager, mock_llm_config, auth_config
+    ):
+        """Test exclude_rules with NONE value is converted to empty list"""
+        mock_config_service.load_llm_config.return_value = mock_llm_config
+        mock_config_manager.get_value.return_value = {
+            "exclude_rules": constant.EXCLUDE_NONE
+        }
+        mock_provider_manager.branch_or_pr_prompt.return_value = ("main", None)
+
+        with patch('devdox_ai_sonar.cli.ConfigService') as mock_cs:
+            mock_cs.return_value = mock_config_service
+
+            with patch('devdox_ai_sonar.cli.ConfigManager') as mock_cm:
+                mock_cm.return_value = mock_config_manager
+
+                with patch('devdox_ai_sonar.cli.ProviderConfigManager') as mock_pm:
+                    mock_pm.return_value = mock_provider_manager
+
+                    with patch("devdox_ai_sonar.cli.ConfigService.load_auth_config", return_value=mock_auth_dict), \
+                            patch("devdox_ai_sonar.cli.AuthConfig.from_dict") as mock_from_dict:
+                        mock_auth_instance = Mock(spec=AuthConfig)
+                        mock_auth_instance.validate.return_value = (True, None)
+                        mock_from_dict.return_value = mock_auth_instance
+
+                        _, _, params = await _load_and_validate_config()
+
+                        # NONE value should be converted to empty list
+                        assert isinstance(params['exclude_rules'], list)
+                        assert len(params['exclude_rules']) == 0
 
     async def test_load_and_validate_config_exclude_rules_already_list(
             self, mock_config_service, mock_config_manager,
