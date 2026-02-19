@@ -702,8 +702,17 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
     async def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
         exclude_dirs = {
-            "venv", ".venv", "env", ".env", "node_modules", "__pycache__",
-            ".git", ".tox", ".mypy_cache", ".pytest_cache", "site-packages",
+            "venv",
+            ".venv",
+            "env",
+            ".env",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "site-packages",
         }
 
         for file_path in self.codebase_root.rglob("*.py"):

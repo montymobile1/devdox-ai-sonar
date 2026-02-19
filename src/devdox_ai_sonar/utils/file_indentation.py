@@ -135,9 +135,7 @@ class TmpCloneManager:
             try:
                 self._on_cleanup(self._tmp_path)
             except Exception:
-                logger.exception(
-                    f"on_cleanup callback failed for: {self._tmp_path}"
-                )
+                logger.exception(f"on_cleanup callback failed for: {self._tmp_path}")
 
         # Run cleanup — catch BaseException so CancelledError (Python 3.9+)
         # does not skip deletion.
@@ -778,7 +776,7 @@ def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]
         lines, block.replacements, start_idx, end_idx
     ):
         # Strategy 2: Fall back to multiline replacement
-       _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
+        _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
 
     return lines
 
