@@ -716,7 +716,7 @@ class TestConvenationNameHandlerGenerateFixes:
         self.context = _make_context(
             functions=[{"name": "my_func", "start_line": 10}],
         )
-        self.issues = [Mock()]
+        self.issues = [Mock(rule="python:S117")]
 
     @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
