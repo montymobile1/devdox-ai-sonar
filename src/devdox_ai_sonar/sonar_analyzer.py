@@ -18,6 +18,7 @@ from devdox_ai_sonar.models.sonar import (
     Severity,
     IssueType,
     Impact,
+    HotspotDetail,
 )
 
 
@@ -828,7 +829,7 @@ class SonarCloudAnalyzer:
 
         return ("rules", rules) if rules else (None, None)
 
-    def get_hotspot_detail(self, hotspot_key: str) -> Dict[str, Any]:
+    def get_hotspot_detail(self, hotspot_key: str) -> HotspotDetail:
         """Fetch detailed information about a single security hotspot.
 
         API Endpoint: GET /api/hotspots/show
@@ -841,7 +842,7 @@ class SonarCloudAnalyzer:
             hotspot_key: The unique key of the hotspot.
 
         Returns:
-            Parsed JSON response dict, or empty dict on error.
+            Parsed JSON response as HotspotDetail, or empty dict on error.
         """
         url = urljoin(self.base_url, "/api/hotspots/show")
         params: Dict[str, str] = {"hotspot": hotspot_key}
@@ -849,15 +850,16 @@ class SonarCloudAnalyzer:
         try:
             response = self.session.get(url, params=params, timeout=self.timeout)
             response.raise_for_status()
-            return response.json()
+            data: HotspotDetail = response.json()
+            return data
         except requests.RequestException as e:
             logger.warning(f"Failed to fetch hotspot detail for {hotspot_key}: {e}")
-            return {}
+            return HotspotDetail()
         except Exception as e:
             logger.warning(
                 f"Unexpected error fetching hotspot detail for {hotspot_key}: {e}"
             )
-            return {}
+            return HotspotDetail()
 
     def _resolve_hotspot_language(
         self,

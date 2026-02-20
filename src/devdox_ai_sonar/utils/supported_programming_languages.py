@@ -221,7 +221,7 @@ class FileFilter:
         if allowed_suffixes is not None:
             resolved_suffixes = allowed_suffixes
         elif languages:
-            resolved_suffixes: Set[str] = set()
+            resolved_suffixes = set()
             for lang in languages:
                 resolved_suffixes.update(lang.file_extensions)
         else:
