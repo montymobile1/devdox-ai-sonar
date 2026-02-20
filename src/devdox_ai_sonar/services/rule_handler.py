@@ -91,7 +91,7 @@ def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str
 
 AWAIT_REMOVAL_PATTERN = r"\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()"
 ARG_RENAME_PATTERN = r"(\b{func_name}\s*\([\s\S]*?\b){old_arg}\s*="
-
+FUNC_CALL_RENAME_PATTERN = r"(?<!\w)(?<!def ){func_name}(?![\w])(?=\s*\()"
 
 class RuleHandler(ABC):
     """Abstract base class for rule-specific fix handlers."""
@@ -231,7 +231,7 @@ class ConvenationNameHandler(RuleHandler):
     definition and all known call sites in the project.
     """
 
-    RULE_ID = ["python:S117", "python:S1172"]
+    RULE_ID = ["python:S117", "python:S1172","python:S1542"]
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
@@ -249,6 +249,7 @@ class ConvenationNameHandler(RuleHandler):
         Generate fixes for parameter naming/usage violations.
 
         - python:S117  → Rename non-snake_case parameters in definition + call sites.
+        - python:S1542  → Rename non-snake_case function in definition + call sites.
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
         """
         try:
@@ -269,8 +270,10 @@ class ConvenationNameHandler(RuleHandler):
 
                 if issue.rule == "python:S117":
                     return self._fix_naming_convention(function_info, context, file_path)
+                if issue.rule == "python:S1542":
+                    return self._fix_func_naming_convention(function_info, context, file_path)
                 elif issue.rule == "python:S1172":
-                    return await self._fix_unused_parameters(function_info, context, file_path, project_path)
+                    return  self._fix_unused_parameters(function_info, context, file_path)
 
             return None
 
@@ -278,12 +281,11 @@ class ConvenationNameHandler(RuleHandler):
             logger.error("Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True)
             return None
 
-    async def _fix_unused_parameters(
+    def _fix_unused_parameters(
             self,
             function_info: Dict,
             context: FixContext,
             file_path: Path,
-            project_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         code_blocks = []
         response_lst = []
@@ -500,7 +502,7 @@ class ConvenationNameHandler(RuleHandler):
         if not code_blocks:
             return None
 
-        caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
+        caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info,"change_arg_name")
         for block in caller_blocks:
             response_lst.append(
                 SonarFixResponse(
@@ -522,6 +524,68 @@ class ConvenationNameHandler(RuleHandler):
         )
 
         logger.info("Generated %d definition block(s) for S117 rename", len(code_blocks))
+
+        response_lst.append(
+            SonarFixResponse(
+                IMPORT_BLOCK="",
+                FIXED_CODE_BLOCKS=code_blocks,
+                NEW_HELPER_CODE="",
+                PLACEMENT="SIBLING",
+                EXPLANATION=explanation,
+                CONFIDENCE=0.95,
+            )
+        )
+
+        return response_lst
+
+    def _fix_func_naming_convention(
+            self,
+            function_info: Dict,
+            context: FixContext,
+            file_path: Path,
+    ) -> Optional[List[SonarFixResponse]]:
+        """
+        S117: Rename non-snake_case parameters in the function definition
+        and update all keyword argument call sites accordingly.
+        """
+        code_blocks = []
+        response_lst = []
+        funcs_to_be_changed = {}
+
+        for definition in function_info["definitions"]:
+            if Path(definition['file']) == file_path:
+                new_name = to_snake_case(definition["function"])
+                funcs_to_be_changed[definition["function"]] = new_name
+                code_blocks.append(
+                    self._change_function_definition_block(
+                        definition, context, definition["function"], new_name
+                    ))
+        if not code_blocks:
+            return None
+
+        caller_blocks = self._create_caller_blocks(funcs_to_be_changed, function_info, "change_func_name")
+        for block in caller_blocks:
+            response_lst.append(
+                SonarFixResponse(
+                    IMPORT_BLOCK="",
+                    FIXED_CODE_BLOCKS=[block],
+                    NEW_HELPER_CODE="",
+                    PLACEMENT="SIBLING",
+                    EXPLANATION="",
+                    CONFIDENCE=0.95,
+                )
+            )
+
+
+        explanation = (
+            f"Renamed non-snake_case function(s) {list(funcs_to_be_changed.keys())} "
+            f"to {list(funcs_to_be_changed.values())}. "
+            f"Updated {len(caller_blocks)} call site(s) to use the new function name(s). "
+            f"This satisfies python:S1542, which requires function names "
+            f"to follow snake_case naming convention."
+        )
+
+        logger.info("Generated %d definition block(s) for S1542 rename", len(code_blocks))
 
         response_lst.append(
             SonarFixResponse(
@@ -581,6 +645,7 @@ class ConvenationNameHandler(RuleHandler):
         self,
         args_to_be_changed: Dict[str, str],
         function_info: Dict[str, Any],
+        change_type: str = "change_arg_name"
     ) -> List[CodeBlock]:
         """
         Build CodeBlocks to rename keyword arguments at all call sites.
@@ -600,10 +665,21 @@ class ConvenationNameHandler(RuleHandler):
         """
         blocks = []
         func_name = function_info["definitions"][0]["function"]
+
         num_args = len(function_info["definitions"][0]["args"])
 
         for caller in function_info["calls"]:
             for old_arg_name, new_arg_name in args_to_be_changed.items():
+                if change_type == "change_arg_name":
+                    search_pattern = ARG_RENAME_PATTERN.format(
+                        func_name=re.escape(func_name),
+                        old_arg=re.escape(old_arg_name),
+                    )
+                    replace_pattern = r"\1" + f"{new_arg_name}="
+                else:
+
+                    search_pattern = FUNC_CALL_RENAME_PATTERN.format(func_name=re.escape(old_arg_name))
+                    replace_pattern = new_arg_name
                 blocks.append(
                     CodeBlock(
                         block_name=func_name,
@@ -614,11 +690,8 @@ class ConvenationNameHandler(RuleHandler):
                         block_type=BlockType.FUNCTION,
                         replacements=[
                             SearchReplace(
-                                search=ARG_RENAME_PATTERN.format(
-                                    func_name=re.escape(func_name),
-                                    old_arg=re.escape(old_arg_name),
-                                ),
-                                replace=r"\1" + f"{new_arg_name}=",
+                                search=search_pattern,
+                                replace=replace_pattern,
                                 is_regex=True,
                                 count=None,
                             )
