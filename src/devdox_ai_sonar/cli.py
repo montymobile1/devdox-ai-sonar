@@ -943,9 +943,7 @@ async def change_parameters(
             "Rules to be excluded  ([yellow]comma-separated[/yellow], "
             "or [bold cyan]NONE[/bold cyan] for no exclusions)"
         )
-        
-        
-        
+
         _ = await change_field(
             manager=manager,
             field=EXCLUDE_RULE_CONFIG_FIELD,
@@ -1750,9 +1748,7 @@ def _fetch_issues_by_type(
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
                 languages=(
-                    [_python_config.sonar_language_key]
-                    if _python_config
-                    else None
+                    [_python_config.sonar_language_key] if _python_config else None
                 ),
             )
 

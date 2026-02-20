@@ -851,9 +851,7 @@ class SonarCloudAnalyzer:
             response.raise_for_status()
             return response.json()
         except requests.RequestException as e:
-            logger.warning(
-                f"Failed to fetch hotspot detail for {hotspot_key}: {e}"
-            )
+            logger.warning(f"Failed to fetch hotspot detail for {hotspot_key}: {e}")
             return {}
         except Exception as e:
             logger.warning(

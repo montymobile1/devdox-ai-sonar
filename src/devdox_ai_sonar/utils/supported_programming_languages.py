@@ -313,8 +313,7 @@ class LanguageRegistry:
         for key, lang in self._languages.items():
             if key != lang.name:
                 raise ValueError(
-                    f"Dict key '{key}' does not match "
-                    f"LanguageConfig.name '{lang.name}'"
+                    f"Dict key '{key}' does not match LanguageConfig.name '{lang.name}'"
                 )
 
             for repo in lang.sonar_repositories:
