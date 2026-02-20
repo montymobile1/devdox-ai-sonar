@@ -22,6 +22,10 @@ from devdox_ai_sonar.models.sonar import (
 
 
 from devdox_ai_sonar.config import settings
+from devdox_ai_sonar.utils.supported_programming_languages import (
+    LanguageConfig,
+    LanguageRegistry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +102,31 @@ class SonarCloudAnalyzer:
         facets: Optional[str] = None,
         filter_by: Optional[str] = None,
         filter_values: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None,
+        additional_fields: Optional[List[str]] = None,
     ) -> Optional[AnalysisResult]:
         if statuses is None:
             statuses = ["OPEN"]
 
         url = urljoin(self.base_url, "/api/issues/search")
+
+        # When language filtering is active, enrich the request with
+        # language facets (aggregation) and additional fields (enrichment).
+        effective_facets = facets
+        effective_additional_fields = additional_fields
+        if languages:
+            if effective_facets:
+                if "languages" not in effective_facets:
+                    effective_facets = f"{effective_facets},languages"
+            else:
+                effective_facets = "languages"
+            if effective_additional_fields is None:
+                effective_additional_fields = ["languages"]
+            elif "languages" not in effective_additional_fields:
+                effective_additional_fields = [
+                    *effective_additional_fields,
+                    "languages",
+                ]
 
         try:
             params = self._build_query_params(
@@ -113,9 +137,11 @@ class SonarCloudAnalyzer:
                 statuses,
                 severities,
                 types,
-                facets=facets,
+                facets=effective_facets,
                 filter_by=filter_by,
                 filter_values=filter_values,
+                languages=languages,
+                additional_fields=effective_additional_fields,
             )
             issues = self._fetch_issues(url, params, "issues")
             parsed_issues = self._parse_issues(issues)
@@ -150,6 +176,7 @@ class SonarCloudAnalyzer:
         facets: Optional[str] = None,
         total: int = 0,
         rules_excluded: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None,
     ) -> Optional[List[str]]:
         if statuses is None:
             statuses = ["OPEN"]
@@ -166,6 +193,7 @@ class SonarCloudAnalyzer:
                 severities,
                 types,
                 facets=facets,
+                languages=languages,
             )
             rules = self._fetch_issues(url, params, "facets")
             return self._filter_rules(rules, exclude_rules, total)
@@ -230,6 +258,8 @@ class SonarCloudAnalyzer:
         facets: Optional[str] = None,
         filter_by: Optional[str] = None,
         filter_values: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None,
+        additional_fields: Optional[List[str]] = None,
     ) -> Dict[str, Union[str, int]]:
         params: Dict[str, Union[str, int]] = {
             field_key: project_key,
@@ -255,6 +285,10 @@ class SonarCloudAnalyzer:
             params["facets"] = facets
         if filter_by and filter_values:
             params[filter_by] = ",".join(filter_values)
+        if languages:
+            params["languages"] = ",".join(languages)
+        if additional_fields:
+            params["additionalFields"] = ",".join(additional_fields)
         return params
 
     def _fetch_issues(
@@ -507,7 +541,11 @@ class SonarCloudAnalyzer:
         return issues
 
     def _parse_security_issues(
-        self, issues_data: List[Dict[str, Any]], project_key: str
+        self,
+        issues_data: List[Dict[str, Any]],
+        project_key: str,
+        language: Optional[LanguageConfig] = None,
+        registry: Optional[LanguageRegistry] = None,
     ) -> List[SonarSecurityIssue]:
         issues = []
 
@@ -516,6 +554,16 @@ class SonarCloudAnalyzer:
                 # Extract file path from component
                 component = issue_data.get("component", "")
                 file_path = self._extract_file_path(component)
+                rule_key = issue_data.get("ruleKey", "")
+                hotspot_key = issue_data.get("key", "")
+
+                # Filter by language when requested
+                if language and registry:
+                    if not self._resolve_hotspot_language(
+                        rule_key, file_path, hotspot_key, language, registry
+                    ):
+                        continue
+
                 problem_lines = []
 
                 first_line = issue_data.get("line")
@@ -528,8 +576,8 @@ class SonarCloudAnalyzer:
                     problem_lines.append(last_line)
 
                 issue = SonarSecurityIssue(
-                    key=issue_data.get("key", ""),
-                    rule=issue_data.get("ruleKey", ""),
+                    key=hotspot_key,
+                    rule=rule_key,
                     component=component,
                     project=project_key,
                     security_category=issue_data.get("securityCategory", ""),
@@ -693,6 +741,7 @@ class SonarCloudAnalyzer:
         types_list: Optional[List[str]] = None,
         group_by: Optional[str] = "file",
         rules_excluded: Optional[List[str]] = None,
+        languages: Optional[List[str]] = None,
     ) -> Dict[str, List[SonarIssue]]:
         """
         Get issues that are potentially fixable by LLM.
@@ -701,6 +750,8 @@ class SonarCloudAnalyzer:
             project_key: SonarCloud project key
             branch: Branch to analyze
             types_list: Optional list of issue types to filter by
+            languages: Optional list of SonarCloud language keys to filter by
+                (e.g. ["py"] for Python)
 
         Returns:
             List of fixable SonarIssue objects
@@ -717,6 +768,7 @@ class SonarCloudAnalyzer:
             types_list,
             group_by,
             rules_excluded,
+            languages,
         )
 
         analysis = self.get_project_issues(
@@ -728,6 +780,7 @@ class SonarCloudAnalyzer:
             types=types_list,
             filter_by=filter_by,
             filter_values=filter_values,
+            languages=languages,
         )
         if not analysis:
             return {}
@@ -756,6 +809,7 @@ class SonarCloudAnalyzer:
         types_list: Optional[List[str]],
         group_by: Optional[str],
         rules_excluded: Optional[List[str]],
+        languages: Optional[List[str]] = None,
     ) -> tuple[Optional[str], Optional[List[str]]]:
         if group_by != "rules":
             return None, None
@@ -769,9 +823,94 @@ class SonarCloudAnalyzer:
             facets=group_by,
             total=max_issues or 1,
             rules_excluded=rules_excluded,
+            languages=languages,
         )
 
         return ("rules", rules) if rules else (None, None)
+
+    def get_hotspot_detail(self, hotspot_key: str) -> Dict[str, Any]:
+        """Fetch detailed information about a single security hotspot.
+
+        API Endpoint: GET /api/hotspots/show
+
+        This is the most reliable way to obtain the ``ruleKey`` for a
+        hotspot.  Used as a fallback when ``/api/hotspots/search`` does
+        not include ``ruleKey`` in its response.
+
+        Args:
+            hotspot_key: The unique key of the hotspot.
+
+        Returns:
+            Parsed JSON response dict, or empty dict on error.
+        """
+        url = urljoin(self.base_url, "/api/hotspots/show")
+        params: Dict[str, str] = {"hotspot": hotspot_key}
+
+        try:
+            response = self.session.get(url, params=params, timeout=self.timeout)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as e:
+            logger.warning(
+                f"Failed to fetch hotspot detail for {hotspot_key}: {e}"
+            )
+            return {}
+        except Exception as e:
+            logger.warning(
+                f"Unexpected error fetching hotspot detail for {hotspot_key}: {e}"
+            )
+            return {}
+
+    def _resolve_hotspot_language(
+        self,
+        rule_key: str,
+        file_path: Optional[str],
+        hotspot_key: str,
+        language: LanguageConfig,
+        registry: LanguageRegistry,
+    ) -> bool:
+        """Determine whether a security hotspot belongs to a given language.
+
+        Uses a 3-pronged strategy:
+          1. If ``rule_key`` is present, resolve via the registry.
+          2. If that fails, resolve from the file extension.
+          3. If that also fails, call ``GET /api/hotspots/show`` to
+             reliably obtain the rule key and retry prong 1.
+
+        Args:
+            rule_key: The ruleKey from the hotspot search response
+                (may be empty).
+            file_path: Extracted file path from the component string
+                (may be None).
+            hotspot_key: The unique hotspot key, used for the /show
+                fallback.
+            language: The target LanguageConfig to match against.
+            registry: The LanguageRegistry for lookups.
+
+        Returns:
+            True if the hotspot belongs to the target language.
+        """
+        # Prong 1: resolve by rule key
+        if rule_key:
+            resolved = registry.from_sonar_rule_key(rule_key)
+            if resolved is not None:
+                return resolved.name == language.name
+
+        # Prong 2: resolve by file extension
+        if file_path:
+            resolved = registry.from_file_extension(file_path)
+            if resolved is not None:
+                return resolved.name == language.name
+
+        # Prong 3: call /api/hotspots/show to get the reliable rule key
+        detail = self.get_hotspot_detail(hotspot_key)
+        show_rule_key = detail.get("rule", {}).get("key", "")
+        if show_rule_key:
+            resolved = registry.from_sonar_rule_key(show_rule_key)
+            if resolved is not None:
+                return resolved.name == language.name
+
+        return False
 
     def get_fixable_security_issues(
         self,
@@ -779,21 +918,30 @@ class SonarCloudAnalyzer:
         branch: str = "",
         pull_request: Optional[int] = 0,
         max_issues: Optional[int] = None,
+        language: Optional[LanguageConfig] = None,
+        registry: Optional[LanguageRegistry] = None,
     ) -> Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]]:
         """
-        Get issues that are potentially fixable by LLM.
+        Get security issues that are potentially fixable by LLM.
 
         Args:
             project_key: SonarCloud project key
             branch: Branch to analyze
             max_issues: Maximum number of issues to return
-            types_list: Optional list of issue types to filter by
+            language: Optional LanguageConfig to filter hotspots by language
+            registry: Optional LanguageRegistry for language resolution
+                (required when language is provided)
 
         Returns:
-            List of fixable SonarIssue objects
+            Dict mapping file paths to lists of security issues
         """
         analysis = self.get_project_security_issues(
-            project_key, branch, max_issues, pull_request_number=pull_request
+            project_key,
+            branch,
+            max_issues,
+            pull_request_number=pull_request,
+            language=language,
+            registry=registry,
         )
 
         if not analysis:
@@ -808,6 +956,8 @@ class SonarCloudAnalyzer:
         branch: str = "",
         max_issues: Optional[int] = 10,
         pull_request_number: Optional[int] = 0,
+        language: Optional[LanguageConfig] = None,
+        registry: Optional[LanguageRegistry] = None,
     ) -> Optional[SecurityAnalysisResult]:
         url = urljoin(self.base_url, "/api/hotspots/search")
 
@@ -821,7 +971,9 @@ class SonarCloudAnalyzer:
                 statuses=["OPEN"],
             )
             issues = self._fetch_issues(url, params, "hotspots")
-            parsed_issues = self._parse_security_issues(issues, project_key)
+            parsed_issues = self._parse_security_issues(
+                issues, project_key, language=language, registry=registry
+            )
 
             return SecurityAnalysisResult(
                 project_key=project_key,

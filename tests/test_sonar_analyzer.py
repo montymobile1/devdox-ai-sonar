@@ -2712,3 +2712,333 @@ class TestGetBranchFromPRParametrized:
             with pytest.raises(error_type):
                 analyzer.get_branch_from_pr(project_key, pull_request)
 
+
+# ============================================================================
+# TEST CLASS: LANGUAGE FILTERING
+# ============================================================================
+
+class TestLanguageFiltering:
+    """Tests for language-based filtering in _build_query_params,
+    _resolve_hotspot_language, _parse_security_issues, and get_hotspot_detail."""
+
+    # --- _build_query_params language tests ---
+
+    def test_build_query_params_with_languages(self, analyzer):
+        """languages param is serialized correctly."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            languages=["py"],
+        )
+        assert params["languages"] == "py"
+
+    def test_build_query_params_with_multiple_languages(self, analyzer):
+        """Multiple languages are joined with commas."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            languages=["py", "java"],
+        )
+        assert params["languages"] == "py,java"
+
+    def test_build_query_params_without_languages(self, analyzer):
+        """When languages is None, the key is absent (backward compat)."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+        )
+        assert "languages" not in params
+
+    def test_build_query_params_with_additional_fields(self, analyzer):
+        """additional_fields param is serialized correctly."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            additional_fields=["languages"],
+        )
+        assert params["additionalFields"] == "languages"
+
+    def test_build_query_params_without_additional_fields(self, analyzer):
+        """When additional_fields is None, the key is absent."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+        )
+        assert "additionalFields" not in params
+
+    def test_build_query_params_languages_with_facets(self, analyzer):
+        """Languages and facets can coexist."""
+        params = analyzer._build_query_params(
+            project_key="test-project",
+            branch="main",
+            max_issues=10,
+            pull_request_number=0,
+            languages=["py"],
+            facets="rules",
+        )
+        assert params["languages"] == "py"
+        assert params["facets"] == "rules"
+
+    # --- get_hotspot_detail tests ---
+
+    def test_get_hotspot_detail_success(self, analyzer):
+        """Successful call returns parsed JSON."""
+        mock_response = Mock()
+        mock_response.json.return_value = {
+            "key": "hotspot-1",
+            "rule": {"key": "python:S5042"},
+        }
+        with patch.object(analyzer.session, "get", return_value=mock_response):
+            result = analyzer.get_hotspot_detail("hotspot-1")
+        assert result["key"] == "hotspot-1"
+        assert result["rule"]["key"] == "python:S5042"
+
+    def test_get_hotspot_detail_request_error(self, analyzer):
+        """Returns empty dict on RequestException."""
+        with patch.object(
+            analyzer.session, "get", side_effect=requests.RequestException("timeout")
+        ):
+            result = analyzer.get_hotspot_detail("hotspot-1")
+        assert result == {}
+
+    def test_get_hotspot_detail_unexpected_error(self, analyzer):
+        """Returns empty dict on unexpected exception."""
+        with patch.object(
+            analyzer.session, "get", side_effect=ValueError("bad data")
+        ):
+            result = analyzer.get_hotspot_detail("hotspot-1")
+        assert result == {}
+
+    def test_get_hotspot_detail_calls_correct_endpoint(self, analyzer):
+        """Verifies the URL and params passed to session.get."""
+        mock_response = Mock()
+        mock_response.json.return_value = {}
+        with patch.object(analyzer.session, "get", return_value=mock_response) as mock_get:
+            analyzer.get_hotspot_detail("hs-abc")
+        args, kwargs = mock_get.call_args
+        assert "/api/hotspots/show" in args[0]
+        assert kwargs["params"] == {"hotspot": "hs-abc"}
+
+    # --- _resolve_hotspot_language tests ---
+
+    def test_resolve_hotspot_language_prong1_rule_key(self, analyzer):
+        """Prong 1: rule key resolves the language."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageConfig, LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        result = analyzer._resolve_hotspot_language(
+            rule_key="python:S1234",
+            file_path="src/app.py",
+            hotspot_key="hs-1",
+            language=python,
+            registry=registry,
+        )
+        assert result is True
+
+    def test_resolve_hotspot_language_prong1_wrong_language(self, analyzer):
+        """Prong 1: rule key resolves to a different language -> False."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageConfig, LanguageRegistry,
+        )
+        java_config = LanguageConfig(
+            name="java",
+            sonar_language_key="java",
+            sonar_repositories=frozenset({"java"}),
+            file_extensions=frozenset({".java"}),
+        )
+        registry = LanguageRegistry()
+        # Python rule key, but we're asking if it's Java
+        result = analyzer._resolve_hotspot_language(
+            rule_key="python:S1234",
+            file_path=None,
+            hotspot_key="hs-1",
+            language=java_config,
+            registry=registry,
+        )
+        assert result is False
+
+    def test_resolve_hotspot_language_prong2_file_extension(self, analyzer):
+        """Prong 2: empty rule key, falls back to file extension."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        with patch.object(analyzer, "get_hotspot_detail") as mock_show:
+            result = analyzer._resolve_hotspot_language(
+                rule_key="",
+                file_path="src/utils/helpers.py",
+                hotspot_key="hs-2",
+                language=python,
+                registry=registry,
+            )
+        assert result is True
+        # Prong 3 should NOT have been called because prong 2 resolved it
+        mock_show.assert_not_called()
+
+    def test_resolve_hotspot_language_prong3_show_fallback(self, analyzer):
+        """Prong 3: no rule key, unknown extension, falls back to /show."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        with patch.object(
+            analyzer,
+            "get_hotspot_detail",
+            return_value={"rule": {"key": "pythonsecurity:S5042"}},
+        ):
+            result = analyzer._resolve_hotspot_language(
+                rule_key="",
+                file_path="src/utils/helpers.unknown",
+                hotspot_key="hs-3",
+                language=python,
+                registry=registry,
+            )
+        assert result is True
+
+    def test_resolve_hotspot_language_prong3_no_match(self, analyzer):
+        """All 3 prongs fail -> returns False."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        with patch.object(
+            analyzer, "get_hotspot_detail", return_value={}
+        ):
+            result = analyzer._resolve_hotspot_language(
+                rule_key="",
+                file_path=None,
+                hotspot_key="hs-4",
+                language=python,
+                registry=registry,
+            )
+        assert result is False
+
+    def test_resolve_hotspot_language_prong3_show_returns_unknown_rule(self, analyzer):
+        """Prong 3 returns a rule key for an unknown language -> False."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        with patch.object(
+            analyzer,
+            "get_hotspot_detail",
+            return_value={"rule": {"key": "ruby:S9999"}},
+        ):
+            result = analyzer._resolve_hotspot_language(
+                rule_key="",
+                file_path=None,
+                hotspot_key="hs-5",
+                language=python,
+                registry=registry,
+            )
+        assert result is False
+
+    # --- _parse_security_issues language filtering tests ---
+
+    def test_parse_security_issues_filters_by_language(self, analyzer):
+        """Only issues matching the target language are returned."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        python_issue = {
+            "key": "sec-1",
+            "ruleKey": "python:S5042",
+            "component": "project:src/app.py",
+            "line": 10,
+            "message": "Python issue",
+        }
+        java_issue = {
+            "key": "sec-2",
+            "ruleKey": "java:S3649",
+            "component": "project:src/App.java",
+            "line": 20,
+            "message": "Java issue",
+        }
+
+        # Mock _resolve_hotspot_language to return True only for python_issue
+        def mock_resolve(rule_key, file_path, hotspot_key, language, reg):
+            return rule_key.startswith("python")
+
+        with patch.object(analyzer, "_resolve_hotspot_language", side_effect=mock_resolve):
+            issues = analyzer._parse_security_issues(
+                [python_issue, java_issue],
+                "test-project",
+                language=python,
+                registry=registry,
+            )
+
+        assert len(issues) == 1
+        assert issues[0].key == "sec-1"
+
+    def test_parse_security_issues_no_language_returns_all(self, analyzer):
+        """When language is None, all issues are returned (backward compat)."""
+        issue_a = {
+            "key": "sec-1",
+            "ruleKey": "python:S5042",
+            "component": "project:src/app.py",
+            "line": 10,
+            "message": "Issue A",
+        }
+        issue_b = {
+            "key": "sec-2",
+            "ruleKey": "java:S3649",
+            "component": "project:src/App.java",
+            "line": 20,
+            "message": "Issue B",
+        }
+
+        issues = analyzer._parse_security_issues(
+            [issue_a, issue_b],
+            "test-project",
+        )
+
+        assert len(issues) == 2
+
+    def test_parse_security_issues_language_without_registry_returns_all(self, analyzer):
+        """When language is set but registry is None, filtering is skipped."""
+        from devdox_ai_sonar.utils.supported_programming_languages import (
+            LanguageRegistry,
+        )
+        registry = LanguageRegistry()
+        python = registry.get(LanguageRegistry.PYTHON)
+
+        issue = {
+            "key": "sec-1",
+            "ruleKey": "java:S3649",
+            "component": "project:src/App.java",
+            "line": 20,
+            "message": "Java issue",
+        }
+
+        # language set but registry=None -> filtering skipped, all returned
+        issues = analyzer._parse_security_issues(
+            [issue],
+            "test-project",
+            language=python,
+            registry=None,
+        )
+        assert len(issues) == 1

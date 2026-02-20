@@ -46,12 +46,23 @@ from devdox_ai_sonar.utils.provider_config import (
 )
 
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
-from devdox_ai_sonar.utils.file_filter import is_file_processable
+from devdox_ai_sonar.utils.supported_programming_languages import (
+    FileFilter,
+    LanguageRegistry,
+)
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
+
+# Language setup — only Python is supported for now.
+_language_registry = LanguageRegistry()
+_python_config = _language_registry.get(LanguageRegistry.PYTHON)
+_python_file_filter = FileFilter.for_languages(
+    [_python_config] if _python_config else None,
+    excluded_prefixes={"test_"},
+)
 
 console = Console()
 
@@ -1451,13 +1462,7 @@ async def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-        if issue.file and not is_file_processable(
-            issue.file,
-            allowed_suffixes=[".py"],
-            excluded_suffixes=[],
-            allowed_prefixes=[],
-            excluded_prefixes=["test_"],
-        ):
+        if issue.file and not _python_file_filter.is_processable(issue.file):
             console.print(
                 f"[dim]Skipping {issue.file} "
                 f"(only .py files excluding test_ are processed)[/dim]"
@@ -1529,13 +1534,7 @@ async def _process_security_issues(
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
         for idx_new, issue in enumerate(issues, 1):
-            if issue.file and not is_file_processable(
-                issue.file,
-                allowed_suffixes=[".py"],
-                excluded_suffixes=[],
-                allowed_prefixes=[],
-                excluded_prefixes=["test_"],
-            ):
+            if issue.file and not _python_file_filter.is_processable(issue.file):
                 console.print(
                     f"[dim]Skipping {issue.file} "
                     f"(only .py files excluding test_ are processed)[/dim]"
@@ -1736,6 +1735,8 @@ def _fetch_issues_by_type(
                 branch=branch or "",
                 pull_request=pr_number,
                 max_issues=fix_params["max_fixes"],
+                language=_python_config,
+                registry=_language_registry,
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
@@ -1748,6 +1749,11 @@ def _fetch_issues_by_type(
                 types_list=fix_params["types_list"],
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
+                languages=(
+                    [_python_config.sonar_language_key]
+                    if _python_config
+                    else None
+                ),
             )
 
 
