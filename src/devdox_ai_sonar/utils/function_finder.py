@@ -8,8 +8,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_SNAKE_LOWER_UPPER = regex.compile(r'([a-z0-9])([A-Z])')
-_SNAKE_ACRONYM = regex.compile(r'(?>([A-Z]+))([A-Z][a-z])')  # atomic group on acronym
+_SNAKE_LOWER_UPPER = regex.compile(r"([a-z0-9])([A-Z])")
+_SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on acronym
 
 _MAX_IDENTIFIER_LENGTH = 256
 
@@ -356,8 +356,8 @@ def to_snake_case(name: str) -> str:
         raise ValueError(
             f"Identifier name exceeds maximum allowed length of {_MAX_IDENTIFIER_LENGTH}."
         )
-    text = _SNAKE_LOWER_UPPER.sub(r'\1_\2', name)
-    text = _SNAKE_ACRONYM.sub(r'\1_\2', text)
+    text: str = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
+    text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
     return text.lower()
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
@@ -444,7 +444,6 @@ def find_function_implementations(
         "*.egg-info",
         "site-packages",
     }
-
 
     for file_path in directory.rglob("*"):
         if any(excluded in file_path.parts for excluded in exclude_dirs):
