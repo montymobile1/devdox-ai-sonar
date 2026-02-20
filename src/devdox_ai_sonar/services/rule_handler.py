@@ -253,6 +253,10 @@ class ConvenationNameHandler(RuleHandler):
         """
         try:
 
+            if len(context.functions) == 0:
+                logger.warning("Could not find functions ")
+                return None
+
             function_info = find_function_implementations(
                 project_path, context.functions[0]["name"]
             )
