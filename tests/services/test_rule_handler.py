@@ -1472,7 +1472,7 @@ class TestFixUnusedParameters:
         assert "safe_param" in result[0].EXPLANATION
 
     def test_no_unused_args_returns_none(self):
-        """Empty unused_args list → returns None."""
+        """Empty unused_args list → returns None via _collect_removable_params."""
         function_info = {
             "definitions": [{
                 "file": str(self.file_path),
@@ -1491,8 +1491,107 @@ class TestFixUnusedParameters:
         assert result is None
 
 
+class TestGetCallsiteIndex:
+    """Tests for ConvenationNameHandler._get_callsite_index — pure logic, no I/O."""
+
+    def test_simple_no_self(self):
+        """Without self/cls, index matches position directly."""
+        assert ConvenationNameHandler._get_callsite_index("x", ["x", "y"]) == 0
+        assert ConvenationNameHandler._get_callsite_index("y", ["x", "y"]) == 1
+
+    def test_with_self_offset(self):
+        """With self as first arg, index is shifted down by 1."""
+        assert ConvenationNameHandler._get_callsite_index("x", ["self", "x", "y"]) == 0
+        assert ConvenationNameHandler._get_callsite_index("y", ["self", "x", "y"]) == 1
+
+    def test_with_cls_offset(self):
+        """cls behaves the same as self."""
+        assert ConvenationNameHandler._get_callsite_index("x", ["cls", "x"]) == 0
+
+    def test_underscore_prefix_returns_none(self):
+        """Params starting with _ are intentionally unused → None."""
+        assert ConvenationNameHandler._get_callsite_index("_unused", ["self", "_unused"]) is None
+
+    def test_param_not_found_returns_none(self):
+        """Param not in args list → None."""
+        assert ConvenationNameHandler._get_callsite_index("ghost", ["self", "x"]) is None
+
+    def test_star_args_stripped(self):
+        """Leading * and ** are stripped before lookup."""
+        assert ConvenationNameHandler._get_callsite_index("args", ["self", "*args"]) == 0
+        assert ConvenationNameHandler._get_callsite_index("kwargs", ["self", "**kwargs"]) == 0
+
+    def test_empty_args_list(self):
+        """Empty args list → param not found → None."""
+        assert ConvenationNameHandler._get_callsite_index("x", []) is None
+
+
+class TestCollectRemovableParams:
+    """Tests for ConvenationNameHandler._collect_removable_params."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_unused_and_not_at_callsite(self, mock_used):
+        """Param unused in body AND at callsite → included in result."""
+        mock_used.return_value = False
+        definition = {
+            "args": ["self", "x"],
+            "unused_args": ["x"],
+        }
+        result = self.handler._collect_removable_params(definition, [])
+        assert result == ["x"]
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_unused_but_used_at_callsite(self, mock_used):
+        """Param unused in body but used at callsite → excluded."""
+        mock_used.return_value = True
+        definition = {
+            "args": ["self", "x"],
+            "unused_args": ["x"],
+        }
+        result = self.handler._collect_removable_params(definition, [{"file": "/f.py", "line": 1}])
+        assert result == []
+
+    def test_underscore_param_skipped(self):
+        """Params starting with _ are skipped entirely."""
+        definition = {
+            "args": ["self", "_internal"],
+            "unused_args": ["_internal"],
+        }
+        result = self.handler._collect_removable_params(definition, [])
+        assert result == []
+
+    def test_missing_param_skipped(self):
+        """Param in unused_args but not in args → skipped."""
+        definition = {
+            "args": ["self", "a"],
+            "unused_args": ["ghost"],
+        }
+        result = self.handler._collect_removable_params(definition, [])
+        assert result == []
+
+    def test_no_unused_args(self):
+        """No unused_args key → empty list."""
+        definition = {"args": ["self", "x"]}
+        result = self.handler._collect_removable_params(definition, [])
+        assert result == []
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_mixed_params(self, mock_used):
+        """Multiple unused: one safe, one used at callsite, one with _ prefix."""
+        mock_used.side_effect = lambda p, i, c: p == "used"
+        definition = {
+            "args": ["self", "safe", "used", "_private"],
+            "unused_args": ["safe", "used", "_private"],
+        }
+        result = self.handler._collect_removable_params(definition, [{"file": "/f.py", "line": 1}])
+        assert result == ["safe"]
+
+
 # ============================================================================
-# REMOVE PARAM FROM SIGNATURE (lines 426-474)
+# REMOVE PARAM FROM SIGNATURE
 # ============================================================================
 
 

@@ -287,57 +287,20 @@ class ConvenationNameHandler(RuleHandler):
             context: FixContext,
             file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
-        code_blocks = []
-        response_lst = []
-        args_safe_to_remove = []
+        args_safe_to_remove: List[str] = []
 
         for definition in function_info["definitions"]:
             if Path(definition["file"]) != file_path:
                 continue
-
-            unused_args = definition.get("unused_args", [])
-            all_args = definition.get("args", [])
-
-            for param in unused_args:
-                if param.startswith("_"):
-                    logger.debug("Skipping intentionally unused param: %s", param)
-                    continue
-
-                # Get 0-based index of this param in the full signature
-                # Strip self/cls offset for call site positional matching
-                clean_args = [a.lstrip("*") for a in all_args]
-                has_self = clean_args[0] in ("self", "cls") if clean_args else False
-
-                try:
-                    raw_index = clean_args.index(param)
-                except ValueError:
-                    logger.warning("Param '%s' not found in args list %s", param, clean_args)
-                    continue
-
-                # Callers don't pass self/cls, so subtract 1 for positional matching
-                callsite_index = raw_index - 1 if has_self else raw_index
-
-                used_at_callsite = _is_param_used_at_callsite(
-                    param, callsite_index, function_info["calls"]
-                )
-
-                if not used_at_callsite:
-                    args_safe_to_remove.append(param)
-
-                    logger.info(
-                        "Param '%s' (index %d) unused in body and at all call sites — safe to remove",
-                        param, callsite_index,
-                    )
-                else:
-                    logger.info(
-                        "Param '%s' is unused in body but IS used at call sites — skipping",
-                        param,
-                    )
+            args_safe_to_remove.extend(
+                self._collect_removable_params(definition, function_info["calls"])
+            )
 
         if not args_safe_to_remove:
             logger.info("No safely removable unused parameters found for S1172")
             return None
 
+        code_blocks: List[CodeBlock] = []
         for definition in function_info["definitions"]:
             if Path(definition["file"]) == file_path:
                 for param in args_safe_to_remove:
@@ -358,7 +321,7 @@ class ConvenationNameHandler(RuleHandler):
 
         logger.info("Generated %d block(s) for S1172 unused param removal", len(code_blocks))
 
-        response_lst.append(
+        return [
             SonarFixResponse(
                 IMPORT_BLOCK="",
                 FIXED_CODE_BLOCKS=code_blocks,
@@ -367,9 +330,68 @@ class ConvenationNameHandler(RuleHandler):
                 EXPLANATION=explanation,
                 CONFIDENCE=0.90,
             )
-        )
+        ]
 
-        return response_lst
+    def _collect_removable_params(
+            self,
+            definition: Dict,
+            calls: List[Dict],
+    ) -> List[str]:
+        """
+        Identify which unused parameters in a single definition are safe to remove.
+
+        Iterates the definition's unused_args, skips intentionally-unused names
+        (prefixed with ``_``), resolves the call-site positional index, and
+        checks every call site.  Only parameters that are unused at **all**
+        call sites are returned.
+        """
+        safe: List[str] = []
+
+        for param in definition.get("unused_args", []):
+            callsite_index = self._get_callsite_index(param, definition.get("args", []))
+            if callsite_index is None:
+                continue
+
+            if not _is_param_used_at_callsite(param, callsite_index, calls):
+                safe.append(param)
+                logger.info(
+                    "Param '%s' (index %d) unused in body and at all call sites — safe to remove",
+                    param, callsite_index,
+                )
+            else:
+                logger.info(
+                    "Param '%s' is unused in body but IS used at call sites — skipping",
+                    param,
+                )
+
+        return safe
+
+    @staticmethod
+    def _get_callsite_index(param: str, all_args: List[str]) -> Optional[int]:
+        """
+        Compute the 0-based positional index a caller would use for *param*.
+
+        Returns ``None`` (skip this param) when:
+        - The param name starts with ``_`` (intentionally unused).
+        - The param is not found in the args list.
+
+        When the first argument is ``self`` or ``cls`` it is not passed by
+        callers, so the returned index is shifted down by one.
+        """
+        if param.startswith("_"):
+            logger.debug("Skipping intentionally unused param: %s", param)
+            return None
+
+        clean_args = [a.lstrip("*") for a in all_args]
+        has_self = clean_args[0] in ("self", "cls") if clean_args else False
+
+        try:
+            raw_index = clean_args.index(param)
+        except ValueError:
+            logger.warning("Param '%s' not found in args list %s", param, clean_args)
+            return None
+
+        return raw_index - 1 if has_self else raw_index
 
     def _remove_parameter_block(
             self,
