@@ -1145,3 +1145,623 @@ class TestRuleHandlerRegistry:
         custom = Mock(spec=CognitiveComplexityHandler)
         registry.register(custom, priority=0)
         assert registry.handlers[0] is custom
+
+
+# ============================================================================
+# CONVENATION NAME HANDLER — DISPATCH BRANCHES (lines 257-278)
+# ============================================================================
+
+
+class TestConvenationNameHandlerDispatch:
+    """Tests for generate_fixes dispatch: empty functions, S1542, S1172, unknown rule."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+        self.file_path = Path("/project/src/module.py")
+        self.project_path = Path("/project")
+
+    @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
+    async def test_returns_none_empty_functions(self, mock_find):
+        """Lines 257-259: context.functions is empty → returns None immediately."""
+        context = _make_context(functions=[])
+        issues = [Mock(rule="python:S117")]
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, self.file_path, llm_caller=None,
+        )
+        assert result is None
+        mock_find.assert_not_called()
+
+    @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
+    @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
+    async def test_s1542_dispatches_to_fix_func_naming(self, mock_find, mock_snake):
+        """Line 273: issue.rule == 'python:S1542' → _fix_func_naming_convention."""
+        context = _make_context(
+            functions=[{"name": "myFunc", "start_line": 10}],
+            context_dict={
+                "start_line": 10,
+                "import_section": {"end_line": 3},
+                "new_context": [{"context": "def myFunc(self):\n    pass\n"}],
+            },
+        )
+        issues = [Mock(rule="python:S1542")]
+        mock_find.return_value = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "myFunc",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [],
+        }
+        mock_snake.return_value = "my_func"
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, self.file_path, llm_caller=None,
+        )
+        assert result is not None
+        assert len(result) >= 1
+        # The last response should contain the definition block
+        last = result[-1]
+        assert last.CONFIDENCE == 0.95
+        assert "S1542" in last.EXPLANATION
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
+    async def test_s1172_dispatches_to_fix_unused_params(self, mock_find, mock_used):
+        """Lines 275-276: issue.rule == 'python:S1172' → _fix_unused_parameters."""
+        context = _make_context(
+            functions=[{"name": "my_func", "start_line": 10}],
+        )
+        issues = [Mock(rule="python:S1172")]
+        mock_find.return_value = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "unused_param"],
+                "unused_args": ["unused_param"],
+            }],
+            "calls": [],
+        }
+        mock_used.return_value = False
+
+        # Mock _remove_parameter_block since it reads files from disk
+        with patch.object(
+            self.handler, "_remove_parameter_block",
+            return_value=_make_code_block(block_name="test"),
+        ):
+            result = await self.handler.generate_fixes(
+                issues, context, self.project_path, self.file_path, llm_caller=None,
+            )
+        assert result is not None
+        assert len(result) >= 1
+        assert "S1172" in result[-1].EXPLANATION
+
+    @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
+    async def test_unknown_rule_returns_none(self, mock_find):
+        """Line 278: rule not S117/S1542/S1172 → returns None."""
+        context = _make_context(
+            functions=[{"name": "my_func", "start_line": 10}],
+        )
+        issues = [Mock(rule="python:S9999")]
+        mock_find.return_value = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [],
+        }
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, self.file_path, llm_caller=None,
+        )
+        assert result is None
+
+
+# ============================================================================
+# FIX UNUSED PARAMETERS (lines 284-372)
+# ============================================================================
+
+
+class TestFixUnusedParameters:
+    """Tests for ConvenationNameHandler._fix_unused_parameters."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+        self.file_path = Path("/project/src/module.py")
+        self.context = _make_context(
+            functions=[{"name": "my_func", "start_line": 10}],
+        )
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_happy_path_param_removed(self, mock_used):
+        """Unused param not used at callsite → safe to remove."""
+        mock_used.return_value = False
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "unused_x"],
+                "unused_args": ["unused_x"],
+            }],
+            "calls": [],
+        }
+
+        with patch.object(
+            self.handler, "_remove_parameter_block",
+            return_value=_make_code_block(block_name="test"),
+        ) as mock_remove:
+            result = self.handler._fix_unused_parameters(
+                function_info, self.context, self.file_path,
+            )
+
+        assert result is not None
+        assert len(result) == 1
+        assert result[0].CONFIDENCE == 0.90
+        assert "unused_x" in result[0].EXPLANATION
+        mock_remove.assert_called_once()
+
+    def test_definition_different_file_skipped(self):
+        """Definition in a different file → skipped, returns None."""
+        function_info = {
+            "definitions": [{
+                "file": "/other/file.py",
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "x"],
+                "unused_args": ["x"],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_unused_parameters(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+    def test_underscore_prefix_skipped(self):
+        """Params starting with _ are intentionally unused → skipped."""
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "_unused"],
+                "unused_args": ["_unused"],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_unused_parameters(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+    def test_param_not_in_args_list(self):
+        """Param in unused_args but not in args → ValueError caught, skipped."""
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "other"],
+                "unused_args": ["ghost"],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_unused_parameters(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_has_self_offset(self, mock_used):
+        """With self as first arg, callsite_index = raw_index - 1."""
+        mock_used.return_value = False
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "x", "y"],
+                "unused_args": ["y"],
+            }],
+            "calls": [{"file": "/caller.py", "line": 5}],
+        }
+
+        with patch.object(
+            self.handler, "_remove_parameter_block",
+            return_value=_make_code_block(),
+        ):
+            self.handler._fix_unused_parameters(
+                function_info, self.context, self.file_path,
+            )
+
+        # "y" is at raw_index=2, minus 1 for self → callsite_index=1
+        mock_used.assert_called_once_with("y", 1, function_info["calls"])
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_no_self_no_offset(self, mock_used):
+        """Without self/cls, callsite_index == raw_index."""
+        mock_used.return_value = False
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["x", "y"],
+                "unused_args": ["x"],
+            }],
+            "calls": [],
+        }
+
+        with patch.object(
+            self.handler, "_remove_parameter_block",
+            return_value=_make_code_block(),
+        ):
+            self.handler._fix_unused_parameters(
+                function_info, self.context, self.file_path,
+            )
+
+        # "x" is at raw_index=0, no self → callsite_index=0
+        mock_used.assert_called_once_with("x", 0, [])
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_param_used_at_callsite_not_removed(self, mock_used):
+        """Param unused in body but IS used at callsite → not removed."""
+        mock_used.return_value = True
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "param"],
+                "unused_args": ["param"],
+            }],
+            "calls": [{"file": "/caller.py", "line": 5}],
+        }
+
+        result = self.handler._fix_unused_parameters(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+    @patch("devdox_ai_sonar.services.rule_handler._is_param_used_at_callsite")
+    def test_multiple_unused_some_safe(self, mock_used):
+        """Two unused params: one safe, one used at callsite → only safe one removed."""
+        # "safe_param" → not used at callsite; "used_param" → used at callsite
+        mock_used.side_effect = lambda param, idx, calls: param == "used_param"
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "safe_param", "used_param"],
+                "unused_args": ["safe_param", "used_param"],
+            }],
+            "calls": [{"file": "/caller.py", "line": 5}],
+        }
+
+        with patch.object(
+            self.handler, "_remove_parameter_block",
+            return_value=_make_code_block(),
+        ) as mock_remove:
+            result = self.handler._fix_unused_parameters(
+                function_info, self.context, self.file_path,
+            )
+
+        assert result is not None
+        # Only safe_param should be removed
+        mock_remove.assert_called_once()
+        assert "safe_param" in result[0].EXPLANATION
+
+    def test_no_unused_args_returns_none(self):
+        """Empty unused_args list → returns None."""
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self", "x"],
+                "unused_args": [],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_unused_parameters(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+
+# ============================================================================
+# REMOVE PARAM FROM SIGNATURE (lines 426-474)
+# ============================================================================
+
+
+class TestRemoveParamFromSignature:
+    """Tests for ConvenationNameHandler._remove_param_from_signature — pure string ops."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+
+    def test_plain_param_only(self):
+        assert self.handler._remove_param_from_signature("def foo(unused):", "unused") == "def foo():"
+
+    def test_typed_param(self):
+        assert self.handler._remove_param_from_signature("def foo(unused: int):", "unused") == "def foo():"
+
+    def test_default_value(self):
+        assert self.handler._remove_param_from_signature("def foo(unused=None):", "unused") == "def foo():"
+
+    def test_typed_and_default(self):
+        assert self.handler._remove_param_from_signature("def foo(unused: int = 2):", "unused") == "def foo():"
+
+    def test_star_args(self):
+        assert self.handler._remove_param_from_signature("def foo(*unused):", "unused") == "def foo():"
+
+    def test_double_star_kwargs(self):
+        assert self.handler._remove_param_from_signature("def foo(**unused):", "unused") == "def foo():"
+
+    def test_middle_param(self):
+        result = self.handler._remove_param_from_signature("def foo(a, unused, b):", "unused")
+        assert result == "def foo(a, b):"
+
+    def test_first_param(self):
+        result = self.handler._remove_param_from_signature("def foo(unused, a):", "unused")
+        assert result == "def foo(a):"
+
+    def test_last_param(self):
+        result = self.handler._remove_param_from_signature("def foo(a, unused):", "unused")
+        assert result == "def foo(a):"
+
+    def test_multiple_remaining(self):
+        result = self.handler._remove_param_from_signature("def foo(a, unused, b, c):", "unused")
+        assert result == "def foo(a, b, c):"
+
+
+# ============================================================================
+# REMOVE PARAMETER BLOCK (lines 374-424)
+# ============================================================================
+
+
+class TestRemoveParameterBlock:
+    """Tests for ConvenationNameHandler._remove_parameter_block using tmp_path."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+
+    def test_single_line_signature(self, tmp_path):
+        """Remove param from a single-line function signature."""
+        source = "def my_func(self, unused_param):\n    pass\n"
+        src_file = tmp_path / "module.py"
+        src_file.write_text(source, encoding="utf-8")
+
+        definition = {
+            "file": str(src_file),
+            "function": "my_func",
+            "line": 1,
+            "decorators": [],
+            "args": ["self", "unused_param"],
+        }
+        context = _make_context()
+
+        block = self.handler._remove_parameter_block(definition, context, "unused_param")
+        assert block.start_line == 1
+        assert block.end_line == 1
+        assert "unused_param" not in block.context
+        assert "self" in block.context
+        assert block.change_type == ChangeType.FULL_CODE
+
+    def test_multi_line_signature(self, tmp_path):
+        """Remove param from a multi-line function signature."""
+        source = (
+            "def my_func(\n"
+            "    self,\n"
+            "    unused_param,\n"
+            "    other_param,\n"
+            "):\n"
+            "    pass\n"
+        )
+        src_file = tmp_path / "module.py"
+        src_file.write_text(source, encoding="utf-8")
+
+        definition = {
+            "file": str(src_file),
+            "function": "my_func",
+            "line": 1,
+            "decorators": [],
+            "args": ["self", "unused_param", "other_param"],
+        }
+        context = _make_context()
+
+        block = self.handler._remove_parameter_block(definition, context, "unused_param")
+        assert block.start_line == 1
+        assert block.end_line == 5  # 5 signature lines
+        assert "unused_param" not in block.context
+        assert "other_param" in block.context
+        assert block.file_path == str(src_file)
+
+
+# ============================================================================
+# FIX FUNC NAMING CONVENTION — S1542 (lines 541-601)
+# ============================================================================
+
+
+class TestFixFuncNamingConvention:
+    """Tests for ConvenationNameHandler._fix_func_naming_convention."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+        self.file_path = Path("/project/src/module.py")
+        self.context = _make_context(
+            functions=[{"name": "myFunc", "start_line": 10}],
+            context_dict={
+                "start_line": 10,
+                "import_section": {"end_line": 3},
+                "new_context": [{"context": "def myFunc(self):\n    pass\n"}],
+            },
+        )
+
+    @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
+    def test_happy_path_no_callers(self, mock_snake):
+        """camelCase function with no callers → returns SonarFixResponse with definition block."""
+        mock_snake.return_value = "my_func"
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "myFunc",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_func_naming_convention(
+            function_info, self.context, self.file_path,
+        )
+        assert result is not None
+        assert len(result) == 1  # Only the definition response (no caller responses)
+        assert "S1542" in result[-1].EXPLANATION
+        assert "myFunc" in result[-1].EXPLANATION
+
+    @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
+    def test_happy_path_with_callers(self, mock_snake):
+        """camelCase function with callers → caller blocks + definition block."""
+        mock_snake.return_value = "my_func"
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "myFunc",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [
+                {"file": "/other/file.py", "line": 5},
+                {"file": "/another/file.py", "line": 12},
+            ],
+        }
+
+        result = self.handler._fix_func_naming_convention(
+            function_info, self.context, self.file_path,
+        )
+        assert result is not None
+        # 2 caller responses + 1 definition response = 3
+        assert len(result) == 3
+
+    @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
+    def test_already_snake_case_still_produces_block(self, mock_snake):
+        """to_snake_case returns same name → code block still created (no guard in method)."""
+        mock_snake.return_value = "my_func"
+        function_info = {
+            "definitions": [{
+                "file": str(self.file_path),
+                "function": "my_func",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [],
+        }
+        context = _make_context(
+            functions=[{"name": "my_func", "start_line": 10}],
+            context_dict={
+                "start_line": 10,
+                "import_section": {"end_line": 3},
+                "new_context": [{"context": "def my_func(self):\n    pass\n"}],
+            },
+        )
+
+        result = self.handler._fix_func_naming_convention(
+            function_info, context, self.file_path,
+        )
+        # Unlike _fix_naming_convention, this method does not check old == new
+        assert result is not None
+
+    @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
+    def test_definition_in_different_file_returns_none(self, mock_snake):
+        """Definition in different file → skipped → returns None."""
+        mock_snake.return_value = "my_func"
+        function_info = {
+            "definitions": [{
+                "file": "/other/file.py",
+                "function": "myFunc",
+                "line": 10,
+                "decorators": [],
+                "args": ["self"],
+            }],
+            "calls": [],
+        }
+
+        result = self.handler._fix_func_naming_convention(
+            function_info, self.context, self.file_path,
+        )
+        assert result is None
+
+
+# ============================================================================
+# CREATE CALLER BLOCKS — change_func_name BRANCH (lines 681-682)
+# ============================================================================
+
+
+class TestCreateCallerBlocksFuncRename:
+    """Tests for _create_caller_blocks with change_type='change_func_name'."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+
+    def test_uses_func_call_rename_pattern(self):
+        """change_func_name branch → uses FUNC_CALL_RENAME_PATTERN, not ARG_RENAME."""
+        function_info = {
+            "definitions": [{"function": "myFunc", "args": ["self"]}],
+            "calls": [{"file": "/caller.py", "line": 5}],
+        }
+
+        blocks = self.handler._create_caller_blocks(
+            {"myFunc": "my_func"}, function_info, "change_func_name",
+        )
+        assert len(blocks) == 1
+        block = blocks[0]
+        assert block.change_type == ChangeType.SEARCH_REPLACE
+        # The replace pattern should be the new name directly
+        assert block.replacements[0].replace == "my_func"
+        # The search pattern should match function call, not keyword arg
+        assert "myFunc" in block.replacements[0].search
+        # Should NOT contain the arg rename backreference pattern
+        assert r"\1" not in block.replacements[0].replace
+
+    def test_multiple_callers_func_rename(self):
+        """Multiple callers with func rename → one block per caller."""
+        function_info = {
+            "definitions": [{"function": "myFunc", "args": ["self", "x"]}],
+            "calls": [
+                {"file": "/a.py", "line": 5},
+                {"file": "/b.py", "line": 10},
+            ],
+        }
+
+        blocks = self.handler._create_caller_blocks(
+            {"myFunc": "my_func"}, function_info, "change_func_name",
+        )
+        assert len(blocks) == 2
+        assert blocks[0].file_path == "/a.py"
+        assert blocks[1].file_path == "/b.py"
