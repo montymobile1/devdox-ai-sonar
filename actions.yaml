@@ -1,29 +1,10 @@
-name: "DevDox Sonar"
+name: "DevDox AI sonar"
 description: "Run devdox-sonar code quality analysis on your Python project"
-branding:
-  icon: "code"
-  color: "blue"
-
 inputs:
-  # ── Installation ────────────────────────────────────────────────────────────
-  version:
-    description: "Version of devdox-sonar to install from PyPI (default: latest)"
+  command:
+    description: "Command to run (e.g., 'fix_multiple')"
     required: false
-    default: "0.0.1"
-  python-version:
-    description: "Python version to use"
-    required: false
-    default: "3.12"
-  working-directory:
-    description: "Directory to run analysis on (default: repo root)"
-    required: false
-    default: "."
-  extra-args:
-    description: "Additional CLI arguments to pass to devdox-sonar"
-    required: false
-    default: ""
-
-  # ── auth.json fields (SonarCloud) ───────────────────────────────────────────
+    default: "fix_multiple"
   sonar-token:
     description: "SonarCloud authentication token (SONAR_TOKEN)"
     required: true
@@ -35,199 +16,37 @@ inputs:
     required: true
   project-path:
     description: "Local path to the project. Defaults to GITHUB_WORKSPACE if not set."
-    required: false
-    default: ""
-
-  # ── config.toml: sonar section ──────────────────────────────────────────────
-  clone-type:
-    description: "Analysis mode: 'branch' or 'pr'"
     required: true
-    default: "branch"
-  pull-number:
-    description: "Pull request number (required when clone-type is 'pr')"
-    required: false
     default: ""
-  default-branch:
-    description: "Default branch name"
-    required: false
-    default: "main"
-
-  # ── config.toml: llm section ────────────────────────────────────────────────
   llm-provider:
-    description: "LLM provider name (e.g. openai, gemini, togetherai)"
+    description: "LLM API key for LLM integration"
     required: true
   llm-api-key:
-    description: "API key for the LLM provider"
+    description: "LLM API key for LLM integration"
     required: true
   llm-default-model:
-    description: "Default model to use (e.g. gpt-4o)"
+    description: "Default LLM model to use"
     required: true
-  llm-models:
-    description: "Comma-separated list of available models (e.g. gpt-4o,gpt-4o-mini)"
-    required: false
-    default: ""
-
-  # ── config.toml: optional tuning ────────────────────────────────────────────
-  max-fixes:
-    description: "Maximum number of fixes to apply (0 = unlimited)"
-    required: false
-    default: "0"
-  exclude-rules:
-    description: "Comma-separated SonarCloud rule keys to exclude (e.g. python:S101,python:S102)"
-    required: false
-    default: ""
-
-outputs:
-  report-path:
-    description: "Path to the generated sonar report"
-    value: ${{ steps.run-sonar.outputs.report-path }}
-
 runs:
-  using: "composite"
-  steps:
-    - name: Set up Python ${{ inputs.python-version }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ inputs.python-version }}
-
-    - name: Install devdox-sonar (pinned version)
-      if: ${{ inputs.version != '' }}
-      shell: bash
-      run: pip install devdox-sonar==${{ inputs.version }}
-
-    - name: Install devdox-sonar (latest)
-      if: ${{ inputs.version == '' }}
-      shell: bash
-      run: pip install devdox-sonar
-
-    - name: Verify installation
-      shell: bash
-      run: |
-        echo "devdox-sonar $(pip show devdox-sonar | grep Version | cut -d' ' -f2) installed"
-
-    - name: Validate PR inputs
-      if: ${{ inputs.clone-type == 'pr' && inputs.pull-number == '' }}
-      shell: bash
-      run: |
-        echo "::error::clone-type is 'pr' but pull-number was not provided."
-        exit 1
-
-    - name: Build ~/.devdox/auth.json
-      shell: bash
-      env:
-        SONAR_TOKEN: ${{ inputs.sonar-token }}
-        SONAR_ORG: ${{ inputs.sonar-org }}
-        SONAR_PROJ: ${{ inputs.sonar-project }}
-        PROJECT_PATH: ${{ inputs.project-path }}
-      run: |
-        mkdir -p "$HOME/.devdox"
-
-        # Use GITHUB_WORKSPACE as project_path if not explicitly provided
-        RESOLVED_PATH="${PROJECT_PATH:-$GITHUB_WORKSPACE}"
-
-        python3 - <<EOF
-        import json, os, pathlib
-
-        auth = {
-            "token":        os.environ["SONAR_TOKEN"],
-            "organization": os.environ["SONAR_ORG"],
-            "project":      os.environ["SONAR_PROJ"],
-            "project_path": os.environ.get("PROJECT_PATH") or os.environ["GITHUB_WORKSPACE"],
-        }
-
-        out = pathlib.Path.home() / ".devdox" / "auth.json"
-        out.write_text(json.dumps(auth, indent=2))
-        print(f"auth.json written → project_path: {auth['project_path']}")
-        EOF
-
-    - name: Build ~/.devdox/config.toml
-      shell: bash
-      env:
-        LLM_PROVIDER:     ${{ inputs.llm-provider }}
-        LLM_API_KEY:      ${{ inputs.llm-api-key }}
-        LLM_DEFAULT_MODEL: ${{ inputs.llm-default-model }}
-        LLM_MODELS:       ${{ inputs.llm-models }}
-        CLONE_TYPE:       ${{ inputs.clone-type }}
-        PULL_NUMBER:      ${{ inputs.pull-number }}
-        DEFAULT_BRANCH:   ${{ inputs.default-branch }}
-        MAX_FIXES:        ${{ inputs.max-fixes }}
-        EXCLUDE_RULES:    ${{ inputs.exclude-rules }}
-      run: |
-        python3 - <<EOF
-        import os, pathlib
-
-        provider     = os.environ["LLM_PROVIDER"]
-        api_key      = os.environ["LLM_API_KEY"]
-        default_model = os.environ["LLM_DEFAULT_MODEL"]
-        clone_type   = os.environ["CLONE_TYPE"]
-        pull_number  = os.environ.get("PULL_NUMBER", "")
-        default_branch = os.environ.get("DEFAULT_BRANCH", "main")
-        max_fixes    = int(os.environ.get("MAX_FIXES", "0"))
-        exclude_raw  = os.environ.get("EXCLUDE_RULES", "")
-        models_raw   = os.environ.get("LLM_MODELS", "")
-
-        # Build models list — always include default_model
-        models = [m.strip() for m in models_raw.split(",") if m.strip()]
-        if default_model not in models:
-            models.insert(0, default_model)
-
-        # Build exclude_rules list
-        exclude_rules = [r.strip() for r in exclude_raw.split(",") if r.strip()]
-
-        # Build sonar_options block
-        sonar_options_lines = [f'clone_type = "{clone_type}"']
-        if clone_type == "pr" and pull_number:
-            sonar_options_lines.append(f'pull_number = "{pull_number}"')
-
-        # Build optional config lines
-        optional_lines = []
-        if max_fixes > 0:
-            optional_lines.append(f"max_fixes = {max_fixes}")
-        if exclude_rules:
-            rules_str = ", ".join(f'"{r}"' for r in exclude_rules)
-            optional_lines.append(f"exclude_rules = [{rules_str}]")
-
-        models_str = ", ".join(f'"{m}"' for m in models)
-
-        toml = f"""
-        [llm]
-        default_provider = "{provider}"
-        default_model = "{default_model}"
-
-        [[llm.providers]]
-        name = "{provider}"
-        api_key = "{api_key}"
-        default_model = "{default_model}"
-        models = [{models_str}]
-
-        [sonar]
-        default_branch = "{default_branch}"
-        """.strip()
-
-        if optional_lines:
-            toml += "\n" + "\n".join(optional_lines)
-
-        toml += "\n\n[sonar.sonar_options]\n"
-        toml += "\n".join(sonar_options_lines)
-        toml += "\n"
-
-        out = pathlib.Path.home() / ".devdox" / "config.toml"
-        out.write_text(toml)
-        print("config.toml written:")
-        print(toml)
-        EOF
-
-    - name: Run devdox-sonar analysis
-      id: run-sonar
-      shell: bash
-      working-directory: ${{ inputs.working-directory }}
-      run: |
-        devdox-sonar ${{ inputs.extra-args }}
-        echo "report-path=$GITHUB_WORKSPACE/.devdox-sonar-report" >> "$GITHUB_OUTPUT"
-
-    - name: Clean up config files
-      if: always()
-      shell: bash
-      run: |
-        rm -f "$HOME/.devdox/auth.json" "$HOME/.devdox/config.toml"
-        echo "Cleaned up ~/.devdox config files"
+  using: "docker"
+  image: "Dockerfile"
+  args:
+    - --command
+    - ${{ inputs.command }}
+    - --sonar-token
+    - ${{ inputs.sonar-token }}
+    - --sonar-org
+    - ${{ inputs.sonar-org }}
+    - --sonar-project
+    - ${{ inputs.sonar-project }}
+    - --project-path
+    - ${{ inputs.project-path }}
+    - --llm-provider
+    - ${{ inputs.llm-provider }}
+    - --llm-api-key
+    - ${{ inputs.llm-api-key }}
+    - --llm-default-model
+    - ${{ inputs.llm-default-model }}
+branding:
+  icon: "activity"
+  color: "blue"

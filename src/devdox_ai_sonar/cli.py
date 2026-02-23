@@ -1063,7 +1063,8 @@ async def _run_fix_issues(**kwargs: Any) -> None:
             pull_request=str(parameters.get("pull_request", 0)),
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
-            download_latest=True
+            download_latest=True,
+            system_ask=True
         )
 
     except SwitchCommandException:
@@ -1104,7 +1105,8 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
             str(fix_params.get("pull_request", 0)),
             fix_params,
             issue_type=IssueType.SECURITY,
-            download_latest=True
+            download_latest=True,
+            system_ask=True
         )
 
     except SwitchCommandException:
@@ -1248,10 +1250,6 @@ async def fix_multiple(**kwargs: Any) -> None:
             "create_backup": 0,
         }
 
-        # Confirm before proceeding
-        if not await smart_confirm("Proceed with these settings?", default=True):
-            console.print("[yellow]Cancelled[/yellow]")
-            return
 
         # Process issues
         await _process_and_fix_issues(
@@ -1261,7 +1259,8 @@ async def fix_multiple(**kwargs: Any) -> None:
             pull_request=str(pull_request),
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
-            download_latest=False
+            download_latest=False,
+            system_ask=False
         )
         #security issues
         await _process_and_fix_issues(
@@ -1271,7 +1270,8 @@ async def fix_multiple(**kwargs: Any) -> None:
             pull_request=str(pull_request),
             fix_params=fix_params,
             issue_type=IssueType.SECURITY,
-            download_latest=False
+            download_latest=False,
+            system_ask=False
         )
 
     except SwitchCommandException:
@@ -1382,7 +1382,8 @@ async def _process_and_fix_issues(
     pull_request: Optional[str],
     fix_params: Dict[str, Any],
     issue_type: IssueType = IssueType.REGULAR,
-    download_latest:bool = True
+    download_latest:bool = True,
+    system_ask:bool=True
 ) -> None:
     """Process and fix issues - Refactored."""
 
@@ -1427,7 +1428,7 @@ async def _process_and_fix_issues(
 
     console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
     await _process_files_with_issues(
-        issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
+        issues, services, auth_config, fix_params, issue_type, Path(tmp_path), system_ask=system_ask
     )
     remove_tmp_files(tmp_path)
 
@@ -1456,6 +1457,7 @@ async def _process_files_with_issues(
     fix_params: Dict[str, Any],
     issue_type: IssueType,
     tmp_path: Path,
+    system_ask:bool=True
 ) -> None:
     """
     Process files with issues.
@@ -1482,6 +1484,7 @@ async def _process_files_with_issues(
             fix_params,
             md_file_path,
             tmp_path,
+            system_ask
         )
 
 
@@ -1492,6 +1495,7 @@ async def _process_regular_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask:bool=True
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1514,6 +1518,7 @@ async def _process_regular_issues(
             fix_params,
             md_file_path,
             tmp_path,
+            system_ask
         )
 
         if not success:
@@ -1528,6 +1533,7 @@ async def _process_issues_for_rule(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask:bool = True
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1564,7 +1570,7 @@ async def _process_issues_for_rule(
             tmp_path=tmp_path,
         )
 
-        if not await _should_continue_to_next_issue(idx, total_issues):
+        if not await _should_continue_to_next_issue(idx, total_issues, system_ask=system_ask):
             return False  # Stop processing
 
     return True  # Continue to next rule
@@ -1714,14 +1720,14 @@ def _collect_rule_information(
     return rule_info_list
 
 
-async def _should_continue_to_next_issue(current_idx: int, total_files: int) -> bool:
+async def _should_continue_to_next_issue(current_idx: int, total_files: int, system_ask:bool=True) -> bool:
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
-
-    if not await smart_confirm("Continue to next issue?", default=True):
-        console.print("[yellow]Stopped processing remaining files[/yellow]")
-        return False
+    if system_ask:
+        if not await smart_confirm("Continue to next issue?", default=True):
+            console.print("[yellow]Stopped processing remaining files[/yellow]")
+            return False
 
     return True
 
