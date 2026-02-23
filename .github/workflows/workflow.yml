@@ -23,18 +23,19 @@ jobs:
             sonar-token: ${{ secrets.SONAR_TOKEN }}
             sonar-org: ${{ secrets.SONAR_ORG }}
             sonar-project: ${{ secrets.SONAR_PROJ }}
+            project-path: ${{ github.workspace }}
 
             # ── Analysis mode ───────────────────────────────────────────────────
-            clone-type: "pr"
-            pull-number:  ${{ github.event.pull_request.number }}
+            pull-number: ${{ github.event.pull_request.number }}
 
             # ── LLM ─────────────────────────────────────────────────────────────
             llm-provider: ${{ secrets.LLM_API_PROVIDER}}
             llm-api-key: ${{ secrets.LLM_API_KEY }}
             llm-default-model:  ${{ secrets.LLM_MODEL }}
-            llm-models: [${{ secrets.LLM_MODEL }}]
+            llm-models: ${{ secrets.LLM_MODEL }}
 
-            # ── Optional tuning ─────────────────────────────────────────────────
+
+          # ── Optional tuning ─────────────────────────────────────────────────
             max-fixes: "10"
             exclude-rules: "python:S101,python:S106"
 
