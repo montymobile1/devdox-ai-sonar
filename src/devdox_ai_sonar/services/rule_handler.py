@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple, Set
+import ast
 import logging
 import re
 
@@ -13,6 +14,7 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     BlockType,
+    PlacementType,
     LineChange,
     ChangeAction,
     SearchReplace,
@@ -433,6 +435,190 @@ class ConvenationNameHandler(RuleHandler):
         return blocks
 
 
+_S1192_MESSAGE_PATTERN = re.compile(
+    r'Define a constant instead of duplicating this literal "(.*?)" (\d+) times\.'
+)
+
+
+class StringLiteralDuplicateHandler(RuleHandler):
+    """
+    Handler for python:S1192 - string literals should not be duplicated.
+
+    This rule flags string literals that appear 3 or more times in a file.
+    The handler extracts each duplicated literal into a module-level constant
+    and replaces all occurrences with the constant name.
+    """
+
+    RULE_ID = "python:S1192"
+    MOIDY_LINE_RANGE = False
+
+    def can_handle(self, rule: str) -> bool:
+        return rule == self.RULE_ID
+
+    async def generate_fixes(
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any = None,
+    ) -> Optional[List[SonarFixResponse]]:
+        """
+        Generate fixes for duplicated string literal issues (python:S1192).
+
+        Strategy:
+        1. Read the full source file and parse it into an AST.
+        2. For each issue, extract the duplicated string from the Sonar message.
+        3. Walk the AST to locate every occurrence of that string literal.
+        4. Build SEARCH_REPLACE code blocks to swap each occurrence with a
+           module-level constant, and set NEW_HELPER_CODE for the definitions.
+
+        Args:
+            issues:       List of S1192 issues (each about a different string).
+            context:      Fix context with surrounding code metadata.
+            project_path: Root of the project.
+            file_path:    Path to the file containing the duplicated literals.
+            llm_caller:   Unused — this handler is purely AST-based.
+
+        Returns:
+            A single-element list with one SonarFixResponse bundling all
+            replacements and constant definitions, or None if no fixes apply.
+        """
+        try:
+            source = file_path.read_text(encoding="utf-8")
+            file_lines = source.splitlines(keepends=True)
+            tree = ast.parse(source, filename=str(file_path))
+        except Exception as e:
+            logger.error(f"Failed to read/parse {file_path}: {e}")
+            return None
+
+        all_code_blocks: List[CodeBlock] = []
+        constant_defs: List[str] = []
+        used_names: Set[str] = set()
+        counter = 0
+
+        for issue in issues:
+            literal = self._extract_literal_from_message(issue.message)
+            if literal is None:
+                continue
+
+            occurrences = self._find_string_occurrences(tree, literal)
+            if not occurrences:
+                continue
+
+            counter += 1
+            const_name = self._generate_constant_name(counter, used_names)
+            used_names.add(const_name)
+
+            blocks = self._build_replacement_blocks(
+                occurrences, file_lines, const_name
+            )
+            all_code_blocks.extend(blocks)
+            constant_defs.append(f'{const_name} = "{literal}"')
+
+        if not all_code_blocks:
+            return None
+
+        helper_code = "\n".join(constant_defs)
+
+        explanation = (
+            f"Extracted {counter} duplicated string literal(s) into module-level "
+            f"constant(s). Replaced {len(all_code_blocks)} occurrence(s) across "
+            f"the file."
+        )
+
+        return [
+            SonarFixResponse(
+                IMPORT_BLOCK="",
+                FIXED_CODE_BLOCKS=all_code_blocks,
+                NEW_HELPER_CODE=helper_code,
+                PLACEMENT=PlacementType.GLOBAL_TOP,
+                EXPLANATION=explanation,
+                CONFIDENCE=0.95,
+            )
+        ]
+
+    @staticmethod
+    def _extract_literal_from_message(message: str) -> Optional[str]:
+        """Extract the duplicated string value from a SonarCloud S1192 message."""
+        match = _S1192_MESSAGE_PATTERN.search(message)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def _find_string_occurrences(
+        tree: ast.Module, target: str
+    ) -> List[Tuple[int, int, int]]:
+        """
+        Walk the AST and return (lineno, col_offset, end_col_offset) for every
+        ast.Constant node whose value equals the target string.
+        """
+        occurrences: List[Tuple[int, int, int]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            if not isinstance(node.value, str):
+                continue
+            if node.value != target:
+                continue
+            if node.end_col_offset is None:
+                continue
+            occurrences.append((node.lineno, node.col_offset, node.end_col_offset))
+        return occurrences
+
+    @staticmethod
+    def _generate_constant_name(counter: int, used_names: Set[str]) -> str:
+        """Return a sequential constant name like STRING_LITERAL_1."""
+        name = f"STRING_LITERAL_{counter}"
+        while name in used_names:
+            counter += 1
+            name = f"STRING_LITERAL_{counter}"
+        return name
+
+    @staticmethod
+    def _build_replacement_blocks(
+        occurrences: List[Tuple[int, int, int]],
+        file_lines: List[str],
+        constant_name: str,
+    ) -> List[CodeBlock]:
+        """
+        Build one SEARCH_REPLACE CodeBlock per occurrence.
+
+        Uses the exact quoted representation from the source line (via column
+        offsets) so that both single-quoted and double-quoted strings are
+        handled correctly.
+        """
+        blocks: List[CodeBlock] = []
+        for lineno, col_start, col_end in occurrences:
+            line_idx = lineno - 1
+            if line_idx < 0 or line_idx >= len(file_lines):
+                continue
+
+            line_text = file_lines[line_idx]
+            quoted_literal = line_text[col_start:col_end]
+
+            blocks.append(
+                CodeBlock(
+                    block_name=constant_name,
+                    start_line=lineno,
+                    end_line=lineno,
+                    has_changes=True,
+                    change_type=ChangeType.SEARCH_REPLACE,
+                    block_type=BlockType.MODULE,
+                    replacements=[
+                        SearchReplace(
+                            search=quoted_literal,
+                            replace=constant_name,
+                            is_regex=False,
+                            count=1,
+                        )
+                    ],
+                )
+            )
+        return blocks
+
+
 class AsyncToSyncHandler(RuleHandler):
     """
     Handler for python:S7503 - unnecessary async functions.
@@ -708,6 +894,7 @@ class RuleHandlerRegistry:
             AsyncToSyncHandler(),
             CognitiveComplexityHandler(),
             ConvenationNameHandler(),
+            StringLiteralDuplicateHandler(),
             DefaultRuleHandler(),  # Catch-all at the end
         ]
 

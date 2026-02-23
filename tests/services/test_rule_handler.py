@@ -1,3 +1,4 @@
+import ast
 import re
 import pytest
 from pathlib import Path
@@ -9,6 +10,7 @@ from devdox_ai_sonar.services.rule_handler import (
     AsyncToSyncHandler,
     CognitiveComplexityHandler,
     DefaultRuleHandler,
+    StringLiteralDuplicateHandler,
     RuleHandlerRegistry,
     _resolve_effective_values,
     _resolve_relative_path,
@@ -18,6 +20,7 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     BlockType,
+    PlacementType,
     SearchReplace,
 )
 from devdox_ai_sonar.models.file_structures import (
@@ -1107,14 +1110,15 @@ class TestRuleHandlerRegistry:
 
     def test_default_handlers_count(self):
         registry = RuleHandlerRegistry()
-        assert len(registry.handlers) == 4
+        assert len(registry.handlers) == 5
 
     def test_handler_order(self):
         registry = RuleHandlerRegistry()
         assert isinstance(registry.handlers[0], AsyncToSyncHandler)
         assert isinstance(registry.handlers[1], CognitiveComplexityHandler)
         assert isinstance(registry.handlers[2], ConvenationNameHandler)
-        assert isinstance(registry.handlers[3], DefaultRuleHandler)
+        assert isinstance(registry.handlers[3], StringLiteralDuplicateHandler)
+        assert isinstance(registry.handlers[4], DefaultRuleHandler)
 
     def test_get_handler_s7503(self):
         registry = RuleHandlerRegistry()
@@ -1145,3 +1149,388 @@ class TestRuleHandlerRegistry:
         custom = Mock(spec=CognitiveComplexityHandler)
         registry.register(custom, priority=0)
         assert registry.handlers[0] is custom
+
+    def test_get_handler_s1192(self):
+        registry = RuleHandlerRegistry()
+        assert isinstance(
+            registry.get_handler("python:S1192"), StringLiteralDuplicateHandler
+        )
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — CAN HANDLE
+# ============================================================================
+
+
+class TestStringLiteralDuplicateCanHandle:
+    """Tests for StringLiteralDuplicateHandler.can_handle."""
+
+    def test_s1192_true(self):
+        assert StringLiteralDuplicateHandler().can_handle("python:S1192") is True
+
+    def test_other_rule_false(self):
+        assert StringLiteralDuplicateHandler().can_handle("python:S117") is False
+
+    def test_empty_string_false(self):
+        assert StringLiteralDuplicateHandler().can_handle("") is False
+
+    def test_partial_match_false(self):
+        assert StringLiteralDuplicateHandler().can_handle("S1192") is False
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — EXTRACT LITERAL FROM MESSAGE
+# ============================================================================
+
+
+class TestExtractLiteralFromMessage:
+    """Tests for StringLiteralDuplicateHandler._extract_literal_from_message."""
+
+    def setup_method(self):
+        self.extract = StringLiteralDuplicateHandler._extract_literal_from_message
+
+    def test_standard_message(self):
+        msg = 'Define a constant instead of duplicating this literal "application/json" 5 times.'
+        assert self.extract(msg) == "application/json"
+
+    def test_string_with_special_chars(self):
+        msg = 'Define a constant instead of duplicating this literal "Content-Type" 3 times.'
+        assert self.extract(msg) == "Content-Type"
+
+    def test_string_with_spaces(self):
+        msg = 'Define a constant instead of duplicating this literal "hello world" 4 times.'
+        assert self.extract(msg) == "hello world"
+
+    def test_string_with_path(self):
+        msg = 'Define a constant instead of duplicating this literal "/api/v1/users" 3 times.'
+        assert self.extract(msg) == "/api/v1/users"
+
+    def test_malformed_message_returns_none(self):
+        assert self.extract("Some random message") is None
+
+    def test_empty_message_returns_none(self):
+        assert self.extract("") is None
+
+    def test_message_without_quotes_returns_none(self):
+        msg = "Define a constant instead of duplicating this literal 3 times."
+        assert self.extract(msg) is None
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — GENERATE CONSTANT NAME
+# ============================================================================
+
+
+class TestGenerateConstantName:
+    """Tests for StringLiteralDuplicateHandler._generate_constant_name."""
+
+    def setup_method(self):
+        self.gen = StringLiteralDuplicateHandler._generate_constant_name
+
+    def test_counter_1(self):
+        assert self.gen(1, set()) == "STRING_LITERAL_1"
+
+    def test_counter_2(self):
+        assert self.gen(2, set()) == "STRING_LITERAL_2"
+
+    def test_collision_increments(self):
+        used = {"STRING_LITERAL_1"}
+        assert self.gen(1, used) == "STRING_LITERAL_2"
+
+    def test_multiple_collisions(self):
+        used = {"STRING_LITERAL_1", "STRING_LITERAL_2", "STRING_LITERAL_3"}
+        assert self.gen(1, used) == "STRING_LITERAL_4"
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — FIND STRING OCCURRENCES
+# ============================================================================
+
+
+class TestFindStringOccurrences:
+    """Tests for StringLiteralDuplicateHandler._find_string_occurrences."""
+
+    def setup_method(self):
+        self.find = StringLiteralDuplicateHandler._find_string_occurrences
+
+    def test_finds_all_matching_strings(self):
+        source = (
+            'x = "hello"\n'
+            'y = "hello"\n'
+            'z = "hello"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 3
+
+    def test_returns_correct_line_numbers(self):
+        source = (
+            'x = "hello"\n'
+            'y = "world"\n'
+            'z = "hello"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        lines = [r[0] for r in result]
+        assert lines == [1, 3]
+
+    def test_does_not_match_different_strings(self):
+        source = (
+            'x = "hello"\n'
+            'y = "world"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "goodbye")
+        assert len(result) == 0
+
+    def test_does_not_match_non_strings(self):
+        source = "x = 42\ny = 3.14\n"
+        tree = ast.parse(source)
+        result = self.find(tree, "42")
+        assert len(result) == 0
+
+    def test_handles_single_quotes(self):
+        source = "x = 'hello'\ny = 'hello'\n"
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 2
+
+    def test_handles_mixed_quotes(self):
+        source = 'x = "hello"\ny = \'hello\'\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 2
+
+    def test_string_in_function(self):
+        source = (
+            "def foo():\n"
+            '    return "test_value"\n'
+            "\n"
+            "def bar():\n"
+            '    return "test_value"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "test_value")
+        assert len(result) == 2
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — BUILD REPLACEMENT BLOCKS
+# ============================================================================
+
+
+class TestBuildReplacementBlocks:
+    """Tests for StringLiteralDuplicateHandler._build_replacement_blocks."""
+
+    def setup_method(self):
+        self.build = StringLiteralDuplicateHandler._build_replacement_blocks
+
+    def test_single_occurrence(self):
+        lines = ['x = "hello"\n']
+        occurrences = [(1, 4, 11)]  # "hello" at col 4-11
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert len(blocks) == 1
+        assert blocks[0].change_type == ChangeType.SEARCH_REPLACE
+        assert blocks[0].start_line == 1
+        assert blocks[0].replacements[0].search == '"hello"'
+        assert blocks[0].replacements[0].replace == "STRING_LITERAL_1"
+
+    def test_multiple_occurrences(self):
+        lines = ['x = "hello"\n', 'y = "hello"\n']
+        occurrences = [(1, 4, 11), (2, 4, 11)]
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert len(blocks) == 2
+        assert blocks[0].start_line == 1
+        assert blocks[1].start_line == 2
+
+    def test_single_quote_preservation(self):
+        lines = ["x = 'hello'\n"]
+        occurrences = [(1, 4, 11)]
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert blocks[0].replacements[0].search == "'hello'"
+
+    def test_invalid_line_number_skipped(self):
+        lines = ['x = "hello"\n']
+        occurrences = [(999, 4, 11)]  # line doesn't exist
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert len(blocks) == 0
+
+    def test_block_type_is_module(self):
+        lines = ['x = "hello"\n']
+        occurrences = [(1, 4, 11)]
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert blocks[0].block_type == BlockType.MODULE
+
+    def test_count_is_one(self):
+        lines = ['x = "hello"\n']
+        occurrences = [(1, 4, 11)]
+        blocks = self.build(occurrences, lines, "STRING_LITERAL_1")
+        assert blocks[0].replacements[0].count == 1
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — GENERATE FIXES (END-TO-END)
+# ============================================================================
+
+
+class TestStringLiteralDuplicateGenerateFixes:
+    """End-to-end tests for StringLiteralDuplicateHandler.generate_fixes."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+        self.project_path = Path("/project")
+
+    def _make_issue(self, message: str, first_line: int = 1) -> Mock:
+        issue = Mock()
+        issue.message = message
+        issue.first_line = first_line
+        issue.rule = "python:S1192"
+        return issue
+
+    async def test_single_duplicated_string(self, tmp_path):
+        source = (
+            'x = "application/json"\n'
+            'y = "application/json"\n'
+            'z = "application/json"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal '
+            '"application/json" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        assert len(result) == 1
+
+        response = result[0]
+        assert len(response.FIXED_CODE_BLOCKS) == 3
+        assert "STRING_LITERAL_1" in response.NEW_HELPER_CODE
+        assert '"application/json"' in response.NEW_HELPER_CODE
+        assert response.PLACEMENT == PlacementType.GLOBAL_TOP
+
+    async def test_multiple_duplicated_strings(self, tmp_path):
+        source = (
+            'x = "hello world"\n'
+            'y = "hello world"\n'
+            'z = "hello world"\n'
+            'a = "foo/bar"\n'
+            'b = "foo/bar"\n'
+            'c = "foo/bar"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issues = [
+            self._make_issue(
+                'Define a constant instead of duplicating this literal '
+                '"hello world" 3 times.'
+            ),
+            self._make_issue(
+                'Define a constant instead of duplicating this literal '
+                '"foo/bar" 3 times.'
+            ),
+        ]
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        assert len(response.FIXED_CODE_BLOCKS) == 6
+        assert "STRING_LITERAL_1" in response.NEW_HELPER_CODE
+        assert "STRING_LITERAL_2" in response.NEW_HELPER_CODE
+
+    async def test_syntax_error_returns_none(self, tmp_path):
+        file = tmp_path / "bad.py"
+        file.write_text("def foo(:\n")
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "x" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_unextractable_message_returns_none(self, tmp_path):
+        source = 'x = "hello"\ny = "hello"\nz = "hello"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue("Some unrelated message")
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_no_occurrences_returns_none(self, tmp_path):
+        source = 'x = "hello"\ny = "world"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal '
+            '"not_found" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_nonexistent_file_returns_none(self):
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "x" 3 times.'
+        )
+        context = _make_context()
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path,
+            Path("/nonexistent/file.py"), llm_caller=None,
+        )
+        assert result is None
+
+    async def test_confidence_is_high(self, tmp_path):
+        source = 'x = "test"\ny = "test"\nz = "test"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "test" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        assert result[0].CONFIDENCE == 0.95
+
+    async def test_replacement_uses_exact_quoted_form(self, tmp_path):
+        source = "x = 'hello'\ny = 'hello'\nz = 'hello'\n"
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        block = result[0].FIXED_CODE_BLOCKS[0]
+        assert block.replacements[0].search == "'hello'"
