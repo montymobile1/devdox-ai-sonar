@@ -474,21 +474,20 @@ class TestPromptWithRichFallback:
 
     @patch('devdox_ai_sonar.utils.ui.console')
     @patch('devdox_ai_sonar.utils.ui.Prompt')
-    def test_shows_switch_hint_when_enabled(self, mock_prompt_class, mock_console):
-        """Test shows switch command hint when enabled."""
+    def test_no_switch_hint_when_enabled(self, mock_prompt_class, mock_console):
+        """Test switch command hint is not shown even when allow_switch is True."""
         mock_prompt_class.ask.return_value = "input"
 
-        with patch.object(constant, 'SWITCH_COMMAND_TRIGGER', '/'):
-            config = PromptConfig(
-                message="Enter:",
-                allow_switch=True
-            )
+        config = PromptConfig(
+            message="Enter:",
+            allow_switch=True
+        )
 
-            _prompt_with_rich_fallback(config)
+        _prompt_with_rich_fallback(config)
 
-            mock_console.print.assert_called_with(
-                "[dim](Type '/' to switch commands)[/dim]"
-            )
+        # Switch hint should not be printed
+        for call in mock_console.print.call_args_list:
+            assert "switch commands" not in str(call)
 
     @patch('devdox_ai_sonar.utils.ui.console')
     @patch('devdox_ai_sonar.utils.ui.Prompt')
@@ -609,22 +608,20 @@ class TestConfirmWithConsoleFallback:
         assert result == "no"
 
     @patch('devdox_ai_sonar.utils.ui.console')
-    def test_console_confirm_shows_switch_hint(self, mock_console):
-        """Test console fallback shows switch hint."""
+    def test_console_confirm_no_switch_hint(self, mock_console):
+        """Test console fallback does not show switch hint."""
         mock_console.input.return_value = "yes"
 
-        with patch.object(constant, 'SWITCH_COMMAND_TRIGGER', '/'):
-            config = ConfirmConfig(
-                message="Proceed?",
-                default=True,
-                allow_switch=True
-            )
+        config = ConfirmConfig(
+            message="Proceed?",
+            default=True,
+            allow_switch=True
+        )
 
-            _confirm_with_console_fallback(config)
+        _confirm_with_console_fallback(config)
 
-            mock_console.print.assert_called_once_with(
-                "[dim](Type '/' to switch commands)[/dim]"
-            )
+        # Switch hint should not be printed
+        mock_console.print.assert_not_called()
 
     @patch('devdox_ai_sonar.utils.ui.console')
     def test_console_confirm_strips_whitespace(self, mock_console):

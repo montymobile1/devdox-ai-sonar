@@ -256,14 +256,13 @@ class TestPromptConfig:
         assert config.allow_switch is False
 
     def test_prompt_config_get_display_message_with_switch(self):
-        """Test get_display_message with switch enabled."""
+        """Test get_display_message returns plain message regardless of allow_switch."""
         config = PromptConfig(
             message="Enter value:",
             allow_switch=True
         )
 
-        expected = "Enter value:\n[dim](Type '/' to switch commands)[/dim]"
-        assert config.get_display_message() == expected
+        assert config.get_display_message() == "Enter value:"
 
     def test_prompt_config_get_display_message_without_switch(self):
         """Test get_display_message with switch disabled."""
@@ -305,17 +304,15 @@ class TestPromptConfig:
 
         assert config.choices == []
 
-    def test_prompt_config_switch_trigger_in_message(self):
-        """Test display message includes correct switch trigger."""
-        # Assuming constant.SWITCH_COMMAND_TRIGGER is defined
+    def test_prompt_config_switch_trigger_not_in_message(self):
+        """Test display message does not include switch trigger hint."""
         config = PromptConfig(
             message="Choose option:",
             allow_switch=True
         )
 
         display_message = config.get_display_message()
-        assert "Type '/' to switch commands" in display_message or \
-               f"Type '{constant.SWITCH_COMMAND_TRIGGER}' to switch commands" in display_message
+        assert "switch commands" not in display_message
 
 
 # ============================================================================
@@ -358,15 +355,14 @@ class TestConfirmConfig:
         assert config.allow_switch is False
 
     def test_confirm_config_get_display_message_with_switch(self):
-        """Test get_display_message with switch enabled."""
+        """Test get_display_message returns plain message regardless of allow_switch."""
         config = ConfirmConfig(
             message="Confirm action?",
             default=True,
             allow_switch=True
         )
 
-        expected = "Confirm action?\n[dim](Type '/' to switch commands)[/dim]"
-        assert config.get_display_message() == expected
+        assert config.get_display_message() == "Confirm action?"
 
     def test_confirm_config_get_display_message_without_switch(self):
         """Test get_display_message with switch disabled."""
@@ -451,7 +447,7 @@ class TestConfirmConfig:
         choices = config.get_questionary_choices()
 
         assert "Deploy to production?" in display_msg
-        assert "Type '/' to switch commands" in display_msg
+        assert "switch commands" not in display_msg
         assert default_choice == "No"
         assert len(choices) == 3
 

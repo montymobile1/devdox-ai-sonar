@@ -48,9 +48,7 @@ class PromptConfig:
     multiple: bool = False
 
     def get_display_message(self) -> str:
-        """Build the full message with optional switch hint."""
-        if self.allow_switch:
-            return f"{self.message}\n[dim](Type '/' to switch commands)[/dim]"
+        """Build the full message."""
         return self.message
 
 
@@ -63,9 +61,7 @@ class ConfirmConfig:
     allow_switch: bool
 
     def get_display_message(self) -> str:
-        """Build message with optional switch hint."""
-        if self.allow_switch:
-            return f"{self.message}\n[dim](Type '/' to switch commands)[/dim]"
+        """Build the display message."""
         return self.message
 
     def get_default_choice(self) -> str:
