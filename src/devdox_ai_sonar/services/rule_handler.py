@@ -23,7 +23,7 @@ from devdox_ai_sonar.utils.function_finder import (
     detect_original_function_type,
     find_function_implementations,
     AsyncConversionAnalyzer,
-    to_snake_case
+    to_snake_case,
 )
 
 logger = logging.getLogger(__name__)
@@ -189,7 +189,9 @@ class RuleHandler(ABC):
                 modify_line_range=self.MOIDY_LINE_RANGE,
             )
 
-            relative_file_path = _resolve_relative_path(effective_file_path, project_path)
+            relative_file_path = _resolve_relative_path(
+                effective_file_path, project_path
+            )
 
             lst_suggestion.append(
                 FixSuggestion(
@@ -274,7 +276,7 @@ class ConvenationNameHandler(RuleHandler):
 
             # Step 1: Find all function implementations
             function_info = find_function_implementations(
-                project_path, context.functions[0]['name']
+                project_path, context.functions[0]["name"]
             )
 
             if not function_info.get("definitions"):
@@ -284,7 +286,7 @@ class ConvenationNameHandler(RuleHandler):
             # Step 2: Identify parameters to rename in the affected file
             args_to_be_changed = {}
             for definition in function_info["definitions"]:
-                if Path(definition['file']) == file_path:
+                if Path(definition["file"]) == file_path:
                     for arg in definition["args"]:
                         new_arg = to_snake_case(arg)
                         if new_arg != arg:
@@ -299,7 +301,9 @@ class ConvenationNameHandler(RuleHandler):
                 return None
 
             # Step 3: Build caller blocks for cross-file call sites
-            caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info)
+            caller_blocks = self._create_caller_blocks(
+                args_to_be_changed, function_info
+            )
             for block in caller_blocks:
                 response_lst.append(
                     SonarFixResponse(
@@ -365,8 +369,8 @@ class ConvenationNameHandler(RuleHandler):
         Returns:
             A CodeBlock targeting the function definition with the rename applied.
         """
-        original_def = context.context_dict['new_context'][0]['context']
-        num_lines = len(original_def.strip().split('\n'))
+        original_def = context.context_dict["new_context"][0]["context"]
+        num_lines = len(original_def.strip().split("\n"))
         new_def = original_def.replace(arg_name, new_arg_name)
 
         actual_start_line = function_info["line"] - len(function_info["decorators"])
@@ -407,7 +411,7 @@ class ConvenationNameHandler(RuleHandler):
         func_name = function_info["definitions"][0]["function"]
         num_args = len(function_info["definitions"][0]["args"])
 
-        for caller in function_info['calls']:
+        for caller in function_info["calls"]:
             for old_arg_name, new_arg_name in args_to_be_changed.items():
                 blocks.append(
                     CodeBlock(
@@ -510,9 +514,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
             const_name = self._generate_constant_name(counter, used_names)
             used_names.add(const_name)
 
-            blocks = self._build_replacement_blocks(
-                occurrences, file_lines, const_name
-            )
+            blocks = self._build_replacement_blocks(occurrences, file_lines, const_name)
             all_code_blocks.extend(blocks)
             constant_defs.append(f'{const_name} = "{literal}"')
 
@@ -668,7 +670,9 @@ class AsyncToSyncHandler(RuleHandler):
 
             # Step 2: Build code block for function definition
             code_blocks.append(
-                self._create_function_definition_block(function_info, context, file_path)
+                self._create_function_definition_block(
+                    function_info, context, file_path
+                )
             )
 
             # Step 3: Analyze call sites

@@ -349,6 +349,7 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         print(f"Syntax error: {e}")
         return []
 
+
 def to_snake_case(name: str) -> str:
     if not name:
         raise ValueError("Identifier name must not be empty.")
@@ -359,6 +360,7 @@ def to_snake_case(name: str) -> str:
     text: str = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
     text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
     return text.lower()
+
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
     """
@@ -702,8 +704,17 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
     async def _find_all_callers(self) -> None:
         """Find all places where this function is called."""
         exclude_dirs = {
-            "venv", ".venv", "env", ".env", "node_modules", "__pycache__",
-            ".git", ".tox", ".mypy_cache", ".pytest_cache", "site-packages",
+            "venv",
+            ".venv",
+            "env",
+            ".env",
+            "node_modules",
+            "__pycache__",
+            ".git",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "site-packages",
         }
 
         for file_path in self.codebase_root.rglob("*.py"):
@@ -745,7 +756,7 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
 
     def _check_if_awaited_in_context(
         self,
-        call_node: ast.Call, # NOSONAR
+        call_node: ast.Call,  # NOSONAR
         tree: ast.AST,
     ) -> bool:
         """Check if a call is awaited by examining parent nodes."""

@@ -586,7 +586,7 @@ def apply_search_replace_change(lines: List[str], block: CodeBlock) -> List[str]
         lines, block.replacements, start_idx, end_idx
     ):
         # Strategy 2: Fall back to multiline replacement
-       _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
+        _apply_multiline_replacements(lines, block.replacements, start_idx, end_idx)
 
     return lines
 
