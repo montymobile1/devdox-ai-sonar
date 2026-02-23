@@ -750,7 +750,6 @@ async def main(  # ← Async main
         "pull_request": pull_request,
         "excluded_rules": excluded_rules,
     }
-    print("llm_api_key ", llm_api_key)
     # If command specified, run it directly
     if command:
         await _execute_command_async(ctx, command)
