@@ -306,7 +306,7 @@ class ConvenationNameHandler(RuleHandler):
                         IMPORT_BLOCK="",
                         FIXED_CODE_BLOCKS=[block],
                         NEW_HELPER_CODE="",
-                        PLACEMENT="SIBLING",
+                        PLACEMENT=PlacementType.SIBLING,
                         EXPLANATION="",
                         CONFIDENCE=0.95,
                     )
@@ -329,7 +329,7 @@ class ConvenationNameHandler(RuleHandler):
                     IMPORT_BLOCK="",
                     FIXED_CODE_BLOCKS=code_blocks,
                     NEW_HELPER_CODE="",
-                    PLACEMENT="SIBLING",
+                    PLACEMENT=PlacementType.SIBLING,
                     EXPLANATION=explanation,
                     CONFIDENCE=0.95,
                 )
@@ -692,7 +692,7 @@ class AsyncToSyncHandler(RuleHandler):
                             IMPORT_BLOCK="",
                             FIXED_CODE_BLOCKS=[block],
                             NEW_HELPER_CODE="",
-                            PLACEMENT="SIBLING",
+                            PLACEMENT=PlacementType.SIBLING,
                             EXPLANATION="",
                             CONFIDENCE=0.95,
                         )
@@ -707,7 +707,7 @@ class AsyncToSyncHandler(RuleHandler):
                     IMPORT_BLOCK="",
                     FIXED_CODE_BLOCKS=code_blocks,
                     NEW_HELPER_CODE="",
-                    PLACEMENT="SIBLING",
+                    PLACEMENT=PlacementType.SIBLING,
                     EXPLANATION=explanation.format(caller_count=len(caller_blocks)),
                     CONFIDENCE=0.95,
                 )
