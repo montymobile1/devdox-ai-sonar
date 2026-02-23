@@ -32,7 +32,7 @@ runs:
   image: "Dockerfile"
   args:
     - --command
-    - ${{ inputs.command }}
+    - fix_multiple
     - --sonar-token
     - ${{ inputs.sonar-token }}
     - --sonar-org
