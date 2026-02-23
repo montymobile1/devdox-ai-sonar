@@ -24,6 +24,7 @@ class IssueExtractor:
         issues: List[Union[SonarIssue, SonarSecurityIssue]],
         tmp_path: Path,
         project_path: Path,
+        check_tmp_path: bool = True,
     ) -> ValidationResult:
         """
         Validate that issues are from the same file and extract information.
@@ -40,16 +41,22 @@ class IssueExtractor:
             return ValidationResult(is_valid=False, error="No issues provided")
 
         try:
-            # Step 1: Extract and validate file paths
-            file_path_tmp, line_range_tmp = _validate_and_extract_issue_info(
-                issues, tmp_path
-            )
 
-            file_path, _ = _validate_and_extract_issue_info(issues, project_path)
+
+            file_path, line_range = _validate_and_extract_issue_info(issues, project_path)
+
+            if check_tmp_path:
+                # Step 1: Extract and validate file paths
+                file_path_tmp, line_range_tmp = _validate_and_extract_issue_info(
+                    issues, tmp_path
+                )
+            else:
+                line_range_tmp = line_range
+                file_path_tmp = file_path
 
             # Step 2: Get content range from tmp file
             line_range_result: Optional[Dict[str, Any]] = await self.get_content_range(
-                file_path_tmp, line_range_tmp, file_path
+                file_path_tmp, line_range_tmp, file_path, check_tmp_path
             )
 
             if line_range_result is None:
@@ -77,17 +84,18 @@ class IssueExtractor:
             return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
     async def get_content_range(
-        self, file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path
+        self, file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path,check_tmp_path: bool = True
     ) -> Optional[Dict[str, Any]]:
         if not file_path_tmp.exists():
             raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
         if not file_path.exists():
             raise FileNotFoundError(f"Actual file not found: {file_path}")
 
+        if check_tmp_path:
             # Extract line range info
-        first_line_tmp = line_range_tmp.get("first_line")
-        last_line_tmp = line_range_tmp.get("last_line")
-        problem_lines_tmp = line_range_tmp.get("problem_lines", [])
+            first_line_tmp = line_range_tmp.get("first_line")
+            last_line_tmp = line_range_tmp.get("last_line")
+            problem_lines_tmp = line_range_tmp.get("problem_lines", [])
 
         if (
             first_line_tmp is None

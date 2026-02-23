@@ -3,7 +3,7 @@ description: "Run devdox-sonar code quality analysis on your Python project"
 inputs:
   command:
     description: "Command to run (e.g., 'fix_multiple')"
-    required: false
+    required: true
     default: "fix_multiple"
   sonar-token:
     description: "SonarCloud authentication token (SONAR_TOKEN)"

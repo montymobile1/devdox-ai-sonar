@@ -1422,7 +1422,7 @@ async def _process_and_fix_issues(
     """Process and fix issues - Refactored."""
 
     services = _initialize_fix_services(auth_config, llm_config)
-
+    tmp_path = generate_tmp_path()
     if download_latest:
         tmp_path = generate_tmp_path()
         branch_downloaded = branch
@@ -1442,8 +1442,8 @@ async def _process_and_fix_issues(
         if not downloaded:
             console.print("Not able to download latest version")
             raise click.Abort()
-    else:
-        tmp_path = str(auth_config.project_path)
+
+
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
         services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
