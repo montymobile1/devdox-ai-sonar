@@ -93,6 +93,7 @@ AWAIT_REMOVAL_PATTERN = r"\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()"
 ARG_RENAME_PATTERN = r"(\b{func_name}\s*\([\s\S]*?\b){old_arg}\s*="
 FUNC_CALL_RENAME_PATTERN = r"(?<!\w)(?<!def ){func_name}(?![\w])(?=\s*\()"
 
+
 class RuleHandler(ABC):
     """Abstract base class for rule-specific fix handlers."""
 
@@ -231,19 +232,19 @@ class ConvenationNameHandler(RuleHandler):
     definition and all known call sites in the project.
     """
 
-    RULE_ID = ["python:S117", "python:S1172","python:S1542"]
+    RULE_ID = ["python:S117", "python:S1172", "python:S1542"]
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
         return rule in self.RULE_ID
 
     async def generate_fixes(
-            self,
-            issues: List[Union[SonarIssue, SonarSecurityIssue]],
-            context: FixContext,
-            project_path: Path,
-            file_path: Path,
-            llm_caller: Any = None,
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for parameter naming/usage violations.
@@ -253,7 +254,6 @@ class ConvenationNameHandler(RuleHandler):
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
         """
         try:
-
             if len(context.functions) == 0:
                 logger.warning("Could not find functions ")
                 return None
@@ -263,29 +263,39 @@ class ConvenationNameHandler(RuleHandler):
             )
 
             if not function_info.get("definitions"):
-                logger.warning("Could not find function definitions for %s", context.functions[0]["name"])
+                logger.warning(
+                    "Could not find function definitions for %s",
+                    context.functions[0]["name"],
+                )
                 return None
 
             for issue in issues:
-
                 if issue.rule == "python:S117":
-                    return self._fix_naming_convention(function_info, context, file_path)
+                    return self._fix_naming_convention(
+                        function_info, context, file_path
+                    )
                 if issue.rule == "python:S1542":
-                    return self._fix_func_naming_convention(function_info, context, file_path)
+                    return self._fix_func_naming_convention(
+                        function_info, context, file_path
+                    )
                 elif issue.rule == "python:S1172":
-                    return  self._fix_unused_parameters(function_info, context, file_path)
+                    return self._fix_unused_parameters(
+                        function_info, context, file_path
+                    )
 
             return None
 
         except Exception as e:
-            logger.error("Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True)
+            logger.error(
+                "Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True
+            )
             return None
 
     def _fix_unused_parameters(
-            self,
-            function_info: Dict,
-            context: FixContext,
-            file_path: Path,
+        self,
+        function_info: Dict,
+        context: FixContext,
+        file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         args_safe_to_remove: List[str] = []
 
@@ -319,7 +329,9 @@ class ConvenationNameHandler(RuleHandler):
             f"This satisfies python:S1172 (unused function parameters)."
         )
 
-        logger.info("Generated %d block(s) for S1172 unused param removal", len(code_blocks))
+        logger.info(
+            "Generated %d block(s) for S1172 unused param removal", len(code_blocks)
+        )
 
         return [
             SonarFixResponse(
@@ -333,9 +345,9 @@ class ConvenationNameHandler(RuleHandler):
         ]
 
     def _collect_removable_params(
-            self,
-            definition: Dict,
-            calls: List[Dict],
+        self,
+        definition: Dict,
+        calls: List[Dict],
     ) -> List[str]:
         """
         Identify which unused parameters in a single definition are safe to remove.
@@ -356,7 +368,8 @@ class ConvenationNameHandler(RuleHandler):
                 safe.append(param)
                 logger.info(
                     "Param '%s' (index %d) unused in body and at all call sites — safe to remove",
-                    param, callsite_index,
+                    param,
+                    callsite_index,
                 )
             else:
                 logger.info(
@@ -394,10 +407,10 @@ class ConvenationNameHandler(RuleHandler):
         return raw_index - 1 if has_self else raw_index
 
     def _remove_parameter_block(
-            self,
-            definition: Dict,
-            context: FixContext,
-            param: str,
+        self,
+        definition: Dict,
+        context: FixContext,
+        param: str,
     ) -> CodeBlock:
         """
         Build a CodeBlock that removes a single unused parameter from a function definition.
@@ -440,9 +453,7 @@ class ConvenationNameHandler(RuleHandler):
             change_type=ChangeType.FULL_CODE,
             start_line=definition["line"],
             end_line=definition["line"] + len(signature_lines) - 1,
-
             context=cleaned_signature,
-
         )
 
     def _remove_param_from_signature(self, signature: str, param: str) -> str:
@@ -471,7 +482,9 @@ class ConvenationNameHandler(RuleHandler):
         pattern = re.compile(
             r"""
             \*{0,2}             # optional * or **
-            \b""" + re.escape(param) + r"""\b
+            \b"""
+            + re.escape(param)
+            + r"""\b
             (?:\s*:\s*[^,=)]+)? # optional type annotation:  : SomeType
             (?:\s*=\s*[^,)]+)?  # optional default value:     = some_value
             \s*,?\s*            # trailing comma + whitespace
@@ -496,10 +509,10 @@ class ConvenationNameHandler(RuleHandler):
         return cleaned
 
     def _fix_naming_convention(
-            self,
-            function_info: Dict,
-            context: FixContext,
-            file_path: Path,
+        self,
+        function_info: Dict,
+        context: FixContext,
+        file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         """
         S117: Rename non-snake_case parameters in the function definition
@@ -510,7 +523,7 @@ class ConvenationNameHandler(RuleHandler):
         args_to_be_changed = {}
 
         for definition in function_info["definitions"]:
-            if Path(definition['file']) == file_path:
+            if Path(definition["file"]) == file_path:
                 for arg in definition["args"]:
                     new_arg = to_snake_case(arg)
                     if new_arg != arg:
@@ -524,7 +537,9 @@ class ConvenationNameHandler(RuleHandler):
         if not code_blocks:
             return None
 
-        caller_blocks = self._create_caller_blocks(args_to_be_changed, function_info,"change_arg_name")
+        caller_blocks = self._create_caller_blocks(
+            args_to_be_changed, function_info, "change_arg_name"
+        )
         for block in caller_blocks:
             response_lst.append(
                 SonarFixResponse(
@@ -545,7 +560,9 @@ class ConvenationNameHandler(RuleHandler):
             f"parameters to follow the snake_case naming convention."
         )
 
-        logger.info("Generated %d definition block(s) for S117 rename", len(code_blocks))
+        logger.info(
+            "Generated %d definition block(s) for S117 rename", len(code_blocks)
+        )
 
         response_lst.append(
             SonarFixResponse(
@@ -561,10 +578,10 @@ class ConvenationNameHandler(RuleHandler):
         return response_lst
 
     def _fix_func_naming_convention(
-            self,
-            function_info: Dict,
-            context: FixContext,
-            file_path: Path,
+        self,
+        function_info: Dict,
+        context: FixContext,
+        file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         """
         S117: Rename non-snake_case parameters in the function definition
@@ -575,17 +592,20 @@ class ConvenationNameHandler(RuleHandler):
         funcs_to_be_changed = {}
 
         for definition in function_info["definitions"]:
-            if Path(definition['file']) == file_path:
+            if Path(definition["file"]) == file_path:
                 new_name = to_snake_case(definition["function"])
                 funcs_to_be_changed[definition["function"]] = new_name
                 code_blocks.append(
                     self._change_function_definition_block(
                         definition, context, definition["function"], new_name
-                    ))
+                    )
+                )
         if not code_blocks:
             return None
 
-        caller_blocks = self._create_caller_blocks(funcs_to_be_changed, function_info, "change_func_name")
+        caller_blocks = self._create_caller_blocks(
+            funcs_to_be_changed, function_info, "change_func_name"
+        )
         for block in caller_blocks:
             response_lst.append(
                 SonarFixResponse(
@@ -598,7 +618,6 @@ class ConvenationNameHandler(RuleHandler):
                 )
             )
 
-
         explanation = (
             f"Renamed non-snake_case function(s) {list(funcs_to_be_changed.keys())} "
             f"to {list(funcs_to_be_changed.values())}. "
@@ -607,7 +626,9 @@ class ConvenationNameHandler(RuleHandler):
             f"to follow snake_case naming convention."
         )
 
-        logger.info("Generated %d definition block(s) for S1542 rename", len(code_blocks))
+        logger.info(
+            "Generated %d definition block(s) for S1542 rename", len(code_blocks)
+        )
 
         response_lst.append(
             SonarFixResponse(
@@ -621,7 +642,6 @@ class ConvenationNameHandler(RuleHandler):
         )
 
         return response_lst
-
 
     def _change_function_definition_block(
         self,
@@ -667,7 +687,7 @@ class ConvenationNameHandler(RuleHandler):
         self,
         args_to_be_changed: Dict[str, str],
         function_info: Dict[str, Any],
-        change_type: str = "change_arg_name"
+        change_type: str = "change_arg_name",
     ) -> List[CodeBlock]:
         """
         Build CodeBlocks to rename keyword arguments at all call sites.
@@ -699,8 +719,9 @@ class ConvenationNameHandler(RuleHandler):
                     )
                     replace_pattern = r"\1" + f"{new_arg_name}="
                 else:
-
-                    search_pattern = FUNC_CALL_RENAME_PATTERN.format(func_name=re.escape(old_arg_name))
+                    search_pattern = FUNC_CALL_RENAME_PATTERN.format(
+                        func_name=re.escape(old_arg_name)
+                    )
                     replace_pattern = new_arg_name
                 blocks.append(
                     CodeBlock(

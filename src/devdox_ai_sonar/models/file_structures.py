@@ -68,7 +68,8 @@ class LineRange:
         return (
             0 <= self.start <= self.end
             and (self.start == self.end or self.end > 0)
-            and self.end <= total_lines and total_lines > 0
+            and self.end <= total_lines
+            and total_lines > 0
         )
 
 

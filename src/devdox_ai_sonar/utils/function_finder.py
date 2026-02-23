@@ -13,7 +13,8 @@ _SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on a
 
 _MAX_IDENTIFIER_LENGTH = 256
 
-def _collect_used_names(func_node: ast.FunctionDef) -> set[str]:
+
+def _collect_used_names(func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> set[str]:
     """Collect all Name references inside the function body (excluding the signature)."""
     used = set()
     for node in ast.walk(ast.Module(body=func_node.body, type_ignores=[])):
@@ -25,9 +26,10 @@ def _collect_used_names(func_node: ast.FunctionDef) -> set[str]:
                 used.add(node.value.id)
     return used
 
+
 def _extract_all_args(args: ast.arguments) -> List[str]:
     """Extract all argument names from a function signature."""
-    all_args = []
+    all_args: List[str] = []
 
     # Regular positional args: def f(a, b)
     all_args.extend(arg.arg for arg in args.args)
@@ -44,6 +46,7 @@ def _extract_all_args(args: ast.arguments) -> List[str]:
         all_args.append(f"**{args.kwarg.arg}")
 
     return all_args
+
 
 def _call_node_uses_param(
     node: ast.Call,
@@ -109,7 +112,11 @@ def _is_param_used_at_callsite(
                 if match_kind is not None:
                     logger.debug(
                         "Param '%s' (index %d) found %s at %s:%s",
-                        param, param_index, match_kind, file_path, line_number,
+                        param,
+                        param_index,
+                        match_kind,
+                        file_path,
+                        line_number,
                     )
                     return True
 
@@ -119,6 +126,8 @@ def _is_param_used_at_callsite(
             )
 
     return False
+
+
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
 # ============================================================================
@@ -343,10 +352,10 @@ class FunctionLocator(ast.NodeVisitor):
     ) -> None:
         """Track function definitions."""
         unused_args = []
-        EXEMPT = {"self", "cls","*args","**kwargs"}
+        EXEMPT = {"self", "cls", "*args", "**kwargs"}
         if node.name == self.target_function:
             used_names = _collect_used_names(node)
-            args =  _extract_all_args(node.args)
+            args = _extract_all_args(node.args)
 
             for param in args:
                 if param in EXEMPT:
@@ -367,8 +376,8 @@ class FunctionLocator(ast.NodeVisitor):
                         d.id if isinstance(d, ast.Name) else str(d)
                         for d in node.decorator_list
                     ],
-                    "args":args,
-                    "unused_args":unused_args,
+                    "args": args,
+                    "unused_args": unused_args,
                     "is_async": isinstance(node, ast.AsyncFunctionDef),
                 }
             )
@@ -401,11 +410,7 @@ class FunctionLocator(ast.NodeVisitor):
                     "line": node.lineno,
                     "col": node.col_offset,
                     "context": self._get_context(node),
-                    "kwargs": [
-                        kw.arg
-                        for kw in node.keywords
-                        if kw.arg is not None
-                    ],
+                    "kwargs": [kw.arg for kw in node.keywords if kw.arg is not None],
                 }
             )
 
@@ -471,6 +476,7 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         print(f"Syntax error: {e}")
         return []
 
+
 def to_snake_case(name: str) -> str:
     if not name:
         raise ValueError("Identifier name must not be empty.")
@@ -478,9 +484,10 @@ def to_snake_case(name: str) -> str:
         raise ValueError(
             f"Identifier name exceeds maximum allowed length of {_MAX_IDENTIFIER_LENGTH}."
         )
-    text = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
+    text: str = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
     text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
     return text.lower()
+
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
     """

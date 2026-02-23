@@ -932,9 +932,7 @@ async def change_parameters(
             "Rules to be excluded  ([yellow]comma-separated[/yellow], "
             "or [bold cyan]NONE[/bold cyan] for no exclusions)"
         )
-        
-        
-        
+
         _ = await change_field(
             manager=manager,
             field=EXCLUDE_RULE_CONFIG_FIELD,
