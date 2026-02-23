@@ -52,6 +52,7 @@ from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
+EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
 
 console = Console()
 
@@ -881,10 +882,15 @@ async def change_field(
 
     if types:
         await manager.set_value(field, types)
-    elif allow_empty and default_value:
-        # User provided empty input but there was a previous value
-        # This means they want to clear it - delete the property from config
-        await manager.delete_value(field)
+    elif allow_empty:
+        # Empty input not allowed — loop until valid input
+        while not types:
+            console.print(constant.EXCLUDE_RULES_EMPTY_ERROR)
+            retry_input = await smart_prompt(
+                message, default=default_value, choices=choices, multiple=multiple
+            )
+            types = retry_input if retry_input else None
+        await manager.set_value(field, types)
     return types
 
 
@@ -963,11 +969,22 @@ async def change_parameters(
             multiple=False,
         )
 
+        console.print(
+            "Rules to be excluded  ([yellow]comma-separated[/yellow], "
+            "or [bold cyan]NONE[/bold cyan] for no exclusions)"
+        )
+        
+        
+        
         _ = await change_field(
             manager=manager,
-            field="configuration.exclude_rules",
-            message="Rules to be excluded  (comma-separated, or press Enter to skip)",
-            default_value=await manager.get_value("configuration.exclude_rules"),
+            field=EXCLUDE_RULE_CONFIG_FIELD,
+            message="Exclude rules",
+            default_value=(
+                await manager.get_value(EXCLUDE_RULE_CONFIG_FIELD)
+                if await manager.get_value(EXCLUDE_RULE_CONFIG_FIELD) is not None
+                else kwargs.get("exclude_rules", constant.EXCLUDE_NONE)
+            ),
             allow_empty=True,
         )
         manager.save_config(create_backup=False)
@@ -1339,7 +1356,10 @@ async def _load_and_validate_config(
         raise click.Abort()
     params = await manager.get_value("configuration") or {}
     if params.get("exclude_rules"):
-        params["exclude_rules"] = str(params["exclude_rules"]).split(",")
+        if str(params["exclude_rules"]) == constant.EXCLUDE_NONE:
+            params["exclude_rules"] = []
+        else:
+            params["exclude_rules"] = str(params["exclude_rules"]).split(",")
 
     params["branch"] = branch
     params["pull_request"] = pull_request
