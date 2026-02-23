@@ -1,0 +1,47 @@
+name: "Fix Sonar Issues"
+description: "Fix Sonar Issues using DevDox Sonar"
+on: [pull_request]
+
+permissions:
+  contents: write
+
+jobs:
+  devdox-sonar:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Run DevDox Sonar (PR)
+        uses: montymobile1/devdox-ai-sonar@0.0.2
+        with:
+            # ── SonarCloud ──────────────────────────────────────────────────────
+            sonar-token: ${{ secrets.SONAR_TOKEN }}
+            sonar-org: ${{ secrets.SONAR_ORG }}
+            sonar-project: ${{ secrets.SONAR_PROJ }}
+            project-path: ${{ github.workspace }}
+
+            # ── Analysis mode ───────────────────────────────────────────────────
+            pull-number: ${{ github.event.pull_request.number }}
+
+            # ── LLM ─────────────────────────────────────────────────────────────
+            llm-provider: ${{ secrets.LLM_API_PROVIDER}}
+            llm-api-key: ${{ secrets.LLM_API_KEY }}
+            llm-default-model:  ${{ secrets.LLM_MODEL }}
+            llm-models: ${{ secrets.LLM_MODEL }}
+
+
+          # ── Optional tuning ─────────────────────────────────────────────────
+            max-fixes: "10"
+            exclude-rules: "python:S101,python:S106"
+
+      - name: Upload Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+            name: devdox-sonar-report
+            path: .devdox-sonar-report
+            retention-days: 30

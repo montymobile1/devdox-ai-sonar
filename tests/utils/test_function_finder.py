@@ -17,6 +17,7 @@ from devdox_ai_sonar.utils.function_finder import (
     find_function_implementations,
     AsyncConversionAnalyzer,
     to_snake_case,
+    _call_node_uses_param,
 )
 from devdox_ai_sonar.models.file_structures import ConversionRisk
 
@@ -1032,3 +1033,71 @@ class TestSyncToAsyncAnalysis:
         assert result.risk_level in (ConversionRisk.NEEDS_CHANGES, ConversionRisk.SAFE)
         if result.risk_level == ConversionRisk.NEEDS_CHANGES:
             assert any("blocking" in s.lower() or "replace" in s.lower() for s in result.suggestions)
+
+
+# ============================================================================
+# _call_node_uses_param — extracted helper
+# ============================================================================
+
+
+class TestCallNodeUsesParam:
+    """Tests for the _call_node_uses_param helper."""
+
+    @staticmethod
+    def _make_call(args=None, keywords=None):
+        """Build a minimal ast.Call node for testing."""
+        return ast.Call(
+            func=ast.Name(id="fn", ctx=ast.Load()),
+            args=args or [],
+            keywords=keywords or [],
+        )
+
+    def test_keyword_match(self):
+        """Param passed as keyword argument → 'kwarg'."""
+        node = self._make_call(
+            keywords=[ast.keyword(arg="x", value=ast.Constant(value=1))]
+        )
+        assert _call_node_uses_param(node, "x", param_index=0) == "kwarg"
+
+    def test_keyword_no_match(self):
+        """Keyword present but for a different name → None."""
+        node = self._make_call(
+            keywords=[ast.keyword(arg="y", value=ast.Constant(value=1))]
+        )
+        assert _call_node_uses_param(node, "x", param_index=5) is None
+
+    def test_positional_match(self):
+        """Enough positional args to cover param_index → 'positional'."""
+        node = self._make_call(
+            args=[ast.Constant(value=1), ast.Constant(value=2)]
+        )
+        assert _call_node_uses_param(node, "b", param_index=1) == "positional"
+
+    def test_positional_out_of_range(self):
+        """param_index beyond positional args and no keyword → None."""
+        node = self._make_call(args=[ast.Constant(value=1)])
+        assert _call_node_uses_param(node, "c", param_index=3) is None
+
+    def test_empty_call(self):
+        """No args and no keywords → None."""
+        node = self._make_call()
+        assert _call_node_uses_param(node, "x", param_index=0) is None
+
+    def test_keyword_takes_priority_over_position(self):
+        """If keyword matches, returns 'kwarg' even when positional index is out of range."""
+        node = self._make_call(
+            keywords=[ast.keyword(arg="x", value=ast.Constant(value=1))]
+        )
+        assert _call_node_uses_param(node, "x", param_index=99) == "kwarg"
+
+    def test_double_star_kwargs_ignored(self):
+        """**kwargs (keyword.arg is None) should not match any param name."""
+        node = self._make_call(
+            keywords=[ast.keyword(arg=None, value=ast.Name(id="kw", ctx=ast.Load()))]
+        )
+        assert _call_node_uses_param(node, "x", param_index=5) is None
+
+    def test_positional_index_zero(self):
+        """First positional arg covers index 0."""
+        node = self._make_call(args=[ast.Constant(value=42)])
+        assert _call_node_uses_param(node, "first", param_index=0) == "positional"

@@ -13,6 +13,121 @@ _SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on a
 
 _MAX_IDENTIFIER_LENGTH = 256
 
+
+def _collect_used_names(func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> set[str]:
+    """Collect all Name references inside the function body (excluding the signature)."""
+    used = set()
+    for node in ast.walk(ast.Module(body=func_node.body, type_ignores=[])):
+        if isinstance(node, ast.Name):
+            used.add(node.id)
+        # Also catch attribute access on a param: self.x, cls.method()
+        elif isinstance(node, ast.Attribute):
+            if isinstance(node.value, ast.Name):
+                used.add(node.value.id)
+    return used
+
+
+def _extract_all_args(args: ast.arguments) -> List[str]:
+    """Extract all argument names from a function signature."""
+    all_args: List[str] = []
+
+    # Regular positional args: def f(a, b)
+    all_args.extend(arg.arg for arg in args.args)
+
+    # *args
+    if args.vararg:
+        all_args.append(f"*{args.vararg.arg}")
+
+    # Keyword-only args (after *args): def f(*args, key=val)
+    all_args.extend(arg.arg for arg in args.kwonlyargs)
+
+    # **kwargs
+    if args.kwarg:
+        all_args.append(f"**{args.kwarg.arg}")
+
+    return all_args
+
+
+def _call_node_uses_param(
+    node: ast.Call,
+    param: str,
+    param_index: int,
+) -> Optional[str]:
+    """
+    Check whether a single Call AST node passes *param* by keyword or by position.
+
+    Args:
+        node:        The ``ast.Call`` node to inspect.
+        param:       The parameter name to look for as a keyword argument.
+        param_index: The 0-based positional index of this param in the
+                     function signature (after stripping self/cls).
+
+    Returns:
+        ``"kwarg"`` if matched by keyword, ``"positional"`` if matched by
+        index, or ``None`` if the parameter is not used at this call site.
+    """
+    for keyword in node.keywords:
+        if keyword.arg == param:
+            return "kwarg"
+
+    if param_index < len(node.args):
+        return "positional"
+
+    return None
+
+
+def _is_param_used_at_callsite(
+    param: str,
+    param_index: int,
+    call_sites: List[Dict],
+) -> bool:
+    """
+    Check if a parameter is used at any call site either:
+      1. As a keyword argument: f(param=value)
+      2. Positionally by index: f(a, b, c)  ← param at position `param_index`
+
+    Args:
+        param:       The parameter name to check.
+        param_index: The 0-based index of this param in the function signature.
+        call_sites:  List of call site dicts from find_function_implementations.
+
+    Returns:
+        True if the param is passed (by name or position) at any call site.
+    """
+    for call in call_sites:
+        file_path = call.get("file", "")
+        line_number = call.get("line", 0)
+
+        try:
+            source = Path(file_path).read_text(encoding="utf-8")
+            tree = ast.parse(source)
+
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if node.lineno != line_number:
+                    continue
+
+                match_kind = _call_node_uses_param(node, param, param_index)
+                if match_kind is not None:
+                    logger.debug(
+                        "Param '%s' (index %d) found %s at %s:%s",
+                        param,
+                        param_index,
+                        match_kind,
+                        file_path,
+                        line_number,
+                    )
+                    return True
+
+        except Exception as e:
+            logger.warning(
+                "Could not inspect call site %s:%s — %s", file_path, line_number, e
+            )
+
+    return False
+
+
 # ============================================================================
 # PART 1: CLASS METHOD FINDER (Distinguishes methods from functions)
 # ============================================================================
@@ -236,7 +351,20 @@ class FunctionLocator(ast.NodeVisitor):
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
     ) -> None:
         """Track function definitions."""
+        unused_args = []
+        EXEMPT = {"self", "cls", "*args", "**kwargs"}
         if node.name == self.target_function:
+            used_names = _collect_used_names(node)
+            args = _extract_all_args(node.args)
+
+            for param in args:
+                if param in EXEMPT:
+                    continue
+                is_used = param in used_names
+
+                if not is_used:
+                    unused_args.append(param)
+
             self.definitions.append(
                 {
                     "file": self.current_file,
@@ -248,7 +376,8 @@ class FunctionLocator(ast.NodeVisitor):
                         d.id if isinstance(d, ast.Name) else str(d)
                         for d in node.decorator_list
                     ],
-                    "args": [arg.arg for arg in node.args.args],
+                    "args": args,
+                    "unused_args": unused_args,
                     "is_async": isinstance(node, ast.AsyncFunctionDef),
                 }
             )
@@ -269,11 +398,8 @@ class FunctionLocator(ast.NodeVisitor):
         """Track function calls."""
         func_name = None
 
-        # Direct function call: function_a()
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
-
-        # Method call: obj.function_a()
         elif isinstance(node.func, ast.Attribute):
             func_name = node.func.attr
 
@@ -284,6 +410,7 @@ class FunctionLocator(ast.NodeVisitor):
                     "line": node.lineno,
                     "col": node.col_offset,
                     "context": self._get_context(node),
+                    "kwargs": [kw.arg for kw in node.keywords if kw.arg is not None],
                 }
             )
 
