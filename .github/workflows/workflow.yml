@@ -17,7 +17,7 @@ jobs:
 
       - name: Run DevDox Sonar (PR)
 
-        uses: montymobile1/devdox-ai-sonar/.github/actions/devdox-sonar@DEV-97-add-git-hub-actions-workflow
+        uses: montymobile1/devdox-ai-sonar/.github/workflows/devdox-sonar@DEV-97-add-git-hub-actions-workflow
         with:
             # ── SonarCloud ──────────────────────────────────────────────────────
             sonar-token: ${{ secrets.SONAR_TOKEN }}
