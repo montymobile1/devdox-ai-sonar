@@ -45,8 +45,35 @@ def _extract_all_args(args: ast.arguments) -> List[str]:
 
     return all_args
 
-def _is_param_used_at_callsite(
+def _call_node_uses_param(
+    node: ast.Call,
+    param: str,
+    param_index: int,
+) -> Optional[str]:
+    """
+    Check whether a single Call AST node passes *param* by keyword or by position.
 
+    Args:
+        node:        The ``ast.Call`` node to inspect.
+        param:       The parameter name to look for as a keyword argument.
+        param_index: The 0-based positional index of this param in the
+                     function signature (after stripping self/cls).
+
+    Returns:
+        ``"kwarg"`` if matched by keyword, ``"positional"`` if matched by
+        index, or ``None`` if the parameter is not used at this call site.
+    """
+    for keyword in node.keywords:
+        if keyword.arg == param:
+            return "kwarg"
+
+    if param_index < len(node.args):
+        return "positional"
+
+    return None
+
+
+def _is_param_used_at_callsite(
     param: str,
     param_index: int,
     call_sites: List[Dict],
@@ -78,23 +105,11 @@ def _is_param_used_at_callsite(
                 if node.lineno != line_number:
                     continue
 
-                # Scenario 1: Explicit keyword argument — f(param=value)
-                for keyword in node.keywords:
-                    if keyword.arg == param:
-                        logger.debug(
-                            "Param '%s' found as kwarg at %s:%s",
-                            param, file_path, line_number,
-                        )
-                        return True
-
-                # Scenario 2: Positional argument — f(a, b, c)
-                # param_index accounts for 'self'/'cls' being stripped already,
-                # so we check if a positional arg exists at that index.
-                positional_args = node.args  # list of positional ast nodes
-                if param_index < len(positional_args):
+                match_kind = _call_node_uses_param(node, param, param_index)
+                if match_kind is not None:
                     logger.debug(
-                        "Param '%s' (index %d) found positionally at %s:%s",
-                        param, param_index, file_path, line_number,
+                        "Param '%s' (index %d) found %s at %s:%s",
+                        param, param_index, match_kind, file_path, line_number,
                     )
                     return True
 
