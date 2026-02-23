@@ -25,7 +25,8 @@ from devdox_ai_sonar.models.sonar import (
 from devdox_ai_sonar.config import settings
 from devdox_ai_sonar.utils.supported_programming_languages import (
     LanguageConfig,
-    LanguageRegistry,
+    lang_from_rule_key,
+    lang_from_file_ext,
 )
 
 logger = logging.getLogger(__name__)
@@ -546,7 +547,6 @@ class SonarCloudAnalyzer:
         issues_data: List[Dict[str, Any]],
         project_key: str,
         language: Optional[LanguageConfig] = None,
-        registry: Optional[LanguageRegistry] = None,
     ) -> List[SonarSecurityIssue]:
         issues = []
 
@@ -559,9 +559,9 @@ class SonarCloudAnalyzer:
                 hotspot_key = issue_data.get("key", "")
 
                 # Filter by language when requested
-                if language and registry:
+                if language:
                     if not self._resolve_hotspot_language(
-                        rule_key, file_path, hotspot_key, language, registry
+                        rule_key, file_path, hotspot_key, language
                     ):
                         continue
 
@@ -842,7 +842,7 @@ class SonarCloudAnalyzer:
             hotspot_key: The unique key of the hotspot.
 
         Returns:
-            Parsed JSON response as HotspotDetail, or empty dict on error.
+            Parsed response as HotspotDetail, or empty HotspotDetail on error.
         """
         url = urljoin(self.base_url, "/api/hotspots/show")
         params: Dict[str, str] = {"hotspot": hotspot_key}
@@ -867,13 +867,13 @@ class SonarCloudAnalyzer:
         file_path: Optional[str],
         hotspot_key: str,
         language: LanguageConfig,
-        registry: LanguageRegistry,
     ) -> bool:
         """Determine whether a security hotspot belongs to a given language.
 
         Uses a 3-pronged strategy:
-          1. If ``rule_key`` is present, resolve via the registry.
-          2. If that fails, resolve from the file extension.
+          1. If ``rule_key`` is present, resolve via ``lang_from_rule_key``.
+          2. If that fails, resolve from the file extension via
+             ``lang_from_file_ext``.
           3. If that also fails, call ``GET /api/hotspots/show`` to
              reliably obtain the rule key and retry prong 1.
 
@@ -885,20 +885,19 @@ class SonarCloudAnalyzer:
             hotspot_key: The unique hotspot key, used for the /show
                 fallback.
             language: The target LanguageConfig to match against.
-            registry: The LanguageRegistry for lookups.
 
         Returns:
             True if the hotspot belongs to the target language.
         """
         # Prong 1: resolve by rule key
         if rule_key:
-            resolved = registry.from_sonar_rule_key(rule_key)
+            resolved = lang_from_rule_key(rule_key)
             if resolved is not None:
                 return resolved.name == language.name
 
         # Prong 2: resolve by file extension
         if file_path:
-            resolved = registry.from_file_extension(file_path)
+            resolved = lang_from_file_ext(file_path)
             if resolved is not None:
                 return resolved.name == language.name
 
@@ -906,7 +905,7 @@ class SonarCloudAnalyzer:
         detail = self.get_hotspot_detail(hotspot_key)
         show_rule_key = detail.get("rule", {}).get("key", "")
         if show_rule_key:
-            resolved = registry.from_sonar_rule_key(show_rule_key)
+            resolved = lang_from_rule_key(show_rule_key)
             if resolved is not None:
                 return resolved.name == language.name
 
@@ -919,7 +918,6 @@ class SonarCloudAnalyzer:
         pull_request: Optional[int] = 0,
         max_issues: Optional[int] = None,
         language: Optional[LanguageConfig] = None,
-        registry: Optional[LanguageRegistry] = None,
     ) -> Dict[str, List[Union[SonarIssue, SonarSecurityIssue]]]:
         """
         Get security issues that are potentially fixable by LLM.
@@ -929,8 +927,6 @@ class SonarCloudAnalyzer:
             branch: Branch to analyze
             max_issues: Maximum number of issues to return
             language: Optional LanguageConfig to filter hotspots by language
-            registry: Optional LanguageRegistry for language resolution
-                (required when language is provided)
 
         Returns:
             Dict mapping file paths to lists of security issues
@@ -941,7 +937,6 @@ class SonarCloudAnalyzer:
             max_issues,
             pull_request_number=pull_request,
             language=language,
-            registry=registry,
         )
 
         if not analysis:
@@ -957,7 +952,6 @@ class SonarCloudAnalyzer:
         max_issues: Optional[int] = 10,
         pull_request_number: Optional[int] = 0,
         language: Optional[LanguageConfig] = None,
-        registry: Optional[LanguageRegistry] = None,
     ) -> Optional[SecurityAnalysisResult]:
         url = urljoin(self.base_url, "/api/hotspots/search")
 
@@ -972,7 +966,7 @@ class SonarCloudAnalyzer:
             )
             issues = self._fetch_issues(url, params, "hotspots")
             parsed_issues = self._parse_security_issues(
-                issues, project_key, language=language, registry=registry
+                issues, project_key, language=language
             )
 
             return SecurityAnalysisResult(

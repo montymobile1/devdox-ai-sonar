@@ -2833,58 +2833,47 @@ class TestLanguageFiltering:
 
     def test_resolve_hotspot_language_prong1_rule_key(self, analyzer):
         """Prong 1: rule key resolves the language."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageConfig, LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         result = analyzer._resolve_hotspot_language(
             rule_key="python:S1234",
             file_path="src/app.py",
             hotspot_key="hs-1",
-            language=python,
-            registry=registry,
+            language=PYTHON,
         )
         assert result is True
 
     def test_resolve_hotspot_language_prong1_wrong_language(self, analyzer):
         """Prong 1: rule key resolves to a different language -> False."""
         from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageConfig, LanguageRegistry,
+            LanguageConfig,
         )
+
         java_config = LanguageConfig(
             name="java",
             sonar_language_key="java",
             sonar_repositories=frozenset({"java"}),
             file_extensions=frozenset({".java"}),
         )
-        registry = LanguageRegistry()
         # Python rule key, but we're asking if it's Java
         result = analyzer._resolve_hotspot_language(
             rule_key="python:S1234",
             file_path=None,
             hotspot_key="hs-1",
             language=java_config,
-            registry=registry,
         )
         assert result is False
 
     def test_resolve_hotspot_language_prong2_file_extension(self, analyzer):
         """Prong 2: empty rule key, falls back to file extension."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         with patch.object(analyzer, "get_hotspot_detail") as mock_show:
             result = analyzer._resolve_hotspot_language(
                 rule_key="",
                 file_path="src/utils/helpers.py",
                 hotspot_key="hs-2",
-                language=python,
-                registry=registry,
+                language=PYTHON,
             )
         assert result is True
         # Prong 3 should NOT have been called because prong 2 resolved it
@@ -2892,11 +2881,7 @@ class TestLanguageFiltering:
 
     def test_resolve_hotspot_language_prong3_show_fallback(self, analyzer):
         """Prong 3: no rule key, unknown extension, falls back to /show."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         with patch.object(
             analyzer,
@@ -2907,18 +2892,13 @@ class TestLanguageFiltering:
                 rule_key="",
                 file_path="src/utils/helpers.unknown",
                 hotspot_key="hs-3",
-                language=python,
-                registry=registry,
+                language=PYTHON,
             )
         assert result is True
 
     def test_resolve_hotspot_language_prong3_no_match(self, analyzer):
         """All 3 prongs fail -> returns False."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         with patch.object(
             analyzer, "get_hotspot_detail", return_value={}
@@ -2927,18 +2907,13 @@ class TestLanguageFiltering:
                 rule_key="",
                 file_path=None,
                 hotspot_key="hs-4",
-                language=python,
-                registry=registry,
+                language=PYTHON,
             )
         assert result is False
 
     def test_resolve_hotspot_language_prong3_show_returns_unknown_rule(self, analyzer):
         """Prong 3 returns a rule key for an unknown language -> False."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         with patch.object(
             analyzer,
@@ -2949,8 +2924,7 @@ class TestLanguageFiltering:
                 rule_key="",
                 file_path=None,
                 hotspot_key="hs-5",
-                language=python,
-                registry=registry,
+                language=PYTHON,
             )
         assert result is False
 
@@ -2958,11 +2932,7 @@ class TestLanguageFiltering:
 
     def test_parse_security_issues_filters_by_language(self, analyzer):
         """Only issues matching the target language are returned."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
+        from devdox_ai_sonar.utils.supported_programming_languages import PYTHON
 
         python_issue = {
             "key": "sec-1",
@@ -2980,15 +2950,16 @@ class TestLanguageFiltering:
         }
 
         # Mock _resolve_hotspot_language to return True only for python_issue
-        def mock_resolve(rule_key, file_path, hotspot_key, language, reg):
+        def mock_resolve(rule_key, file_path, hotspot_key, language):
             return rule_key.startswith("python")
 
-        with patch.object(analyzer, "_resolve_hotspot_language", side_effect=mock_resolve):
+        with patch.object(
+            analyzer, "_resolve_hotspot_language", side_effect=mock_resolve
+        ):
             issues = analyzer._parse_security_issues(
                 [python_issue, java_issue],
                 "test-project",
-                language=python,
-                registry=registry,
+                language=PYTHON,
             )
 
         assert len(issues) == 1
@@ -3017,28 +2988,3 @@ class TestLanguageFiltering:
         )
 
         assert len(issues) == 2
-
-    def test_parse_security_issues_language_without_registry_returns_all(self, analyzer):
-        """When language is set but registry is None, filtering is skipped."""
-        from devdox_ai_sonar.utils.supported_programming_languages import (
-            LanguageRegistry,
-        )
-        registry = LanguageRegistry()
-        python = registry.get(LanguageRegistry.PYTHON)
-
-        issue = {
-            "key": "sec-1",
-            "ruleKey": "java:S3649",
-            "component": "project:src/App.java",
-            "line": 20,
-            "message": "Java issue",
-        }
-
-        # language set but registry=None -> filtering skipped, all returned
-        issues = analyzer._parse_security_issues(
-            [issue],
-            "test-project",
-            language=python,
-            registry=None,
-        )
-        assert len(issues) == 1
