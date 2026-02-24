@@ -227,16 +227,16 @@ class LLMFixer:
     def _convert_regex_to_diff(
         block: CodeBlock, file_cache: Dict[str, List[str]]
     ) -> Dict[str, Any]:
-        """Convert a regex SearchReplace block to a DIFF with actual source code.
+        """Convert a SearchReplace block to a DIFF with actual source code.
 
-        Reads the real source line from disk, applies the regex, and returns
-        a dict of updates for model_copy (change_type, changes, replacements).
+        Reads the real source line from disk, applies the replacement, and
+        returns a dict of updates for model_copy (change_type, changes,
+        replacements).  Handles both regex and plain-string replacements.
         Returns an empty dict if conversion is not applicable or fails.
         """
         if not (
             block.change_type == ChangeType.SEARCH_REPLACE
             and block.replacements
-            and any(r.is_regex for r in block.replacements)
             and block.file_path
         ):
             return {}
@@ -257,6 +257,10 @@ class LLMFixer:
                 if repl.is_regex:
                     fixed_line = re.sub(
                         repl.search, repl.replace, fixed_line, count=repl.count or 0
+                    )
+                else:
+                    fixed_line = fixed_line.replace(
+                        repl.search, repl.replace, repl.count or 1
                     )
             return {
                 "change_type": ChangeType.DIFF,
@@ -1261,9 +1265,9 @@ class LLMFixer:
                 filtered_steps.append("• Print or Log the unused parameters.")
 
                 rule_info_list[rule_key]["how_to_fix"]["steps"] = filtered_steps
-                rule_info_list[rule_key]["name"] = (
-                    "Be sure that every parameter is used"
-                )
+                rule_info_list[rule_key][
+                    "name"
+                ] = "Be sure that every parameter is used"
                 rule_info_list[rule_key]["root_cause"] = None
 
             strategies = self._extend_strategies_for_issue(

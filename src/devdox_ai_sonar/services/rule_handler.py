@@ -809,6 +809,13 @@ class StringLiteralDuplicateHandler(RuleHandler):
         constant_defs: List[str] = []
         used_names: Set[str] = set()
         counter = 0
+        literal_reports: List[Dict[str, Any]] = []
+
+        try:
+            relative_path = str(file_path.relative_to(project_path))
+        except ValueError:
+            relative_path = str(file_path)
+        file_path_str = str(file_path)
 
         for issue in issues:
             literal = self._extract_literal_from_message(issue.message)
@@ -825,28 +832,61 @@ class StringLiteralDuplicateHandler(RuleHandler):
                 const_name = existing[0][0]
                 definition_line = existing[0][1]
                 occurrences = [occ for occ in occurrences if occ[0] != definition_line]
+                action = "reused"
             else:
                 counter += 1
                 const_name = self._generate_constant_name(counter, used_names)
                 used_names.add(const_name)
                 constant_defs.append(f'{const_name} = "{literal}"')
+                definition_line = None
+                action = "created"
 
             if not occurrences:
                 continue
 
-            blocks = self._build_replacement_blocks(occurrences, file_lines, const_name)
+            blocks = self._build_replacement_blocks(
+                occurrences, file_lines, const_name, file_path_str
+            )
             all_code_blocks.extend(blocks)
+
+            literal_reports.append(
+                {
+                    "message": issue.message,
+                    "literal": literal,
+                    "const_name": const_name,
+                    "action": action,
+                    "definition_line": definition_line,
+                    "lines": [occ[0] for occ in occurrences],
+                }
+            )
 
         if not all_code_blocks:
             return None
 
         helper_code = "\n".join(constant_defs)
 
-        explanation = (
-            f"Extracted {counter} duplicated string literal(s) into module-level "
-            f"constant(s). Replaced {len(all_code_blocks)} occurrence(s) across "
-            f"the file."
-        )
+        if constant_defs:
+            all_code_blocks.insert(
+                0,
+                CodeBlock(
+                    block_name="New constants",
+                    start_line=0,
+                    end_line=0,
+                    has_changes=True,
+                    change_type=ChangeType.DIFF,
+                    block_type=BlockType.MODULE,
+                    file_path=file_path_str,
+                    changes=[
+                        LineChange(
+                            line=0,
+                            action=ChangeAction.INSERT,
+                            new=helper_code,
+                        )
+                    ],
+                ),
+            )
+
+        explanation = self._build_explanation(relative_path, literal_reports)
 
         return [
             SonarFixResponse(
@@ -866,6 +906,34 @@ class StringLiteralDuplicateHandler(RuleHandler):
         if match:
             return match.group(1)
         return None
+
+    @staticmethod
+    def _build_explanation(
+        relative_path: str, literal_reports: List[Dict[str, Any]]
+    ) -> str:
+        """Build a structured explanation from per-literal metadata."""
+        parts: List[str] = [f"**File:** `{relative_path}`"]
+        for report in literal_reports:
+            lines_list = "\n".join(f"        - {ln}" for ln in report["lines"])
+            if report["action"] == "reused":
+                action_text = (
+                    f"Reused existing constant "
+                    f"`{report['const_name']}` "
+                    f"(defined at line {report['definition_line']})"
+                )
+            else:
+                action_text = (
+                    f"Created "
+                    f'`{report["const_name"]} = "{report["literal"]}"` '
+                    f"at module level"
+                )
+            parts.append(
+                f"> {report['message']}\n"
+                f"    - **Action:** {action_text}\n"
+                f"    - **Lines affected:**\n"
+                f"{lines_list}"
+            )
+        return "\n\n".join(parts)
 
     @staticmethod
     def _find_existing_constant(tree: ast.Module, target: str) -> List[Tuple[str, int]]:
@@ -946,6 +1014,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
         occurrences: List[Tuple[int, int, int]],
         file_lines: List[str],
         constant_name: str,
+        file_path: Optional[str] = None,
     ) -> List[CodeBlock]:
         """
         Build one SEARCH_REPLACE CodeBlock per occurrence.
@@ -971,6 +1040,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
                     has_changes=True,
                     change_type=ChangeType.SEARCH_REPLACE,
                     block_type=BlockType.MODULE,
+                    file_path=file_path,
                     replacements=[
                         SearchReplace(
                             search=quoted_literal,

@@ -1538,7 +1538,9 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert len(result) == 1
 
         response = result[0]
-        assert len(response.FIXED_CODE_BLOCKS) == 3
+        # 1 constants block + 3 replacement blocks
+        assert len(response.FIXED_CODE_BLOCKS) == 4
+        assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
         assert "STRING_LITERAL_1" in response.NEW_HELPER_CODE
         assert '"application/json"' in response.NEW_HELPER_CODE
         assert response.PLACEMENT == PlacementType.GLOBAL_TOP
@@ -1572,9 +1574,17 @@ class TestStringLiteralDuplicateGenerateFixes:
         )
         assert result is not None
         response = result[0]
-        assert len(response.FIXED_CODE_BLOCKS) == 6
-        assert "STRING_LITERAL_1" in response.NEW_HELPER_CODE
-        assert "STRING_LITERAL_2" in response.NEW_HELPER_CODE
+        # 1 constants block + 6 replacement blocks
+        assert len(response.FIXED_CODE_BLOCKS) == 7
+        assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
+        assert 'STRING_LITERAL_1 = "hello world"' in response.NEW_HELPER_CODE
+        assert 'STRING_LITERAL_2 = "foo/bar"' in response.NEW_HELPER_CODE
+        # Verify each replacement maps to the correct constant
+        replacement_blocks = response.FIXED_CODE_BLOCKS[1:]
+        for block in replacement_blocks[:3]:
+            assert block.replacements[0].replace == "STRING_LITERAL_1"
+        for block in replacement_blocks[3:]:
+            assert block.replacements[0].replace == "STRING_LITERAL_2"
 
     async def test_syntax_error_returns_none(self, tmp_path):
         file = tmp_path / "bad.py"
@@ -1664,8 +1674,168 @@ class TestStringLiteralDuplicateGenerateFixes:
             [issue], context, self.project_path, file, llm_caller=None
         )
         assert result is not None
-        block = result[0].FIXED_CODE_BLOCKS[0]
+        # Skip the constants block (index 0) to get the first replacement block
+        block = result[0].FIXED_CODE_BLOCKS[1]
         assert block.replacements[0].search == "'hello'"
+
+    async def test_bug_unique_constant_names(self, tmp_path):
+        """Verify two different literals get unique constant names."""
+        source = (
+            "def fetch():\n"
+            '    response = requests.get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch2():\n"
+            '    response = requests.get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch3():\n"
+            '    response = requests.get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch4():\n"
+            '    response = requests.post(url, body="1234")\n'
+            "\n"
+            "def fetch5():\n"
+            '    response = requests.post(url, body="1234")\n'
+            "\n"
+            "def fetch6():\n"
+            '    response = requests.post(url, body="1234")\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issues = [
+            self._make_issue(
+                "Define a constant instead of duplicating this literal "
+                '"application/json" 3 times.'
+            ),
+            self._make_issue(
+                "Define a constant instead of duplicating this literal "
+                '"1234" 3 times.'
+            ),
+        ]
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+
+        assert 'STRING_LITERAL_1 = "application/json"' in response.NEW_HELPER_CODE
+        assert 'STRING_LITERAL_2 = "1234"' in response.NEW_HELPER_CODE
+
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        json_blocks = [
+            b
+            for b in replacement_blocks
+            if b.replacements[0].replace == "STRING_LITERAL_1"
+        ]
+        num_blocks = [
+            b
+            for b in replacement_blocks
+            if b.replacements[0].replace == "STRING_LITERAL_2"
+        ]
+        assert len(json_blocks) == 3
+        assert len(num_blocks) == 3
+
+    async def test_explanation_created_constant(self, tmp_path):
+        """Explanation shows SonarCloud message, action, file, and lines."""
+        source = 'x = "hello"\n' 'y = "hello"\n' 'z = "hello"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        explanation = result[0].EXPLANATION
+
+        assert "**File:**" in explanation
+        assert 'duplicating this literal "hello"' in explanation
+        assert "Created" in explanation
+        assert 'STRING_LITERAL_1 = "hello"' in explanation
+        assert "**Lines affected:**" in explanation
+        assert "- 1" in explanation
+        assert "- 2" in explanation
+        assert "- 3" in explanation
+
+    async def test_explanation_reused_constant(self, tmp_path):
+        """Explanation shows reuse action when existing constant found."""
+        source = (
+            'APP_JSON = "application/json"\n'
+            "\n"
+            "def fetch():\n"
+            '    response = get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch2():\n"
+            '    response = get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch3():\n"
+            '    response = get(url, headers={"Content-Type": "application/json"})\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            "Define a constant instead of duplicating this literal "
+            '"application/json" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        explanation = result[0].EXPLANATION
+
+        assert "Reused existing constant" in explanation
+        assert "`APP_JSON`" in explanation
+        assert "defined at line 1" in explanation
+        assert "**Lines affected:**" in explanation
+        # Should NOT have a constants block (reuse case)
+        constants_blocks = [
+            b for b in result[0].FIXED_CODE_BLOCKS if b.block_name == "New constants"
+        ]
+        assert len(constants_blocks) == 0
+
+    async def test_explanation_file_path(self, tmp_path):
+        """Explanation includes relative file path."""
+        source = 'x = "a"\ny = "a"\nz = "a"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "a" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        assert "**File:**" in result[0].EXPLANATION
+
+    async def test_replacement_blocks_have_file_path(self, tmp_path):
+        """All replacement blocks include file_path."""
+        source = 'x = "test"\ny = "test"\nz = "test"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "test" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        for block in result[0].FIXED_CODE_BLOCKS:
+            assert block.file_path is not None
 
 
 # ============================================================================
