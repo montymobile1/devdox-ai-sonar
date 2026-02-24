@@ -41,9 +41,9 @@ class IssueExtractor:
             return ValidationResult(is_valid=False, error="No issues provided")
 
         try:
-
-
-            file_path, line_range = _validate_and_extract_issue_info(issues, project_path)
+            file_path, line_range = _validate_and_extract_issue_info(
+                issues, project_path
+            )
 
             if check_tmp_path:
                 # Step 1: Extract and validate file paths
@@ -56,7 +56,7 @@ class IssueExtractor:
 
             # Step 2: Get content range from tmp file
             line_range_result: Optional[Dict[str, Any]] = await self.get_content_range(
-                file_path_tmp, line_range_tmp, file_path, check_tmp_path
+                file_path_tmp, line_range_tmp, file_path
             )
 
             if line_range_result is None:
@@ -84,13 +84,15 @@ class IssueExtractor:
             return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
     async def get_content_range(
-        self, file_path_tmp: Path, line_range_tmp: Dict[str, Any], file_path: Path,check_tmp_path: bool = True
+        self,
+        file_path_tmp: Path,
+        line_range_tmp: Dict[str, Any],
+        file_path: Path,
     ) -> Optional[Dict[str, Any]]:
         if not file_path_tmp.exists():
             raise FileNotFoundError(f"Temporary file not found: {file_path_tmp}")
         if not file_path.exists():
             raise FileNotFoundError(f"Actual file not found: {file_path}")
-
 
         # Extract line range info
         first_line_tmp = line_range_tmp.get("first_line")
