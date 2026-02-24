@@ -91,11 +91,11 @@ class IssueExtractor:
         if not file_path.exists():
             raise FileNotFoundError(f"Actual file not found: {file_path}")
 
-        if check_tmp_path:
-            # Extract line range info
-            first_line_tmp = line_range_tmp.get("first_line")
-            last_line_tmp = line_range_tmp.get("last_line")
-            problem_lines_tmp = line_range_tmp.get("problem_lines", [])
+
+        # Extract line range info
+        first_line_tmp = line_range_tmp.get("first_line")
+        last_line_tmp = line_range_tmp.get("last_line")
+        problem_lines_tmp = line_range_tmp.get("problem_lines", [])
 
         if (
             first_line_tmp is None
