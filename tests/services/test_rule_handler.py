@@ -103,7 +103,10 @@ class TestAwaitRemovalWhitespace:
         assert apply_removal("\tawait foo()", "foo") == "\tfoo()"
 
     def test_deep_indentation(self):
-        assert apply_removal("        result = await foo()", "foo") == "        result = foo()"
+        assert (
+            apply_removal("        result = await foo()", "foo")
+            == "        result = foo()"
+        )
 
     def test_space_before_paren(self):
         assert apply_removal("await foo ()", "foo") == "foo ()"
@@ -136,7 +139,9 @@ class TestAwaitRemovalDottedAccess:
         assert apply_removal("await cls.foo()", "foo") == "cls.foo()"
 
     def test_dotted_with_assignment(self):
-        assert apply_removal("result = await self.foo(x)", "foo") == "result = self.foo(x)"
+        assert (
+            apply_removal("result = await self.foo(x)", "foo") == "result = self.foo(x)"
+        )
 
     def test_dotted_with_underscore_module(self):
         assert apply_removal("await _private.foo()", "foo") == "_private.foo()"
@@ -239,14 +244,22 @@ class TestAwaitRemovalMultipleAwaits:
 
     def test_await_in_both_sides_of_or(self):
         """Only await before target is removed."""
-        assert apply_removal("x = await foo() or await bar()", "foo") == "x = foo() or await bar()"
+        assert (
+            apply_removal("x = await foo() or await bar()", "foo")
+            == "x = foo() or await bar()"
+        )
 
     def test_await_in_both_sides_of_and(self):
-        assert apply_removal("x = await bar() and await foo()", "foo") == "x = await bar() and foo()"
+        assert (
+            apply_removal("x = await bar() and await foo()", "foo")
+            == "x = await bar() and foo()"
+        )
 
     def test_keyword_arg_same_as_func_name(self):
         """'foo=' should not be confused with 'foo('."""
-        assert apply_removal("await bar(foo=await foo())", "foo") == "await bar(foo=foo())"
+        assert (
+            apply_removal("await bar(foo=await foo())", "foo") == "await bar(foo=foo())"
+        )
 
 
 # ============================================================================
@@ -264,7 +277,10 @@ class TestAwaitRemovalParenthesized:
         assert apply_removal("x = (await foo())[0]", "foo") == "x = (foo())[0]"
 
     def test_paren_await_dotted_prefix(self):
-        assert apply_removal("x = (await module.foo()).bar", "foo") == "x = (module.foo()).bar"
+        assert (
+            apply_removal("x = (await module.foo()).bar", "foo")
+            == "x = (module.foo()).bar"
+        )
 
     def test_double_paren(self):
         assert apply_removal("x = ((await foo()))", "foo") == "x = ((foo()))"
@@ -300,7 +316,10 @@ class TestAwaitRemovalNestedExpressions:
         assert apply_removal("print(await foo())", "foo") == "print(foo())"
 
     def test_ternary_expression(self):
-        assert apply_removal("x = await foo() if True else None", "foo") == "x = foo() if True else None"
+        assert (
+            apply_removal("x = await foo() if True else None", "foo")
+            == "x = foo() if True else None"
+        )
 
     def test_comparison(self):
         assert apply_removal("if await foo() == 1:", "foo") == "if foo() == 1:"
@@ -340,7 +359,9 @@ class TestAwaitRemovalSpecialNames:
     """Function names with underscores, numbers, etc."""
 
     def test_underscore_name(self):
-        assert apply_removal("await _private_func()", "_private_func") == "_private_func()"
+        assert (
+            apply_removal("await _private_func()", "_private_func") == "_private_func()"
+        )
 
     def test_dunder_name(self):
         assert apply_removal("await __init__()", "__init__") == "__init__()"
@@ -399,7 +420,8 @@ class TestAwaitRemovalKnownLimitations:
 
     def test_await_inside_string_literal_matches(self):
         """Regex cannot distinguish code from string contents.
-        This is acceptable because the analyzer won't flag string lines as call sites."""
+        This is acceptable because the analyzer won't flag string lines as call sites.
+        """
         line = 'x = "await foo()"'
         result = apply_removal(line, "foo")
         # The regex WILL match inside the string — this is the known limitation
@@ -515,8 +537,10 @@ class TestBuildFixSuggestion:
         context = _make_context()
         response = _make_fix_response(EXPLANATION="test explanation")
         result = self.handler._build_fix_suggestion(
-            [response], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [response],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": [10]},
         )
         assert len(result) == 1
@@ -527,8 +551,10 @@ class TestBuildFixSuggestion:
     def test_multiple_suggestions(self):
         context = _make_context()
         result = self.handler._build_fix_suggestion(
-            [_make_fix_response(), _make_fix_response()], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [_make_fix_response(), _make_fix_response()],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": []},
         )
         assert len(result) == 2
@@ -537,8 +563,10 @@ class TestBuildFixSuggestion:
         self.handler.model = "gpt-4o"
         context = _make_context()
         result = self.handler._build_fix_suggestion(
-            [_make_fix_response()], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [_make_fix_response()],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": []},
         )
         assert result[0].llm_model == "gpt-4o"
@@ -546,8 +574,10 @@ class TestBuildFixSuggestion:
     def test_default_model_unknown(self):
         context = _make_context()
         result = self.handler._build_fix_suggestion(
-            [_make_fix_response()], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [_make_fix_response()],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": []},
         )
         assert result[0].llm_model == "unknown"
@@ -561,8 +591,10 @@ class TestBuildFixSuggestion:
             },
         )
         result = self.handler._build_fix_suggestion(
-            [_make_fix_response()], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [_make_fix_response()],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": []},
         )
         assert result[0].end_import_block_code == 7
@@ -576,8 +608,10 @@ class TestBuildFixSuggestion:
             },
         )
         result = self.handler._build_fix_suggestion(
-            [_make_fix_response()], context,
-            Path("/project/src/module.py"), Path("/project"),
+            [_make_fix_response()],
+            context,
+            Path("/project/src/module.py"),
+            Path("/project"),
             {"first_line": 10, "last_line": 20, "problem_lines": []},
         )
         assert result[0].end_import_block_code == 0
@@ -634,8 +668,11 @@ class TestCognitiveComplexityHandlerGenerateFixes:
 
     async def test_returns_none_without_llm_caller(self):
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=None,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=None,
         )
         assert result is None
 
@@ -645,8 +682,11 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         mock_llm._call_llm_list.return_value = fix_response
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=mock_llm,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
         )
         assert result == [fix_response]
         mock_llm._call_llm_list.assert_called_once()
@@ -656,8 +696,11 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         mock_llm._call_llm_list.side_effect = RuntimeError("LLM error")
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=mock_llm,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
         )
         assert result is None
 
@@ -677,8 +720,11 @@ class TestDefaultRuleHandlerGenerateFixes:
 
     async def test_returns_none_without_llm_caller(self):
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=None,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=None,
         )
         assert result is None
 
@@ -688,8 +734,11 @@ class TestDefaultRuleHandlerGenerateFixes:
         mock_llm._call_llm_list.return_value = fix_response
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=mock_llm,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
         )
         assert result == [fix_response]
 
@@ -698,8 +747,11 @@ class TestDefaultRuleHandlerGenerateFixes:
         mock_llm._call_llm_list.side_effect = RuntimeError("boom")
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, Path("/project"),
-            Path("/project/src/module.py"), llm_caller=mock_llm,
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
         )
         assert result is None
 
@@ -725,20 +777,25 @@ class TestConvenationNameHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
     async def test_renames_camelcase_arg(self, mock_find, mock_snake):
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "camelCase"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "camelCase"],
+                }
+            ],
             "calls": [],
         }
         mock_snake.side_effect = lambda x: "camel_case" if x == "camelCase" else x
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         assert len(result) >= 1
@@ -750,8 +807,11 @@ class TestConvenationNameHandlerGenerateFixes:
         mock_find.return_value = {"definitions": [], "calls": []}
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -759,20 +819,25 @@ class TestConvenationNameHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
     async def test_returns_none_no_args_need_renaming(self, mock_find, mock_snake):
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "already_snake"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "already_snake"],
+                }
+            ],
             "calls": [],
         }
         mock_snake.side_effect = lambda x: x  # no change
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -780,13 +845,15 @@ class TestConvenationNameHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
     async def test_creates_caller_blocks(self, mock_find, mock_snake):
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "camelCase"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "camelCase"],
+                }
+            ],
             "calls": [
                 {"file": "/other/file.py", "line": 5},
                 {"file": "/another/file.py", "line": 12},
@@ -795,8 +862,11 @@ class TestConvenationNameHandlerGenerateFixes:
         mock_snake.side_effect = lambda x: "camel_case" if x == "camelCase" else x
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         # Should have caller responses (one per caller) + final definition response
@@ -807,8 +877,11 @@ class TestConvenationNameHandlerGenerateFixes:
         mock_find.side_effect = RuntimeError("oops")
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -816,20 +889,25 @@ class TestConvenationNameHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
     async def test_definition_different_file_skipped(self, mock_find, mock_snake):
         mock_find.return_value = {
-            "definitions": [{
-                "file": "/other/file.py",
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "camelCase"],
-            }],
+            "definitions": [
+                {
+                    "file": "/other/file.py",
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "camelCase"],
+                }
+            ],
             "calls": [],
         }
         mock_snake.side_effect = lambda x: "camel_case" if x == "camelCase" else x
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -856,10 +934,15 @@ class TestConvenationNameHelpers:
             },
         )
         func_info = {
-            "function": "my_func", "line": 10, "decorators": [],
+            "function": "my_func",
+            "line": 10,
+            "decorators": [],
         }
         block = self.handler._change_function_definition_block(
-            func_info, context, "camelCase", "camel_case",
+            func_info,
+            context,
+            "camelCase",
+            "camel_case",
         )
         assert block.change_type == ChangeType.FULL_CODE
         assert "camel_case" in block.context
@@ -874,26 +957,34 @@ class TestConvenationNameHelpers:
             },
         )
         func_info = {
-            "function": "my_func", "line": 15, "decorators": ["staticmethod"],
+            "function": "my_func",
+            "line": 15,
+            "decorators": ["staticmethod"],
         }
         block = self.handler._change_function_definition_block(
-            func_info, context, "x", "y",
+            func_info,
+            context,
+            "x",
+            "y",
         )
         assert block.start_line == 14  # 15 - 1 decorator
 
     def test_caller_blocks_per_pair(self):
         func_info = {
-            "definitions": [{
-                "function": "my_func",
-                "args": ["a", "b"],
-            }],
+            "definitions": [
+                {
+                    "function": "my_func",
+                    "args": ["a", "b"],
+                }
+            ],
             "calls": [
                 {"file": "/file1.py", "line": 5},
                 {"file": "/file2.py", "line": 12},
             ],
         }
         blocks = self.handler._create_caller_blocks(
-            {"camelCase": "camel_case", "otherArg": "other_arg"}, func_info,
+            {"camelCase": "camel_case", "otherArg": "other_arg"},
+            func_info,
         )
         # 2 callers × 2 args = 4 blocks
         assert len(blocks) == 4
@@ -938,23 +1029,36 @@ class TestAsyncToSyncHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.detect_original_function_type")
     async def test_success(self, mock_detect, mock_analyzer_cls):
         mock_detect.return_value = {
-            "found": True, "name": "my_func",
+            "found": True,
+            "name": "my_func",
             "definition": "async def my_func():",
             "start_line": 0,
         }
         mock_analysis = ConversionAnalysis(
-            function_name="my_func", current_type="async", target_type="sync",
-            risk_level=ConversionRisk.SAFE, blocking_issues=[], required_changes=[],
-            caller_impact=[{
-                "awaited": True, "file": str(self.file_path), "line": 25,
-            }],
-            internal_calls=[], suggestions=[],
+            function_name="my_func",
+            current_type="async",
+            target_type="sync",
+            risk_level=ConversionRisk.SAFE,
+            blocking_issues=[],
+            required_changes=[],
+            caller_impact=[
+                {
+                    "awaited": True,
+                    "file": str(self.file_path),
+                    "line": 25,
+                }
+            ],
+            internal_calls=[],
+            suggestions=[],
         )
         mock_analyzer_cls.return_value.analyze = AsyncMock(return_value=mock_analysis)
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         assert len(result) >= 1
@@ -964,8 +1068,11 @@ class TestAsyncToSyncHandlerGenerateFixes:
         mock_detect.return_value = {"found": False}
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -973,23 +1080,36 @@ class TestAsyncToSyncHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.detect_original_function_type")
     async def test_cross_file_callers_separated(self, mock_detect, mock_analyzer_cls):
         mock_detect.return_value = {
-            "found": True, "name": "my_func",
+            "found": True,
+            "name": "my_func",
             "definition": "async def my_func():",
             "start_line": 0,
         }
         mock_analysis = ConversionAnalysis(
-            function_name="my_func", current_type="async", target_type="sync",
-            risk_level=ConversionRisk.SAFE, blocking_issues=[], required_changes=[],
-            caller_impact=[{
-                "awaited": True, "file": "/other/file.py", "line": 5,
-            }],
-            internal_calls=[], suggestions=[],
+            function_name="my_func",
+            current_type="async",
+            target_type="sync",
+            risk_level=ConversionRisk.SAFE,
+            blocking_issues=[],
+            required_changes=[],
+            caller_impact=[
+                {
+                    "awaited": True,
+                    "file": "/other/file.py",
+                    "line": 5,
+                }
+            ],
+            internal_calls=[],
+            suggestions=[],
         )
         mock_analyzer_cls.return_value.analyze = AsyncMock(return_value=mock_analysis)
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         # Cross-file caller → separate response; definition → another response
@@ -999,23 +1119,36 @@ class TestAsyncToSyncHandlerGenerateFixes:
     @patch("devdox_ai_sonar.services.rule_handler.detect_original_function_type")
     async def test_skips_non_awaited(self, mock_detect, mock_analyzer_cls):
         mock_detect.return_value = {
-            "found": True, "name": "my_func",
+            "found": True,
+            "name": "my_func",
             "definition": "async def my_func():",
             "start_line": 0,
         }
         mock_analysis = ConversionAnalysis(
-            function_name="my_func", current_type="async", target_type="sync",
-            risk_level=ConversionRisk.SAFE, blocking_issues=[], required_changes=[],
-            caller_impact=[{
-                "awaited": False, "file": str(self.file_path), "line": 25,
-            }],
-            internal_calls=[], suggestions=[],
+            function_name="my_func",
+            current_type="async",
+            target_type="sync",
+            risk_level=ConversionRisk.SAFE,
+            blocking_issues=[],
+            required_changes=[],
+            caller_impact=[
+                {
+                    "awaited": False,
+                    "file": str(self.file_path),
+                    "line": 25,
+                }
+            ],
+            internal_calls=[],
+            suggestions=[],
         )
         mock_analyzer_cls.return_value.analyze = AsyncMock(return_value=mock_analysis)
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         # Only the definition response, no caller blocks
@@ -1026,8 +1159,11 @@ class TestAsyncToSyncHandlerGenerateFixes:
         mock_detect.side_effect = RuntimeError("parsing failed")
 
         result = await self.handler.generate_fixes(
-            self.issues, self.context, self.project_path,
-            self.file_path, llm_caller=None,
+            self.issues,
+            self.context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -1058,7 +1194,9 @@ class TestAsyncToSyncHelpers:
             "start_line": 0,
         }
         file_path = Path("/project/src/module.py")
-        block = self.handler._create_function_definition_block(func_info, context, file_path)
+        block = self.handler._create_function_definition_block(
+            func_info, context, file_path
+        )
         assert block.change_type == ChangeType.DIFF
         assert len(block.changes) == 1
         assert block.changes[0].old == "async def my_func():"
@@ -1126,7 +1264,9 @@ class TestRuleHandlerRegistry:
 
     def test_get_handler_s3776(self):
         registry = RuleHandlerRegistry()
-        assert isinstance(registry.get_handler("python:S3776"), CognitiveComplexityHandler)
+        assert isinstance(
+            registry.get_handler("python:S3776"), CognitiveComplexityHandler
+        )
 
     def test_get_handler_s117(self):
         registry = RuleHandlerRegistry()
@@ -1254,31 +1394,20 @@ class TestFindStringOccurrences:
         self.find = StringLiteralDuplicateHandler._find_string_occurrences
 
     def test_finds_all_matching_strings(self):
-        source = (
-            'x = "hello"\n'
-            'y = "hello"\n'
-            'z = "hello"\n'
-        )
+        source = 'x = "hello"\n' 'y = "hello"\n' 'z = "hello"\n'
         tree = ast.parse(source)
         result = self.find(tree, "hello")
         assert len(result) == 3
 
     def test_returns_correct_line_numbers(self):
-        source = (
-            'x = "hello"\n'
-            'y = "world"\n'
-            'z = "hello"\n'
-        )
+        source = 'x = "hello"\n' 'y = "world"\n' 'z = "hello"\n'
         tree = ast.parse(source)
         result = self.find(tree, "hello")
         lines = [r[0] for r in result]
         assert lines == [1, 3]
 
     def test_does_not_match_different_strings(self):
-        source = (
-            'x = "hello"\n'
-            'y = "world"\n'
-        )
+        source = 'x = "hello"\n' 'y = "world"\n'
         tree = ast.parse(source)
         result = self.find(tree, "goodbye")
         assert len(result) == 0
@@ -1296,7 +1425,7 @@ class TestFindStringOccurrences:
         assert len(result) == 2
 
     def test_handles_mixed_quotes(self):
-        source = 'x = "hello"\ny = \'hello\'\n'
+        source = "x = \"hello\"\ny = 'hello'\n"
         tree = ast.parse(source)
         result = self.find(tree, "hello")
         assert len(result) == 2
@@ -1397,7 +1526,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         file.write_text(source)
 
         issue = self._make_issue(
-            'Define a constant instead of duplicating this literal '
+            "Define a constant instead of duplicating this literal "
             '"application/json" 3 times.'
         )
         context = _make_context(file_path=file)
@@ -1428,11 +1557,11 @@ class TestStringLiteralDuplicateGenerateFixes:
 
         issues = [
             self._make_issue(
-                'Define a constant instead of duplicating this literal '
+                "Define a constant instead of duplicating this literal "
                 '"hello world" 3 times.'
             ),
             self._make_issue(
-                'Define a constant instead of duplicating this literal '
+                "Define a constant instead of duplicating this literal "
                 '"foo/bar" 3 times.'
             ),
         ]
@@ -1480,7 +1609,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         file.write_text(source)
 
         issue = self._make_issue(
-            'Define a constant instead of duplicating this literal '
+            "Define a constant instead of duplicating this literal "
             '"not_found" 3 times.'
         )
         context = _make_context(file_path=file)
@@ -1497,8 +1626,11 @@ class TestStringLiteralDuplicateGenerateFixes:
         context = _make_context()
 
         result = await self.handler.generate_fixes(
-            [issue], context, self.project_path,
-            Path("/nonexistent/file.py"), llm_caller=None,
+            [issue],
+            context,
+            self.project_path,
+            Path("/nonexistent/file.py"),
+            llm_caller=None,
         )
         assert result is None
 
@@ -1537,6 +1669,101 @@ class TestStringLiteralDuplicateGenerateFixes:
 
 
 # ============================================================================
+# FIND EXISTING CONSTANT — UNIT TESTS
+# ============================================================================
+
+
+class TestFindExistingConstant:
+    """Tests for StringLiteralDuplicateHandler._find_existing_constant."""
+
+    def _parse(self, source: str) -> ast.Module:
+        return ast.parse(source)
+
+    def test_simple_assign_found(self):
+        tree = self._parse('APP_JSON = "application/json"\n')
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert len(result) == 1
+        assert result[0] == ("APP_JSON", 1)
+
+    def test_ann_assign_found(self):
+        tree = self._parse('APP_JSON: str = "application/json"\n')
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert len(result) == 1
+        assert result[0] == ("APP_JSON", 1)
+
+    def test_no_match_returns_empty(self):
+        tree = self._parse('x = "other"\n')
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert result == []
+
+    def test_lowercase_name_found(self):
+        tree = self._parse('app_json = "application/json"\n')
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert len(result) == 1
+        assert result[0] == ("app_json", 1)
+
+    def test_multiple_matches_sorted_by_line(self):
+        source = 'APP_JSON = "application/json"\n' 'CONTENT_TYPE = "application/json"\n'
+        tree = self._parse(source)
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert len(result) == 2
+        assert result[0] == ("APP_JSON", 1)
+        assert result[1] == ("CONTENT_TYPE", 2)
+
+    def test_class_level_not_found(self):
+        source = "class Config:\n" '    APP_JSON = "application/json"\n'
+        tree = self._parse(source)
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert result == []
+
+    def test_function_level_not_found(self):
+        source = "def setup():\n" '    content_type = "application/json"\n'
+        tree = self._parse(source)
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert result == []
+
+    def test_dict_value_not_found(self):
+        source = 'HEADERS = {"Content-Type": "application/json"}\n'
+        tree = self._parse(source)
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert result == []
+
+    def test_tuple_unpack_not_found(self):
+        source = 'A, B = "application/json", "other"\n'
+        tree = self._parse(source)
+        result = StringLiteralDuplicateHandler._find_existing_constant(
+            tree, "application/json"
+        )
+        assert result == []
+
+    def test_non_string_value_not_found(self):
+        tree = self._parse("X = 42\n")
+        result = StringLiteralDuplicateHandler._find_existing_constant(tree, "42")
+        assert result == []
+
+    def test_ann_assign_without_value_not_found(self):
+        tree = self._parse("X: str\n")
+        result = StringLiteralDuplicateHandler._find_existing_constant(tree, "anything")
+        assert result == []
+
+
+# ============================================================================
 # CONVENATION NAME HANDLER — DISPATCH BRANCHES (lines 257-278)
 # ============================================================================
 
@@ -1556,7 +1783,11 @@ class TestConvenationNameHandlerDispatch:
         issues = [Mock(rule="python:S117")]
 
         result = await self.handler.generate_fixes(
-            issues, context, self.project_path, self.file_path, llm_caller=None,
+            issues,
+            context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
         mock_find.assert_not_called()
@@ -1575,19 +1806,25 @@ class TestConvenationNameHandlerDispatch:
         )
         issues = [Mock(rule="python:S1542")]
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "myFunc",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "myFunc",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [],
         }
         mock_snake.return_value = "my_func"
 
         result = await self.handler.generate_fixes(
-            issues, context, self.project_path, self.file_path, llm_caller=None,
+            issues,
+            context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is not None
         assert len(result) >= 1
@@ -1605,25 +1842,32 @@ class TestConvenationNameHandlerDispatch:
         )
         issues = [Mock(rule="python:S1172")]
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "unused_param"],
-                "unused_args": ["unused_param"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "unused_param"],
+                    "unused_args": ["unused_param"],
+                }
+            ],
             "calls": [],
         }
         mock_used.return_value = False
 
         # Mock _remove_parameter_block since it reads files from disk
         with patch.object(
-            self.handler, "_remove_parameter_block",
+            self.handler,
+            "_remove_parameter_block",
             return_value=_make_code_block(block_name="test"),
         ):
             result = await self.handler.generate_fixes(
-                issues, context, self.project_path, self.file_path, llm_caller=None,
+                issues,
+                context,
+                self.project_path,
+                self.file_path,
+                llm_caller=None,
             )
         assert result is not None
         assert len(result) >= 1
@@ -1637,18 +1881,24 @@ class TestConvenationNameHandlerDispatch:
         )
         issues = [Mock(rule="python:S9999")]
         mock_find.return_value = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [],
         }
 
         result = await self.handler.generate_fixes(
-            issues, context, self.project_path, self.file_path, llm_caller=None,
+            issues,
+            context,
+            self.project_path,
+            self.file_path,
+            llm_caller=None,
         )
         assert result is None
 
@@ -1673,23 +1923,28 @@ class TestFixUnusedParameters:
         """Unused param not used at callsite → safe to remove."""
         mock_used.return_value = False
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "unused_x"],
-                "unused_args": ["unused_x"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "unused_x"],
+                    "unused_args": ["unused_x"],
+                }
+            ],
             "calls": [],
         }
 
         with patch.object(
-            self.handler, "_remove_parameter_block",
+            self.handler,
+            "_remove_parameter_block",
             return_value=_make_code_block(block_name="test"),
         ) as mock_remove:
             result = self.handler._fix_unused_parameters(
-                function_info, self.context, self.file_path,
+                function_info,
+                self.context,
+                self.file_path,
             )
 
         assert result is not None
@@ -1701,57 +1956,69 @@ class TestFixUnusedParameters:
     def test_definition_different_file_skipped(self):
         """Definition in a different file → skipped, returns None."""
         function_info = {
-            "definitions": [{
-                "file": "/other/file.py",
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "x"],
-                "unused_args": ["x"],
-            }],
+            "definitions": [
+                {
+                    "file": "/other/file.py",
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "x"],
+                    "unused_args": ["x"],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_unused_parameters(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
     def test_underscore_prefix_skipped(self):
         """Params starting with _ are intentionally unused → skipped."""
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "_unused"],
-                "unused_args": ["_unused"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "_unused"],
+                    "unused_args": ["_unused"],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_unused_parameters(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
     def test_param_not_in_args_list(self):
         """Param in unused_args but not in args → ValueError caught, skipped."""
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "other"],
-                "unused_args": ["ghost"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "other"],
+                    "unused_args": ["ghost"],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_unused_parameters(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
@@ -1760,23 +2027,28 @@ class TestFixUnusedParameters:
         """With self as first arg, callsite_index = raw_index - 1."""
         mock_used.return_value = False
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "x", "y"],
-                "unused_args": ["y"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "x", "y"],
+                    "unused_args": ["y"],
+                }
+            ],
             "calls": [{"file": "/caller.py", "line": 5}],
         }
 
         with patch.object(
-            self.handler, "_remove_parameter_block",
+            self.handler,
+            "_remove_parameter_block",
             return_value=_make_code_block(),
         ):
             self.handler._fix_unused_parameters(
-                function_info, self.context, self.file_path,
+                function_info,
+                self.context,
+                self.file_path,
             )
 
         # "y" is at raw_index=2, minus 1 for self → callsite_index=1
@@ -1787,23 +2059,28 @@ class TestFixUnusedParameters:
         """Without self/cls, callsite_index == raw_index."""
         mock_used.return_value = False
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["x", "y"],
-                "unused_args": ["x"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["x", "y"],
+                    "unused_args": ["x"],
+                }
+            ],
             "calls": [],
         }
 
         with patch.object(
-            self.handler, "_remove_parameter_block",
+            self.handler,
+            "_remove_parameter_block",
             return_value=_make_code_block(),
         ):
             self.handler._fix_unused_parameters(
-                function_info, self.context, self.file_path,
+                function_info,
+                self.context,
+                self.file_path,
             )
 
         # "x" is at raw_index=0, no self → callsite_index=0
@@ -1814,19 +2091,23 @@ class TestFixUnusedParameters:
         """Param unused in body but IS used at callsite → not removed."""
         mock_used.return_value = True
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "param"],
-                "unused_args": ["param"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "param"],
+                    "unused_args": ["param"],
+                }
+            ],
             "calls": [{"file": "/caller.py", "line": 5}],
         }
 
         result = self.handler._fix_unused_parameters(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
@@ -1836,23 +2117,28 @@ class TestFixUnusedParameters:
         # "safe_param" → not used at callsite; "used_param" → used at callsite
         mock_used.side_effect = lambda param, idx, calls: param == "used_param"
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "safe_param", "used_param"],
-                "unused_args": ["safe_param", "used_param"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "safe_param", "used_param"],
+                    "unused_args": ["safe_param", "used_param"],
+                }
+            ],
             "calls": [{"file": "/caller.py", "line": 5}],
         }
 
         with patch.object(
-            self.handler, "_remove_parameter_block",
+            self.handler,
+            "_remove_parameter_block",
             return_value=_make_code_block(),
         ) as mock_remove:
             result = self.handler._fix_unused_parameters(
-                function_info, self.context, self.file_path,
+                function_info,
+                self.context,
+                self.file_path,
             )
 
         assert result is not None
@@ -1863,19 +2149,23 @@ class TestFixUnusedParameters:
     def test_no_unused_args_returns_none(self):
         """Empty unused_args list → returns None via _collect_removable_params."""
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self", "x"],
-                "unused_args": [],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "x"],
+                    "unused_args": [],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_unused_parameters(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
@@ -1899,16 +2189,26 @@ class TestGetCallsiteIndex:
 
     def test_underscore_prefix_returns_none(self):
         """Params starting with _ are intentionally unused → None."""
-        assert ConvenationNameHandler._get_callsite_index("_unused", ["self", "_unused"]) is None
+        assert (
+            ConvenationNameHandler._get_callsite_index("_unused", ["self", "_unused"])
+            is None
+        )
 
     def test_param_not_found_returns_none(self):
         """Param not in args list → None."""
-        assert ConvenationNameHandler._get_callsite_index("ghost", ["self", "x"]) is None
+        assert (
+            ConvenationNameHandler._get_callsite_index("ghost", ["self", "x"]) is None
+        )
 
     def test_star_args_stripped(self):
         """Leading * and ** are stripped before lookup."""
-        assert ConvenationNameHandler._get_callsite_index("args", ["self", "*args"]) == 0
-        assert ConvenationNameHandler._get_callsite_index("kwargs", ["self", "**kwargs"]) == 0
+        assert (
+            ConvenationNameHandler._get_callsite_index("args", ["self", "*args"]) == 0
+        )
+        assert (
+            ConvenationNameHandler._get_callsite_index("kwargs", ["self", "**kwargs"])
+            == 0
+        )
 
     def test_empty_args_list(self):
         """Empty args list → param not found → None."""
@@ -1940,7 +2240,9 @@ class TestCollectRemovableParams:
             "args": ["self", "x"],
             "unused_args": ["x"],
         }
-        result = self.handler._collect_removable_params(definition, [{"file": "/f.py", "line": 1}])
+        result = self.handler._collect_removable_params(
+            definition, [{"file": "/f.py", "line": 1}]
+        )
         assert result == []
 
     def test_underscore_param_skipped(self):
@@ -1975,7 +2277,9 @@ class TestCollectRemovableParams:
             "args": ["self", "safe", "used", "_private"],
             "unused_args": ["safe", "used", "_private"],
         }
-        result = self.handler._collect_removable_params(definition, [{"file": "/f.py", "line": 1}])
+        result = self.handler._collect_removable_params(
+            definition, [{"file": "/f.py", "line": 1}]
+        )
         assert result == ["safe"]
 
 
@@ -1991,37 +2295,65 @@ class TestRemoveParamFromSignature:
         self.handler = ConvenationNameHandler()
 
     def test_plain_param_only(self):
-        assert self.handler._remove_param_from_signature("def foo(unused):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature("def foo(unused):", "unused")
+            == "def foo():"
+        )
 
     def test_typed_param(self):
-        assert self.handler._remove_param_from_signature("def foo(unused: int):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature("def foo(unused: int):", "unused")
+            == "def foo():"
+        )
 
     def test_default_value(self):
-        assert self.handler._remove_param_from_signature("def foo(unused=None):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature("def foo(unused=None):", "unused")
+            == "def foo():"
+        )
 
     def test_typed_and_default(self):
-        assert self.handler._remove_param_from_signature("def foo(unused: int = 2):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature(
+                "def foo(unused: int = 2):", "unused"
+            )
+            == "def foo():"
+        )
 
     def test_star_args(self):
-        assert self.handler._remove_param_from_signature("def foo(*unused):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature("def foo(*unused):", "unused")
+            == "def foo():"
+        )
 
     def test_double_star_kwargs(self):
-        assert self.handler._remove_param_from_signature("def foo(**unused):", "unused") == "def foo():"
+        assert (
+            self.handler._remove_param_from_signature("def foo(**unused):", "unused")
+            == "def foo():"
+        )
 
     def test_middle_param(self):
-        result = self.handler._remove_param_from_signature("def foo(a, unused, b):", "unused")
+        result = self.handler._remove_param_from_signature(
+            "def foo(a, unused, b):", "unused"
+        )
         assert result == "def foo(a, b):"
 
     def test_first_param(self):
-        result = self.handler._remove_param_from_signature("def foo(unused, a):", "unused")
+        result = self.handler._remove_param_from_signature(
+            "def foo(unused, a):", "unused"
+        )
         assert result == "def foo(a):"
 
     def test_last_param(self):
-        result = self.handler._remove_param_from_signature("def foo(a, unused):", "unused")
+        result = self.handler._remove_param_from_signature(
+            "def foo(a, unused):", "unused"
+        )
         assert result == "def foo(a):"
 
     def test_multiple_remaining(self):
-        result = self.handler._remove_param_from_signature("def foo(a, unused, b, c):", "unused")
+        result = self.handler._remove_param_from_signature(
+            "def foo(a, unused, b, c):", "unused"
+        )
         assert result == "def foo(a, b, c):"
 
 
@@ -2051,7 +2383,9 @@ class TestRemoveParameterBlock:
         }
         context = _make_context()
 
-        block = self.handler._remove_parameter_block(definition, context, "unused_param")
+        block = self.handler._remove_parameter_block(
+            definition, context, "unused_param"
+        )
         assert block.start_line == 1
         assert block.end_line == 1
         assert "unused_param" not in block.context
@@ -2080,7 +2414,9 @@ class TestRemoveParameterBlock:
         }
         context = _make_context()
 
-        block = self.handler._remove_parameter_block(definition, context, "unused_param")
+        block = self.handler._remove_parameter_block(
+            definition, context, "unused_param"
+        )
         assert block.start_line == 1
         assert block.end_line == 5  # 5 signature lines
         assert "unused_param" not in block.context
@@ -2113,18 +2449,22 @@ class TestFixFuncNamingConvention:
         """camelCase function with no callers → returns SonarFixResponse with definition block."""
         mock_snake.return_value = "my_func"
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "myFunc",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "myFunc",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_func_naming_convention(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is not None
         assert len(result) == 1  # Only the definition response (no caller responses)
@@ -2136,13 +2476,15 @@ class TestFixFuncNamingConvention:
         """camelCase function with callers → caller blocks + definition block."""
         mock_snake.return_value = "my_func"
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "myFunc",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "myFunc",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [
                 {"file": "/other/file.py", "line": 5},
                 {"file": "/another/file.py", "line": 12},
@@ -2150,7 +2492,9 @@ class TestFixFuncNamingConvention:
         }
 
         result = self.handler._fix_func_naming_convention(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is not None
         # 2 caller responses + 1 definition response = 3
@@ -2161,13 +2505,15 @@ class TestFixFuncNamingConvention:
         """to_snake_case returns same name → code block still created (no guard in method)."""
         mock_snake.return_value = "my_func"
         function_info = {
-            "definitions": [{
-                "file": str(self.file_path),
-                "function": "my_func",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [],
         }
         context = _make_context(
@@ -2180,7 +2526,9 @@ class TestFixFuncNamingConvention:
         )
 
         result = self.handler._fix_func_naming_convention(
-            function_info, context, self.file_path,
+            function_info,
+            context,
+            self.file_path,
         )
         # Unlike _fix_naming_convention, this method does not check old == new
         assert result is not None
@@ -2190,18 +2538,22 @@ class TestFixFuncNamingConvention:
         """Definition in different file → skipped → returns None."""
         mock_snake.return_value = "my_func"
         function_info = {
-            "definitions": [{
-                "file": "/other/file.py",
-                "function": "myFunc",
-                "line": 10,
-                "decorators": [],
-                "args": ["self"],
-            }],
+            "definitions": [
+                {
+                    "file": "/other/file.py",
+                    "function": "myFunc",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self"],
+                }
+            ],
             "calls": [],
         }
 
         result = self.handler._fix_func_naming_convention(
-            function_info, self.context, self.file_path,
+            function_info,
+            self.context,
+            self.file_path,
         )
         assert result is None
 
@@ -2225,7 +2577,9 @@ class TestCreateCallerBlocksFuncRename:
         }
 
         blocks = self.handler._create_caller_blocks(
-            {"myFunc": "my_func"}, function_info, "change_func_name",
+            {"myFunc": "my_func"},
+            function_info,
+            "change_func_name",
         )
         assert len(blocks) == 1
         block = blocks[0]
@@ -2248,7 +2602,9 @@ class TestCreateCallerBlocksFuncRename:
         }
 
         blocks = self.handler._create_caller_blocks(
-            {"myFunc": "my_func"}, function_info, "change_func_name",
+            {"myFunc": "my_func"},
+            function_info,
+            "change_func_name",
         )
         assert len(blocks) == 2
         assert blocks[0].file_path == "/a.py"

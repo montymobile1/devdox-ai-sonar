@@ -819,13 +819,23 @@ class StringLiteralDuplicateHandler(RuleHandler):
             if not occurrences:
                 continue
 
-            counter += 1
-            const_name = self._generate_constant_name(counter, used_names)
-            used_names.add(const_name)
+            existing = self._find_existing_constant(tree, literal)
+
+            if len(existing) == 1:
+                const_name = existing[0][0]
+                definition_line = existing[0][1]
+                occurrences = [occ for occ in occurrences if occ[0] != definition_line]
+            else:
+                counter += 1
+                const_name = self._generate_constant_name(counter, used_names)
+                used_names.add(const_name)
+                constant_defs.append(f'{const_name} = "{literal}"')
+
+            if not occurrences:
+                continue
 
             blocks = self._build_replacement_blocks(occurrences, file_lines, const_name)
             all_code_blocks.extend(blocks)
-            constant_defs.append(f'{const_name} = "{literal}"')
 
         if not all_code_blocks:
             return None
@@ -856,6 +866,50 @@ class StringLiteralDuplicateHandler(RuleHandler):
         if match:
             return match.group(1)
         return None
+
+    @staticmethod
+    def _find_existing_constant(tree: ast.Module, target: str) -> List[Tuple[str, int]]:
+        """
+        Find module-level simple assignments whose value is the target string.
+
+        Walks only top-level statements (direct children of ast.Module) and
+        checks both ast.Assign and ast.AnnAssign nodes for a single ast.Name
+        target with an ast.Constant string value matching the target.
+
+        Args:
+            tree:   Parsed AST of the source file.
+            target: The duplicated string literal to search for.
+
+        Returns:
+            List of (variable_name, line_number) tuples sorted by line number.
+            Empty list if no matching assignments found.
+        """
+        matches: List[Tuple[str, int]] = []
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                if len(node.targets) != 1:
+                    continue
+                name_node = node.targets[0]
+                value_node = node.value
+            elif isinstance(node, ast.AnnAssign):
+                name_node = node.target
+                value_node = node.value
+            else:
+                continue
+
+            if not isinstance(name_node, ast.Name):
+                continue
+            if not isinstance(value_node, ast.Constant):
+                continue
+            if not isinstance(value_node.value, str):
+                continue
+            if value_node.value != target:
+                continue
+
+            matches.append((name_node.id, node.lineno))
+
+        matches.sort(key=lambda m: m[1])
+        return matches
 
     @staticmethod
     def _find_string_occurrences(
