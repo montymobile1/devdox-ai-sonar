@@ -349,6 +349,7 @@ class LLMFixer:
         tmp_path: Path,
         modified_content: str = "",
         file_md: str = "",
+        check_tmp_path:bool = True,
     ) -> Optional[List[FixSuggestion]]:
         """
         Generate fix suggestions for issues in a single file.
@@ -376,7 +377,7 @@ class LLMFixer:
         try:
             # Step 1: Validate issues and extract file information
             validation = await extractor.validate_issue_group(
-                issues, tmp_path, project_path
+                issues, tmp_path, project_path,check_tmp_path
             )
 
             if not validation.is_valid:

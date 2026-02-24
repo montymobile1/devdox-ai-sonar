@@ -20,12 +20,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY pyproject.toml .
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir devdox-sonar
 
 # Project mount point
 WORKDIR /github/workspace
 
-RUN mkdir -p /github/workspace/devdox-sonar-report/workflows && \
-    chmod -R 777 /github/workspace
 
 ENTRYPOINT ["python", "-m", "devdox_ai_sonar.cli"]
