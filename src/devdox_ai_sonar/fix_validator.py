@@ -295,7 +295,7 @@ class FixValidator:
                     explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
-            validation_response = self._normalize_code_blocks(validation_response,fix)
+            validation_response = self._normalize_code_blocks(validation_response)
 
 
             modified_fix = fix
@@ -443,94 +443,77 @@ class FixValidator:
         prompt = template.render(**context_dic)
         return prompt.strip()
 
-    def _normalize_code_blocks(self, response: SonarFixResponse, fix: FixSuggestion) -> SonarFixResponse:
+    def _normalize_code_blocks(self, response: SonarFixResponse) -> SonarFixResponse:
         """Normalize code blocks in the response."""
-
         blocks = response.FIXED_CODE_BLOCKS
         if not isinstance(blocks, list):
             return response
 
-        normalized = []
-        for block in blocks:
+        normalized = [self._detect_change_type(block) for block in blocks]
+        self._sort_blocks(normalized)
+        self._align_line_numbers(normalized)
 
-            context = block.context
-            changes = block.changes
-            replacements = block.replacements
+        response.FIXED_CODE_BLOCKS = normalized
+        return response
 
+    @staticmethod
+    def _detect_change_type(block: CodeBlock) -> CodeBlock:
+        """Auto-detect and set the correct change_type based on which fields have data."""
+        has_context = bool(block.context)
+        has_changes = bool(block.changes)
+        has_replacements = bool(block.replacements)
 
+        if has_context:
+            # Context present (with or without other fields) — FULL_CODE wins
+            block.change_type = "FULL_CODE"
+            block.changes = None
+            block.replacements = None
+        elif has_changes and not has_replacements:
+            block.change_type = "DIFF"
+            block.context = ""
+            block.replacements = None
+        elif has_replacements and not has_changes:
+            block.change_type = "SEARCH_REPLACE"
+            block.context = ""
+            block.changes = None
+        elif not has_changes and not has_replacements:
+            # Nothing filled — default to FULL_CODE
+            block.change_type = "FULL_CODE"
 
-            has_context = bool(context)
-            has_changes = bool(changes)
-            has_replacements = bool(replacements)
+        return block
 
-            # Auto-detect correct change_type based on which field has data
-            if has_context and not has_changes and not has_replacements:
-                block.change_type = "FULL_CODE"
-                block.changes = None
-                block.replacements = None
-
-            elif has_changes and not has_context and not has_replacements:
-                block.change_type = "DIFF"
-                block.context = ""
-                block.replacements = None
-
-            elif has_replacements and not has_context and not has_changes:
-                block.change_type = "SEARCH_REPLACE"
-                block.context = ""
-                block.changes = None
-
-            elif has_context and (has_changes or has_replacements):
-                # LLM filled multiple fields — context wins (most complete data)
-                block.change_type = "FULL_CODE"
-                block.changes = None
-                block.replacements = None
-
-            elif not has_context and not has_changes and not has_replacements:
-                # Nothing filled — default to FULL_CODE with empty context
-                # Pydantic will catch this as a validation error
-                block.change_type = "FULL_CODE"
-
-            else:
-                # Fallback: trust declared change_type if present, else FULL_CODE
-                declared = block.get("change_type", "FULL_CODE")
-                block.change_type = declared
-
-            normalized.append(block)
-
-            # --- Step 2: Sort by block_name, FULL_CODE first within each group ---
+    @staticmethod
+    def _sort_blocks(blocks: List[CodeBlock]) -> None:
+        """Sort blocks by block_name, then FULL_CODE first within each group."""
         change_type_order = {
             ChangeType.FULL_CODE: 0,
             ChangeType.DIFF: 1,
             ChangeType.SEARCH_REPLACE: 2,
         }
-        normalized.sort(
+        blocks.sort(
             key=lambda b: (
                 b.block_name,
                 change_type_order.get(b.change_type, 99),
             )
         )
 
-        # --- Step 3: Override start_line/end_line from FULL_CODE to siblings ---
-        # Build a map: block_name -> (start_line, end_line) from FULL_CODE blocks
+    @staticmethod
+    def _align_line_numbers(blocks: List[CodeBlock]) -> None:
+        """Override start_line/end_line from FULL_CODE blocks to siblings sharing the same name."""
         full_code_line_map: dict[str, tuple[int, int]] = {}
-        for block in normalized:
+        for block in blocks:
             if block.change_type == ChangeType.FULL_CODE and block.has_changes:
                 full_code_line_map[block.block_name] = (block.start_line, block.end_line)
 
-        # Apply authoritative line numbers to all blocks sharing the same name
-        for block in normalized:
+        for block in blocks:
             if block.block_name in full_code_line_map:
                 authoritative_start, authoritative_end = full_code_line_map[block.block_name]
                 if (
-                        block.start_line != authoritative_start
-                        or block.end_line != authoritative_end
+                    block.start_line != authoritative_start
+                    or block.end_line != authoritative_end
                 ):
                     block.start_line = authoritative_start
                     block.end_line = authoritative_end
-                    block.line_number = authoritative_start
-
-        response.FIXED_CODE_BLOCKS = normalized
-        return response
 
     def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
         """Call LLM for validation."""

@@ -14,6 +14,7 @@ from devdox_ai_sonar.fix_validator import (
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
+    SonarFixResponse,
     FixSuggestion,
     Severity,
     IssueType,
@@ -1653,6 +1654,366 @@ class TestOpenRouterProviderIntegration:
         """Test that unsupported provider error message lists openrouter."""
         with pytest.raises(ValueError, match="openrouter"):
             FixValidator(provider="invalid_provider", api_key="test-key")
+
+
+def _make_block(**overrides):
+    """Helper to create a CodeBlock with sensible defaults."""
+    defaults = dict(
+        block_name="func_a",
+        start_line=1,
+        end_line=10,
+        has_changes=True,
+        change_type=ChangeType.FULL_CODE,
+        block_type=BlockType.FUNCTION,
+    )
+    defaults.update(overrides)
+    return CodeBlock(**defaults)
+
+
+def _make_response(blocks):
+    """Wrap a list of CodeBlocks into a SonarFixResponse."""
+    return SonarFixResponse(
+        FIXED_CODE_BLOCKS=blocks,
+        EXPLANATION="test",
+        CONFIDENCE=0.9,
+    )
+
+
+# ---------------------------------------------------------------------------
+# _detect_change_type
+# ---------------------------------------------------------------------------
+class TestDetectChangeType:
+    """Tests for FixValidator._detect_change_type."""
+
+    def test_context_only_sets_full_code(self):
+        block = _make_block(context="code here", changes=None, replacements=None)
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.FULL_CODE
+        assert result.changes is None
+        assert result.replacements is None
+
+    def test_context_with_changes_still_full_code(self):
+        """When context and changes both present, context wins."""
+        block = _make_block(
+            context="code here",
+            changes=[LineChange(line=1, action=ChangeAction.REPLACE, old="a", new="b")],
+            replacements=None,
+        )
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.FULL_CODE
+        assert result.changes is None
+        assert result.replacements is None
+
+    def test_context_with_replacements_still_full_code(self):
+        """When context and replacements both present, context wins."""
+        block = _make_block(
+            context="code here",
+            changes=None,
+            replacements=[SearchReplace(search="a", replace="b")],
+        )
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.FULL_CODE
+        assert result.replacements is None
+
+    def test_changes_only_sets_diff(self):
+        block = _make_block(
+            context=None,
+            changes=[LineChange(line=1, action=ChangeAction.INSERT, new="x")],
+            replacements=None,
+        )
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.DIFF
+        assert result.context == ""
+        assert result.replacements is None
+
+    def test_replacements_only_sets_search_replace(self):
+        block = _make_block(
+            context=None,
+            changes=None,
+            replacements=[SearchReplace(search="old", replace="new")],
+        )
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.SEARCH_REPLACE
+        assert result.context == ""
+        assert result.changes is None
+
+    def test_nothing_filled_defaults_to_full_code(self):
+        block = _make_block(context=None, changes=None, replacements=None)
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.FULL_CODE
+
+    def test_empty_string_context_treated_as_no_context(self):
+        """Empty string is falsy, should not count as having context."""
+        block = _make_block(
+            context="",
+            changes=[LineChange(line=5, action=ChangeAction.DELETE, old="x")],
+            replacements=None,
+        )
+        result = FixValidator._detect_change_type(block)
+        assert result.change_type == ChangeType.DIFF
+
+    def test_returns_same_block_object(self):
+        block = _make_block(context="code")
+        result = FixValidator._detect_change_type(block)
+        assert result is block
+
+
+# ---------------------------------------------------------------------------
+# _sort_blocks
+# ---------------------------------------------------------------------------
+class TestSortBlocks:
+    """Tests for FixValidator._sort_blocks."""
+
+    def test_sorts_by_block_name(self):
+        blocks = [
+            _make_block(block_name="z_func"),
+            _make_block(block_name="a_func"),
+            _make_block(block_name="m_func"),
+        ]
+        FixValidator._sort_blocks(blocks)
+        assert [b.block_name for b in blocks] == ["a_func", "m_func", "z_func"]
+
+    def test_full_code_before_diff_same_name(self):
+        blocks = [
+            _make_block(block_name="func", change_type=ChangeType.DIFF),
+            _make_block(block_name="func", change_type=ChangeType.FULL_CODE),
+        ]
+        FixValidator._sort_blocks(blocks)
+        assert blocks[0].change_type == ChangeType.FULL_CODE
+        assert blocks[1].change_type == ChangeType.DIFF
+
+    def test_full_code_before_search_replace_same_name(self):
+        blocks = [
+            _make_block(block_name="func", change_type=ChangeType.SEARCH_REPLACE),
+            _make_block(block_name="func", change_type=ChangeType.FULL_CODE),
+        ]
+        FixValidator._sort_blocks(blocks)
+        assert blocks[0].change_type == ChangeType.FULL_CODE
+        assert blocks[1].change_type == ChangeType.SEARCH_REPLACE
+
+    def test_sorts_in_place(self):
+        blocks = [_make_block(block_name="b"), _make_block(block_name="a")]
+        FixValidator._sort_blocks(blocks)
+        assert blocks[0].block_name == "a"
+
+    def test_empty_list(self):
+        blocks = []
+        FixValidator._sort_blocks(blocks)
+        assert blocks == []
+
+    def test_single_block(self):
+        blocks = [_make_block(block_name="only")]
+        FixValidator._sort_blocks(blocks)
+        assert len(blocks) == 1
+
+
+# ---------------------------------------------------------------------------
+# _align_line_numbers
+# ---------------------------------------------------------------------------
+class TestAlignLineNumbers:
+    """Tests for FixValidator._align_line_numbers."""
+
+    def test_aligns_sibling_to_full_code(self):
+        full = _make_block(
+            block_name="func",
+            change_type=ChangeType.FULL_CODE,
+            has_changes=True,
+            start_line=10,
+            end_line=20,
+        )
+        sibling = _make_block(
+            block_name="func",
+            change_type=ChangeType.DIFF,
+            has_changes=True,
+            start_line=1,
+            end_line=5,
+        )
+        blocks = [full, sibling]
+        FixValidator._align_line_numbers(blocks)
+        assert sibling.start_line == 10
+        assert sibling.end_line == 20
+
+    def test_no_change_when_already_aligned(self):
+        full = _make_block(
+            block_name="func",
+            change_type=ChangeType.FULL_CODE,
+            has_changes=True,
+            start_line=10,
+            end_line=20,
+        )
+        sibling = _make_block(
+            block_name="func",
+            change_type=ChangeType.DIFF,
+            start_line=10,
+            end_line=20,
+        )
+        blocks = [full, sibling]
+        FixValidator._align_line_numbers(blocks)
+        assert sibling.start_line == 10
+        assert sibling.end_line == 20
+
+    def test_no_full_code_block_leaves_others_unchanged(self):
+        block = _make_block(
+            block_name="func",
+            change_type=ChangeType.DIFF,
+            has_changes=True,
+            start_line=5,
+            end_line=15,
+        )
+        blocks = [block]
+        FixValidator._align_line_numbers(blocks)
+        assert block.start_line == 5
+        assert block.end_line == 15
+
+    def test_full_code_without_changes_not_authoritative(self):
+        """A FULL_CODE block with has_changes=False should not be used as authority."""
+        full = _make_block(
+            block_name="func",
+            change_type=ChangeType.FULL_CODE,
+            has_changes=False,
+            start_line=100,
+            end_line=200,
+        )
+        sibling = _make_block(
+            block_name="func",
+            change_type=ChangeType.DIFF,
+            start_line=1,
+            end_line=5,
+        )
+        blocks = [full, sibling]
+        FixValidator._align_line_numbers(blocks)
+        assert sibling.start_line == 1
+        assert sibling.end_line == 5
+
+    def test_different_block_names_independent(self):
+        full_a = _make_block(
+            block_name="a",
+            change_type=ChangeType.FULL_CODE,
+            has_changes=True,
+            start_line=10,
+            end_line=20,
+        )
+        block_b = _make_block(
+            block_name="b",
+            change_type=ChangeType.DIFF,
+            start_line=1,
+            end_line=5,
+        )
+        blocks = [full_a, block_b]
+        FixValidator._align_line_numbers(blocks)
+        assert block_b.start_line == 1
+        assert block_b.end_line == 5
+
+    def test_empty_list(self):
+        blocks = []
+        FixValidator._align_line_numbers(blocks)
+        assert blocks == []
+
+
+# ---------------------------------------------------------------------------
+# _normalize_code_blocks (integration of all three steps)
+# ---------------------------------------------------------------------------
+class TestNormalizeCodeBlocks:
+    """Integration tests for FixValidator._normalize_code_blocks."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def setup_method(self, method, mock_openai):
+        self.validator = FixValidator(provider="openai", api_key="test-key")
+
+    def test_context_only_block_normalized(self):
+        block = _make_block(context="def foo(): pass", changes=None, replacements=None)
+        response = _make_response([block])
+        result = self.validator._normalize_code_blocks(response)
+        assert result.FIXED_CODE_BLOCKS[0].change_type == ChangeType.FULL_CODE
+
+    def test_changes_only_block_normalized(self):
+        block = _make_block(
+            context=None,
+            changes=[LineChange(line=1, action=ChangeAction.REPLACE, old="a", new="b")],
+            replacements=None,
+        )
+        response = _make_response([block])
+        result = self.validator._normalize_code_blocks(response)
+        assert result.FIXED_CODE_BLOCKS[0].change_type == ChangeType.DIFF
+
+    def test_replacements_only_block_normalized(self):
+        block = _make_block(
+            context=None,
+            changes=None,
+            replacements=[SearchReplace(search="x", replace="y")],
+        )
+        response = _make_response([block])
+        result = self.validator._normalize_code_blocks(response)
+        assert result.FIXED_CODE_BLOCKS[0].change_type == ChangeType.SEARCH_REPLACE
+
+    def test_multiple_blocks_sorted(self):
+        b1 = _make_block(block_name="z_func", context="code")
+        b2 = _make_block(block_name="a_func", context="code")
+        response = _make_response([b1, b2])
+        result = self.validator._normalize_code_blocks(response)
+        assert result.FIXED_CODE_BLOCKS[0].block_name == "a_func"
+        assert result.FIXED_CODE_BLOCKS[1].block_name == "z_func"
+
+    def test_line_numbers_aligned_after_normalization(self):
+        full = _make_block(
+            block_name="func",
+            context="code here",
+            change_type=ChangeType.FULL_CODE,
+            has_changes=True,
+            start_line=10,
+            end_line=20,
+        )
+        sibling = _make_block(
+            block_name="func",
+            context=None,
+            changes=[LineChange(line=1, action=ChangeAction.INSERT, new="x")],
+            change_type=ChangeType.DIFF,
+            start_line=1,
+            end_line=5,
+        )
+        response = _make_response([sibling, full])
+        result = self.validator._normalize_code_blocks(response)
+        # Both should have the FULL_CODE block's line numbers
+        for b in result.FIXED_CODE_BLOCKS:
+            if b.block_name == "func":
+                assert b.start_line == 10
+                assert b.end_line == 20
+
+    def test_returns_same_response_object(self):
+        block = _make_block(context="code")
+        response = _make_response([block])
+        result = self.validator._normalize_code_blocks(response)
+        assert result is response
+
+    def test_non_list_blocks_returns_response_unchanged(self):
+        """Edge case: if FIXED_CODE_BLOCKS is somehow not a list."""
+        response = _make_response([_make_block(context="x")])
+        # Forcefully set to a non-list (bypassing Pydantic for this edge case)
+        object.__setattr__(response, "FIXED_CODE_BLOCKS", "not_a_list")
+        result = self.validator._normalize_code_blocks(response)
+        assert result is response
+
+    def test_context_with_changes_deduplication(self):
+        """The two previously duplicate branches should behave identically."""
+        # Case 1: context only (no changes, no replacements)
+        block_a = _make_block(context="code", changes=None, replacements=None)
+        # Case 2: context + changes (LLM filled multiple fields)
+        block_b = _make_block(
+            context="code",
+            changes=[LineChange(line=1, action=ChangeAction.REPLACE, old="a", new="b")],
+            replacements=None,
+        )
+        response_a = _make_response([block_a])
+        response_b = _make_response([block_b])
+        result_a = self.validator._normalize_code_blocks(response_a)
+        result_b = self.validator._normalize_code_blocks(response_b)
+        # Both should end up as FULL_CODE with changes/replacements cleared
+        assert result_a.FIXED_CODE_BLOCKS[0].change_type == ChangeType.FULL_CODE
+        assert result_b.FIXED_CODE_BLOCKS[0].change_type == ChangeType.FULL_CODE
+        assert result_a.FIXED_CODE_BLOCKS[0].changes is None
+        assert result_b.FIXED_CODE_BLOCKS[0].changes is None
+        assert result_a.FIXED_CODE_BLOCKS[0].replacements is None
+        assert result_b.FIXED_CODE_BLOCKS[0].replacements is None
 
 
 if __name__ == "__main__":
