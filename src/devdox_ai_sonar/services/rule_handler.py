@@ -26,6 +26,11 @@ from devdox_ai_sonar.utils.function_finder import (
     _is_param_used_at_callsite,
     to_snake_case,
 )
+from devdox_ai_sonar.services.constant_namer import (
+    ConstantNamingService,
+    LLMFixerAdapter,
+)
+from devdox_ai_sonar.models.constant_naming import LiteralContext, NamingRequest
 
 logger = logging.getLogger(__name__)
 
@@ -808,7 +813,6 @@ class StringLiteralDuplicateHandler(RuleHandler):
         all_code_blocks: List[CodeBlock] = []
         constant_defs: List[str] = []
         used_names: Set[str] = set()
-        counter = 0
         literal_reports: List[Dict[str, Any]] = []
 
         try:
@@ -816,6 +820,41 @@ class StringLiteralDuplicateHandler(RuleHandler):
         except ValueError:
             relative_path = str(file_path)
         file_path_str = str(file_path)
+
+        # Collect existing module-level UPPERCASE names to avoid collisions.
+        existing_module_names: Set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    existing_module_names.add(target.id)
+
+        # Pre-scan: identify which literals need new names (not reused).
+        literals_needing_names: List[LiteralContext] = []
+        for issue in issues:
+            literal = self._extract_literal_from_message(issue.message)
+            if literal is None:
+                continue
+            occurrences = self._find_string_occurrences(tree, literal)
+            if not occurrences:
+                continue
+            existing = self._find_existing_constant(tree, literal)
+            if len(existing) != 1:
+                literals_needing_names.append(
+                    LiteralContext(literal=literal, occurrences=occurrences)
+                )
+
+        # Call the naming service once for all literals that need new names.
+        naming_service = ConstantNamingService(
+            llm_caller=LLMFixerAdapter(llm_caller) if llm_caller else None,
+        )
+        naming_response = naming_service.name_literals(
+            NamingRequest(
+                file_path=file_path_str,
+                literals=literals_needing_names,
+                existing_names=existing_module_names,
+            )
+        )
 
         for issue in issues:
             literal = self._extract_literal_from_message(issue.message)
@@ -834,8 +873,10 @@ class StringLiteralDuplicateHandler(RuleHandler):
                 occurrences = [occ for occ in occurrences if occ[0] != definition_line]
                 action = "reused"
             else:
-                counter += 1
-                const_name = self._generate_constant_name(counter, used_names)
+                const_name = naming_response.names.get(
+                    literal,
+                    self._generate_constant_name(len(constant_defs) + 1, used_names),
+                )
                 used_names.add(const_name)
                 constant_defs.append(f'{const_name} = "{literal}"')
                 definition_line = None

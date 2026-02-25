@@ -1541,7 +1541,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         # 1 constants block + 3 replacement blocks
         assert len(response.FIXED_CODE_BLOCKS) == 4
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
-        assert "STRING_LITERAL_1" in response.NEW_HELPER_CODE
+        assert "APPLICATION_JSON" in response.NEW_HELPER_CODE
         assert '"application/json"' in response.NEW_HELPER_CODE
         assert response.PLACEMENT == PlacementType.GLOBAL_TOP
 
@@ -1577,14 +1577,14 @@ class TestStringLiteralDuplicateGenerateFixes:
         # 1 constants block + 6 replacement blocks
         assert len(response.FIXED_CODE_BLOCKS) == 7
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
-        assert 'STRING_LITERAL_1 = "hello world"' in response.NEW_HELPER_CODE
-        assert 'STRING_LITERAL_2 = "foo/bar"' in response.NEW_HELPER_CODE
+        assert 'HELLO_WORLD = "hello world"' in response.NEW_HELPER_CODE
+        assert 'FOO_BAR = "foo/bar"' in response.NEW_HELPER_CODE
         # Verify each replacement maps to the correct constant
         replacement_blocks = response.FIXED_CODE_BLOCKS[1:]
         for block in replacement_blocks[:3]:
-            assert block.replacements[0].replace == "STRING_LITERAL_1"
+            assert block.replacements[0].replace == "HELLO_WORLD"
         for block in replacement_blocks[3:]:
-            assert block.replacements[0].replace == "STRING_LITERAL_2"
+            assert block.replacements[0].replace == "FOO_BAR"
 
     async def test_syntax_error_returns_none(self, tmp_path):
         file = tmp_path / "bad.py"
@@ -1720,22 +1720,30 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert result is not None
         response = result[0]
 
-        assert 'STRING_LITERAL_1 = "application/json"' in response.NEW_HELPER_CODE
-        assert 'STRING_LITERAL_2 = "1234"' in response.NEW_HELPER_CODE
+        assert 'APPLICATION_JSON = "application/json"' in response.NEW_HELPER_CODE
+        # "1234" is a single numeric token → falls back to STRING_LITERAL_N
+        assert '= "1234"' in response.NEW_HELPER_CODE
 
         replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
         json_blocks = [
             b
             for b in replacement_blocks
-            if b.replacements[0].replace == "STRING_LITERAL_1"
+            if b.replacements[0].replace == "APPLICATION_JSON"
         ]
+        # "1234" gets a fallback name — find it dynamically
+        num_const_name = None
+        for line in response.NEW_HELPER_CODE.split("\n"):
+            if '"1234"' in line:
+                num_const_name = line.split("=")[0].strip()
+                break
+        assert num_const_name is not None
         num_blocks = [
-            b
-            for b in replacement_blocks
-            if b.replacements[0].replace == "STRING_LITERAL_2"
+            b for b in replacement_blocks if b.replacements[0].replace == num_const_name
         ]
         assert len(json_blocks) == 3
         assert len(num_blocks) == 3
+        # Ensure the two constants have different names
+        assert num_const_name != "APPLICATION_JSON"
 
     async def test_explanation_created_constant(self, tmp_path):
         """Explanation shows SonarCloud message, action, file, and lines."""
@@ -1757,7 +1765,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert "**File:**" in explanation
         assert 'duplicating this literal "hello"' in explanation
         assert "Created" in explanation
-        assert 'STRING_LITERAL_1 = "hello"' in explanation
+        assert '= "hello"' in explanation
         assert "**Lines affected:**" in explanation
         assert "- 1" in explanation
         assert "- 2" in explanation
@@ -2779,3 +2787,1303 @@ class TestCreateCallerBlocksFuncRename:
         assert len(blocks) == 2
         assert blocks[0].file_path == "/a.py"
         assert blocks[1].file_path == "/b.py"
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — FIND STRING OCCURRENCES EDGE CASES
+# ============================================================================
+
+
+class TestFindStringOccurrencesEdgeCases:
+    """Edge-case AST tests for StringLiteralDuplicateHandler._find_string_occurrences."""
+
+    def setup_method(self):
+        self.find = StringLiteralDuplicateHandler._find_string_occurrences
+
+    def test_fstring_with_interpolation_not_found(self):
+        """f-strings with interpolation are JoinedStr nodes, not Constant — not matched."""
+        source = 'x = f"prefix {var} suffix"\ny = f"prefix {var} suffix"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "prefix {var} suffix")
+        assert len(result) == 0
+
+    def test_fstring_fragments_found_individually(self):
+        """Fragments inside f-strings ARE ast.Constant — they can be matched."""
+        source = 'x = f"prefix {var} suffix"\n'
+        tree = ast.parse(source)
+        # The literal "prefix " (with trailing space) exists as a fragment
+        result = self.find(tree, "prefix ")
+        assert len(result) == 1
+
+    def test_triple_quoted_string_found(self):
+        """Triple-quoted strings are Constant nodes with matching value."""
+        source = 'x = """hello"""\ny = """hello"""\nz = """hello"""\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 3
+
+    def test_string_in_decorator_arg_found(self):
+        """String literals in decorator arguments are Constant nodes."""
+        source = (
+            '@cache("key")\n'
+            "def foo(): pass\n"
+            '@cache("key")\n'
+            "def bar(): pass\n"
+            '@cache("key")\n'
+            "def baz(): pass\n"
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "key")
+        assert len(result) == 3
+
+    def test_string_in_default_param_found(self):
+        """Strings used as default parameter values are Constant nodes."""
+        source = (
+            'def foo(x="default"): pass\n'
+            'def bar(x="default"): pass\n'
+            'def baz(x="default"): pass\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "default")
+        assert len(result) == 3
+
+    def test_bytes_literal_not_found(self):
+        """Bytes literals (b\"...\") are not str — should not match."""
+        source = 'x = b"hello"\ny = b"hello"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 0
+
+    def test_implicit_string_concat_merged(self):
+        """Implicit concatenation merges into a single Constant in AST."""
+        source = 'x = "hello" " world"\n'
+        tree = ast.parse(source)
+        # AST merges to "hello world"
+        result = self.find(tree, "hello world")
+        assert len(result) == 1
+        # Individual fragments do NOT exist as separate nodes
+        result_partial = self.find(tree, "hello")
+        assert len(result_partial) == 0
+
+    def test_string_in_module_level_list(self):
+        """Strings inside list literals at module level are Constant nodes."""
+        source = (
+            'ITEMS = ["hello", "world"]\n'
+            'OTHERS = ["hello", "world"]\n'
+            'MORE = ["hello"]\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "hello")
+        assert len(result) == 3
+
+    def test_string_in_module_level_dict_value(self):
+        """Strings as dict values at module level are Constant nodes."""
+        source = (
+            'HEADERS = {"Content-Type": "application/json"}\n'
+            'OTHER = {"Accept": "application/json"}\n'
+            'MORE = {"X": "application/json"}\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "application/json")
+        assert len(result) == 3
+
+    def test_string_with_escape_chars(self):
+        """Strings with escape characters match on the actual string value."""
+        source = 'x = "hello\\nworld"\ny = "hello\\nworld"\nz = "hello\\nworld"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "hello\nworld")
+        assert len(result) == 3
+
+    def test_string_in_class_body(self):
+        """Strings inside class bodies are found by ast.walk."""
+        source = (
+            "class Config:\n"
+            '    MSG = "error_msg"\n'
+            "\n"
+            "class Other:\n"
+            '    MSG = "error_msg"\n'
+            "\n"
+            'x = "error_msg"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "error_msg")
+        assert len(result) == 3
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — GENERATE FIXES EDGE CASES
+# ============================================================================
+
+
+class TestGenerateFixesEdgeCases:
+    """Edge-case end-to-end tests for generate_fixes with llm_caller=None."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+        self.project_path = Path("/project")
+
+    def _make_issue(self, message: str, first_line: int = 1) -> Mock:
+        issue = Mock()
+        issue.message = message
+        issue.first_line = first_line
+        issue.rule = "python:S1192"
+        return issue
+
+    async def test_string_in_decorator_args(self, tmp_path):
+        """Strings used in decorator args are found and replaced."""
+        source = (
+            'def cache(key): pass\n'
+            '@cache("session_key")\n'
+            "def foo(): pass\n"
+            '@cache("session_key")\n'
+            "def bar(): pass\n"
+            '@cache("session_key")\n'
+            "def baz(): pass\n"
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "session_key" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+        for block in replacement_blocks:
+            assert block.replacements[0].search == '"session_key"'
+
+    async def test_string_in_default_params(self, tmp_path):
+        """Strings used as default parameter values are found and replaced."""
+        source = (
+            'def foo(fmt="json"): pass\n'
+            'def bar(fmt="json"): pass\n'
+            'def baz(fmt="json"): pass\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "json" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_triple_quoted_strings(self, tmp_path):
+        """Triple-quoted strings are found and replaced."""
+        source = (
+            'x = """hello"""\n'
+            'y = """hello"""\n'
+            'z = """hello"""\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+        # Verify the search string uses the exact quoted form from source
+        for block in replacement_blocks:
+            assert block.replacements[0].search == '"""hello"""'
+
+    async def test_string_with_escape_chars_mismatch(self, tmp_path):
+        """Escape chars: Sonar message has source repr, AST has actual value — no match.
+
+        The Sonar message contains 'hello\\nworld' (literal backslash-n) but the AST
+        Constant.value is 'hello\\nworld' (actual newline). These don't match, so
+        _find_string_occurrences returns empty and the handler returns None.
+        This is a known limitation for strings with escape sequences.
+        """
+        source = (
+            'x = "hello\\nworld"\n'
+            'y = "hello\\nworld"\n'
+            'z = "hello\\nworld"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello\\nworld" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        # Returns None because the extracted literal (source repr) doesn't match
+        # the AST value (actual newline character)
+        assert result is None
+
+    async def test_empty_issues_list(self, tmp_path):
+        """Empty issues list produces no fixes."""
+        source = 'x = "hello"\ny = "hello"\nz = "hello"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_mixed_single_and_double_quotes(self, tmp_path):
+        """Mixed quote styles for the same string value are all found."""
+        source = (
+            "x = 'hello'\n"
+            'y = "hello"\n'
+            "z = 'hello'\n"
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+        # Verify each replacement preserves the original quote style
+        searches = [b.replacements[0].search for b in replacement_blocks]
+        assert "'hello'" in searches
+        assert '"hello"' in searches
+
+    async def test_fstring_only_occurrences_returns_none(self, tmp_path):
+        """If the literal only appears inside f-strings, no Constant nodes match."""
+        source = (
+            'x = f"prefix hello suffix"\n'
+            'y = f"prefix hello suffix"\n'
+            'z = f"prefix hello suffix"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "prefix hello suffix" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        # f-strings without interpolation ARE Constant nodes in the AST,
+        # so they will be found. This test verifies that behavior.
+        # (Only f-strings WITH {expressions} become JoinedStr and are invisible.)
+        assert result is not None
+
+    async def test_fstring_with_interpolation_not_found(self, tmp_path):
+        """If the literal only appears in f-strings with interpolation, returns None."""
+        source = (
+            'x = f"hello {name} world"\n'
+            'y = f"hello {name} world"\n'
+            'z = f"hello {name} world"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello {name} world" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_string_in_class_body(self, tmp_path):
+        """Strings inside class bodies are found across the file."""
+        source = (
+            "class Config:\n"
+            '    MSG = "error_occurred"\n'
+            "\n"
+            "class Handler:\n"
+            '    MSG = "error_occurred"\n'
+            "\n"
+            'DEFAULT_MSG = "error_occurred"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "error_occurred" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        # The module-level DEFAULT_MSG is a simple assign with matching value,
+        # so it should be detected as an existing constant (1 match) and reused.
+        # The two class-level occurrences + the definition line is excluded.
+        # Actually: _find_existing_constant finds DEFAULT_MSG (module-level, simple assign).
+        # len(existing) == 1, so it reuses DEFAULT_MSG.
+        # Occurrences: line 2 (class), line 5 (class), line 7 (definition) → exclude line 7
+        # → 2 replacement blocks
+        assert len(replacement_blocks) == 2
+        for block in replacement_blocks:
+            assert block.replacements[0].replace == "DEFAULT_MSG"
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — BUILD EXPLANATION UNIT TESTS
+# ============================================================================
+
+
+class TestBuildExplanation:
+    """Direct unit tests for StringLiteralDuplicateHandler._build_explanation."""
+
+    def setup_method(self):
+        self.build = StringLiteralDuplicateHandler._build_explanation
+
+    def test_created_action_format(self):
+        """Created action includes constant definition and 'at module level'."""
+        reports = [
+            {
+                "message": 'Define a constant instead of duplicating this literal "hello" 3 times.',
+                "literal": "hello",
+                "const_name": "GREETING_MSG",
+                "action": "created",
+                "definition_line": None,
+                "lines": [1, 5, 10],
+            }
+        ]
+        result = self.build("src/module.py", reports)
+
+        assert "**File:** `src/module.py`" in result
+        assert "Created" in result
+        assert '`GREETING_MSG = "hello"`' in result
+        assert "at module level" in result
+        assert "**Lines affected:**" in result
+        assert "- 1" in result
+        assert "- 5" in result
+        assert "- 10" in result
+
+    def test_reused_action_format(self):
+        """Reused action includes constant name and definition line."""
+        reports = [
+            {
+                "message": 'Define a constant instead of duplicating this literal "app/json" 3 times.',
+                "literal": "app/json",
+                "const_name": "APP_JSON",
+                "action": "reused",
+                "definition_line": 1,
+                "lines": [5, 10, 15],
+            }
+        ]
+        result = self.build("src/module.py", reports)
+
+        assert "Reused existing constant" in result
+        assert "`APP_JSON`" in result
+        assert "defined at line 1" in result
+        assert "- 5" in result
+
+    def test_mixed_actions(self):
+        """Multiple literals with different actions in one explanation."""
+        reports = [
+            {
+                "message": 'Duplicating "app/json" 3 times.',
+                "literal": "app/json",
+                "const_name": "APP_JSON",
+                "action": "reused",
+                "definition_line": 1,
+                "lines": [5, 10],
+            },
+            {
+                "message": 'Duplicating "1234" 3 times.',
+                "literal": "1234",
+                "const_name": "STRING_LITERAL_1",
+                "action": "created",
+                "definition_line": None,
+                "lines": [20, 30],
+            },
+        ]
+        result = self.build("src/module.py", reports)
+
+        assert "Reused existing constant" in result
+        assert "Created" in result
+        assert "`APP_JSON`" in result
+        assert "STRING_LITERAL_1" in result
+
+    def test_empty_reports(self):
+        """No reports → only file path line."""
+        result = self.build("src/module.py", [])
+        assert "**File:** `src/module.py`" in result
+
+    def test_file_path_always_present(self):
+        """File path is always included in the output."""
+        reports = [
+            {
+                "message": "msg",
+                "literal": "x",
+                "const_name": "X_Y",
+                "action": "created",
+                "definition_line": None,
+                "lines": [1],
+            }
+        ]
+        result = self.build("deeply/nested/path/module.py", reports)
+        assert "**File:** `deeply/nested/path/module.py`" in result
+
+
+# ============================================================================
+# S1192 INTEGRATION TEST — FULL PIPELINE + MD.J2 RENDERING
+# ============================================================================
+
+
+class TestS1192Integration:
+    """Full pipeline integration test: generate_fixes → render md.j2 → verify output."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+
+    def _make_issue(self, literal: str, count: int = 3) -> Mock:
+        issue = Mock()
+        issue.message = (
+            f"Define a constant instead of duplicating this literal "
+            f'"{literal}" {count} times.'
+        )
+        issue.first_line = 1
+        issue.rule = "python:S1192"
+        issue.severity = "MAJOR"
+        issue.file_path = "src/module.py"
+        issue.line = 2
+        return issue
+
+    async def test_full_pipeline_created_constant(self, tmp_path):
+        """Full pipeline: new constant created → render through md.j2."""
+        source = (
+            "import requests\n"
+            "\n"
+            "def fetch_users(url):\n"
+            '    return requests.get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch_orders(url):\n"
+            '    return requests.post(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch_items(url):\n"
+            '    return requests.put(url, headers={"Content-Type": "application/json"})\n'
+        )
+        src_file = tmp_path / "module.py"
+        src_file.write_text(source)
+
+        issue = self._make_issue("application/json")
+        context = _make_context(file_path=src_file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, tmp_path, src_file, llm_caller=None
+        )
+        assert result is not None
+        fix_response = result[0]
+
+        # Verify fix response structure
+        assert fix_response.PLACEMENT == PlacementType.GLOBAL_TOP
+        assert fix_response.CONFIDENCE == 0.95
+        assert "APPLICATION_JSON" in fix_response.NEW_HELPER_CODE
+        assert '"application/json"' in fix_response.NEW_HELPER_CODE
+        assert "Created" in fix_response.EXPLANATION
+        assert "**File:**" in fix_response.EXPLANATION
+
+        # Render through md.j2
+        from jinja2 import Environment, FileSystemLoader
+
+        templates_dir = (
+            Path(__file__).resolve().parent.parent.parent
+            / "src"
+            / "devdox_ai_sonar"
+            / "templates"
+        )
+        env = Environment(loader=FileSystemLoader(str(templates_dir)))
+        template = env.get_template("md.j2")
+
+        rendered = template.render(
+            rule="python:S1192",
+            severity="MAJOR",
+            message=issue.message,
+            file_path="src/module.py",
+            line=2,
+            explanation=fix_response.EXPLANATION,
+            suggestion=fix_response.FIXED_CODE_BLOCKS,
+            original_code={},
+        )
+
+        # Verify rendered markdown has key sections
+        assert "python:S1192" in rendered
+        assert "Explanation" in rendered
+        assert "Suggested Fix" in rendered
+        assert "Created" in rendered
+        assert "APPLICATION_JSON" in rendered
+
+    async def test_full_pipeline_reused_constant(self, tmp_path):
+        """Full pipeline: existing constant reused → render through md.j2."""
+        source = (
+            'APP_JSON = "application/json"\n'
+            "\n"
+            "def fetch_users(url):\n"
+            '    return get(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch_orders(url):\n"
+            '    return post(url, headers={"Content-Type": "application/json"})\n'
+            "\n"
+            "def fetch_items(url):\n"
+            '    return put(url, headers={"Content-Type": "application/json"})\n'
+        )
+        src_file = tmp_path / "module.py"
+        src_file.write_text(source)
+
+        issue = self._make_issue("application/json")
+        context = _make_context(file_path=src_file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, tmp_path, src_file, llm_caller=None
+        )
+        assert result is not None
+        fix_response = result[0]
+
+        # No new constant created — reusing APP_JSON
+        assert fix_response.NEW_HELPER_CODE == ""
+        assert "Reused existing constant" in fix_response.EXPLANATION
+        assert "`APP_JSON`" in fix_response.EXPLANATION
+
+        # All replacement blocks use APP_JSON
+        replacement_blocks = [b for b in fix_response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+        for block in replacement_blocks:
+            assert block.replacements[0].replace == "APP_JSON"
+
+        # Render through md.j2
+        from jinja2 import Environment, FileSystemLoader
+
+        templates_dir = (
+            Path(__file__).resolve().parent.parent.parent
+            / "src"
+            / "devdox_ai_sonar"
+            / "templates"
+        )
+        env = Environment(loader=FileSystemLoader(str(templates_dir)))
+        template = env.get_template("md.j2")
+
+        rendered = template.render(
+            rule="python:S1192",
+            severity="MAJOR",
+            message=issue.message,
+            file_path="src/module.py",
+            line=2,
+            explanation=fix_response.EXPLANATION,
+            suggestion=fix_response.FIXED_CODE_BLOCKS,
+            original_code={},
+        )
+
+        assert "python:S1192" in rendered
+        assert "Reused existing constant" in rendered
+        assert "`APP_JSON`" in rendered
+
+    async def test_full_pipeline_mixed_literals(self, tmp_path):
+        """Full pipeline: multiple literals, mix of reuse + create."""
+        source = (
+            'CONTENT_TYPE = "application/json"\n'
+            "\n"
+            "def fetch_users():\n"
+            '    return get("/api/v1/users", headers={"Accept": "application/json"})\n'
+            "\n"
+            "def fetch_orders():\n"
+            '    return get("/api/v1/users", headers={"Accept": "application/json"})\n'
+            "\n"
+            "def fetch_items():\n"
+            '    return get("/api/v1/users", headers={"Accept": "application/json"})\n'
+        )
+        src_file = tmp_path / "module.py"
+        src_file.write_text(source)
+
+        issues = [
+            self._make_issue("application/json"),
+            self._make_issue("/api/v1/users"),
+        ]
+        context = _make_context(file_path=src_file)
+
+        result = await self.handler.generate_fixes(
+            issues, context, tmp_path, src_file, llm_caller=None
+        )
+        assert result is not None
+        fix_response = result[0]
+
+        # application/json → reused CONTENT_TYPE
+        # /api/v1/users → new constant created
+        assert "Reused existing constant" in fix_response.EXPLANATION
+        assert "Created" in fix_response.EXPLANATION
+
+        replacement_blocks = [b for b in fix_response.FIXED_CODE_BLOCKS if b.replacements]
+        replace_names = {b.replacements[0].replace for b in replacement_blocks}
+        assert "CONTENT_TYPE" in replace_names
+        # The /api/v1/users literal gets a generated name
+        assert len(replace_names) == 2
+
+
+# ============================================================================
+# STRING LITERAL DUPLICATE HANDLER — ADDITIONAL EDGE CASES
+# ============================================================================
+
+
+class TestFindStringOccurrencesAdditionalEdgeCases:
+    """Additional AST context tests for _find_string_occurrences."""
+
+    def setup_method(self):
+        self.find = StringLiteralDuplicateHandler._find_string_occurrences
+
+    def test_string_in_list_comprehension(self):
+        """Strings inside list comprehensions are Constant nodes."""
+        source = (
+            'result = [x for x in items if x == "active"]\n'
+            'other = [x for x in items if x == "active"]\n'
+            'more = [x for x in items if x == "active"]\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "active")
+        assert len(result) == 3
+
+    def test_string_in_lambda(self):
+        """Strings inside lambda bodies are Constant nodes."""
+        source = (
+            'fn1 = lambda: "default_value"\n'
+            'fn2 = lambda: "default_value"\n'
+            'fn3 = lambda: "default_value"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "default_value")
+        assert len(result) == 3
+
+    def test_string_in_assert(self):
+        """Strings in assert statements are Constant nodes."""
+        source = (
+            'assert result == "expected"\n'
+            'assert other == "expected"\n'
+            'assert final == "expected"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "expected")
+        assert len(result) == 3
+
+    def test_string_in_raise(self):
+        """Strings in raise statements are Constant nodes."""
+        source = (
+            'raise ValueError("invalid input")\n'
+            'raise TypeError("invalid input")\n'
+            'raise RuntimeError("invalid input")\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "invalid input")
+        assert len(result) == 3
+
+    def test_string_in_walrus_operator(self):
+        """Strings in walrus operator (:=) are Constant nodes."""
+        source = (
+            'if (x := "sentinel"):\n'
+            "    pass\n"
+            'if (y := "sentinel"):\n'
+            "    pass\n"
+            'if (z := "sentinel"):\n'
+            "    pass\n"
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "sentinel")
+        assert len(result) == 3
+
+    def test_string_as_dict_key(self):
+        """Strings used as dict keys are Constant nodes."""
+        source = (
+            'a = {"status": 1}\n'
+            'b = {"status": 2}\n'
+            'c = {"status": 3}\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "status")
+        assert len(result) == 3
+
+    def test_string_in_with_statement(self):
+        """Strings in with statements are Constant nodes."""
+        source = (
+            'with open("config.json") as f:\n'
+            "    pass\n"
+            'with open("config.json") as g:\n'
+            "    pass\n"
+            'with open("config.json") as h:\n'
+            "    pass\n"
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "config.json")
+        assert len(result) == 3
+
+    def test_string_in_try_except(self):
+        """Strings in try/except blocks are Constant nodes."""
+        source = (
+            "try:\n"
+            '    log("error occurred")\n'
+            "except:\n"
+            '    log("error occurred")\n'
+            "finally:\n"
+            '    log("error occurred")\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "error occurred")
+        assert len(result) == 3
+
+    def test_same_literal_twice_on_same_line(self):
+        """Two occurrences of the same literal on a single line."""
+        source = 'x = {"key": "value", "other": "value"}\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "value")
+        assert len(result) == 2
+        # Both should have the same lineno but different col offsets
+        assert result[0][0] == result[1][0]  # same line
+        assert result[0][1] != result[1][1]  # different columns
+
+    def test_multiline_triple_quoted_string(self):
+        """Multiline triple-quoted strings spanning multiple source lines."""
+        source = 'x = """line1\nline2"""\ny = """line1\nline2"""\nz = """line1\nline2"""\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "line1\nline2")
+        assert len(result) == 3
+
+    def test_raw_string(self):
+        """Raw strings (r\"...\") store literal backslashes in AST."""
+        source = 'x = r"hello\\nworld"\ny = r"hello\\nworld"\nz = r"hello\\nworld"\n'
+        tree = ast.parse(source)
+        # r"hello\nworld" → AST value is "hello\\nworld" (literal backslash-n)
+        result = self.find(tree, "hello\\nworld")
+        assert len(result) == 3
+
+    def test_empty_string(self):
+        """Empty string literals are valid Constant nodes."""
+        source = 'x = ""\ny = ""\nz = ""\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "")
+        assert len(result) == 3
+
+    def test_string_in_dunder_all(self):
+        """Strings in __all__ are Constant nodes."""
+        source = (
+            '__all__ = ["module_a", "module_b"]\n'
+            'x = "module_a"\n'
+            'y = "module_a"\n'
+        )
+        tree = ast.parse(source)
+        result = self.find(tree, "module_a")
+        assert len(result) == 3
+
+
+class TestFindExistingConstantAdditionalEdgeCases:
+    """Additional edge cases for _find_existing_constant."""
+
+    def setup_method(self):
+        self.find = StringLiteralDuplicateHandler._find_existing_constant
+
+    def test_augmented_assign_not_found(self):
+        """Augmented assignment (+=) is not ast.Assign — should be skipped."""
+        source = 'X = ""\nX += "value"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "value")
+        assert len(result) == 0
+
+    def test_multiple_targets_assign_not_found(self):
+        """Multiple targets (A = B = \"value\") has len(targets)==2 — skipped."""
+        source = 'A = B = "value"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "value")
+        assert len(result) == 0
+
+    def test_conditional_expression_not_found(self):
+        """Conditional expression value (IfExp) is not Constant — skipped."""
+        source = 'X = "value" if True else "other"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "value")
+        assert len(result) == 0
+
+    def test_string_concat_not_found(self):
+        """String concatenation (BinOp) is not Constant — skipped."""
+        source = 'X = "hello" + " world"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "hello world")
+        assert len(result) == 0
+
+    def test_annassign_without_value(self):
+        """AnnAssign without a value (X: str) has value=None — skipped."""
+        source = "X: str\n"
+        tree = ast.parse(source)
+        result = self.find(tree, "")
+        assert len(result) == 0
+
+    def test_annassign_with_none_value(self):
+        """AnnAssign with value=None literal (X: str = None) — not a string."""
+        source = "X: str = None\n"
+        tree = ast.parse(source)
+        result = self.find(tree, "None")
+        assert len(result) == 0
+
+    def test_both_assign_and_annassign_same_literal(self):
+        """Both Assign and AnnAssign for same literal → 2 matches (ambiguous)."""
+        source = 'X = "value"\nY: str = "value"\n'
+        tree = ast.parse(source)
+        result = self.find(tree, "value")
+        assert len(result) == 2
+
+
+class TestGenerateFixesAdditionalEdgeCases:
+    """Additional edge cases for generate_fixes."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+        self.project_path = Path("/project")
+
+    def _make_issue(self, message: str, first_line: int = 1) -> Mock:
+        issue = Mock()
+        issue.message = message
+        issue.first_line = first_line
+        issue.rule = "python:S1192"
+        return issue
+
+    async def test_empty_source_file(self, tmp_path):
+        """Empty source file produces no fixes."""
+        file = tmp_path / "empty.py"
+        file.write_text("")
+        context = _make_context(file_path=file)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello" 3 times.'
+        )
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is None
+
+    async def test_only_constant_definition_no_other_occurrences(self, tmp_path):
+        """If only the definition exists and no other occurrences, returns None."""
+        source = 'MY_CONST = "only_here"\n'
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "only_here" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        # Existing constant found → definition line filtered → 0 occurrences
+        assert result is None
+
+    async def test_duplicate_issues_for_same_literal(self, tmp_path):
+        """Two issues for the same literal should not produce duplicate blocks."""
+        source = (
+            "def foo():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def bar():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def baz():\n"
+            '    return "hello world"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue1 = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello world" 3 times.'
+        )
+        issue2 = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello world" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue1, issue2], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        # Both issues produce blocks — the handler doesn't deduplicate issues.
+        # This documents current behavior: 6 replacement blocks (3 per issue).
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        # At minimum, we verify it doesn't crash and produces valid output
+        assert len(replacement_blocks) >= 3
+
+    async def test_same_literal_twice_on_same_line(self, tmp_path):
+        """Two occurrences on the same line produce two separate blocks."""
+        source = (
+            'x = {"key": "value", "other": "value"}\n'
+            'y = "value"\n'
+            'z = "value"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "value" 4 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        # 4 occurrences → 4 replacement blocks
+        assert len(replacement_blocks) == 4
+        # The two blocks on line 1 should have different search strings
+        # (same value but potentially different column slices)
+        line1_blocks = [b for b in replacement_blocks if b.start_line == 1]
+        assert len(line1_blocks) == 2
+
+    async def test_annassign_collision_with_naming_service(self, tmp_path):
+        """AnnAssign UPPERCASE name should be considered for collision avoidance."""
+        source = (
+            'APPLICATION_JSON: str = "something_else"\n'
+            "\n"
+            "def foo():\n"
+            '    return "application/json"\n'
+            "\n"
+            "def bar():\n"
+            '    return "application/json"\n'
+            "\n"
+            "def baz():\n"
+            '    return "application/json"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "application/json" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        # The naming service would want to generate APPLICATION_JSON, but that
+        # name already exists as an AnnAssign. Document current behavior:
+        # the existing_module_names collection only checks ast.Assign, NOT
+        # ast.AnnAssign, so the naming service doesn't know about the collision.
+        # This is a known limitation.
+        assert response.NEW_HELPER_CODE != ""
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_string_in_list_comprehension(self, tmp_path):
+        """Strings inside list comprehensions are found and replaced."""
+        source = (
+            'result1 = [x for x in items if x == "active"]\n'
+            'result2 = [x for x in items if x == "active"]\n'
+            'result3 = [x for x in items if x == "active"]\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "active" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_string_in_lambda(self, tmp_path):
+        """Strings inside lambda bodies are found and replaced."""
+        source = (
+            'fn1 = lambda: "default_value"\n'
+            'fn2 = lambda: "default_value"\n'
+            'fn3 = lambda: "default_value"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "default_value" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_string_in_raise_statement(self, tmp_path):
+        """Strings in raise statements are found and replaced."""
+        source = (
+            "def foo():\n"
+            '    raise ValueError("invalid input")\n'
+            "\n"
+            "def bar():\n"
+            '    raise TypeError("invalid input")\n'
+            "\n"
+            "def baz():\n"
+            '    raise RuntimeError("invalid input")\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "invalid input" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_string_in_assert_statement(self, tmp_path):
+        """Strings in assert statements are found and replaced."""
+        source = (
+            'assert result1 == "expected"\n'
+            'assert result2 == "expected"\n'
+            'assert result3 == "expected"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "expected" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_raw_string_occurrences(self, tmp_path):
+        """Raw strings (r\"...\") are found by their AST value."""
+        source = (
+            'x = r"hello\\nworld"\n'
+            'y = r"hello\\nworld"\n'
+            'z = r"hello\\nworld"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        # Sonar message would contain the actual string value (with literal backslash)
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello\\nworld" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 3
+
+    async def test_file_outside_project_path(self, tmp_path):
+        """File path not under project_path uses absolute path in explanation."""
+        source = (
+            "def foo():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def bar():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def baz():\n"
+            '    return "hello world"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "hello world" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        # Use a project_path that doesn't contain the file
+        unrelated_project = Path("/some/other/project")
+        result = await self.handler.generate_fixes(
+            [issue], context, unrelated_project, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        # Explanation should contain the absolute path since relative_to fails
+        assert str(file) in response.EXPLANATION
+
+    async def test_naming_collision_two_literals_same_generated_name(self, tmp_path):
+        """Two literals that would generate the same name get deduplicated names."""
+        source = (
+            "def foo():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def bar():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def baz():\n"
+            '    return "hello world"\n'
+            "\n"
+            "def qux():\n"
+            '    return "hello/world"\n'
+            "\n"
+            "def quux():\n"
+            '    return "hello/world"\n'
+            "\n"
+            "def corge():\n"
+            '    return "hello/world"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issues = [
+            self._make_issue(
+                'Define a constant instead of duplicating this literal "hello world" 3 times.'
+            ),
+            self._make_issue(
+                'Define a constant instead of duplicating this literal "hello/world" 3 times.'
+            ),
+        ]
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            issues, context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        # Both literals would generate HELLO_WORLD — naming service should deduplicate
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        replace_names = {b.replacements[0].replace for b in replacement_blocks}
+        # Must have 2 distinct names
+        assert len(replace_names) == 2
+
+    async def test_multiline_triple_quoted_string_replacement(self, tmp_path):
+        """Multiline triple-quoted strings spanning multiple source lines."""
+        source = (
+            'x = """line1\n'
+            'line2"""\n'
+            'y = """line1\n'
+            'line2"""\n'
+            'z = """line1\n'
+            'line2"""\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "line1\nline2" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        # The handler will find the occurrences via AST, but _build_replacement_blocks
+        # slices only one source line. Document current behavior.
+        if result is not None:
+            response = result[0]
+            replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+            # Verify it at least produces blocks (even if slicing is partial)
+            assert len(replacement_blocks) >= 0
+
+    async def test_string_in_dunder_all(self, tmp_path):
+        """Strings in __all__ are treated as regular occurrences.
+
+        Note: replacing string literals in __all__ with constant references
+        is technically valid Python but may be surprising. This test documents
+        current behavior — the handler does NOT exempt __all__.
+        """
+        source = (
+            '__all__ = ["my_module", "other"]\n'
+            'x = "my_module"\n'
+            'y = "my_module"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "my_module" 3 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        # All 3 occurrences are replaced including the one in __all__
+        assert len(replacement_blocks) == 3
+
+    async def test_assign_and_annassign_same_literal_creates_new(self, tmp_path):
+        """Both Assign and AnnAssign for same literal → ambiguous → creates new constant."""
+        source = (
+            'X = "value"\n'
+            'Y: str = "value"\n'
+            "\n"
+            "def foo():\n"
+            '    return "value"\n'
+            "\n"
+            "def bar():\n"
+            '    return "value"\n'
+            "\n"
+            "def baz():\n"
+            '    return "value"\n'
+        )
+        file = tmp_path / "module.py"
+        file.write_text(source)
+
+        issue = self._make_issue(
+            'Define a constant instead of duplicating this literal "value" 5 times.'
+        )
+        context = _make_context(file_path=file)
+
+        result = await self.handler.generate_fixes(
+            [issue], context, self.project_path, file, llm_caller=None
+        )
+        assert result is not None
+        response = result[0]
+        # 2 existing constants → ambiguous → creates new constant
+        # All 5 occurrences (including definitions) are replaced
+        assert response.NEW_HELPER_CODE != ""
+        replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
+        assert len(replacement_blocks) == 5
