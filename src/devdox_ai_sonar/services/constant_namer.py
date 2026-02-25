@@ -16,17 +16,17 @@ from langdetect import detect
 from langdetect import DetectorFactory
 from pydantic import TypeAdapter
 
-DetectorFactory.seed = 0
-
-_names_adapter: TypeAdapter[Dict[str, str]] = TypeAdapter(Dict[str, str])
-
 from devdox_ai_sonar.models.constant_naming import (
     LiteralContext,
     NamingRequest,
     NamingResponse,
 )
 
+DetectorFactory.seed = 0
+
 logger = logging.getLogger(__name__)
+
+_names_adapter: TypeAdapter[Dict[str, str]] = TypeAdapter(Dict[str, str])
 
 MAX_WORDS_THRESHOLD = 4
 
@@ -306,12 +306,8 @@ class ConstantNamingService:
         names: Dict[str, str] = {}
         used: Set[str] = set(request.existing_names)
 
-        remaining = self._name_via_pipeline(
-            request.literals, names, used
-        )
-        self._resolve_remaining(
-            remaining, names, used, file_path=request.file_path
-        )
+        remaining = self._name_via_pipeline(request.literals, names, used)
+        self._resolve_remaining(remaining, names, used, file_path=request.file_path)
 
         return NamingResponse(names=names)
 

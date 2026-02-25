@@ -1265,9 +1265,9 @@ class LLMFixer:
                 filtered_steps.append("• Print or Log the unused parameters.")
 
                 rule_info_list[rule_key]["how_to_fix"]["steps"] = filtered_steps
-                rule_info_list[rule_key][
-                    "name"
-                ] = "Be sure that every parameter is used"
+                rule_info_list[rule_key]["name"] = (
+                    "Be sure that every parameter is used"
+                )
                 rule_info_list[rule_key]["root_cause"] = None
 
             strategies = self._extend_strategies_for_issue(

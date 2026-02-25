@@ -14,7 +14,9 @@ _SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on a
 _MAX_IDENTIFIER_LENGTH = 256
 
 
-def _collect_used_names(func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> set[str]:
+def _collect_used_names(
+    func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+) -> set[str]:
     """Collect all Name references inside the function body (excluding the signature)."""
     used = set()
     for node in ast.walk(ast.Module(body=func_node.body, type_ignores=[])):

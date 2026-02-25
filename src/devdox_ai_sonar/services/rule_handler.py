@@ -30,7 +30,11 @@ from devdox_ai_sonar.services.constant_namer import (
     ConstantNamingService,
     LLMFixerAdapter,
 )
-from devdox_ai_sonar.models.constant_naming import LiteralContext, NamingRequest, NamingResponse
+from devdox_ai_sonar.models.constant_naming import (
+    LiteralContext,
+    NamingRequest,
+    NamingResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -917,8 +921,13 @@ class StringLiteralDuplicateHandler(RuleHandler):
             processed.add(literal)
 
             self._process_single_literal(
-                issue, literal, caches, naming_response,
-                file_lines, file_path_str, acc,
+                issue,
+                literal,
+                caches,
+                naming_response,
+                file_lines,
+                file_path_str,
+                acc,
             )
         return acc
 
@@ -937,18 +946,22 @@ class StringLiteralDuplicateHandler(RuleHandler):
         if not occurrences:
             return
 
-        const_name, action, definition_line, occurrences = (
-            self._resolve_literal_action(
-                literal, caches, naming_response, acc, occurrences
-            )
+        const_name, action, definition_line, occurrences = self._resolve_literal_action(
+            literal, caches, naming_response, acc, occurrences
         )
         if not occurrences:
             return
 
         self._append_literal_results(
-            issue, literal, const_name, action,
-            definition_line, occurrences, file_lines,
-            file_path_str, acc,
+            issue,
+            literal,
+            const_name,
+            action,
+            definition_line,
+            occurrences,
+            file_lines,
+            file_path_str,
+            acc,
         )
 
     def _resolve_literal_action(
@@ -969,9 +982,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
 
         const_name = naming_response.names.get(
             literal,
-            self._generate_constant_name(
-                len(acc.constant_defs) + 1, acc.used_names
-            ),
+            self._generate_constant_name(len(acc.constant_defs) + 1, acc.used_names),
         )
         acc.used_names.add(const_name)
         acc.constant_defs.append(f"{const_name} = {repr(literal)}")
@@ -994,19 +1005,19 @@ class StringLiteralDuplicateHandler(RuleHandler):
             occurrences, file_lines, const_name, file_path_str
         )
         acc.code_blocks.extend(blocks)
-        acc.reports.append({
-            "message": issue.message,
-            "literal": literal,
-            "const_name": const_name,
-            "action": action,
-            "definition_line": definition_line,
-            "lines": [occ[0] for occ in occurrences],
-        })
+        acc.reports.append(
+            {
+                "message": issue.message,
+                "literal": literal,
+                "const_name": const_name,
+                "action": action,
+                "definition_line": definition_line,
+                "lines": [occ[0] for occ in occurrences],
+            }
+        )
 
     @staticmethod
-    def _build_response(
-        acc: "_FixAccumulator", relative_path: str
-    ) -> SonarFixResponse:
+    def _build_response(acc: "_FixAccumulator", relative_path: str) -> SonarFixResponse:
         """Assemble the final SonarFixResponse from accumulated results."""
         helper_code = "\n".join(acc.constant_defs)
         all_blocks = list(acc.code_blocks)
@@ -1066,9 +1077,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
         """Build a structured explanation from per-literal metadata."""
         parts: List[str] = [f"**File:** `{relative_path}`"]
         for report in literal_reports:
-            parts.append(
-                StringLiteralDuplicateHandler._format_literal_report(report)
-            )
+            parts.append(StringLiteralDuplicateHandler._format_literal_report(report))
         return "\n\n".join(parts)
 
     @staticmethod
@@ -1113,9 +1122,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
         """
         matches: List[Tuple[str, int]] = []
         for node in tree.body:
-            result = StringLiteralDuplicateHandler._match_assignment_value(
-                node, target
-            )
+            result = StringLiteralDuplicateHandler._match_assignment_value(node, target)
             if result is not None:
                 matches.append(result)
         matches.sort(key=lambda m: m[1])
