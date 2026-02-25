@@ -17,7 +17,7 @@ class BlockType(str, Enum):
 
 
 class ChangeType(str, Enum):
-    FULL_CODE = "FULL_CODE"  # Complete function (small functions)
+    FULL_CODE = "FULL_CODE"  # Complete code block
     DIFF = "DIFF"  # Line-level changes
     SEARCH_REPLACE = "SEARCH_REPLACE"  # Pattern replacement
 
