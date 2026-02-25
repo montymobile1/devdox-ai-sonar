@@ -809,7 +809,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
         parsed = self._read_and_parse_file(file_path)
         if parsed is None:
             return None
-        source, file_lines, tree = parsed
+        _, file_lines, tree = parsed
 
         file_path_str = str(file_path)
         relative_path = _resolve_relative_path(file_path, project_path)
