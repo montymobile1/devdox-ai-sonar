@@ -13,10 +13,14 @@ from pathlib import Path
 import json
 from pydantic import ValidationError
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
+from langchain_core.language_models import BaseChatModel
+from langchain_core.prompts import ChatPromptTemplate
+from langgraph.graph import StateGraph, END
 from datetime import datetime
 import logging
 
 from .fix_validator import FixValidator, ValidationStatus
+
 from devdox_ai_sonar.models.file_structures import FixApplication, FixContext
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -24,6 +28,7 @@ from devdox_ai_sonar.models.sonar import (
     FixSuggestion,
     FixResult,
     SonarFixResponse,
+    FixGraphState,
     CodeBlock,
     ChangeType,
     ChangeAction,
@@ -80,6 +85,238 @@ STATICMETHOD_DECORATOR = "@staticmethod"
 PYTHON_CODE_BLOCK = "```python"
 CODE_BLOCK_END = "```"
 
+
+def build_llm(
+    provider: str,
+    model: str,
+    api_key: str,
+    max_tokens: int = 8000,
+    temperature: float = 0.08,
+) -> BaseChatModel:
+    """
+    Maps your existing provider strings to LangChain chat models.
+    Mirrors _validate_and_configure_provider() naming exactly.
+    """
+    provider = provider.lower()
+
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    elif provider == "togetherai":
+        from langchain_together import ChatTogether
+        return ChatTogether(
+            model=model,
+            together_api_key=api_key,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    elif provider == "openrouter":
+        # OpenRouter exposes an OpenAI-compatible endpoint
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            max_tokens=max_tokens,
+            temperature=temperature,
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
+
+    elif provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            max_output_tokens=max_tokens,
+            temperature=temperature,
+        )
+
+    else:
+        raise ValueError(
+            f"Unsupported provider: {provider}. "
+            "Use 'openai', 'togetherai', 'openrouter', or 'gemini'."
+        )
+
+def call_llm_with_graph(
+    provider: str,
+    model: str,
+    api_key: str,
+    prompt_system: str,
+    prompt: str,
+    max_tokens: int = 8000,
+    temperature: float = 0.08,
+    max_attempts: int = 3,
+) -> Optional[Any]:
+    """
+
+    Returns:
+        SonarFixResponse on success, None on failure.
+    """
+    initial_state: FixGraphState = {
+        "provider": provider,
+        "model": model,
+        "api_key": api_key,
+        "prompt_system": prompt_system,
+        "original_prompt": prompt,
+        "prompt": prompt,
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "max_attempts": max_attempts,
+        "fix_result": None,
+        "validation_error": None,
+        "attempt": 0,
+    }
+
+    final_state = _FIX_GRAPH.invoke(initial_state)
+
+    if final_state["fix_result"] is None:
+        logger.error(
+            f"LLM pipeline failed after {max_attempts} attempts "
+            f"[provider={provider}]. "
+            f"Last error: {final_state.get('validation_error')}"
+        )
+        return None
+
+    return final_state["fix_result"]
+
+
+def fix_node(state: FixGraphState) -> FixGraphState:
+    """Call the LLM with structured output via the appropriate provider."""
+    from devdox_ai_sonar.models.sonar import SonarFixResponse  # local import to avoid circular
+
+    try:
+        llm = build_llm(
+            provider=state["provider"],
+            model=state["model"],
+            api_key=state["api_key"],
+            max_tokens=state["max_tokens"],
+            temperature=state["temperature"],
+        )
+
+        # .with_structured_output() handles json_schema internally per provider
+        structured_llm = llm.with_structured_output(SonarFixResponse)
+
+        chain = ChatPromptTemplate.from_messages([
+            ("system", "{prompt_system}"),
+            ("human", "{prompt}"),
+        ]) | structured_llm
+
+        result: SonarFixResponse = chain.invoke({
+            "prompt_system": state["prompt_system"],
+            "prompt": state["prompt"],
+        })
+
+        return {**state, "fix_result": result, "validation_error": None}
+
+    except Exception as e:
+        logger.error(f"[fix_node] {state['provider']} call failed: {e}", exc_info=True)
+        return {**state, "fix_result": None, "validation_error": str(e)}
+
+def validate_node(state: FixGraphState) -> FixGraphState:
+    """
+    Validate that the structured output is usable.
+    Mirrors the quality checks in your existing _parse_chat_completion_response
+    and _validate_results paths.
+    """
+    result = state.get("fix_result")
+
+    if result is None:
+        return {**state, "validation_error": "No result produced by fix node"}
+
+    errors = []
+
+    # Check FIXED_CODE_BLOCKS — primary output
+    if not result.FIXED_CODE_BLOCKS:
+        errors.append("FIXED_CODE_BLOCKS is empty")
+
+    # Check EXPLANATION
+    if not getattr(result, "EXPLANATION", "").strip():
+        errors.append("EXPLANATION is empty")
+
+    # Check CONFIDENCE
+    confidence = getattr(result, "CONFIDENCE", 0.0)
+    if confidence < 0.3:
+        errors.append(f"CONFIDENCE too low: {confidence}")
+
+    if errors:
+        error_msg = f"Validation failed: {'; '.join(errors)}"
+        logger.warning(f"[validate_node] {error_msg}")
+        return {**state, "validation_error": error_msg, "fix_result": None}
+
+    return {**state, "validation_error": None}
+
+
+def retry_node(state: FixGraphState) -> FixGraphState:
+    """
+    Increment attempt counter and enrich the prompt with the previous error
+    so the model can self-correct on the next attempt.
+    """
+    attempt = state["attempt"] + 1
+    enriched_prompt = (
+        f"{state['original_prompt']}\n\n"
+        f"[Attempt {attempt} correction: previous response failed validation — "
+        f"{state['validation_error']}. "
+        f"Ensure FIXED_CODE_BLOCKS is populated, EXPLANATION is clear, "
+        f"and CONFIDENCE >= 0.3. Return valid JSON only.]"
+    )
+    logger.info(f"[retry_node] Retrying — attempt {attempt}")
+    return {
+        **state,
+        "attempt": attempt,
+        "prompt": enriched_prompt,
+        "validation_error": None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 4. Routing edge
+# ---------------------------------------------------------------------------
+
+def should_retry(state: FixGraphState) -> str:
+    if state.get("validation_error") is None:
+        return "done"
+    if state["attempt"] >= state["max_attempts"]:
+        logger.warning(
+            f"[should_retry] Max attempts ({state['max_attempts']}) reached — giving up"
+        )
+        return "give_up"
+    return "retry"
+
+
+# ---------------------------------------------------------------------------
+# 5. Graph builder (compiled once, reused)
+# ---------------------------------------------------------------------------
+
+def build_fix_graph():
+    graph = StateGraph(FixGraphState)
+
+    graph.add_node("fix", fix_node)
+    graph.add_node("validate", validate_node)
+    graph.add_node("retry", retry_node)
+
+    graph.set_entry_point("fix")
+    graph.add_edge("fix", "validate")
+    graph.add_conditional_edges(
+        "validate",
+        should_retry,
+        {"done": END, "give_up": END, "retry": "retry"},
+    )
+    graph.add_edge("retry", "fix")
+
+    return graph.compile()
+
+
+_FIX_GRAPH = build_fix_graph()
 
 class LLMFixer:
     """LLM-powered code fixer for SonarCloud issues."""
@@ -167,7 +404,7 @@ class LLMFixer:
                 "Together API key not provided. Set TOGETHER_API_KEY environment variable."
             )
 
-        self.client = Together(api_key=self.api_key)
+        #self.client = Together(api_key=self.api_key)
 
     def _configure_openai(self, model: Optional[str], api_key: Optional[str]) -> None:
         if not HAS_OPENAI:
@@ -214,14 +451,14 @@ class LLMFixer:
                 "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
             )
 
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://devdox.ai",
-                "X-Title": "DevDox AI Sonar",
-            },
-        )
+        # self.client = openai.OpenAI(
+        #     api_key=self.api_key,
+        #     base_url="https://openrouter.ai/api/v1",
+        #     default_headers={
+        #         "HTTP-Referer": "https://devdox.ai",
+        #         "X-Title": "DevDox AI Sonar",
+        #     },
+        # )
 
     @staticmethod
     def _convert_regex_to_diff(
@@ -830,33 +1067,30 @@ class LLMFixer:
 
                 return response.parsed  # type: ignore[no-any-return]
 
+
             elif self.provider in ("togetherai", "openrouter"):
-                response = self.client.chat.completions.create(
+
+                return call_llm_with_graph(
+
+                    provider=self.provider,
+
                     model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system},
-                        {"role": "user", "content": prompt},
-                    ],
+
+                    api_key=self.api_key,
+
+                    prompt_system=prompt_system,
+
+                    prompt=prompt,
+
                     max_tokens=8000,
+
                     temperature=0.08,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "sonar_fix_response",
-                            "schema": SonarFixResponse.model_json_schema(),
-                            "strict": True,
-                        },
-                    },
+
+                    max_attempts=3,
+
                 )
-                input_tokens = response.usage.prompt_tokens
-                output_tokens = response.usage.completion_tokens
-                total_tokens = response.usage.total_tokens
 
-                print(f"Input tokens: {input_tokens}")
-                print(f"Output tokens: {output_tokens}")
-                print(f"Total tokens: {total_tokens}")
 
-                return self._parse_chat_completion_response(response)
             else:
                 logger.error(f"Unknown provider: {self.provider}")
                 return None

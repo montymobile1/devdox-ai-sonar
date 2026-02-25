@@ -23,9 +23,9 @@ MANDATORY:
 {% endfor %}```
 {% endfor %}
 
-{% if context.context_dict.import_section and context.context_dict.import_section.has_imports %}## IMPORTS
+{% if context.context_dict['import_section'] and context.context_dict['import_section']['has_imports'] %}## IMPORTS
 ````{{ language }}
-{{ context.context_dict.import_section.content }}```
+{{ context.context_dict['import_section']['content'] }}```
 {% endif %}
 
 {% if error_message %}## ⚠️ RETRY as ERROR MESSAGE: {{ error_message }}

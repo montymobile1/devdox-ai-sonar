@@ -36,10 +36,10 @@ dependencies = [
     "rich-click==1.9.4",
     "requests>=2.32",
     "pydantic==2.9.0",
-    "pydantic_core==2.23.2",
+    #"pydantic_core==2.23.2",
     "pydantic-settings==2.12.0",
     "python-dotenv==1.0.0",
-    "openai==2.15.0",
+    "openai==2.23.0",
     "google-genai==1.60.0",
     "sonar-tools==3.16.2",
     "pycodestyle==2.14.0",
@@ -49,6 +49,10 @@ dependencies = [
     "GitPython==3.1.46",
     "together==2.1.1",
     "Jinja2==3.1.6",
+    "langgraph==0.3.9",
+    "langchain-together==0.3.1",
+    "langchain-openai >=0.3,<0.4",
+    "langchain-google-genai==2.1.12",
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
     "tomli-w==1.2.0",
@@ -57,7 +61,11 @@ dependencies = [
     "tomlkit==0.13.3",
     "inquirer==3.4.1",
     "aiofiles==25.1.0",
-    "langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements
+
+    #"langchain-core>=1.2.13"
+
+    #"langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements,
+
 ]
 
 [project.optional-dependencies]

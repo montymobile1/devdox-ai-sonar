@@ -70,6 +70,7 @@ class CodeBlock(BaseModel):
     file_path: Optional[str] = Field(None, description="Path to the file being fixed")
 
 
+
 class SonarFixResponse(BaseModel):
     """
     Complete response format for SonarQube fix from LLM.
@@ -231,6 +232,25 @@ class SonarFixResponse(BaseModel):
                 "CONFIDENCE": 0.92,
             }
         }
+
+
+
+class FixGraphState(TypedDict):
+    # ── inputs (set once, never mutated) ────────────────────────────────────
+    provider: str
+    model: str
+    api_key: str
+    prompt_system: str
+    original_prompt: str          # never modified — used for retry enrichment
+    max_tokens: int
+    temperature: float
+    max_attempts: int
+
+    # ── working state (mutated per iteration) ────────────────────────────────
+    prompt: str                   # may be enriched on retry
+    fix_result: Optional[Any]     # SonarFixResponse | None
+    validation_error: Optional[str]
+    attempt: int
 
 
 class SonarType(str, Enum):
