@@ -213,45 +213,55 @@ class LLMFixerAdapter:
     ) -> Optional[Dict[str, str]]:
         try:
             if self._fixer.provider in ("openai", "togetherai", "openrouter"):
-                response = self._fixer.client.chat.completions.create(
-                    model=self._fixer.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    response_format={"type": "json_object"},
-                    max_tokens=2000,
-                    temperature=0.05,
-                )
-                content = response.choices[0].message.content
-                if content is None:
-                    return None
-                return json.loads(content)
-
+                return self._call_openai_compatible(system_prompt, user_prompt)
             elif self._fixer.provider == "gemini":
-                from google.genai import types  # local to avoid hard dep
-
-                response = self._fixer.client.models.generate_content(
-                    model=self._fixer.model,
-                    contents=user_prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system_prompt,
-                        response_mime_type="application/json",
-                    ),
-                )
-                if response.text is None:
-                    return None
-                return json.loads(response.text)
-
+                return self._call_gemini(system_prompt, user_prompt)
             else:
                 logger.error(
-                    f"Unknown provider for constant naming: {self._fixer.provider}"
+                    "Unknown provider for constant naming: %s",
+                    self._fixer.provider,
                 )
                 return None
-
-        except Exception as e:
-            logger.error(f"LLM call for constant naming failed: {e}", exc_info=True)
+        except Exception:
+            logger.error("LLM call for constant naming failed", exc_info=True)
             return None
+
+    def _call_openai_compatible(
+        self, system_prompt: str, user_prompt: str
+    ) -> Optional[Dict[str, str]]:
+        """Call an OpenAI-compatible chat completions endpoint."""
+        response = self._fixer.client.chat.completions.create(
+            model=self._fixer.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=2000,
+            temperature=0.05,
+        )
+        content = response.choices[0].message.content
+        if content is None:
+            return None
+        return json.loads(content)
+
+    def _call_gemini(
+        self, system_prompt: str, user_prompt: str
+    ) -> Optional[Dict[str, str]]:
+        """Call the Google Gemini content generation endpoint."""
+        from google.genai import types  # local to avoid hard dep
+
+        response = self._fixer.client.models.generate_content(
+            model=self._fixer.model,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                response_mime_type="application/json",
+            ),
+        )
+        if response.text is None:
+            return None
+        return json.loads(response.text)
 
 
 # ---------------------------------------------------------------------------
@@ -292,13 +302,30 @@ class ConstantNamingService:
         """Main entry point. Accepts all literals for a file, returns mapping."""
         names: Dict[str, str] = {}
         used: Set[str] = set(request.existing_names)
-        remaining: List[LiteralContext] = []
-        seen_literals: Set[str] = set()
 
-        for lit_ctx in request.literals:
-            if lit_ctx.literal in seen_literals:
+        remaining = self._name_via_pipeline(
+            request.literals, names, used
+        )
+        self._resolve_remaining(
+            remaining, names, used, file_path=request.file_path
+        )
+
+        return NamingResponse(names=names)
+
+    def _name_via_pipeline(
+        self,
+        literals: List[LiteralContext],
+        names: Dict[str, str],
+        used: Set[str],
+    ) -> List[LiteralContext]:
+        """Try the clean → slugify/YAKE pipeline; return literals that failed."""
+        remaining: List[LiteralContext] = []
+        seen: Set[str] = set()
+
+        for lit_ctx in literals:
+            if lit_ctx.literal in seen:
                 continue
-            seen_literals.add(lit_ctx.literal)
+            seen.add(lit_ctx.literal)
 
             name = generate_name(lit_ctx.literal, max_words=self._max_words)
             if name and self._validator.is_structurally_valid(name):
@@ -308,27 +335,43 @@ class ConstantNamingService:
             else:
                 remaining.append(lit_ctx)
 
-        if remaining and self._llm_caller:
-            llm_names = self._call_llm_for_names(
-                remaining, used, file_path=request.file_path
-            )
-            for lit_ctx in remaining:
-                llm_name = llm_names.get(lit_ctx.literal)
-                if llm_name and self._validator.is_structurally_valid(llm_name):
-                    llm_name = self._validator.make_unique(llm_name, used)
-                    names[lit_ctx.literal] = llm_name
-                    used.add(llm_name)
-                else:
-                    fallback = self._generic_fallback(used)
-                    names[lit_ctx.literal] = fallback
-                    used.add(fallback)
-        elif remaining:
-            for lit_ctx in remaining:
-                fallback = self._generic_fallback(used)
-                names[lit_ctx.literal] = fallback
-                used.add(fallback)
+        return remaining
 
-        return NamingResponse(names=names)
+    def _resolve_remaining(
+        self,
+        remaining: List[LiteralContext],
+        names: Dict[str, str],
+        used: Set[str],
+        file_path: str = "",
+    ) -> None:
+        """Resolve literals that the pipeline could not name."""
+        if not remaining:
+            return
+
+        llm_names: Dict[str, str] = {}
+        if self._llm_caller:
+            llm_names = self._call_llm_for_names(remaining, used, file_path)
+
+        for lit_ctx in remaining:
+            self._assign_name(lit_ctx, llm_names, names, used)
+
+    def _assign_name(
+        self,
+        lit_ctx: LiteralContext,
+        llm_names: Dict[str, str],
+        names: Dict[str, str],
+        used: Set[str],
+    ) -> None:
+        """Assign a single literal its name from LLM results or fallback."""
+        llm_name = llm_names.get(lit_ctx.literal)
+        if llm_name and self._validator.is_structurally_valid(llm_name):
+            llm_name = self._validator.make_unique(llm_name, used)
+            names[lit_ctx.literal] = llm_name
+            used.add(llm_name)
+        else:
+            fallback = self._generic_fallback(used)
+            names[lit_ctx.literal] = fallback
+            used.add(fallback)
 
     # -- LLM fallback -------------------------------------------------------
 
@@ -346,7 +389,7 @@ class ConstantNamingService:
             system_tpl = self._jinja_env.get_template("python/constant_namer_system.j2")
             user_tpl = self._jinja_env.get_template("python/constant_namer_user.j2")
         except Exception as e:
-            logger.error(f"Failed to load naming prompt templates: {e}")
+            logger.error("Failed to load naming prompt templates: %s", e)
             return {}
 
         system_prompt = system_tpl.render()

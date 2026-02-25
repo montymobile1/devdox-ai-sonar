@@ -5,10 +5,12 @@ from unittest.mock import Mock
 from devdox_ai_sonar.models.constant_naming import LiteralContext, NamingRequest
 from devdox_ai_sonar.services.constant_namer import (
     ConstantNamingService,
+    LLMFixerAdapter,
     NameValidator,
     _clean,
     _detect_language,
     _extract_with_yake,
+    _format_screaming_snake,
     _slugify,
     generate_name,
 )
@@ -395,3 +397,236 @@ class TestConstantNamingServiceWithLLM:
         assert resp.names["hello"] == "GREETING_MSG"
         # LLM should have been called once, only for "hello"
         mock_caller.call_for_json.assert_called_once()
+
+
+# ============================================================================
+# FORMAT SCREAMING SNAKE
+# ============================================================================
+
+
+class TestFormatScreamingSnake:
+    def test_basic_tokens(self):
+        assert _format_screaming_snake(["hello", "world"]) == "HELLO_WORLD"
+
+    def test_empty_list(self):
+        assert _format_screaming_snake([]) is None
+
+    def test_strips_non_ascii(self):
+        result = _format_screaming_snake(["café"])
+        assert result is not None
+        assert all(c.isascii() for c in result)
+
+    def test_collapses_multiple_underscores(self):
+        result = _format_screaming_snake(["a__b", "c"])
+        assert "__" not in result
+
+
+# ============================================================================
+# _name_via_pipeline
+# ============================================================================
+
+
+class TestNameViaPipeline:
+    """Tests for the _name_via_pipeline micro-method."""
+
+    def setup_method(self):
+        self.service = ConstantNamingService()
+
+    def test_slugifiable_literals_resolved(self):
+        names = {}
+        used = set()
+        remaining = self.service._name_via_pipeline(
+            [LiteralContext(literal="application/json", occurrences=[(1, 0, 18)])],
+            names,
+            used,
+        )
+        assert names["application/json"] == "APPLICATION_JSON"
+        assert "APPLICATION_JSON" in used
+        assert remaining == []
+
+    def test_non_slugifiable_returned_as_remaining(self):
+        names = {}
+        used = set()
+        remaining = self.service._name_via_pipeline(
+            [LiteralContext(literal="hello", occurrences=[(1, 0, 7)])],
+            names,
+            used,
+        )
+        assert "hello" not in names
+        assert len(remaining) == 1
+        assert remaining[0].literal == "hello"
+
+    def test_deduplicates_same_literal(self):
+        names = {}
+        used = set()
+        remaining = self.service._name_via_pipeline(
+            [
+                LiteralContext(literal="application/json", occurrences=[(1, 0, 18)]),
+                LiteralContext(literal="application/json", occurrences=[(2, 0, 18)]),
+            ],
+            names,
+            used,
+        )
+        assert len(names) == 1
+        assert remaining == []
+
+    def test_collision_resolved_via_make_unique(self):
+        names = {}
+        used = {"APPLICATION_JSON"}
+        remaining = self.service._name_via_pipeline(
+            [LiteralContext(literal="application/json", occurrences=[(1, 0, 18)])],
+            names,
+            used,
+        )
+        assert names["application/json"] == "APPLICATION_JSON_2"
+
+
+# ============================================================================
+# _resolve_remaining
+# ============================================================================
+
+
+class TestResolveRemaining:
+    """Tests for the _resolve_remaining micro-method."""
+
+    def test_empty_remaining_does_nothing(self):
+        service = ConstantNamingService()
+        names = {}
+        used = set()
+        service._resolve_remaining([], names, used)
+        assert names == {}
+
+    def test_without_llm_falls_to_fallback(self):
+        service = ConstantNamingService()
+        names = {}
+        used = set()
+        remaining = [LiteralContext(literal="hello", occurrences=[(1, 0, 7)])]
+        service._resolve_remaining(remaining, names, used)
+        assert names["hello"] == "STRING_LITERAL_1"
+
+    def test_with_llm_uses_llm_result(self):
+        mock_caller = Mock()
+        mock_caller.call_for_json.return_value = {"hello": "GREETING_MSG"}
+        service = ConstantNamingService(llm_caller=mock_caller)
+        names = {}
+        used = set()
+        remaining = [LiteralContext(literal="hello", occurrences=[(1, 0, 7)])]
+        service._resolve_remaining(remaining, names, used, file_path="/test.py")
+        assert names["hello"] == "GREETING_MSG"
+
+
+# ============================================================================
+# _assign_name
+# ============================================================================
+
+
+class TestAssignName:
+    """Tests for the _assign_name micro-method."""
+
+    def setup_method(self):
+        self.service = ConstantNamingService()
+
+    def test_valid_llm_name_assigned(self):
+        names = {}
+        used = set()
+        lit_ctx = LiteralContext(literal="hello", occurrences=[(1, 0, 7)])
+        self.service._assign_name(
+            lit_ctx, {"hello": "GREETING_DEFAULT"}, names, used
+        )
+        assert names["hello"] == "GREETING_DEFAULT"
+        assert "GREETING_DEFAULT" in used
+
+    def test_invalid_llm_name_falls_to_fallback(self):
+        names = {}
+        used = set()
+        lit_ctx = LiteralContext(literal="hello", occurrences=[(1, 0, 7)])
+        self.service._assign_name(lit_ctx, {"hello": "bad"}, names, used)
+        assert names["hello"] == "STRING_LITERAL_1"
+
+    def test_missing_llm_name_falls_to_fallback(self):
+        names = {}
+        used = set()
+        lit_ctx = LiteralContext(literal="hello", occurrences=[(1, 0, 7)])
+        self.service._assign_name(lit_ctx, {}, names, used)
+        assert names["hello"] == "STRING_LITERAL_1"
+
+    def test_llm_name_collision_resolved(self):
+        names = {}
+        used = {"GREETING_DEFAULT"}
+        lit_ctx = LiteralContext(literal="hello", occurrences=[(1, 0, 7)])
+        self.service._assign_name(
+            lit_ctx, {"hello": "GREETING_DEFAULT"}, names, used
+        )
+        assert names["hello"] == "GREETING_DEFAULT_2"
+
+
+# ============================================================================
+# LLMFixerAdapter
+# ============================================================================
+
+
+class TestLLMFixerAdapterCallOpenaiCompatible:
+    """Tests for _call_openai_compatible micro-method."""
+
+    def test_successful_call(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "openai"
+        mock_fixer.model = "gpt-4"
+        mock_fixer.client.chat.completions.create.return_value = Mock(
+            choices=[Mock(message=Mock(content='{"hello": "GREETING"}'))]
+        )
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter._call_openai_compatible("system", "user")
+        assert result == {"hello": "GREETING"}
+
+    def test_none_content_returns_none(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "openai"
+        mock_fixer.model = "gpt-4"
+        mock_fixer.client.chat.completions.create.return_value = Mock(
+            choices=[Mock(message=Mock(content=None))]
+        )
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter._call_openai_compatible("system", "user")
+        assert result is None
+
+
+class TestLLMFixerAdapterCallForJson:
+    """Tests for call_for_json dispatch."""
+
+    def test_dispatches_to_openai(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "openai"
+        mock_fixer.model = "gpt-4"
+        mock_fixer.client.chat.completions.create.return_value = Mock(
+            choices=[Mock(message=Mock(content='{"k": "V"}'))]
+        )
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result == {"k": "V"}
+
+    def test_dispatches_togetherai(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "togetherai"
+        mock_fixer.model = "model"
+        mock_fixer.client.chat.completions.create.return_value = Mock(
+            choices=[Mock(message=Mock(content='{"k": "V"}'))]
+        )
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result == {"k": "V"}
+
+    def test_unknown_provider_returns_none(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "unknown_provider"
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result is None
+
+    def test_exception_returns_none(self):
+        mock_fixer = Mock()
+        mock_fixer.provider = "openai"
+        mock_fixer.client.chat.completions.create.side_effect = RuntimeError("fail")
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result is None

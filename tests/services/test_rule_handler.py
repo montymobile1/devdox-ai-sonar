@@ -14,6 +14,12 @@ from devdox_ai_sonar.services.rule_handler import (
     RuleHandlerRegistry,
     _resolve_effective_values,
     _resolve_relative_path,
+    _LiteralCaches,
+    _FixAccumulator,
+)
+from devdox_ai_sonar.models.constant_naming import (
+    LiteralContext,
+    NamingResponse,
 )
 from devdox_ai_sonar.models.sonar import (
     SonarFixResponse,
@@ -4087,3 +4093,665 @@ class TestGenerateFixesAdditionalEdgeCases:
         assert response.NEW_HELPER_CODE != ""
         replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
         assert len(replacement_blocks) == 5
+
+
+# ============================================================================
+# HELPER CLASSES — _LiteralCaches and _FixAccumulator
+# ============================================================================
+
+
+class TestLiteralCaches:
+    """Tests for the _LiteralCaches data holder."""
+
+    def test_initial_state(self):
+        caches = _LiteralCaches()
+        assert caches.occurrences == {}
+        assert caches.existing == {}
+        assert caches.needing_names == []
+        assert caches.seen == set()
+
+    def test_stores_occurrences(self):
+        caches = _LiteralCaches()
+        caches.occurrences["hello"] = [(1, 0, 7)]
+        caches.seen.add("hello")
+        assert "hello" in caches.occurrences
+        assert "hello" in caches.seen
+
+
+class TestFixAccumulator:
+    """Tests for the _FixAccumulator data holder."""
+
+    def test_initial_state(self):
+        acc = _FixAccumulator()
+        assert acc.code_blocks == []
+        assert acc.constant_defs == []
+        assert acc.used_names == set()
+        assert acc.reports == []
+
+    def test_accumulates_data(self):
+        acc = _FixAccumulator()
+        acc.constant_defs.append('MY_CONST = "value"')
+        acc.used_names.add("MY_CONST")
+        acc.reports.append({"literal": "value"})
+        assert len(acc.constant_defs) == 1
+        assert "MY_CONST" in acc.used_names
+        assert len(acc.reports) == 1
+
+
+# ============================================================================
+# _collect_module_level_names
+# ============================================================================
+
+
+class TestCollectModuleLevelNames:
+    """Tests for _collect_module_level_names."""
+
+    def test_collects_uppercase_assign(self):
+        source = 'MY_CONST = "hello"\nlower = "world"\n'
+        tree = ast.parse(source)
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert "MY_CONST" in names
+        assert "lower" not in names
+
+    def test_collects_uppercase_annassign(self):
+        source = 'MY_CONST: str = "hello"\n'
+        tree = ast.parse(source)
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert "MY_CONST" in names
+
+    def test_ignores_multi_target_assign(self):
+        source = "A = B = 42\n"
+        tree = ast.parse(source)
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert "A" not in names
+        assert "B" not in names
+
+    def test_empty_module(self):
+        tree = ast.parse("")
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert names == set()
+
+    def test_mixed_assign_and_annassign(self):
+        source = (
+            'FOO = "foo"\n'
+            'BAR: str = "bar"\n'
+            'baz = "baz"\n'
+        )
+        tree = ast.parse(source)
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert names == {"FOO", "BAR"}
+
+    def test_ignores_nested_functions(self):
+        source = 'def f():\n    NESTED = "val"\n'
+        tree = ast.parse(source)
+        names = StringLiteralDuplicateHandler._collect_module_level_names(tree)
+        assert names == set()
+
+
+# ============================================================================
+# _prescan_issues
+# ============================================================================
+
+
+class TestPrescanIssues:
+    """Tests for _prescan_issues."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+
+    def _make_issue(self, literal, count=3):
+        issue = Mock()
+        issue.message = f'Define a constant instead of duplicating this literal "{literal}" {count} times.'
+        return issue
+
+    def test_caches_occurrences(self):
+        source = 'x = "hello"\ny = "hello"\nz = "hello"\n'
+        tree = ast.parse(source)
+        issues = [self._make_issue("hello")]
+        caches = self.handler._prescan_issues(issues, tree)
+        assert "hello" in caches.occurrences
+        assert len(caches.occurrences["hello"]) == 3
+
+    def test_deduplicates_same_literal(self):
+        source = 'x = "hello"\ny = "hello"\nz = "hello"\n'
+        tree = ast.parse(source)
+        issues = [self._make_issue("hello"), self._make_issue("hello")]
+        caches = self.handler._prescan_issues(issues, tree)
+        assert len(caches.needing_names) == 1
+
+    def test_literal_with_existing_constant(self):
+        source = (
+            'MY_CONST = "hello"\n'
+            'def foo():\n'
+            '    return "hello"\n'
+            'def bar():\n'
+            '    return "hello"\n'
+        )
+        tree = ast.parse(source)
+        issues = [self._make_issue("hello")]
+        caches = self.handler._prescan_issues(issues, tree)
+        assert "hello" in caches.existing
+        assert len(caches.existing["hello"]) == 1
+        # Existing constant found → not in needing_names
+        assert len(caches.needing_names) == 0
+
+    def test_no_occurrences_skipped(self):
+        source = 'x = "other"\n'
+        tree = ast.parse(source)
+        issues = [self._make_issue("missing")]
+        caches = self.handler._prescan_issues(issues, tree)
+        assert caches.occurrences.get("missing") == []
+        assert len(caches.needing_names) == 0
+
+    def test_invalid_message_skipped(self):
+        issue = Mock()
+        issue.message = "Some other message"
+        tree = ast.parse("")
+        caches = self.handler._prescan_issues([issue], tree)
+        assert caches.seen == set()
+
+
+# ============================================================================
+# _resolve_names
+# ============================================================================
+
+
+class TestResolveNames:
+    """Tests for _resolve_names."""
+
+    def test_returns_naming_response(self):
+        caches = _LiteralCaches()
+        caches.needing_names = [
+            LiteralContext(literal="application/json", occurrences=[(1, 0, 18)])
+        ]
+        result = StringLiteralDuplicateHandler._resolve_names(
+            caches, set(), "/test.py", None
+        )
+        assert isinstance(result, NamingResponse)
+        assert "application/json" in result.names
+
+    def test_empty_needing_names(self):
+        caches = _LiteralCaches()
+        result = StringLiteralDuplicateHandler._resolve_names(
+            caches, set(), "/test.py", None
+        )
+        assert isinstance(result, NamingResponse)
+        assert result.names == {}
+
+    def test_respects_existing_names(self):
+        caches = _LiteralCaches()
+        caches.needing_names = [
+            LiteralContext(literal="application/json", occurrences=[(1, 0, 18)])
+        ]
+        result = StringLiteralDuplicateHandler._resolve_names(
+            caches, {"APPLICATION_JSON"}, "/test.py", None
+        )
+        assert result.names["application/json"] == "APPLICATION_JSON_2"
+
+
+# ============================================================================
+# _process_issues
+# ============================================================================
+
+
+class TestProcessIssues:
+    """Tests for _process_issues."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+
+    def _make_issue(self, literal, count=3):
+        issue = Mock()
+        issue.message = f'Define a constant instead of duplicating this literal "{literal}" {count} times.'
+        return issue
+
+    def test_processes_single_issue(self):
+        source = 'x = "hello world"\ny = "hello world"\nz = "hello world"\n'
+        file_lines = source.splitlines(keepends=True)
+        tree = ast.parse(source)
+
+        issues = [self._make_issue("hello world")]
+        caches = self.handler._prescan_issues(issues, tree)
+        naming_response = NamingResponse(names={"hello world": "HELLO_WORLD"})
+
+        acc = self.handler._process_issues(
+            issues, caches, naming_response, file_lines, "/test.py"
+        )
+        assert len(acc.code_blocks) == 3
+        assert len(acc.constant_defs) == 1
+        assert "HELLO_WORLD" in acc.used_names
+
+    def test_deduplicates_issues(self):
+        source = 'x = "hello world"\ny = "hello world"\nz = "hello world"\n'
+        file_lines = source.splitlines(keepends=True)
+        tree = ast.parse(source)
+
+        issues = [self._make_issue("hello world"), self._make_issue("hello world")]
+        caches = self.handler._prescan_issues(issues, tree)
+        naming_response = NamingResponse(names={"hello world": "HELLO_WORLD"})
+
+        acc = self.handler._process_issues(
+            issues, caches, naming_response, file_lines, "/test.py"
+        )
+        # Duplicate issue should be skipped
+        assert len(acc.reports) == 1
+
+
+# ============================================================================
+# _process_single_literal
+# ============================================================================
+
+
+class TestProcessSingleLiteral:
+    """Tests for _process_single_literal."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+
+    def _make_issue(self, literal, count=3):
+        issue = Mock()
+        issue.message = f'Define a constant instead of duplicating this literal "{literal}" {count} times.'
+        return issue
+
+    def test_creates_new_constant(self):
+        source = 'x = "value"\ny = "value"\nz = "value"\n'
+        file_lines = source.splitlines(keepends=True)
+        tree = ast.parse(source)
+
+        caches = _LiteralCaches()
+        caches.occurrences["value"] = [(1, 4, 11), (2, 4, 11), (3, 4, 11)]
+        caches.existing["value"] = []
+        naming_response = NamingResponse(names={"value": "VALUE_CONST"})
+        acc = _FixAccumulator()
+        issue = self._make_issue("value")
+
+        self.handler._process_single_literal(
+            issue, "value", caches, naming_response,
+            file_lines, "/test.py", acc,
+        )
+        assert "VALUE_CONST" in acc.used_names
+        assert len(acc.code_blocks) == 3
+        assert len(acc.constant_defs) == 1
+        assert acc.reports[0]["action"] == "created"
+
+    def test_reuses_existing_constant(self):
+        source = 'MY_CONST = "value"\nx = "value"\ny = "value"\n'
+        file_lines = source.splitlines(keepends=True)
+
+        caches = _LiteralCaches()
+        caches.occurrences["value"] = [(1, 11, 18), (2, 4, 11), (3, 4, 11)]
+        caches.existing["value"] = [("MY_CONST", 1)]
+        naming_response = NamingResponse(names={})
+        acc = _FixAccumulator()
+        issue = self._make_issue("value")
+
+        self.handler._process_single_literal(
+            issue, "value", caches, naming_response,
+            file_lines, "/test.py", acc,
+        )
+        assert len(acc.constant_defs) == 0
+        # Definition line filtered out; only 2 replacement blocks
+        assert len(acc.code_blocks) == 2
+        assert acc.reports[0]["action"] == "reused"
+
+    def test_no_occurrences_returns_early(self):
+        caches = _LiteralCaches()
+        caches.occurrences["value"] = []
+        naming_response = NamingResponse(names={})
+        acc = _FixAccumulator()
+        issue = self._make_issue("value")
+
+        self.handler._process_single_literal(
+            issue, "value", caches, naming_response,
+            [], "/test.py", acc,
+        )
+        assert len(acc.code_blocks) == 0
+        assert len(acc.reports) == 0
+
+
+# ============================================================================
+# _build_response
+# ============================================================================
+
+
+class TestBuildResponse:
+    """Tests for _build_response."""
+
+    def test_with_constant_defs(self):
+        acc = _FixAccumulator()
+        acc.constant_defs = ['MY_CONST = "value"']
+        acc.code_blocks = [
+            CodeBlock(
+                block_name="MY_CONST",
+                start_line=5,
+                end_line=5,
+                has_changes=True,
+                change_type=ChangeType.SEARCH_REPLACE,
+                block_type=BlockType.MODULE,
+                file_path="/test.py",
+                replacements=[
+                    SearchReplace(
+                        search='"value"', replace="MY_CONST",
+                        is_regex=False, count=1,
+                    )
+                ],
+            )
+        ]
+        acc.reports = [{
+            "message": "test",
+            "literal": "value",
+            "const_name": "MY_CONST",
+            "action": "created",
+            "definition_line": None,
+            "lines": [5],
+        }]
+
+        response = StringLiteralDuplicateHandler._build_response(
+            acc, "src/module.py"
+        )
+        assert response.PLACEMENT == PlacementType.GLOBAL_TOP
+        assert response.CONFIDENCE == 0.95
+        assert 'MY_CONST = "value"' in response.NEW_HELPER_CODE
+        # First block should be the constant definition insert
+        assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
+        assert response.FIXED_CODE_BLOCKS[0].start_line == 0
+
+    def test_without_constant_defs(self):
+        acc = _FixAccumulator()
+        acc.code_blocks = [
+            CodeBlock(
+                block_name="MY_CONST",
+                start_line=5,
+                end_line=5,
+                has_changes=True,
+                change_type=ChangeType.SEARCH_REPLACE,
+                block_type=BlockType.MODULE,
+                file_path="/test.py",
+                replacements=[
+                    SearchReplace(
+                        search='"value"', replace="MY_CONST",
+                        is_regex=False, count=1,
+                    )
+                ],
+            )
+        ]
+        acc.reports = [{
+            "message": "test",
+            "literal": "value",
+            "const_name": "MY_CONST",
+            "action": "reused",
+            "definition_line": 1,
+            "lines": [5],
+        }]
+
+        response = StringLiteralDuplicateHandler._build_response(
+            acc, "src/module.py"
+        )
+        assert response.NEW_HELPER_CODE == ""
+        # No constant def insert block
+        assert response.FIXED_CODE_BLOCKS[0].block_name == "MY_CONST"
+
+
+# ============================================================================
+# _resolve_literal_action
+# ============================================================================
+
+
+class TestResolveLiteralAction:
+    """Tests for _resolve_literal_action."""
+
+    def setup_method(self):
+        self.handler = StringLiteralDuplicateHandler()
+
+    def test_reuses_existing_constant(self):
+        caches = _LiteralCaches()
+        caches.existing["value"] = [("MY_CONST", 1)]
+        naming_response = NamingResponse(names={})
+        acc = _FixAccumulator()
+        occurrences = [(1, 0, 7), (2, 0, 7), (3, 0, 7)]
+
+        name, action, def_line, filtered = self.handler._resolve_literal_action(
+            "value", caches, naming_response, acc, occurrences
+        )
+        assert name == "MY_CONST"
+        assert action == "reused"
+        assert def_line == 1
+        # Definition line filtered out
+        assert (1, 0, 7) not in filtered
+
+    def test_creates_new_constant(self):
+        caches = _LiteralCaches()
+        caches.existing["value"] = []
+        naming_response = NamingResponse(names={"value": "VALUE_CONST"})
+        acc = _FixAccumulator()
+        occurrences = [(1, 0, 7), (2, 0, 7)]
+
+        name, action, def_line, filtered = self.handler._resolve_literal_action(
+            "value", caches, naming_response, acc, occurrences
+        )
+        assert name == "VALUE_CONST"
+        assert action == "created"
+        assert def_line is None
+        assert len(filtered) == 2
+        assert "VALUE_CONST" in acc.used_names
+        assert len(acc.constant_defs) == 1
+
+    def test_falls_to_generate_constant_name(self):
+        caches = _LiteralCaches()
+        caches.existing["value"] = []
+        naming_response = NamingResponse(names={})
+        acc = _FixAccumulator()
+
+        name, action, _, _ = self.handler._resolve_literal_action(
+            "value", caches, naming_response, acc, [(1, 0, 7)]
+        )
+        assert name == "STRING_LITERAL_1"
+        assert action == "created"
+
+
+# ============================================================================
+# _append_literal_results
+# ============================================================================
+
+
+class TestAppendLiteralResults:
+    """Tests for _append_literal_results."""
+
+    def _make_issue(self, literal):
+        issue = Mock()
+        issue.message = f'Define a constant instead of duplicating this literal "{literal}" 3 times.'
+        return issue
+
+    def test_appends_blocks_and_report(self):
+        acc = _FixAccumulator()
+        file_lines = ['x = "val"\n', 'y = "val"\n']
+        issue = self._make_issue("val")
+
+        StringLiteralDuplicateHandler._append_literal_results(
+            issue, "val", "MY_CONST", "created", None,
+            [(1, 4, 9), (2, 4, 9)], file_lines, "/test.py", acc,
+        )
+        assert len(acc.code_blocks) == 2
+        assert len(acc.reports) == 1
+        assert acc.reports[0]["const_name"] == "MY_CONST"
+        assert acc.reports[0]["action"] == "created"
+
+
+# ============================================================================
+# _create_constant_insert_block
+# ============================================================================
+
+
+class TestCreateConstantInsertBlock:
+    """Tests for _create_constant_insert_block."""
+
+    def test_creates_insert_block(self):
+        existing = [
+            CodeBlock(
+                block_name="X",
+                start_line=5,
+                end_line=5,
+                has_changes=True,
+                change_type=ChangeType.SEARCH_REPLACE,
+                block_type=BlockType.MODULE,
+                file_path="/test.py",
+                replacements=[],
+            )
+        ]
+        block = StringLiteralDuplicateHandler._create_constant_insert_block(
+            'MY_CONST = "hello"', existing
+        )
+        assert block.block_name == "New constants"
+        assert block.start_line == 0
+        assert block.change_type == ChangeType.DIFF
+        assert block.file_path == "/test.py"
+        assert block.changes[0].new == 'MY_CONST = "hello"'
+
+    def test_empty_existing_blocks(self):
+        block = StringLiteralDuplicateHandler._create_constant_insert_block(
+            'MY_CONST = "hello"', []
+        )
+        assert block.file_path is None
+
+
+# ============================================================================
+# _format_literal_report
+# ============================================================================
+
+
+class TestFormatLiteralReport:
+    """Tests for _format_literal_report."""
+
+    def test_reused_action(self):
+        report = {
+            "message": "test msg",
+            "literal": "value",
+            "const_name": "MY_CONST",
+            "action": "reused",
+            "definition_line": 5,
+            "lines": [10, 20],
+        }
+        result = StringLiteralDuplicateHandler._format_literal_report(report)
+        assert "Reused existing constant" in result
+        assert "`MY_CONST`" in result
+        assert "line 5" in result
+
+    def test_created_action(self):
+        report = {
+            "message": "test msg",
+            "literal": "value",
+            "const_name": "MY_CONST",
+            "action": "created",
+            "definition_line": None,
+            "lines": [10],
+        }
+        result = StringLiteralDuplicateHandler._format_literal_report(report)
+        assert "Created" in result
+        assert "at module level" in result
+
+
+# ============================================================================
+# _match_assignment_value
+# ============================================================================
+
+
+class TestMatchAssignmentValue:
+    """Tests for _match_assignment_value."""
+
+    def test_matching_assign(self):
+        tree = ast.parse('MY_CONST = "hello"\n')
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "hello")
+        assert result == ("MY_CONST", 1)
+
+    def test_non_matching_value(self):
+        tree = ast.parse('MY_CONST = "other"\n')
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "hello")
+        assert result is None
+
+    def test_matching_annassign(self):
+        tree = ast.parse('MY_CONST: str = "hello"\n')
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "hello")
+        assert result == ("MY_CONST", 1)
+
+    def test_non_string_value(self):
+        tree = ast.parse("X = 42\n")
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "42")
+        assert result is None
+
+    def test_function_def_returns_none(self):
+        tree = ast.parse("def foo(): pass\n")
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "foo")
+        assert result is None
+
+    def test_multi_target_assign_returns_none(self):
+        tree = ast.parse('A = B = "hello"\n')
+        node = tree.body[0]
+        result = StringLiteralDuplicateHandler._match_assignment_value(node, "hello")
+        assert result is None
+
+
+# ============================================================================
+# _create_replacement_block
+# ============================================================================
+
+
+class TestCreateReplacementBlock:
+    """Tests for _create_replacement_block."""
+
+    def test_creates_block(self):
+        block = StringLiteralDuplicateHandler._create_replacement_block(
+            lineno=5,
+            quoted_literal='"hello"',
+            constant_name="MY_CONST",
+            file_path="/test.py",
+        )
+        assert block.start_line == 5
+        assert block.end_line == 5
+        assert block.block_name == "MY_CONST"
+        assert block.change_type == ChangeType.SEARCH_REPLACE
+        assert block.replacements[0].search == '"hello"'
+        assert block.replacements[0].replace == "MY_CONST"
+
+    def test_none_file_path(self):
+        block = StringLiteralDuplicateHandler._create_replacement_block(
+            lineno=1,
+            quoted_literal="'val'",
+            constant_name="X",
+            file_path=None,
+        )
+        assert block.file_path is None
+
+
+# ============================================================================
+# _read_and_parse_file
+# ============================================================================
+
+
+class TestReadAndParseFile:
+    """Tests for _read_and_parse_file."""
+
+    def test_valid_python_file(self, tmp_path):
+        f = tmp_path / "test.py"
+        f.write_text('x = "hello"\n')
+        result = StringLiteralDuplicateHandler._read_and_parse_file(f)
+        assert result is not None
+        source, file_lines, tree = result
+        assert source == 'x = "hello"\n'
+        assert len(file_lines) == 1
+        assert isinstance(tree, ast.Module)
+
+    def test_nonexistent_file(self, tmp_path):
+        f = tmp_path / "missing.py"
+        result = StringLiteralDuplicateHandler._read_and_parse_file(f)
+        assert result is None
+
+    def test_syntax_error_file(self, tmp_path):
+        f = tmp_path / "bad.py"
+        f.write_text("def foo(:\n")
+        result = StringLiteralDuplicateHandler._read_and_parse_file(f)
+        assert result is None
