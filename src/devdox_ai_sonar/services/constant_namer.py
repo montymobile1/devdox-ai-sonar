@@ -4,7 +4,6 @@ Generates meaningful SCREAMING_SNAKE_CASE names for duplicated string literals
 using a pipeline: clean → detect language → slugify/YAKE → LLM fallback.
 """
 
-import json
 import keyword
 import logging
 import re
@@ -15,8 +14,11 @@ import yake
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from langdetect import detect
 from langdetect import DetectorFactory
+from pydantic import TypeAdapter
 
 DetectorFactory.seed = 0
+
+_names_adapter: TypeAdapter[Dict[str, str]] = TypeAdapter(Dict[str, str])
 
 from devdox_ai_sonar.models.constant_naming import (
     LiteralContext,
@@ -48,7 +50,8 @@ def _clean(literal: str) -> List[str]:
 def _detect_language(literal: str) -> str:
     """Return ISO 639-1 language code. Defaults to ``"en"`` on failure."""
     try:
-        return detect(literal)
+        lang: str = detect(literal)
+        return lang
     except Exception:
         return "en"
 
@@ -243,7 +246,7 @@ class LLMFixerAdapter:
         content = response.choices[0].message.content
         if content is None:
             return None
-        return json.loads(content)
+        return _names_adapter.validate_json(content)
 
     def _call_gemini(
         self, system_prompt: str, user_prompt: str
@@ -261,7 +264,7 @@ class LLMFixerAdapter:
         )
         if response.text is None:
             return None
-        return json.loads(response.text)
+        return _names_adapter.validate_json(response.text)
 
 
 # ---------------------------------------------------------------------------

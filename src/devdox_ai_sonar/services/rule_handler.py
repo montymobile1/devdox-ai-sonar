@@ -1133,6 +1133,8 @@ class StringLiteralDuplicateHandler(RuleHandler):
             value_node = node.value
         elif isinstance(node, ast.AnnAssign):
             name_node = node.target
+            if node.value is None:
+                return None
             value_node = node.value
         else:
             return None
