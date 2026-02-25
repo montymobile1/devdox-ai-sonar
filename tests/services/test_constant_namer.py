@@ -197,17 +197,26 @@ class TestNameValidator:
         assert self.v.is_valid("APP_JSON", {"OTHER_CONST"}) is True
 
     def test_make_unique_no_collision(self):
-        assert NameValidator.make_unique("APP_JSON", set()) == "APP_JSON"
+        assert self.v.make_unique("APP_JSON", set()) == "APP_JSON"
 
     def test_make_unique_with_collision(self):
-        result = NameValidator.make_unique("APP_JSON", {"APP_JSON"})
+        result = self.v.make_unique("APP_JSON", {"APP_JSON"})
         assert result == "APP_JSON_2"
 
     def test_make_unique_with_multiple_collisions(self):
-        result = NameValidator.make_unique(
+        result = self.v.make_unique(
             "APP_JSON", {"APP_JSON", "APP_JSON_2", "APP_JSON_3"}
         )
         assert result == "APP_JSON_4"
+
+    def test_make_unique_respects_max_parts(self):
+        """When name already has MAX_PARTS parts, replace last segment instead of appending."""
+        result = self.v.make_unique(
+            "A_B_C_D_E", {"A_B_C_D_E"}
+        )
+        # Should replace last part, not create A_B_C_D_E_2 (6 parts)
+        assert result == "A_B_C_D_2"
+        assert self.v.is_structurally_valid(result)
 
 
 # ============================================================================

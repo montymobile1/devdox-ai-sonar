@@ -828,17 +828,31 @@ class StringLiteralDuplicateHandler(RuleHandler):
                 target = node.targets[0]
                 if isinstance(target, ast.Name) and target.id.isupper():
                     existing_module_names.add(target.id)
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    existing_module_names.add(target.id)
 
-        # Pre-scan: identify which literals need new names (not reused).
+        # Pre-scan: extract, find occurrences, and find existing constants once
+        # per unique literal. Cache results to avoid redundant AST walks.
+        occurrence_cache: Dict[str, List[Tuple[int, int, int]]] = {}
+        existing_cache: Dict[str, List[Tuple[str, int]]] = {}
         literals_needing_names: List[LiteralContext] = []
+        seen_literals: Set[str] = set()
+
         for issue in issues:
             literal = self._extract_literal_from_message(issue.message)
-            if literal is None:
+            if literal is None or literal in seen_literals:
                 continue
+            seen_literals.add(literal)
+
             occurrences = self._find_string_occurrences(tree, literal)
+            occurrence_cache[literal] = occurrences
             if not occurrences:
                 continue
+
             existing = self._find_existing_constant(tree, literal)
+            existing_cache[literal] = existing
             if len(existing) != 1:
                 literals_needing_names.append(
                     LiteralContext(literal=literal, occurrences=occurrences)
@@ -856,16 +870,18 @@ class StringLiteralDuplicateHandler(RuleHandler):
             )
         )
 
+        processed_literals: Set[str] = set()
         for issue in issues:
             literal = self._extract_literal_from_message(issue.message)
-            if literal is None:
+            if literal is None or literal in processed_literals:
                 continue
+            processed_literals.add(literal)
 
-            occurrences = self._find_string_occurrences(tree, literal)
+            occurrences = occurrence_cache.get(literal, [])
             if not occurrences:
                 continue
 
-            existing = self._find_existing_constant(tree, literal)
+            existing = existing_cache.get(literal, [])
 
             if len(existing) == 1:
                 const_name = existing[0][0]
@@ -878,7 +894,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
                     self._generate_constant_name(len(constant_defs) + 1, used_names),
                 )
                 used_names.add(const_name)
-                constant_defs.append(f'{const_name} = "{literal}"')
+                constant_defs.append(f"{const_name} = {repr(literal)}")
                 definition_line = None
                 action = "created"
 
@@ -965,7 +981,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
             else:
                 action_text = (
                     f"Created "
-                    f'`{report["const_name"]} = "{report["literal"]}"` '
+                    f"`{report['const_name']} = {repr(report['literal'])}` "
                     f"at module level"
                 )
             parts.append(

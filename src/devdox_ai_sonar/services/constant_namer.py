@@ -14,6 +14,9 @@ from typing import Any, Dict, List, Optional, Protocol, Set
 import yake
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from langdetect import detect
+from langdetect import DetectorFactory
+
+DetectorFactory.seed = 0
 
 from devdox_ai_sonar.models.constant_naming import (
     LiteralContext,
@@ -51,13 +54,12 @@ def _detect_language(literal: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Step 3 — Slugify (short English strings)
+# Step 3 — Format tokens as SCREAMING_SNAKE_CASE
 # ---------------------------------------------------------------------------
 
 
-def _slugify(tokens: List[str], max_tokens: int = MAX_WORDS_THRESHOLD) -> Optional[str]:
-    """Join the first *max_tokens* tokens as SCREAMING_SNAKE_CASE."""
-    tokens = tokens[:max_tokens]
+def _format_screaming_snake(tokens: List[str]) -> Optional[str]:
+    """Join tokens into a SCREAMING_SNAKE_CASE name, stripping non-ASCII."""
     if not tokens:
         return None
     name = "_".join(tokens).upper()
@@ -67,7 +69,17 @@ def _slugify(tokens: List[str], max_tokens: int = MAX_WORDS_THRESHOLD) -> Option
 
 
 # ---------------------------------------------------------------------------
-# Step 4 — YAKE keyword extraction (long or non-English strings)
+# Step 4 — Slugify (short strings)
+# ---------------------------------------------------------------------------
+
+
+def _slugify(tokens: List[str], max_tokens: int = MAX_WORDS_THRESHOLD) -> Optional[str]:
+    """Join the first *max_tokens* tokens as SCREAMING_SNAKE_CASE."""
+    return _format_screaming_snake(tokens[:max_tokens])
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — YAKE keyword extraction (long strings)
 # ---------------------------------------------------------------------------
 
 
@@ -89,13 +101,7 @@ def _extract_with_yake(
     except Exception:
         return None
 
-    tokens = [kw[0] for kw in keywords]
-    if not tokens:
-        return None
-    name = "_".join(tokens).upper()
-    name = re.sub(r"[^A-Z0-9_]", "", name)
-    name = re.sub(r"_+", "_", name).strip("_")
-    return name if name else None
+    return _format_screaming_snake([kw[0] for kw in keywords])
 
 
 # ---------------------------------------------------------------------------
@@ -111,22 +117,21 @@ def generate_name(
 
     Pipeline:
     1. Clean the string into tokens.
-    2. Detect language.
-    3. If English and short (≤ *max_words* tokens) → direct slugify.
-    4. Otherwise → YAKE keyword extraction.
+    2. If short (≤ *max_words* tokens) → direct slugify (language-agnostic).
+    3. Otherwise → detect language → YAKE keyword extraction.
+
+    Short strings are always slugified because ``langdetect`` is unreliable
+    for short technical strings and YAKE may drop useful tokens.
 
     Returns ``None`` when no valid name can be produced.
     """
     tokens = _clean(literal)
-    lang = _detect_language(literal)
 
-    if lang == "en":
-        if len(tokens) <= max_words:
-            return _slugify(tokens, max_tokens=max_words)
-        else:
-            return _extract_with_yake(literal, lang="en", max_keywords=max_words)
-    else:
-        return _extract_with_yake(literal, lang=lang, max_keywords=max_words)
+    if len(tokens) <= max_words:
+        return _slugify(tokens, max_tokens=max_words)
+
+    lang = _detect_language(literal)
+    return _extract_with_yake(literal, lang=lang, max_keywords=max_words)
 
 
 # ---------------------------------------------------------------------------
@@ -161,15 +166,23 @@ class NameValidator:
         """Return ``True`` when *name* passes all validation rules."""
         return self.is_structurally_valid(name) and name not in existing_names
 
-    @staticmethod
-    def make_unique(name: str, existing_names: Set[str]) -> str:
-        """Append a numeric suffix to resolve collisions."""
+    def make_unique(self, name: str, existing_names: Set[str]) -> str:
+        """Append a numeric suffix to resolve collisions.
+
+        If appending would exceed ``MAX_PARTS``, the last segment is replaced
+        with the numeric suffix instead of appending a new one.
+        """
         if name not in existing_names:
             return name
+        parts = name.split("_")
+        if len(parts) >= self.MAX_PARTS:
+            base = "_".join(parts[: self.MAX_PARTS - 1])
+        else:
+            base = name
         counter = 2
-        while f"{name}_{counter}" in existing_names:
+        while f"{base}_{counter}" in existing_names:
             counter += 1
-        return f"{name}_{counter}"
+        return f"{base}_{counter}"
 
 
 # ---------------------------------------------------------------------------
@@ -199,7 +212,7 @@ class LLMFixerAdapter:
         self, system_prompt: str, user_prompt: str
     ) -> Optional[Dict[str, str]]:
         try:
-            if self._fixer.provider == "openai":
+            if self._fixer.provider in ("openai", "togetherai", "openrouter"):
                 response = self._fixer.client.chat.completions.create(
                     model=self._fixer.model,
                     messages=[
@@ -211,7 +224,9 @@ class LLMFixerAdapter:
                     temperature=0.05,
                 )
                 content = response.choices[0].message.content
-                return json.loads(content)  # type: ignore[arg-type]
+                if content is None:
+                    return None
+                return json.loads(content)
 
             elif self._fixer.provider == "gemini":
                 from google.genai import types  # local to avoid hard dep
@@ -224,21 +239,9 @@ class LLMFixerAdapter:
                         response_mime_type="application/json",
                     ),
                 )
-                return json.loads(response.text)  # type: ignore[arg-type]
-
-            elif self._fixer.provider in ("togetherai", "openrouter"):
-                response = self._fixer.client.chat.completions.create(
-                    model=self._fixer.model,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
-                    max_tokens=2000,
-                    temperature=0.05,
-                    response_format={"type": "json_object"},
-                )
-                content = response.choices[0].message.content
-                return json.loads(content)  # type: ignore[arg-type]
+                if response.text is None:
+                    return None
+                return json.loads(response.text)
 
             else:
                 logger.error(
@@ -272,7 +275,7 @@ class ConstantNamingService:
         max_words: int = MAX_WORDS_THRESHOLD,
     ) -> None:
         self._llm_caller = llm_caller
-        self._max_words = max(max_words, MAX_WORDS_THRESHOLD)
+        self._max_words = max_words
         self._validator = NameValidator()
         self._prompt_dir = Path(__file__).resolve().parent.parent / "prompts"
         self._jinja_env = Environment(
@@ -290,8 +293,13 @@ class ConstantNamingService:
         names: Dict[str, str] = {}
         used: Set[str] = set(request.existing_names)
         remaining: List[LiteralContext] = []
+        seen_literals: Set[str] = set()
 
         for lit_ctx in request.literals:
+            if lit_ctx.literal in seen_literals:
+                continue
+            seen_literals.add(lit_ctx.literal)
+
             name = generate_name(lit_ctx.literal, max_words=self._max_words)
             if name and self._validator.is_structurally_valid(name):
                 name = self._validator.make_unique(name, used)
@@ -301,7 +309,9 @@ class ConstantNamingService:
                 remaining.append(lit_ctx)
 
         if remaining and self._llm_caller:
-            llm_names = self._call_llm_for_names(remaining, used)
+            llm_names = self._call_llm_for_names(
+                remaining, used, file_path=request.file_path
+            )
             for lit_ctx in remaining:
                 llm_name = llm_names.get(lit_ctx.literal)
                 if llm_name and self._validator.is_structurally_valid(llm_name):
@@ -326,9 +336,11 @@ class ConstantNamingService:
         self,
         literals: List[LiteralContext],
         used_names: Set[str],
+        file_path: str = "",
     ) -> Dict[str, str]:
         """Batch all remaining literals into a single LLM call."""
-        assert self._llm_caller is not None
+        if self._llm_caller is None:
+            return {}
 
         try:
             system_tpl = self._jinja_env.get_template("python/constant_namer_system.j2")
@@ -339,6 +351,7 @@ class ConstantNamingService:
 
         system_prompt = system_tpl.render()
         user_prompt = user_tpl.render(
+            file_path=file_path,
             literals=literals,
             used_names=sorted(used_names),
         )

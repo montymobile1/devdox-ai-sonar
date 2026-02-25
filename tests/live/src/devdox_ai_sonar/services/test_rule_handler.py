@@ -114,7 +114,7 @@ class TestExistingConstantReuse:
         response = result[0]
         # ConstantNamingService generates APPLICATION_JSON from "application/json"
         assert "APPLICATION_JSON" in response.NEW_HELPER_CODE
-        assert '"application/json"' in response.NEW_HELPER_CODE
+        assert "'application/json'" in response.NEW_HELPER_CODE
         # Constants block + 3 replacements
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
         blocks = _replacement_blocks(response)
@@ -187,7 +187,7 @@ class TestExistingConstantReuse:
 
         # application/json → reuse CONTENT_TYPE (no new constant for it)
         # /api/v1/users → new named constant (naming service generates a name)
-        assert '"/api/v1/users"' in response.NEW_HELPER_CODE
+        assert "'/api/v1/users'" in response.NEW_HELPER_CODE
         # Only one new constant should be created
         assert response.NEW_HELPER_CODE.count("=") == 1
 
@@ -292,7 +292,7 @@ class TestExistingConstantReuse:
         # not in existing_module_names since existing_module_names only collects
         # UPPERCASE names from ast.Assign — and both ARE Assign nodes, so they ARE
         # in existing_module_names. The naming service will make_unique.)
-        assert '"application/json"' in response.NEW_HELPER_CODE
+        assert "'application/json'" in response.NEW_HELPER_CODE
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
         blocks = _replacement_blocks(response)
         # 2 definitions + 3 inline = 5
@@ -505,7 +505,7 @@ class TestMarkdownRendering:
         assert "Created" in rendered
         assert "Reused existing constant" in rendered
         assert "`APP_JSON`" in rendered
-        assert '= "1234"' in rendered
+        assert "= '1234'" in rendered
         assert "**Lines affected:**" in rendered
 
         # Suggested Fix should show Original/Fixed code (from display blocks)

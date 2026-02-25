@@ -5,7 +5,7 @@ Name the following Python string literals as SCREAMING_SNAKE_CASE constants.
 
 ## Literals to Name
 {% for lit_ctx in literals %}
-- "{{ lit_ctx.literal }}" ({{ lit_ctx.occurrences | length }} occurrences)
+- "{{ lit_ctx.literal | replace('"', '\\"') }}" ({{ lit_ctx.occurrences | length }} occurrences)
 {% endfor %}
 
 ## Names Already Used in This File (AVOID these)

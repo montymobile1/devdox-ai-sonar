@@ -1542,7 +1542,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert len(response.FIXED_CODE_BLOCKS) == 4
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
         assert "APPLICATION_JSON" in response.NEW_HELPER_CODE
-        assert '"application/json"' in response.NEW_HELPER_CODE
+        assert "'application/json'" in response.NEW_HELPER_CODE
         assert response.PLACEMENT == PlacementType.GLOBAL_TOP
 
     async def test_multiple_duplicated_strings(self, tmp_path):
@@ -1577,8 +1577,8 @@ class TestStringLiteralDuplicateGenerateFixes:
         # 1 constants block + 6 replacement blocks
         assert len(response.FIXED_CODE_BLOCKS) == 7
         assert response.FIXED_CODE_BLOCKS[0].block_name == "New constants"
-        assert 'HELLO_WORLD = "hello world"' in response.NEW_HELPER_CODE
-        assert 'FOO_BAR = "foo/bar"' in response.NEW_HELPER_CODE
+        assert "HELLO_WORLD = 'hello world'" in response.NEW_HELPER_CODE
+        assert "FOO_BAR = 'foo/bar'" in response.NEW_HELPER_CODE
         # Verify each replacement maps to the correct constant
         replacement_blocks = response.FIXED_CODE_BLOCKS[1:]
         for block in replacement_blocks[:3]:
@@ -1720,9 +1720,9 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert result is not None
         response = result[0]
 
-        assert 'APPLICATION_JSON = "application/json"' in response.NEW_HELPER_CODE
+        assert "APPLICATION_JSON = 'application/json'" in response.NEW_HELPER_CODE
         # "1234" is a single numeric token → falls back to STRING_LITERAL_N
-        assert '= "1234"' in response.NEW_HELPER_CODE
+        assert "= '1234'" in response.NEW_HELPER_CODE
 
         replacement_blocks = [b for b in response.FIXED_CODE_BLOCKS if b.replacements]
         json_blocks = [
@@ -1733,7 +1733,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         # "1234" gets a fallback name — find it dynamically
         num_const_name = None
         for line in response.NEW_HELPER_CODE.split("\n"):
-            if '"1234"' in line:
+            if "'1234'" in line:
                 num_const_name = line.split("=")[0].strip()
                 break
         assert num_const_name is not None
@@ -1765,7 +1765,7 @@ class TestStringLiteralDuplicateGenerateFixes:
         assert "**File:**" in explanation
         assert 'duplicating this literal "hello"' in explanation
         assert "Created" in explanation
-        assert '= "hello"' in explanation
+        assert "= 'hello'" in explanation
         assert "**Lines affected:**" in explanation
         assert "- 1" in explanation
         assert "- 2" in explanation
@@ -3182,7 +3182,7 @@ class TestBuildExplanation:
 
         assert "**File:** `src/module.py`" in result
         assert "Created" in result
-        assert '`GREETING_MSG = "hello"`' in result
+        assert "`GREETING_MSG = 'hello'`" in result
         assert "at module level" in result
         assert "**Lines affected:**" in result
         assert "- 1" in result
@@ -3310,7 +3310,7 @@ class TestS1192Integration:
         assert fix_response.PLACEMENT == PlacementType.GLOBAL_TOP
         assert fix_response.CONFIDENCE == 0.95
         assert "APPLICATION_JSON" in fix_response.NEW_HELPER_CODE
-        assert '"application/json"' in fix_response.NEW_HELPER_CODE
+        assert "'application/json'" in fix_response.NEW_HELPER_CODE
         assert "Created" in fix_response.EXPLANATION
         assert "**File:**" in fix_response.EXPLANATION
 
