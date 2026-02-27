@@ -1426,24 +1426,20 @@ async def _process_and_fix_issues(
     issue_type: IssueType = IssueType.REGULAR,
     download_latest: bool = True,
     system_ask: bool = True,
-    check_tmp_path: bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """Process and fix issues - Refactored."""
-
     services = _initialize_fix_services(auth_config, llm_config)
-    tmp_path = generate_tmp_path()
+
+    branch_downloaded = branch
     if download_latest:
-        tmp_path = generate_tmp_path()
-        branch_downloaded = branch
         if pull_request and int(pull_request) > 0:
             branch_downloaded = services["analyzer"].get_branch_from_pr(
                 project_key=auth_config.project, pull_request=pull_request
             )
-
-    # Fail fast: validate branch before allocating resources
-    if not branch_downloaded:
-        console.print("[red]Could not determine branch to download[/red]")
-        raise click.Abort()
+        if not branch_downloaded:
+            console.print("[red]Could not determine branch to download[/red]")
+            raise click.Abort()
 
     # Orphaned temp dirs (from SIGKILL/OOM) are cleaned by
     # sweep_orphaned_tmp_dirs() at CLI startup.
@@ -1452,15 +1448,15 @@ async def _process_and_fix_issues(
             f"[dim]Cleaning up temporary files: {p}[/dim]"
         )
     ) as tmp_path:
-        console.print(f"Cloning {auth_config.project} to {tmp_path}")
-        downloaded = download_latest_version(
-            auth_config.git_url, str(tmp_path), branch_downloaded
-        )
-        if not downloaded:
-            console.print("Not able to download latest version")
-            raise click.Abort()
+        if download_latest:
+            console.print(f"Cloning {auth_config.project} to {tmp_path}")
+            downloaded = download_latest_version(
+                auth_config.git_url, str(tmp_path), branch_downloaded
+            )
+            if not downloaded:
+                console.print("Not able to download latest version")
+                raise click.Abort()
 
-        # Fetch issues based on type
         issues = _fetch_issues_by_type(
             services["analyzer"],
             auth_config,
@@ -1476,20 +1472,19 @@ async def _process_and_fix_issues(
                 else "No fixable issues found"
             )
             console.print(f"[yellow]{msg}[/yellow]")
-            return  # __aexit__ handles cleanup
+            return
 
         total_issues = sum(len(issue_list) for issue_list in issues.values())
-
         console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
         await _process_files_with_issues(
             issues,
-	        services,
-	        auth_config,
-	        fix_params,
-	        issue_type,
-	        tmp_path,
-	        system_ask=system_ask,
-	        check_tmp_path=check_tmp_path
+            services,
+            auth_config,
+            fix_params,
+            issue_type,
+            tmp_path,
+            system_ask=system_ask,
+            check_tmp_path=check_tmp_path,
         )
 
 
