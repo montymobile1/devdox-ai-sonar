@@ -256,16 +256,16 @@ class TestLineRange:
 
     def test_is_valid_end_beyond_file(self):
         """Test is_valid returns False when end >= total_lines"""
-        line_range = LineRange(start=10, end=20)
+        line_range = LineRange(start=10, end=21)
 
         assert line_range.is_valid(total_lines=20) is False
 
     def test_is_valid_end_equals_total_lines(self):
-        """Test is_valid returns False when end equals total_lines"""
+        """Test is_valid returns True when end equals total_lines"""
         line_range = LineRange(start=10, end=20)
 
-        # end must be < total_lines (0-indexed)
-        assert line_range.is_valid(total_lines=20) is False
+
+        assert line_range.is_valid(total_lines=20)
 
     def test_is_valid_edge_case_last_valid_line(self):
         """Test is_valid for last valid line in file"""

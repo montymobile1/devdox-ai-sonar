@@ -1,0 +1,52 @@
+name: "DevDox AI sonar"
+description: "Run devdox-sonar code quality analysis on your Python project"
+inputs:
+  command:
+    description: "Command to run (e.g., 'fix_multiple')"
+    required: true
+    default: "fix_multiple"
+  sonar-token:
+    description: "SonarCloud authentication token (SONAR_TOKEN)"
+    required: true
+  sonar-org:
+    description: "SonarCloud organization key (SONAR_ORG)"
+    required: true
+  sonar-project:
+    description: "SonarCloud project key (SONAR_PROJ)"
+    required: true
+  project-path:
+    description: "Local path to the project. Defaults to GITHUB_WORKSPACE if not set."
+    required: true
+    default: ""
+  llm-provider:
+    description: "LLM API key for LLM integration"
+    required: true
+  llm-api-key:
+    description: "LLM API key for LLM integration"
+    required: true
+  llm-default-model:
+    description: "Default LLM model to use"
+    required: true
+runs:
+  using: "docker"
+  image: "Dockerfile"
+  args:
+    - --command
+    - ${{ inputs.command }}
+    - --sonar-token
+    - ${{ inputs.sonar-token }}
+    - --sonar-org
+    - ${{ inputs.sonar-org }}
+    - --sonar-project
+    - ${{ inputs.sonar-project }}
+    - --project-path
+    - ${{ inputs.project-path }}
+    - --llm-provider
+    - ${{ inputs.llm-provider }}
+    - --llm-api-key
+    - ${{ inputs.llm-api-key }}
+    - --llm-default-model
+    - ${{ inputs.llm-default-model }}
+branding:
+  icon: "activity"
+  color: "blue"

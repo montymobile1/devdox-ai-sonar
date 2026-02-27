@@ -84,33 +84,18 @@ devdox_sonar
 
 SonarCloud must have already scanned your project before DevDox AI Sonar can do anything. The tool reads SonarCloud's existing analysis report — it does not perform its own code analysis.
 
-```mermaid
-flowchart LR
-    A["SonarCloud\n(already scanned)"]
-    B["Fetch Issues\nfrom report"]
-    C["Clone Repo\nto /tmp"]
-    D["Extract Code\n+ Context"]
-    E["Build Prompt\n(Jinja2)"]
-    F["Call LLM"]
-    G["Validate Fix"]
-    H{"Preview"}
-    I["Apply +\nChangelog"]
-    J["Skip"]
-
-    A -->|"analysis\nreport"| B --> C --> D --> E --> F --> G --> H
-    H -->|"apply = 1"| I
-    H -->|"apply = 0"| J
-
-    style A fill:#4a90d9,stroke:#2c6faa,color:#fff
-    style B fill:#7b68ee,stroke:#5b48ce,color:#fff
-    style C fill:#7b68ee,stroke:#5b48ce,color:#fff
-    style D fill:#7b68ee,stroke:#5b48ce,color:#fff
-    style E fill:#7b68ee,stroke:#5b48ce,color:#fff
-    style F fill:#f5a623,stroke:#d4891c,color:#fff
-    style G fill:#e67e22,stroke:#c96e1c,color:#fff
-    style H fill:#e8e8e8,stroke:#999,color:#333
-    style I fill:#50c878,stroke:#3da85e,color:#fff
-    style J fill:#ccc,stroke:#999,color:#666
+```
+SonarCloud          Fetch Issues       Clone Repo        Extract Code       Build Prompt
+(already scanned) ──► from report ────► to /tmp ────────► + Context ────────► (Jinja2)
+                                                                                 │
+                                                                                 ▼
+                  ┌── Apply + Changelog ◄── YES ── Preview ◄── Validate ◄── Call LLM
+                  │                          │
+                  │                         NO
+                  │                          │
+                  │                          ▼
+                  │                        Skip
+                  ▼
 ```
 
 1. **Fetch** — Authenticates with SonarCloud and reads the analysis report via the Issues API. Filters by the types and severities you configured. Regular issues (bugs, code smells) are grouped **by rule** so all issues of the same kind are batched together. Security issues are grouped **by file**.
@@ -398,45 +383,49 @@ These options can be passed with any direct mode command to override your saved 
 
 ### The fix_issues Pipeline
 
-```mermaid
-flowchart TD
-    A["Load Config\nauth.json + config.toml"]
-    B["Clone Repo\nGit clone to /tmp"]
-    C["Fetch Issues\nfrom SonarCloud report\nFilter by type/severity"]
-    D["Group by Rule"]
-
-    subgraph LOOP ["For Each Rule Group"]
-        direction TB
-        E["Extract Code\nLocate lines + context"]
-        F["Select Handler"]
-        G["Generate Fix\nLLM or AST-based"]
-        H{"Preview\nFile, confidence,\nexplanation"}
-        I["Apply + Validate"]
-        J["Skip"]
-        K{"Continue to\nnext issue?"}
-    end
-
-    L["Write Changelog\nCHANGES_REGULAR_*.md"]
-
-    A --> B --> C --> D --> E
-    E --> F --> G --> H
-    H -->|"apply = 1"| I --> K
-    H -->|"apply = 0"| J --> K
-    K -->|Yes| E
-    K -->|No| L
-
-    style A fill:#4a90d9,stroke:#2c6faa,color:#fff
-    style B fill:#4a90d9,stroke:#2c6faa,color:#fff
-    style C fill:#4a90d9,stroke:#2c6faa,color:#fff
-    style D fill:#7b68ee,stroke:#5b48ce,color:#fff
-    style E fill:#9b59b6,stroke:#7d3c98,color:#fff
-    style F fill:#9b59b6,stroke:#7d3c98,color:#fff
-    style G fill:#f5a623,stroke:#d4891c,color:#fff
-    style H fill:#e8e8e8,stroke:#999,color:#333
-    style I fill:#50c878,stroke:#3da85e,color:#fff
-    style J fill:#ccc,stroke:#999,color:#666
-    style K fill:#e8e8e8,stroke:#999,color:#333
-    style L fill:#50c878,stroke:#3da85e,color:#fff
+```
+  Load Config (auth.json + config.toml)
+           │
+           ▼
+  Clone Repo (git clone to /tmp)
+           │
+           ▼
+  Fetch Issues from SonarCloud report
+  Filter by type / severity
+           │
+           ▼
+  Group by Rule
+           │
+           ▼
+  ┌────────────────────────────────────────┐
+  │  For Each Rule Group                   │
+  │                                        │
+  │  Extract Code (locate lines + context) │
+  │           │                            │
+  │           ▼                            │
+  │  Select Handler                        │
+  │           │                            │
+  │           ▼                            │
+  │  Generate Fix (LLM or AST-based)       │
+  │           │                            │
+  │           ▼                            │
+  │  Preview (file, confidence, explain)   │
+  │        /        \                      │
+  │   apply=1     apply=0                  │
+  │      │           │                     │
+  │      ▼           ▼                     │
+  │   Apply +      Skip                    │
+  │   Validate       │                     │
+  │      │           │                     │
+  │      └─────┬─────┘                     │
+  │            ▼                           │
+  │     Continue to next issue? ─► YES ─┐  │
+  │            │                        │  │
+  │           NO                  (loop)│  │
+  │            │                        │  │
+  └────────────┼────────────────────────┘  │
+               ▼                           │
+  Write Changelog (CHANGES_REGULAR_*.md)   │
 ```
 
 **Specialized rule handlers** — Most rules go through the LLM via `DefaultRuleHandler`. Two rules have dedicated handlers:
@@ -654,7 +643,7 @@ This project is licensed under the [Apache License 2.0](LICENSE). You are free t
 
 ## Authors
 
-Created and maintained by **Hayat Bourji** (hayat.bourgi@montyholding.com) at [Monty Mobile](https://github.com/montymobile1).
+Created and maintained by **Hayat Bourji** (hayat.bourgi@montyholding.com) and **Mohammad Jaafar** (mohamadali.jaafar@montymobile.com) at [Monty Mobile](https://github.com/montymobile1).
 
 ## Acknowledgments
 

@@ -25,6 +25,7 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
+from devdox_ai_sonar.models.llm import ProviderType
 from devdox_ai_sonar.utils.file_indentation import (
     remove_tmp_files,
     download_latest_version,
@@ -666,12 +667,32 @@ async def update_provider() -> None:
 @click.option(
     "--command",
     "-c",
-    type=click.Choice(["fix_issues", "fix_security_issues", "analyze", "inspect"]),
+    type=click.Choice(
+        ["fix_issues", "fix_security_issues", "analyze", "inspect", "fix_multiple"]
+    ),
     help="Run specific command directly without interactive mode",
+)
+@click.option("--sonar-token", type=str, help="Sonar Cloud API token")
+@click.option("--sonar-org", type=str, help="Sonar Cloud organization")
+@click.option("--sonar-project", type=str, help="Sonar Cloud project")
+@click.option("--project-path", type=str, help="Project path to analyze")
+@click.option(
+    "--llm-provider",
+    type=click.Choice(ProviderType.choices(), case_sensitive=True),
+    help="LLM provider to use",
+)
+@click.option("--llm-api-key", type=str, help="LLM API key")
+@click.option("--llm-default-model", type=str, help="LLM model to use")
+@click.option("--branch", type=str, help="Branch to fix issues on", default="main")
+@click.option(
+    "--pull-request", type=int, help="Pull request number to fix issues on", default=0
 )
 @click.option("--types", type=str, help="Comma-separated issue types (for fix_issues)")
 @click.option(
     "--severity", type=str, help="Comma-separated severities (for fix_issues)"
+)
+@click.option(
+    "--excluded-rules", type=str, help="Comma-separated excluded rules (for fix_issues)"
 )
 @click.option(
     "--max-fixes",
@@ -693,8 +714,18 @@ async def main(  # ← Async main
     ctx: click.Context,
     verbose: bool,
     command: Optional[str],
+    sonar_token: Optional[str],
+    sonar_org: Optional[str],
+    sonar_project: Optional[str],
+    project_path: Optional[str],
+    llm_provider: Optional[str],
+    llm_api_key: Optional[str],
+    llm_default_model: Optional[str],
+    branch: Optional[str],
+    pull_request: Optional[int],
     types: Optional[str],
     severity: Optional[str],
+    excluded_rules: Optional[str],
     max_fixes: Optional[int],
     apply: Optional[int],
     dry_run: bool = False,
@@ -723,8 +754,17 @@ async def main(  # ← Async main
         "max_fixes": max_fixes or 0,
         "apply": apply,
         "dry_run": dry_run,
+        "sonar_token": sonar_token,
+        "sonar_org": sonar_org,
+        "sonar_project": sonar_project,
+        "project_path": project_path,
+        "llm_provider": llm_provider,
+        "llm_api_key": llm_api_key,
+        "llm_default_model": llm_default_model,
+        "branch": branch,
+        "pull_request": pull_request,
+        "excluded_rules": excluded_rules,
     }
-
     # If command specified, run it directly
     if command:
         await _execute_command_async(ctx, command)
@@ -1010,6 +1050,8 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
             await update_provider()  # Sync command
         elif command == "change_parameters":
             await change_parameters(**options)  # Sync command
+        elif command == "fix_multiple":
+            await fix_multiple(**options)
         else:
             click.echo(f"Unknown command: {command}", err=True)
             ctx.exit(1)
@@ -1058,6 +1100,9 @@ async def _run_fix_issues(**kwargs: Any) -> None:
             pull_request=str(parameters.get("pull_request", 0)),
             fix_params=fix_params,
             issue_type=IssueType.REGULAR,
+            download_latest=True,
+            system_ask=True,
+            check_tmp_path=True
         )
 
     except SwitchCommandException:
@@ -1098,6 +1143,9 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
             str(fix_params.get("pull_request", 0)),
             fix_params,
             issue_type=IssueType.SECURITY,
+            download_latest=True,
+            system_ask=True,
+            check_tmp_path=True
         )
 
     except SwitchCommandException:
@@ -1201,6 +1249,84 @@ async def _run_inspect() -> None:
     except SwitchCommandException:
         console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
         raise
+
+
+async def fix_multiple(**kwargs: Any) -> None:
+    console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
+
+    try:
+        sonar_token = kwargs.get("sonar_token", None)
+        sonar_org = kwargs.get("sonar_org", None)
+        sonar_project = kwargs.get("sonar_project", None)
+        project_path = kwargs.get("project_path", None)
+        llm_provider = kwargs.get("llm_provider", None)
+        llm_api_key = kwargs.get("llm_api_key", None)
+        llm_default_model = kwargs.get("llm_default_model", None)
+        branch = kwargs.get("branch", "main")
+        pull_request = kwargs.get("pull_request", 0)
+
+        auth_config = AuthConfig(
+            sonar_token, sonar_org, sonar_project, project_path, ""
+        )
+
+        llm_config = LLMConfig(
+            llm_provider, llm_default_model, llm_api_key, [llm_default_model]
+        )
+
+        max_fixes = kwargs.get("max_fixes", settings.MAX_FIXES_LIMIT)
+        types_list = kwargs.get("types", "")
+        severities = kwargs.get("severity", "")
+
+        excluded_rules = (
+            kwargs.get("excluded_rules", "").split(",")
+            if kwargs.get("excluded_rules", "")
+            else []
+        )
+
+        apply_value = kwargs.get("apply", None)
+        dry_run_value = 1 if kwargs.get("dry_run", False) else 0
+
+        fix_params = {
+            "pull_request": pull_request,
+            "branch": branch,
+            "max_fixes": max_fixes,
+            "types_list": _validate_issue_types(types_list),
+            "severities_list": _validate_severities(severities),
+            "apply": apply_value,
+            "dry_run": dry_run_value,
+            "exclude_rules": excluded_rules,
+            "create_backup": 0,
+        }
+
+        # Process issues
+        await _process_and_fix_issues(
+            auth_config,
+            llm_config,
+            branch,
+            pull_request=str(pull_request),
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            download_latest=False,
+            system_ask=False,
+            check_tmp_path=False
+        )
+        # security issues
+        await _process_and_fix_issues(
+            auth_config,
+            llm_config,
+            branch,
+            pull_request=str(pull_request),
+            fix_params=fix_params,
+            issue_type=IssueType.SECURITY,
+            download_latest=False,
+            system_ask=False,
+            check_tmp_path=False
+        )
+
+    except SwitchCommandException:
+        console.print(f"\n[yellow]{constant.SWITCH_COMMANDS}[/yellow]")
+        traceback.print_exc()
+        raise  # Re-raise to be caught by interactive mode loop
 
 
 # ============================================================================
@@ -1309,30 +1435,34 @@ async def _process_and_fix_issues(
     pull_request: Optional[str],
     fix_params: Dict[str, Any],
     issue_type: IssueType = IssueType.REGULAR,
+    download_latest: bool = True,
+    system_ask: bool = True,
+    check_tmp_path: bool = True
 ) -> None:
     """Process and fix issues - Refactored."""
 
     services = _initialize_fix_services(auth_config, llm_config)
-
-    branch_downloaded = branch
-    if pull_request and int(pull_request) > 0:
-        branch_downloaded = services["analyzer"].get_branch_from_pr(
-            project_key=auth_config.project, pull_request=pull_request
-        )
-
     tmp_path = generate_tmp_path()
+    if download_latest:
+        tmp_path = generate_tmp_path()
+        branch_downloaded = branch
+        if pull_request and int(pull_request) > 0:
+            branch_downloaded = services["analyzer"].get_branch_from_pr(
+                project_key=auth_config.project, pull_request=pull_request
+            )
 
-    if not branch_downloaded:
-        console.print("[red]Could not determine branch to download[/red]")
-        raise click.Abort()
+        if not branch_downloaded:
+            console.print("[red]Could not determine branch to download[/red]")
+            raise click.Abort()
 
-    console.print(f"Cloning {auth_config.project} to {tmp_path}")
-    downloaded = download_latest_version(
-        auth_config.git_url, tmp_path, branch_downloaded
-    )
-    if not downloaded:
-        console.print("Not able to download latest version")
-        raise click.Abort()
+        console.print(f"Cloning {auth_config.project} to {tmp_path}")
+        downloaded = download_latest_version(
+            auth_config.git_url, tmp_path, branch_downloaded
+        )
+        if not downloaded:
+            console.print("Not able to download latest version")
+            raise click.Abort()
+
 
     # Fetch issues based on type
     issues = _fetch_issues_by_type(
@@ -1351,7 +1481,14 @@ async def _process_and_fix_issues(
 
     console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
     await _process_files_with_issues(
-        issues, services, auth_config, fix_params, issue_type, Path(tmp_path)
+        issues,
+        services,
+        auth_config,
+        fix_params,
+        issue_type,
+        Path(tmp_path),
+        system_ask=system_ask,
+        check_tmp_path=check_tmp_path
     )
     remove_tmp_files(tmp_path)
 
@@ -1380,6 +1517,8 @@ async def _process_files_with_issues(
     fix_params: Dict[str, Any],
     issue_type: IssueType,
     tmp_path: Path,
+    system_ask: bool = True,
+    check_tmp_path: bool = True
 ) -> None:
     """
     Process files with issues.
@@ -1393,7 +1532,7 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path
+            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path,check_tmp_path
         )
     else:
         issues_by_rule_nested = {
@@ -1406,6 +1545,8 @@ async def _process_files_with_issues(
             fix_params,
             md_file_path,
             tmp_path,
+            system_ask,
+            check_tmp_path
         )
 
 
@@ -1416,6 +1557,8 @@ async def _process_regular_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask: bool = True,
+    check_tmp_path:bool = True
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1438,6 +1581,8 @@ async def _process_regular_issues(
             fix_params,
             md_file_path,
             tmp_path,
+            system_ask,
+            check_tmp_path
         )
 
         if not success:
@@ -1452,6 +1597,8 @@ async def _process_issues_for_rule(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask: bool = True,
+    check_tmp_path:bool = True
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1480,9 +1627,12 @@ async def _process_issues_for_rule(
             rule_key=rule_key,
             md_file_path=md_file_path,
             tmp_path=tmp_path,
+            check_tmp_path=check_tmp_path
         )
 
-        if not await _should_continue_to_next_issue(idx, total_issues):
+        if not await _should_continue_to_next_issue(
+            idx, total_issues, system_ask=system_ask
+        ):
             return False  # Stop processing
 
     return True  # Continue to next rule
@@ -1497,6 +1647,7 @@ async def _process_single_fix(
     rule_key: str,
     tmp_path: Path,
     md_file_path: Optional[Path] = None,
+    check_tmp_path: bool = True
 ) -> None:
     """
     Generate and handle a single fix.
@@ -1509,6 +1660,7 @@ async def _process_single_fix(
         str(tmp_path),
         rule_key,
         md_file_path,
+        check_tmp_path=check_tmp_path
     )
 
     if fixes:
@@ -1525,6 +1677,7 @@ async def _process_security_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    check_tmp_path: bool = True
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1552,6 +1705,7 @@ async def _process_security_issues(
                 rule_key=file_key,
                 md_file_path=md_file_path,
                 tmp_path=tmp_path,
+                check_tmp_path=check_tmp_path
             )
 
             if not await _should_continue_to_next_issue(idx, total_files):
@@ -1596,6 +1750,7 @@ async def _generate_fix_for_file(
     tmp_path: str,
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
+    check_tmp_path:bool = True
 ) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
@@ -1610,6 +1765,7 @@ async def _generate_fix_for_file(
             project_path=Path(str(auth_config.project_path)),
             tmp_path=Path(tmp_path),
             file_md=file_md_str,
+            check_tmp_path=check_tmp_path
         )
         return result
 
@@ -1626,14 +1782,16 @@ def _collect_rule_information(
     return rule_info_list
 
 
-async def _should_continue_to_next_issue(current_idx: int, total_files: int) -> bool:
+async def _should_continue_to_next_issue(
+    current_idx: int, total_files: int, system_ask: bool = True
+) -> bool:
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
-
-    if not await smart_confirm("Continue to next issue?", default=True):
-        console.print("[yellow]Stopped processing remaining files[/yellow]")
-        return False
+    if system_ask:
+        if not await smart_confirm("Continue to next issue?", default=True):
+            console.print("[yellow]Stopped processing remaining files[/yellow]")
+            return False
 
     return True
 
