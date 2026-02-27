@@ -18,6 +18,9 @@ inputs:
     description: "Local path to the project. Defaults to GITHUB_WORKSPACE if not set."
     required: true
     default: "/github/workspace"
+  pull-request:
+    description: "Pull request number"
+    required: false
   llm-provider:
     description: "LLM API key for LLM integration"
     required: true
@@ -27,6 +30,10 @@ inputs:
   llm-default-model:
     description: "Default LLM model to use"
     required: true
+  max-fixes:
+    description: "Max Issues to fix"
+    required: false
+    default: 10
   apply:
     description: "Apply fixes automatically"
     required: false
@@ -45,12 +52,16 @@ runs:
     - ${{ inputs.sonar-project }}
     - --project-path
     - ${{ inputs.project-path }}
+    - --pull-request
+    - ${{ inputs.pull-request }}
     - --llm-provider
     - ${{ inputs.llm-provider }}
     - --llm-api-key
     - ${{ inputs.llm-api-key }}
     - --llm-default-model
     - ${{ inputs.llm-default-model }}
+    - --max-fixes
+    - ${{ inputs.max-fixes }}
     - --apply
     - ${{ inputs.apply }}
 branding:

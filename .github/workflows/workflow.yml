@@ -26,24 +26,39 @@ jobs:
             project-path: /github/workspace
 
             # ── Analysis mode ───────────────────────────────────────────────────
-            pull-number: ${{ github.event.pull_request.number }}
+            pull-request: ${{ github.event.pull_request.number }}
 
             # ── LLM ─────────────────────────────────────────────────────────────
             llm-provider: ${{ secrets.LLM_API_PROVIDER}}
             llm-api-key: ${{ secrets.LLM_API_KEY }}
             llm-default-model:  ${{ secrets.LLM_MODEL }}
-            llm-models: ${{ secrets.LLM_MODEL }}
-
 
           # ── Optional tuning ─────────────────────────────────────────────────
             max-fixes: "10"
-            exclude-rules: "python:S101,python:S106"
             apply: 1
+
+      - name: Zip modified files
+        if: always()
+        run: |
+            cd ${{ github.workspace }}
+            
+            # Zip the sonar report
+            if [ -d ".devdox-sonar-report" ]; then
+            zip -r devdox-sonar-report.zip .devdox-sonar-report/
+            fi
+            
+            # Zip modified source files (tracked by git)
+            git diff --name-only | xargs -I {} zip -u devdox-sonar-fixes.zip {} || true
+            
+            echo "=== Zipped files ==="
+            ls -lh *.zip 2>/dev/null || echo "No zip files created"
 
       - name: Upload Report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-            name: devdox-sonar-report
-            path: .devdox-sonar-report
-            retention-days: 30
+                name: devdox-sonar-report
+                path: |
+                  ${{ github.workspace }}/devdox-sonar-report.zip
+                  ${{ github.workspace }}/devdox-sonar-fixes.zip
+                retention-days: 30
