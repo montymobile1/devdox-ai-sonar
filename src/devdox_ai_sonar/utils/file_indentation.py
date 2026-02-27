@@ -6,6 +6,7 @@ import shutil
 import tempfile
 import time
 import re
+from urllib.parse import urlparse
 from git import Repo
 from types import TracebackType
 from typing import Callable, List, Optional, Tuple, Union
@@ -25,6 +26,22 @@ from devdox_ai_sonar.models.sonar import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_url(url: str) -> str:
+    """Strip credentials from a URL so it is safe to log.
+
+    Handles ``https://token@host/...`` and ``https://user:pass@host/...``.
+    Returns the original string unchanged when parsing fails.
+    """
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return url
+        safe = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+        return safe
+    except Exception:
+        return "<unparseable-url>"
 
 
 def _handle_remove_readonly(
@@ -118,6 +135,7 @@ class TmpCloneManager:
     async def __aenter__(self) -> Path:
         self._tmp_path = self._path_factory()
         assert self._tmp_path is not None
+        logger.debug("TmpCloneManager created temp directory: %s", self._tmp_path)
         return Path(self._tmp_path)
 
     async def __aexit__(  # NOSONAR — always returning False is intentional; in __aexit__ protocol, False means "do not suppress exceptions"
@@ -134,13 +152,14 @@ class TmpCloneManager:
             try:
                 self._on_cleanup(self._tmp_path)
             except Exception:
-                logger.exception(f"on_cleanup callback failed for: {self._tmp_path}")
+                logger.exception("on_cleanup callback failed for: %s", self._tmp_path)
 
         # Run cleanup — catch BaseException so CancelledError (Python 3.9+)
         # does not skip deletion.
         try:
             loop = asyncio.get_running_loop()
             await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
+            logger.debug("TmpCloneManager cleaned up: %s", self._tmp_path)
         except BaseException:  # NOSONAR — intentional, cleanup must catch all interrupts including CancelledError, KeyboardInterrupt, SystemExit
             # Executor await was interrupted (CancelledError, KeyboardInterrupt,
             # etc.) or cleanup_fn raised. Fall back to synchronous removal so
@@ -177,10 +196,10 @@ def _try_remove_stale_entry(entry: Path, now: float, max_age_seconds: int) -> bo
         return False
     try:
         shutil.rmtree(entry)
-        logger.info(f"Removed orphaned temp directory: {entry} (age: {age:.0f}s)")
+        logger.info("Removed orphaned temp directory: %s (age: %.0fs)", entry, age)
         return True
     except OSError:
-        logger.warning(f"Failed to remove orphaned temp directory: {entry}")
+        logger.warning("Failed to remove orphaned temp directory: %s", entry)
         return False
 
 
@@ -215,7 +234,7 @@ def sweep_orphaned_tmp_dirs(
             if _try_remove_stale_entry(entry, now, max_age_seconds):
                 removed += 1
     except OSError:
-        logger.warning(f"Failed to scan temp directory: {scan_dir}")
+        logger.warning("Failed to scan temp directory: %s", scan_dir)
 
     if on_status:
         if removed > 0:
@@ -263,18 +282,21 @@ def cleanup_tmp_py_file(
         path.unlink()
         return True
     except OSError:
-        logger.warning(f"Failed to remove tmp py file: {path}")
+        logger.warning("Failed to remove tmp py file: %s", path)
         return False
 
 
 def download_latest_version(
     repo_url: str, repo_path: str, branch: str
 ) -> Optional[Repo]:
+    safe_url = _sanitize_url(repo_url)
+    logger.debug("Cloning %s (branch=%s) into %s", safe_url, branch, repo_path)
     try:
         repo = Repo.clone_from(repo_url, repo_path, branch=branch)
+        logger.debug("Clone succeeded: %s -> %s", safe_url, repo_path)
         return repo
     except Exception:
-        logger.exception("Failed to clone repository %s", repo_url)
+        logger.exception("Failed to clone repository %s", safe_url)
         return None
 
 
@@ -941,6 +963,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         elif change.action == ChangeAction.DELETE:
             _apply_delete_action(lines, change)
 
+    logger.debug("[DIFF] Applied %d change(s) to lines %d-%d", len(sorted_changes), block.start_line, block.end_line)
     return lines
 
 
@@ -958,6 +981,10 @@ def find_line_by_content(lines: list[str], content: str, start_line: int) -> int
 def apply_single_code_block(
     lines: List[str], block: CodeBlock
 ) -> Tuple[List[str], int]:
+    logger.debug(
+        "Applying %s block '%s' on lines %d-%d",
+        block.change_type, block.block_name, block.start_line, block.end_line,
+    )
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 
