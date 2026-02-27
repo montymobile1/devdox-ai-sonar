@@ -287,7 +287,7 @@ def cleanup_tmp_py_file(
 
 
 def download_latest_version(
-    repo_url: str, repo_path: str, branch: str
+    repo_url: str, repo_path: str, branch: Optional[str]
 ) -> Optional[Repo]:
     safe_url = _sanitize_url(repo_url)
     logger.debug("Cloning %s (branch=%s) into %s", safe_url, branch, repo_path)
