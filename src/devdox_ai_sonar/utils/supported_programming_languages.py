@@ -7,7 +7,7 @@ This module provides:
    Contains only facts about the language itself: what SonarCloud calls it
    and what file extensions it uses. This never changes per-project.
 
-2. Module-level language constants (e.g. ``PYTHON``) and two lookup
+2. Module-level language constants (``PYTHON``, ``IPYTHON``) and two lookup
    functions (``lang_from_rule_key``, ``lang_from_file_ext``) that map
    any SonarCloud identifier (rule key, repository name, file extension)
    back to a LanguageConfig.
@@ -125,7 +125,14 @@ PYTHON = LanguageConfig(
     file_extensions=frozenset({".py", ".pyw"}),
 )
 
-_SUPPORTED = [PYTHON]
+IPYTHON = LanguageConfig(
+    name="ipython",
+    sonar_language_key="ipynb",
+    sonar_repositories=frozenset({"ipython"}),
+    file_extensions=frozenset({".ipynb"}),
+)
+
+_SUPPORTED = [PYTHON, IPYTHON]
 
 # Reverse indexes built once at import time.
 _REPO_INDEX: Dict[str, LanguageConfig] = {

@@ -49,6 +49,7 @@ from devdox_ai_sonar.utils.provider_config import (
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
 from devdox_ai_sonar.utils.supported_programming_languages import (
     PYTHON,
+    IPYTHON,
     is_file_processable,
 )
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
@@ -66,7 +67,7 @@ def _should_skip_file(file_path: Optional[str]) -> bool:
         file_path
         and not is_file_processable(
             file_path,
-            allowed_suffixes=PYTHON.file_extensions,
+            allowed_suffixes=PYTHON.file_extensions | IPYTHON.file_extensions,
             excluded_prefixes={"test_"},
         )
     )
@@ -1908,7 +1909,7 @@ def _fetch_issues_by_type(
                 types_list=fix_params["types_list"],
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
-                languages=[PYTHON.sonar_language_key],
+                languages=[PYTHON.sonar_language_key, IPYTHON.sonar_language_key],
             )
 
 

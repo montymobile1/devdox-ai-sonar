@@ -2,6 +2,7 @@ import pytest
 
 from devdox_ai_sonar.utils.supported_programming_languages import (
     PYTHON,
+    IPYTHON,
     LanguageConfig,
     is_file_processable,
     lang_from_file_ext,
@@ -17,6 +18,11 @@ from devdox_ai_sonar.utils.supported_programming_languages import (
 @pytest.fixture
 def python_config():
     return PYTHON
+
+
+@pytest.fixture
+def ipython_config():
+    return IPYTHON
 
 
 @pytest.fixture
@@ -48,6 +54,15 @@ class TestLanguageConfig:
     def test_python_file_extensions(self, python_config):
         assert ".py" in python_config.file_extensions
         assert ".pyw" in python_config.file_extensions
+
+    def test_ipython_has_sonar_language_key(self, ipython_config):
+        assert ipython_config.sonar_language_key == "ipynb"
+
+    def test_ipython_includes_ipython_repo(self, ipython_config):
+        assert "ipython" in ipython_config.sonar_repositories
+
+    def test_ipython_file_extensions(self, ipython_config):
+        assert ".ipynb" in ipython_config.file_extensions
 
     def test_frozen_dataclass(self, python_config):
         with pytest.raises(AttributeError):
@@ -90,6 +105,21 @@ class TestLangLookupFunctions:
         lang = lang_from_file_ext("script.pyw")
         assert lang is not None
         assert lang.name == "python"
+
+    def test_resolves_ipython_rule_key(self):
+        lang = lang_from_rule_key("ipython:S5906")
+        assert lang is not None
+        assert lang.sonar_language_key == "ipynb"
+
+    def test_resolves_bare_ipython_repo(self):
+        lang = lang_from_rule_key("ipython")
+        assert lang is not None
+        assert lang.name == "ipython"
+
+    def test_resolves_file_extension_ipynb(self):
+        lang = lang_from_file_ext("notebook.ipynb")
+        assert lang is not None
+        assert lang.name == "ipython"
 
     def test_returns_none_for_unknown_extension(self):
         assert lang_from_file_ext("Foo.java") is None
@@ -144,6 +174,14 @@ class TestIsFileProcessable:
         """No language, but explicit suffixes given."""
         assert is_file_processable("readme.txt", allowed_suffixes={".txt"}) is True
         assert is_file_processable("readme.md", allowed_suffixes={".txt"}) is False
+
+    def test_ipynb_allowed_with_ipython_suffixes(self, ipython_config):
+        suffixes = ipython_config.file_extensions
+        assert is_file_processable("notebook.ipynb", allowed_suffixes=suffixes) is True
+
+    def test_ipynb_rejected_with_python_only_suffixes(self, python_config):
+        suffixes = python_config.file_extensions
+        assert is_file_processable("notebook.ipynb", allowed_suffixes=suffixes) is False
 
     def test_empty_suffixes_allows_all(self):
         """Empty set behaves as allow-all."""
