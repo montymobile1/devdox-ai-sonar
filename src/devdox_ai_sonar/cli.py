@@ -27,9 +27,9 @@ from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.models.llm import ProviderType
 from devdox_ai_sonar.utils.file_indentation import (
-    remove_tmp_files,
     download_latest_version,
-    generate_tmp_path,
+    TmpCloneManager,
+    sweep_orphaned_tmp_dirs,
 )
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -750,6 +750,10 @@ async def main(  # ← Async main
         "pull_request": pull_request,
         "excluded_rules": excluded_rules,
     }
+
+    # Sweep orphaned temp directories from previous crashed runs
+    sweep_orphaned_tmp_dirs(on_status=lambda msg: console.print(f"[dim]{msg}[/dim]"))
+
     # If command specified, run it directly
     if command:
         await _execute_command_async(ctx, command)
@@ -1422,60 +1426,66 @@ async def _process_and_fix_issues(
     issue_type: IssueType = IssueType.REGULAR,
     download_latest: bool = True,
     system_ask: bool = True,
-    check_tmp_path: bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """Process and fix issues - Refactored."""
-
     services = _initialize_fix_services(auth_config, llm_config)
-    tmp_path = generate_tmp_path()
+
+    branch_downloaded = branch
     if download_latest:
-        tmp_path = generate_tmp_path()
-        branch_downloaded = branch
         if pull_request and int(pull_request) > 0:
             branch_downloaded = services["analyzer"].get_branch_from_pr(
                 project_key=auth_config.project, pull_request=pull_request
             )
-
         if not branch_downloaded:
             console.print("[red]Could not determine branch to download[/red]")
             raise click.Abort()
 
-        console.print(f"Cloning {auth_config.project} to {tmp_path}")
-        downloaded = download_latest_version(
-            auth_config.git_url, tmp_path, branch_downloaded
+    # Orphaned temp dirs (from SIGKILL/OOM) are cleaned by
+    # sweep_orphaned_tmp_dirs() at CLI startup.
+    async with TmpCloneManager(
+        on_cleanup=lambda p: console.print(
+            f"[dim]Cleaning up temporary files: {p}[/dim]"
         )
-        if not downloaded:
-            console.print("Not able to download latest version")
-            raise click.Abort()
+    ) as tmp_path:
+        if download_latest:
+            console.print(f"Cloning {auth_config.project} to {tmp_path}")
+            downloaded = download_latest_version(
+                auth_config.git_url, str(tmp_path), branch_downloaded
+            )
+            if not downloaded:
+                console.print("Not able to download latest version")
+                raise click.Abort()
 
-
-    # Fetch issues based on type
-    issues = _fetch_issues_by_type(
-        services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
-    )
-    if not issues:
-        msg = (
-            "No fixable security issues found"
-            if issue_type == IssueType.SECURITY
-            else "No fixable issues found"
+        issues = _fetch_issues_by_type(
+            services["analyzer"],
+            auth_config,
+            branch,
+            pull_request,
+            fix_params,
+            issue_type,
         )
-        console.print(f"[yellow]{msg}[/yellow]")
-        remove_tmp_files(tmp_path)
-        return
-    total_issues = sum(len(issue_list) for issue_list in issues.values())
+        if not issues:
+            msg = (
+                "No fixable security issues found"
+                if issue_type == IssueType.SECURITY
+                else "No fixable issues found"
+            )
+            console.print(f"[yellow]{msg}[/yellow]")
+            return
 
-    console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    await _process_files_with_issues(
-        issues,
-        services,
-        auth_config,
-        fix_params,
-        issue_type,
-        Path(tmp_path),
-        system_ask=system_ask,
-        check_tmp_path=check_tmp_path
-    )
-    remove_tmp_files(tmp_path)
+        total_issues = sum(len(issue_list) for issue_list in issues.values())
+        console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
+        await _process_files_with_issues(
+            issues,
+            services,
+            auth_config,
+            fix_params,
+            issue_type,
+            tmp_path,
+            system_ask=system_ask,
+            check_tmp_path=check_tmp_path,
+        )
 
 
 def _initialize_fix_services(
@@ -1517,7 +1527,7 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path,check_tmp_path
+            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path, check_tmp_path
         )
     else:
         issues_by_rule_nested = {
