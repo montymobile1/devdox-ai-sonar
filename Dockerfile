@@ -20,7 +20,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 COPY pyproject.toml .
 COPY src ./src
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir devdox-sonar
 
 # Project mount point
 WORKDIR /github/workspace

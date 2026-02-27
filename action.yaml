@@ -27,6 +27,10 @@ inputs:
   llm-default-model:
     description: "Default LLM model to use"
     required: true
+  apply:
+    description: "Apply fixes automatically"
+    required: false
+    default: 1
 runs:
   using: "docker"
   image: "Dockerfile"
@@ -47,6 +51,8 @@ runs:
     - ${{ inputs.llm-api-key }}
     - --llm-default-model
     - ${{ inputs.llm-default-model }}
+    - --apply
+    - ${{ inputs.apply }}
 branding:
   icon: "activity"
   color: "blue"

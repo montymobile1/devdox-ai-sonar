@@ -38,6 +38,7 @@ jobs:
           # ── Optional tuning ─────────────────────────────────────────────────
             max-fixes: "10"
             exclude-rules: "python:S101,python:S106"
+            apply: 1
 
       - name: Upload Report
         if: always()
