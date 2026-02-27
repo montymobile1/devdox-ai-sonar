@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+## [0.0.4] - 2026-02-27
+
+### CI
+
+- Switch workflow trigger to manual dispatch only, removing automatic pull request runs ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
+- Commit and push sonar fixes directly to a new branch instead of uploading artifacts ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
+- Fix project path to use `/github/workspace` for correct Docker container resolution ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
+- Declare missing inputs in `action.yml` (`pull-number`, `llm-models`, `max-fixes`, `exclude-rules`) ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
 
 ## [0.0.3] -2026-02-27
 

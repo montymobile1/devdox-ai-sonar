@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
 
       - name: Run DevDox Sonar (PR)
-        uses: montymobile1/devdox-ai-sonar@main
+        uses: montymobile1/devdox-ai-sonar@0.0.4
         with:
             command : fix_multiple
             # ── SonarCloud ──────────────────────────────────────────────────────
