@@ -218,7 +218,7 @@ class RuleHandler(ABC):
                 )
             )
 
-        logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
+        logger.debug("Built %d fix suggestion(s)", len(lst_suggestion))
         return lst_suggestion
 
 
@@ -285,9 +285,9 @@ class ConvenationNameHandler(RuleHandler):
 
             return None
 
-        except Exception as e:
-            logger.error(
-                "Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True
+        except Exception:
+            logger.exception(
+                "ConvenationNameHandler failed to generate fixes for %s", self.RULE_ID
             )
             return None
 
@@ -785,6 +785,10 @@ class AsyncToSyncHandler(RuleHandler):
             code_blocks = []
             response_lst = []
             source_lines = context.code_content
+            logger.debug(
+                "AsyncToSyncHandler: processing %d issue(s) in %s",
+                len(issues), file_path,
+            )
 
             # Step 1: Detect function type
             function_info = detect_original_function_type(source_lines.strip(), 1)
@@ -828,7 +832,7 @@ class AsyncToSyncHandler(RuleHandler):
                     )
 
             logger.info(
-                f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
+                "Generated %d code block(s) for async-to-sync conversion", len(code_blocks)
             )
 
             response_lst.append(
@@ -844,9 +848,8 @@ class AsyncToSyncHandler(RuleHandler):
 
             return response_lst
 
-        except Exception as e:
-            print(f"Error in AsyncToSyncHandler: {e}")
-            logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("AsyncToSyncHandler failed to generate fixes")
             return None
 
     def _create_function_definition_block(
@@ -962,8 +965,8 @@ class CognitiveComplexityHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in CognitiveComplexityHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("CognitiveComplexityHandler failed to generate fixes")
             return None
 
 
@@ -1004,8 +1007,8 @@ class DefaultRuleHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in DefaultRuleHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("DefaultRuleHandler failed to generate fixes")
             return None
 
 
@@ -1051,8 +1054,8 @@ class RuleHandlerRegistry:
         """
         for handler in self.handlers:
             if handler.can_handle(rule):
-                logger.debug(f"Using {handler.__class__.__name__} for rule {rule}")
+                logger.debug("Using %s for rule %s", handler.__class__.__name__, rule)
                 return handler
 
-        logger.warning(f"No handler found for rule {rule}, using default")
+        logger.warning("No handler found for rule %s, using default", rule)
         return self.handlers[-1]

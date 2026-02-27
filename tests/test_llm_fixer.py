@@ -4390,7 +4390,7 @@ class TestApplyFixesToFileDetailed:
 
         with patch("devdox_ai_sonar.llm_fixer.apply_single_fix") as mock_apply, \
              patch("devdox_ai_sonar.llm_fixer.write_file_lines"), \
-             patch("devdox_ai_sonar.llm_fixer.remove_tmp_files"), \
+             patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file"), \
              patch.object(fixer, "check_python_interpreter", return_value=(True, None)):
             mock_apply.return_value = (mock_result, ["x = 1\n", "y = 2\n"])
             fixer.file_reader.read_lines = AsyncMock(return_value=["x = 1\n", "y = 2\n"])
@@ -4412,7 +4412,7 @@ class TestApplyFixesToFileDetailed:
 
         with patch("devdox_ai_sonar.llm_fixer.apply_single_fix") as mock_apply, \
              patch("devdox_ai_sonar.llm_fixer.write_file_lines") as mock_write, \
-             patch("devdox_ai_sonar.llm_fixer.remove_tmp_files"), \
+             patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file"), \
              patch.object(fixer, "check_python_interpreter", return_value=(False, "SyntaxError")):
             mock_apply.return_value = (mock_result, ["x = 1\n"])
             fixer.file_reader.read_lines = AsyncMock(return_value=["x = 1\n"])
@@ -6787,13 +6787,13 @@ class TestHandleFailedFixesWithValidator:
         mock_validator.validate_fix.return_value = mock_val_result
 
         with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="modified content\n"), \
-             patch("devdox_ai_sonar.llm_fixer.remove_tmp_files") as mock_rm:
+             patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file") as mock_cleanup:
             await fixer._handle_failed_fixes_with_validator(
                 py_file, [(fix, issue)], [failed_app], "original",
                 result, mock_validator, dry_run=False,
             )
 
-        mock_rm.assert_called_once()
+        mock_cleanup.assert_called_once()
 
     async def test_exception_in_single_fix_does_not_abort_others(self, fixer, tmp_path):
         py_file = tmp_path / "test.py"

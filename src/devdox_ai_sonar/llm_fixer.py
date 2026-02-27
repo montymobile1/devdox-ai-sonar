@@ -33,7 +33,7 @@ from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
     write_file_lines,
     normalize_indentation,
-    remove_tmp_files,
+    cleanup_tmp_py_file,
 )
 from devdox_ai_sonar.services.rule_handler import (
     RuleHandlerRegistry,
@@ -441,8 +441,8 @@ class LLMFixer:
         except FileNotFoundError as e:
             logger.warning(f"File not found: {e}")
             return None
-        except Exception as e:
-            logger.error(f"Error generating fixes: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error generating fixes")
             return None
 
     def _map_fix_suggestion_to_fix_suggestion_dto(
@@ -640,8 +640,8 @@ class LLMFixer:
                 context_dict=context_dict,
             )
 
-        except Exception as e:
-            logger.error(f"Error preparing context: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error preparing context")
             return None
 
     async def apply_fixes(
@@ -751,7 +751,8 @@ class LLMFixer:
 
         if first_line_idx >= len(lines) or last_line_idx >= len(lines):
             logger.error(
-                f"Line range {first_line_number}-{last_line_number} exceeds file length {len(lines)}"
+                "Line range %d-%d exceeds file length %d",
+                first_line_number, last_line_number, len(lines),
             )
             return extractor._get_empty_context(first_line_number)
 
@@ -761,7 +762,10 @@ class LLMFixer:
 
         if functions_context:
             logger.debug(
-                f"Found {len(functions_context.get('functions', []))} function(s) in range"
+                "Found %d function(s) in range %d-%d",
+                len(functions_context.get("functions", [])),
+                first_line_number,
+                last_line_number,
             )
 
             return functions_context
@@ -798,6 +802,11 @@ class LLMFixer:
 
         # Determine programming language
         language = self._get_language_from_extension(file_extension)
+
+        logger.debug(
+            "LLM call — provider=%s, model=%s, language=%s, issues=%d",
+            self.provider, self.model, language, len(issues),
+        )
 
         # Prepare prompt
         prompt, system_template = self._create_fix_prompt_list(
@@ -852,16 +861,17 @@ class LLMFixer:
                 output_tokens = response.usage.completion_tokens
                 total_tokens = response.usage.total_tokens
 
-                print(f"Input tokens: {input_tokens}")
-                print(f"Output tokens: {output_tokens}")
-                print(f"Total tokens: {total_tokens}")
+                logger.debug(
+                    "Token usage — input: %d, output: %d, total: %d",
+                    input_tokens, output_tokens, total_tokens,
+                )
 
                 return self._parse_chat_completion_response(response)
             else:
-                logger.error(f"Unknown provider: {self.provider}")
+                logger.error("Unknown provider: %s", self.provider)
                 return None
-        except Exception as e:
-            logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error calling %s LLM", self.provider)
             return None
 
     def _is_init_method(self, context: str) -> bool:
@@ -1339,8 +1349,8 @@ class LLMFixer:
         try:
             return response.output_parsed  # type: ignore[no-any-return]
 
-        except Exception as e:
-            logger.error(f"Error parsing OpenAI response: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error parsing OpenAI response")
             return None
 
     def _parse_gemini_response(self, response: Any) -> Optional[Dict[str, Any]]:
@@ -1348,8 +1358,8 @@ class LLMFixer:
         try:
             content = response.text
             return self._extract_fix_from_response(content)
-        except Exception as e:
-            logger.error(f"Error parsing Gemini response: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error parsing Gemini response")
             return None
 
     def _parse_chat_completion_response(
@@ -1359,8 +1369,8 @@ class LLMFixer:
         try:
             content = response.choices[0].message.content
             return self.parse_llm_response(content)
-        except Exception as e:
-            logger.error(f"Error parsing {self.provider} response: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error parsing %s response", self.provider)
             return None
 
     # Aliases for backward compatibility and test clarity
@@ -1541,9 +1551,8 @@ class LLMFixer:
             # Step 2: Last resort - regex extraction
             return self._extract_using_regex_fallback(content)
 
-        except Exception as e:
-            logger.error(f"Error in extraction: {e}", exc_info=True)
-            print(f"Error in extraction: {e}")
+        except Exception:
+            logger.exception("Failed to extract LLM response")
             return None
 
     def _get_language_from_extension(self, extension: str) -> str:
@@ -1673,6 +1682,7 @@ class LLMFixer:
         if dry_run:
             return True, []
 
+        logger.debug("Applying %d fix(es) to %s", len(fixes), file_path)
         try:
             lines = await self.file_reader.read_lines(file_path)
             results = []
@@ -1680,25 +1690,29 @@ class LLMFixer:
                 result, lines = apply_single_fix(lines, fix)
 
                 if not result.success:
-                    logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
-                    print((f"Fix {fix.issue_key} skipped: {result.reason}"))
+                    logger.warning("Fix %s skipped: %s", fix.issue_key, result.reason)
                     continue
                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
 
                 write_file_lines(file_path_tmp, lines)
                 validate, msg = self.check_python_interpreter(file_path_tmp)
+                cleanup_tmp_py_file(file_path_tmp)
                 result.success = validate
                 result.reason = msg or ""
 
                 results.append(result)
                 if result.success:
+                    logger.debug("Fix %s applied and validated", fix.issue_key)
                     write_file_lines(file_path, lines)
-                    remove_tmp_files(str(file_path_tmp))
+                else:
+                    logger.debug("Fix %s failed validation: %s", fix.issue_key, msg)
 
+            succeeded = sum(1 for r in results if r.success)
+            logger.debug("Finished %s — %d/%d fixes succeeded", file_path, succeeded, len(results))
             return all(r.success for r in results), results
 
-        except Exception as e:
-            logger.error(f"Error applying fixes to {file_path}: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error applying fixes to %s", file_path)
             return False, []
 
     def check_python_interpreter(self, file_path: Path) -> Tuple[bool, Optional[str]]:
@@ -1898,7 +1912,7 @@ class LLMFixer:
                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
                 if file_path_tmp.exists():
                     current_content = await self.read_file_async(file_path_tmp)
-                    remove_tmp_files(str(file_path_tmp))
+                    cleanup_tmp_py_file(file_path_tmp)
 
                 validation_result = validator.validate_fix(
                     fix,
