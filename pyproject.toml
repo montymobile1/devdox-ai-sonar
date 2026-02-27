@@ -58,6 +58,8 @@ dependencies = [
     "inquirer==3.4.1",
     "aiofiles==25.1.0",
     "langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements
+    "yake>=0.4.8",
+    "langdetect>=1.0.9",
 ]
 
 [project.optional-dependencies]
