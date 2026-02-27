@@ -1,6 +1,13 @@
 name: "Fix Sonar Issues"
 description: "Fix Sonar Issues using DevDox Sonar"
-on: [pull_request]
+
+on:
+  workflow_dispatch:
+    inputs:
+      pull-number:
+        description: "Pull request number to analyze"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -37,28 +44,18 @@ jobs:
             max-fixes: "10"
             apply: 1
 
-      - name: Zip modified files
+      - name: Commit fixes to new branch
         if: always()
         run: |
-            cd ${{ github.workspace }}
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
             
-            # Zip the sonar report
-            if [ -d ".devdox-sonar-report" ]; then
-            zip -r devdox-sonar-report.zip .devdox-sonar-report/
-            fi
+            BRANCH="devdox-sonar-fixes/run-${{ github.run_id }}"
+            git checkout -b $BRANCH
             
-            # Zip modified source files (tracked by git)
-            git diff --name-only | xargs -I {} zip -u devdox-sonar-fixes.zip {} || true
+            git add -A
+            git diff --cached --quiet || git commit -m "fix: apply devdox sonar fixes [run ${{ github.run_id }}]"
             
-            echo "=== Zipped files ==="
-            ls -lh *.zip 2>/dev/null || echo "No zip files created"
-
-      - name: Upload Report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-                name: devdox-sonar-report
-                path: |
-                  ${{ github.workspace }}/devdox-sonar-report.zip
-                  ${{ github.workspace }}/devdox-sonar-fixes.zip
-                retention-days: 30
+            git push origin $BRANCH
+            
+            echo "✅ Fixes pushed to branch: $BRANCH"
