@@ -23,7 +23,7 @@ jobs:
             sonar-token: ${{ secrets.SONAR_TOKEN }}
             sonar-org: ${{ secrets.SONAR_ORG }}
             sonar-project: ${{ secrets.SONAR_PROJ }}
-            project-path: ${{ github.workspace }}
+            project-path: /github/workspace
 
             # ── Analysis mode ───────────────────────────────────────────────────
             pull-number: ${{ github.event.pull_request.number }}

@@ -17,7 +17,7 @@ inputs:
   project-path:
     description: "Local path to the project. Defaults to GITHUB_WORKSPACE if not set."
     required: true
-    default: ""
+    default: "/github/workspace"
   llm-provider:
     description: "LLM API key for LLM integration"
     required: true
