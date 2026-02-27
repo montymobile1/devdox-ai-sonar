@@ -452,6 +452,84 @@ class ProcessedRules(TypedDict):
     metadata: Dict[str, Any]
 
 
+# ---------------------------------------------------------------------------
+# Hotspot /api/hotspots/show response types
+# ---------------------------------------------------------------------------
+
+
+class HotspotComponent(TypedDict, total=False):
+    organization: str
+    key: str
+    qualifier: str
+    name: str
+    longName: str
+    path: str
+
+
+class HotspotProject(TypedDict, total=False):
+    organization: str
+    key: str
+    qualifier: str
+    name: str
+    longName: str
+
+
+class HotspotRule(TypedDict, total=False):
+    key: str
+    name: str
+    securityCategory: str
+    vulnerabilityProbability: str
+
+
+class HotspotChangelogDiff(TypedDict, total=False):
+    key: str
+    newValue: str
+    oldValue: str
+
+
+class HotspotChangelog(TypedDict, total=False):
+    user: str
+    userName: str
+    creationDate: str
+    diffs: List["HotspotChangelogDiff"]
+    avatar: str
+    isUserActive: bool
+
+
+class HotspotComment(TypedDict, total=False):
+    key: str
+    login: str
+    htmlText: str
+    markdown: str
+    createdAt: str
+
+
+class HotspotUser(TypedDict, total=False):
+    login: str
+    name: str
+    active: bool
+
+
+class HotspotDetail(TypedDict, total=False):
+    """Typed response from ``GET /api/hotspots/show``."""
+
+    key: str
+    component: HotspotComponent
+    project: HotspotProject
+    rule: HotspotRule
+    status: str
+    line: int
+    message: str
+    assignee: str
+    author: str
+    creationDate: str
+    updateDate: str
+    changelog: List[HotspotChangelog]
+    comment: List[HotspotComment]
+    users: List[HotspotUser]
+    canChangeStatus: bool
+
+
 class FixSuggestion(BaseModel):
     """Represents an LLM-generated fix suggestion."""
 

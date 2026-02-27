@@ -47,7 +47,11 @@ from devdox_ai_sonar.utils.provider_config import (
 )
 
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
-from devdox_ai_sonar.utils.file_filter import is_file_processable
+from devdox_ai_sonar.utils.supported_programming_languages import (
+    PYTHON,
+    IPYTHON,
+    is_file_processable,
+)
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
@@ -55,6 +59,18 @@ from devdox_ai_sonar.config import settings
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
 
 console = Console()
+
+
+def _should_skip_file(file_path: Optional[str]) -> bool:
+    """Return True if *file_path* should be skipped during processing."""
+    return bool(
+        file_path
+        and not is_file_processable(
+            file_path,
+            allowed_suffixes=PYTHON.file_extensions | IPYTHON.file_extensions,
+            excluded_prefixes={"test_"},
+        )
+    )
 
 
 def async_command(f: Any) -> Any:
@@ -1606,13 +1622,7 @@ async def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-        if issue.file and not is_file_processable(
-            issue.file,
-            allowed_suffixes=[".py"],
-            excluded_suffixes=[],
-            allowed_prefixes=[],
-            excluded_prefixes=["test_"],
-        ):
+        if _should_skip_file(issue.file):
             console.print(
                 f"[dim]Skipping {issue.file} "
                 f"(only .py files excluding test_ are processed)[/dim]"
@@ -1690,13 +1700,7 @@ async def _process_security_issues(
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
         for idx_new, issue in enumerate(issues, 1):
-            if issue.file and not is_file_processable(
-                issue.file,
-                allowed_suffixes=[".py"],
-                excluded_suffixes=[],
-                allowed_prefixes=[],
-                excluded_prefixes=["test_"],
-            ):
+            if _should_skip_file(issue.file):
                 console.print(
                     f"[dim]Skipping {issue.file} "
                     f"(only .py files excluding test_ are processed)[/dim]"
@@ -1902,6 +1906,7 @@ def _fetch_issues_by_type(
                 branch=branch or "",
                 pull_request=pr_number,
                 max_issues=fix_params["max_fixes"],
+                language=PYTHON,
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
@@ -1914,6 +1919,7 @@ def _fetch_issues_by_type(
                 types_list=fix_params["types_list"],
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
+                languages=[PYTHON.sonar_language_key, IPYTHON.sonar_language_key],
             )
 
 
