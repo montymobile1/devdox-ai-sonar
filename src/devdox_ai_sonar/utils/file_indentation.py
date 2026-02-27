@@ -3,7 +3,6 @@ import asyncio
 import os
 import stat
 import shutil
-import sys
 import tempfile
 import time
 import re
@@ -150,11 +149,7 @@ class TmpCloneManager:
                 self._cleanup_fn(self._tmp_path)
             except Exception:
                 logger.exception(
-                    f"Failed to clean up temporary directory: {self._tmp_path}"
-                )
-                print(
-                    f"Warning: could not remove temporary directory: {self._tmp_path}",
-                    file=sys.stderr,
+                    "Failed to clean up temporary directory: %s", self._tmp_path
                 )
         return False
 
@@ -278,8 +273,8 @@ def download_latest_version(
     try:
         repo = Repo.clone_from(repo_url, repo_path, branch=branch)
         return repo
-    except Exception as e:
-        print(f"Error loading files from {repo_url}: {e}")
+    except Exception:
+        logger.exception("Failed to clone repository %s", repo_url)
         return None
 
 
@@ -802,7 +797,7 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
-        print(f"Warning: Invalid start_line {block.start_line}")
+        logger.warning("Invalid start_line %d for file with %d lines", block.start_line, len(lines))
         return lines, block.end_line
 
     # Calculate base indentation from original code
@@ -822,16 +817,17 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
     else:
         lines[start_idx : end_idx + 1] = new_lines
 
-    print(
-        f"[FULL_CODE] Replaced lines {block.start_line}-{block.end_line} "
-        f"({end_idx - start_idx} lines) with {len(new_lines)} lines"
+    logger.debug(
+        "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
+        block.start_line, block.end_line, end_idx - start_idx, len(new_lines),
     )
 
     if len(new_lines) > 1:
         end_idx = len(new_lines) + block.start_line - 1
 
-        print(
-            f"Warning: Full code block has {len(new_lines)} lines, expected {end_idx - start_idx + 1}"
+        logger.warning(
+            "Full code block has %d lines, expected %d",
+            len(new_lines), end_idx - start_idx + 1,
         )
 
     return lines, end_idx
@@ -853,7 +849,7 @@ def _replace_line_preserving_indent(
     else:
         original_indent = calculate_base_indentation(lines[line_idx])
         lines[line_idx] = " " * original_indent + change.new.strip() + "\n"
-    print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
+    logger.debug("[DIFF] Replaced line %d: %s -> %s", change.line, change.old, change.new)
 
 
 def _try_replace_at_corrected_line(
@@ -935,7 +931,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
-            print(f"Warning: Invalid line number {change.line}")
+            logger.warning("Invalid line number %d (file has %d lines)", change.line, len(lines))
             continue
 
         if change.action == ChangeAction.REPLACE:
@@ -970,7 +966,7 @@ def apply_single_code_block(
     elif block.change_type == ChangeType.SEARCH_REPLACE:
         return apply_search_replace_change(lines, block), 0
     else:
-        print(f"Warning: Unknown change_type '{block.change_type}'")
+        logger.warning("Unknown change_type '%s'", block.change_type)
         return lines, 0
 
 

@@ -453,8 +453,8 @@ def find_function(code: str, function_name: str) -> Optional[Dict[str, Any]]:
         finder = ClassMethodFinder(function_name)
         finder.visit(tree)
         return finder.function_info
-    except SyntaxError as e:
-        print(f"Syntax error in code: {e}")
+    except SyntaxError:
+        logger.warning("Syntax error parsing code for function '%s'", function_name)
         return None
 
 
@@ -472,8 +472,8 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         finder = AllFunctionsFinder()
         finder.visit(tree)
         return finder.functions
-    except SyntaxError as e:
-        print(f"Syntax error: {e}")
+    except SyntaxError:
+        logger.warning("Syntax error parsing code for all-functions scan")
         return []
 
 
@@ -591,10 +591,10 @@ def find_function_implementations(
             locator.current_file = str(file_path)
             locator.visit(tree)
 
-        except SyntaxError as e:
-            print(f"Syntax error in {file_path}: {e}")
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+        except SyntaxError:
+            logger.warning("Syntax error in %s, skipping", file_path)
+        except Exception:
+            logger.warning("Error processing %s, skipping", file_path, exc_info=True)
 
     return {"definitions": locator.definitions, "calls": locator.calls}
 
@@ -705,8 +705,8 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
 
                             return
 
-            except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+            except Exception:
+                logger.warning("Error processing %s during function definition search", file_path, exc_info=True)
 
     def _analyze_decorators(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]

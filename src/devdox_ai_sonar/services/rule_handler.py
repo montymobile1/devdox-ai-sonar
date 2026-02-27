@@ -285,9 +285,9 @@ class ConvenationNameHandler(RuleHandler):
 
             return None
 
-        except Exception as e:
-            logger.error(
-                "Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True
+        except Exception:
+            logger.exception(
+                "ConvenationNameHandler failed to generate fixes for %s", self.RULE_ID
             )
             return None
 
@@ -844,9 +844,8 @@ class AsyncToSyncHandler(RuleHandler):
 
             return response_lst
 
-        except Exception as e:
-            print(f"Error in AsyncToSyncHandler: {e}")
-            logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("AsyncToSyncHandler failed to generate fixes")
             return None
 
     def _create_function_definition_block(
@@ -962,8 +961,8 @@ class CognitiveComplexityHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in CognitiveComplexityHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("CognitiveComplexityHandler failed to generate fixes")
             return None
 
 
@@ -1004,8 +1003,8 @@ class DefaultRuleHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in DefaultRuleHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("DefaultRuleHandler failed to generate fixes")
             return None
 
 

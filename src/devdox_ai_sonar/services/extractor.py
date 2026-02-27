@@ -80,7 +80,7 @@ class IssueExtractor:
         except FileNotFoundError as e:
             return ValidationResult(is_valid=False, error=f"File not found: {e}")
         except Exception as e:
-            logger.error(f"Validation error: {e}", exc_info=True)
+            logger.exception("Unexpected validation error")
             return ValidationResult(is_valid=False, error=f"Unexpected error: {e}")
 
     async def get_content_range(

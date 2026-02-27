@@ -852,16 +852,17 @@ class LLMFixer:
                 output_tokens = response.usage.completion_tokens
                 total_tokens = response.usage.total_tokens
 
-                print(f"Input tokens: {input_tokens}")
-                print(f"Output tokens: {output_tokens}")
-                print(f"Total tokens: {total_tokens}")
+                logger.debug(
+                    "Token usage — input: %d, output: %d, total: %d",
+                    input_tokens, output_tokens, total_tokens,
+                )
 
                 return self._parse_chat_completion_response(response)
             else:
                 logger.error(f"Unknown provider: {self.provider}")
                 return None
-        except Exception as e:
-            logger.error(f"Error calling {self.provider} LLM: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error calling %s LLM", self.provider)
             return None
 
     def _is_init_method(self, context: str) -> bool:
@@ -1541,9 +1542,8 @@ class LLMFixer:
             # Step 2: Last resort - regex extraction
             return self._extract_using_regex_fallback(content)
 
-        except Exception as e:
-            logger.error(f"Error in extraction: {e}", exc_info=True)
-            print(f"Error in extraction: {e}")
+        except Exception:
+            logger.exception("Failed to extract LLM response")
             return None
 
     def _get_language_from_extension(self, extension: str) -> str:
@@ -1681,7 +1681,6 @@ class LLMFixer:
 
                 if not result.success:
                     logger.warning(f"Fix {fix.issue_key} skipped: {result.reason}")
-                    print((f"Fix {fix.issue_key} skipped: {result.reason}"))
                     continue
                 file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
 
