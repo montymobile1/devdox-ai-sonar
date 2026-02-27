@@ -1,13 +1,7 @@
 name: "Fix Sonar Issues"
 description: "Fix Sonar Issues using DevDox Sonar"
 
-on:
-  workflow_dispatch:
-    inputs:
-      pull-number:
-        description: "Pull request number to analyze"
-        required: false
-        default: ""
+on: [pull_request]
 
 permissions:
   contents: write
