@@ -28,7 +28,7 @@ jobs:
           ref: ${{ github.event.inputs.source_branch }}
 
       - name: Run DevDox Sonar (PR)
-        uses: montymobile1/devdox-ai-sonar@0.0.4
+        uses: montymobile1/devdox-ai-sonar@0.0.5
         with:
           command: fix_multiple
           # ── SonarCloud ──────────────────────────────────────────────────────
