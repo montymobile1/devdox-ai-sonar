@@ -1543,7 +1543,7 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path, check_tmp_path
+            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path, system_ask, check_tmp_path
         )
     else:
         issues_by_rule_nested = {
@@ -1688,6 +1688,7 @@ async def _process_security_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask:bool = True,
     check_tmp_path: bool = True
 ) -> None:
     """
@@ -1719,7 +1720,7 @@ async def _process_security_issues(
                 check_tmp_path=check_tmp_path
             )
 
-            if not await _should_continue_to_next_issue(idx, total_files):
+            if not await _should_continue_to_next_issue(idx, total_files,system_ask=system_ask):
                 break
 
 
@@ -1799,8 +1800,11 @@ async def _should_continue_to_next_issue(
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
-    if system_ask:
-        if not await smart_confirm("Continue to next issue?", default=True):
+
+    if not system_ask:
+        return True
+
+    if not await smart_confirm("Continue to next issue?", default=True):
             console.print("[yellow]Stopped processing remaining files[/yellow]")
             return False
 
