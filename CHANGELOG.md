@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+## [0.0.5] - 2026-03-03
+
+### CI
+
+- Switch workflow trigger from automatic pull_request to manual workflow_dispatch only, removing automatic runs on every PR (#XX) ([#54](https://github.com/montymobile1/devdox-ai-sonar/pull/54))
+- Add manual inputs pr_number and source_branch to allow targeted fixes on any PR from the Actions UI  ([#54](https://github.com/montymobile1/devdox-ai-sonar/pull/54))
+- Remove job-level if: github.event_name == 'pull_request' condition, no longer needed with single manual trigger([#54](https://github.com/montymobile1/devdox-ai-sonar/pull/54))
+
+
 ## [0.0.4] - 2026-02-27
 
 ### CI

@@ -2286,7 +2286,7 @@ class TestSecurityIssuesProcessing:
 
 
         mock_single_fix.assert_called_once()
-        mock_continue.assert_called_once_with(1, 1)
+        mock_continue.assert_called_once_with(1, 1, system_ask=True)
 
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
