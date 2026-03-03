@@ -61,8 +61,7 @@ jobs:
                   --base "$SOURCE_BRANCH" \
                   --head "$BRANCH" \
                   --title "fix: DevDox Sonar fixes [run ${{ github.run_id }}]" \
-                  --body "Automated Sonar issue fixes by DevDox AI.
+                  --body "Automated Sonar issue fixes by DevDox sonar AI.
                 - Run: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
                 - Source branch: \`$SOURCE_BRANCH\`
-                - Triggered by: \`${{ github.actor }}\`" \
-                  --label "devdox,sonar-fix,automated"
+                - Triggered by: \`${{ github.actor }}\`"
