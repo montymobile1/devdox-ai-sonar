@@ -167,6 +167,15 @@ def mock_show_progress(message: str, total=None):
     yield mock_progress, mock_task
 
 
+@contextmanager
+def mock_tmp_clone(tmp_path_value="/tmp/fake_devdox"):
+    """Mock TmpCloneManager for testing."""
+    mock_instance = AsyncMock()
+    mock_instance.__aenter__ = AsyncMock(return_value=Path(tmp_path_value))
+    mock_instance.__aexit__ = AsyncMock(return_value=False)
+    with patch('devdox_ai_sonar.cli.TmpCloneManager', return_value=mock_instance):
+        yield mock_instance
+
 
 @pytest.fixture
 def auth_config():
@@ -2277,7 +2286,7 @@ class TestSecurityIssuesProcessing:
 
 
         mock_single_fix.assert_called_once()
-        mock_continue.assert_called_once_with(1, 1)
+        mock_continue.assert_called_once_with(1, 1, system_ask=True)
 
     @patch('devdox_ai_sonar.cli._should_continue_to_next_issue')
     @patch('devdox_ai_sonar.cli._process_single_fix')
@@ -2775,20 +2784,21 @@ class TestProcessFunctions:
         with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
-                    # CRITICAL: Mock show_progress as a context manager
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        from devdox_ai_sonar.cli import _process_and_fix_issues
+                        with mock_tmp_clone():
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=None):
+                                from devdox_ai_sonar.cli import _process_and_fix_issues
 
-                        # download_latest_version fails with mock, so Abort is raised
-                        with pytest.raises(click.exceptions.Abort):
-                            await _process_and_fix_issues(
-                                auth_config,
-                                llm_config,
-                                "main",
-                                0,
-                                fix_params,
-                                issue_type=IssueType.SECURITY
-                            )
+                                # download_latest_version returns None, so Abort is raised
+                                with pytest.raises(click.exceptions.Abort):
+                                    await _process_and_fix_issues(
+                                        auth_config,
+                                        llm_config,
+                                        "main",
+                                        0,
+                                        fix_params,
+                                        issue_type=IssueType.SECURITY
+                                    )
 
     async def test_process_security_no_issues(self):
         """Test security processing when no issues"""
@@ -2820,12 +2830,8 @@ class TestProcessFunctions:
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        with patch('devdox_ai_sonar.cli.download_latest_version') as mock_download:
-                            with patch('devdox_ai_sonar.cli.remove_tmp_files') as mock_remove_testing:
-
-                                mock_download.return_value = "/tmp/downloaded_repo"  # Set return value
-
-
+                        with mock_tmp_clone():
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/downloaded_repo"):
 
                                 await _process_and_fix_issues(
                                     auth_config,
@@ -2834,7 +2840,6 @@ class TestProcessFunctions:
                                     0,
                                     fix_params,
                                     issue_type=IssueType.SECURITY,
-
                                 )
 
                                 mock_analyzer.get_fixable_security_issues.assert_called_once()
@@ -2888,25 +2893,147 @@ class TestProcessFunctions:
             with patch('devdox_ai_sonar.cli.RuleAnalyzer', return_value=mock_ruler):
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-                        with patch('devdox_ai_sonar.cli.generate_tmp_path') as generate_tmp_path:
-                            with patch('devdox_ai_sonar.cli.download_latest_version') as mock_download:
+                        with mock_tmp_clone():
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/downloaded"):
                                 with patch('devdox_ai_sonar.cli._display_fix_preview'):
                                     with patch('devdox_ai_sonar.cli.smart_confirm', new=AsyncMock(return_value=False)):
-                                        with patch('devdox_ai_sonar.cli.remove_tmp_files') as mock_remove_testing_files:
 
+                                        await _process_and_fix_issues(
+                                            auth_config,
+                                            llm_config,
+                                            "main",
+                                            0,
+                                            fix_params,
+                                            issue_type=IssueType.SECURITY,
+                                        )
 
+                                        mock_fixer.generate_fix_by_file.assert_called_once()
 
-                                            await _process_and_fix_issues(
-                                                auth_config,
-                                                llm_config,
-                                                "main",
-                                                0,
-                                                fix_params,
-                                                issue_type=IssueType.SECURITY,
+    async def test_cleanup_on_download_failure(self):
+        """Test tmp dir is cleaned up when download fails."""
+        auth_config = Mock()
+        auth_config.token = "test"
+        auth_config.organization = "org"
+        auth_config.project = "proj"
+        auth_config.project_path = "/tmp"
+        auth_config.git_url = "https://github.com/test/test.git"
 
-                                            )
+        llm_config = Mock()
+        llm_config.provider = "openai"
+        llm_config.model = "gpt-4"
+        llm_config.api_key = "key"
 
-                                            mock_fixer.generate_fix_by_file.assert_called_once()
+        fix_params = {"max_fixes": 10, "apply": False, "dry_run": False}
+
+        with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer'):
+            with patch('devdox_ai_sonar.cli.RuleAnalyzer'):
+                with patch('devdox_ai_sonar.cli.LLMFixer'):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with mock_tmp_clone() as mock_ctx:
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=None):
+                                with pytest.raises(click.exceptions.Abort):
+                                    await _process_and_fix_issues(
+                                        auth_config, llm_config, "main", 0,
+                                        fix_params, issue_type=IssueType.SECURITY,
+                                    )
+
+                                mock_ctx.__aexit__.assert_called_once()
+
+    async def test_cleanup_on_fetch_exception(self):
+        """Test tmp dir is cleaned up when _fetch_issues_by_type raises."""
+        auth_config = Mock()
+        auth_config.token = "test"
+        auth_config.organization = "org"
+        auth_config.project = "proj"
+        auth_config.project_path = "/tmp"
+        auth_config.git_url = "https://github.com/test/test.git"
+
+        llm_config = Mock()
+        llm_config.provider = "openai"
+        llm_config.model = "gpt-4"
+        llm_config.api_key = "key"
+
+        fix_params = {"max_fixes": 10, "apply": False, "dry_run": False}
+
+        with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer'):
+            with patch('devdox_ai_sonar.cli.RuleAnalyzer'):
+                with patch('devdox_ai_sonar.cli.LLMFixer'):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with mock_tmp_clone() as mock_ctx:
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/repo"):
+                                with patch('devdox_ai_sonar.cli._fetch_issues_by_type', side_effect=RuntimeError("API error")):
+                                    with pytest.raises(RuntimeError, match="API error"):
+                                        await _process_and_fix_issues(
+                                            auth_config, llm_config, "main", 0,
+                                            fix_params, issue_type=IssueType.SECURITY,
+                                        )
+
+                                    mock_ctx.__aexit__.assert_called_once()
+
+    async def test_cleanup_on_process_exception(self):
+        """Test tmp dir is cleaned up when _process_files_with_issues raises."""
+        mock_analyzer = MagicMock()
+        mock_analyzer.get_fixable_security_issues.return_value = {
+            "file.py": [Mock()]
+        }
+
+        auth_config = Mock()
+        auth_config.token = "test"
+        auth_config.organization = "org"
+        auth_config.project = "proj"
+        auth_config.project_path = "/tmp"
+        auth_config.git_url = "https://github.com/test/test.git"
+
+        llm_config = Mock()
+        llm_config.provider = "openai"
+        llm_config.model = "gpt-4"
+        llm_config.api_key = "key"
+
+        fix_params = {"max_fixes": 10, "apply": False, "dry_run": False}
+
+        with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer', return_value=mock_analyzer):
+            with patch('devdox_ai_sonar.cli.RuleAnalyzer'):
+                with patch('devdox_ai_sonar.cli.LLMFixer'):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with mock_tmp_clone() as mock_ctx:
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/repo"):
+                                with patch('devdox_ai_sonar.cli._process_files_with_issues', new=AsyncMock(side_effect=RuntimeError("LLM error"))):
+                                    with pytest.raises(RuntimeError, match="LLM error"):
+                                        await _process_and_fix_issues(
+                                            auth_config, llm_config, "main", 0,
+                                            fix_params, issue_type=IssueType.SECURITY,
+                                        )
+
+                                    mock_ctx.__aexit__.assert_called_once()
+
+    async def test_no_tmpdir_on_branch_failure(self):
+        """Test that no tmp dir is created when branch validation fails."""
+        auth_config = Mock()
+        auth_config.token = "test"
+        auth_config.organization = "org"
+        auth_config.project = "proj"
+        auth_config.project_path = "/tmp"
+
+        llm_config = Mock()
+        llm_config.provider = "openai"
+        llm_config.model = "gpt-4"
+        llm_config.api_key = "key"
+
+        fix_params = {"max_fixes": 10, "apply": False, "dry_run": False}
+
+        with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer'):
+            with patch('devdox_ai_sonar.cli.RuleAnalyzer'):
+                with patch('devdox_ai_sonar.cli.LLMFixer'):
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with patch('devdox_ai_sonar.cli.TmpCloneManager') as MockCls:
+                            with pytest.raises(click.exceptions.Abort):
+                                await _process_and_fix_issues(
+                                    auth_config, llm_config, None, 0,
+                                    fix_params, issue_type=IssueType.REGULAR,
+                                )
+
+                            # TmpCloneManager should never have been used
+                            MockCls.assert_not_called()
 
 
 # ============================================================================
@@ -5414,17 +5541,21 @@ class TestRunAnalyzeFlow:
 class TestProcessAndFixIssuesFlow:
     """Test PR branch-fetching in _process_and_fix_issues."""
 
-    @patch('devdox_ai_sonar.cli.remove_tmp_files')
-    @patch('devdox_ai_sonar.cli.generate_tmp_path', return_value=Path("/tmp/clone"))
+    @patch('devdox_ai_sonar.cli.TmpCloneManager')
     @patch('devdox_ai_sonar.cli.download_latest_version', return_value=True)
     @patch('devdox_ai_sonar.cli._fetch_issues_by_type', return_value={})
     @patch('devdox_ai_sonar.cli._initialize_fix_services')
     @patch('devdox_ai_sonar.cli.console')
     async def test_fetches_branch_from_pr(
-        self, mock_console, mock_init_svc, mock_fetch, mock_download, mock_tmp,
-        mock_remove
+        self, mock_console, mock_init_svc, mock_fetch, mock_download,
+        mock_tmp_cls
     ):
         """Line 1286: pull_request > 0 → calls get_branch_from_pr."""
+        # Set up TmpCloneManager as async context manager
+        mock_mgr = AsyncMock()
+        mock_mgr.__aenter__.return_value = Path("/tmp/clone")
+        mock_tmp_cls.return_value = mock_mgr
+
         mock_analyzer = Mock()
         mock_analyzer.get_branch_from_pr.return_value = "feature-branch"
 

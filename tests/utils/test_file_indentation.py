@@ -1,4 +1,5 @@
 
+import asyncio
 import pytest
 from pathlib import Path
 import os
@@ -6,8 +7,10 @@ from git import Repo
 from git.exc import GitCommandError, InvalidGitRepositoryError
 from typing import List
 
-from unittest.mock import Mock, patch, mock_open, MagicMock
+from unittest.mock import Mock, patch, mock_open, MagicMock, AsyncMock
+import click
 import tempfile
+import time
 import shutil
 
 # Import the functions to test
@@ -53,6 +56,11 @@ from devdox_ai_sonar.utils.file_indentation import (
     _apply_replace_action,
     _apply_insert_action,
     _apply_delete_action,
+    TmpCloneManager,
+    sweep_orphaned_tmp_dirs,
+    _try_remove_stale_entry,
+    cleanup_tmp_py_file,
+    _CLEANUP_TMP_PY_ENABLED,
 )
 
 
@@ -2921,6 +2929,391 @@ class TestGenerateTmpPath:
 
         # Cleanup
         shutil.rmtree(path)
+
+
+# ============================================================================
+# Test TmpCloneManager
+# ============================================================================
+
+
+class TestTmpCloneManager:
+    """Test suite for TmpCloneManager async context manager."""
+
+    async def test_normal_exit_calls_cleanup(self):
+        """Test that cleanup_fn is called on normal exit."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as tmp_path:
+            assert tmp_path == Path("/tmp/devdox_abc_test")
+
+        mock_factory.assert_called_once()
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_exception_calls_cleanup(self):
+        """Test that cleanup_fn is called even when body raises."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        with pytest.raises(ValueError, match="boom"):
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                raise ValueError("boom")
+
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_click_abort_calls_cleanup(self):
+        """Test cleanup on click.Abort (BaseException subclass)."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(return_value=True)
+
+        with pytest.raises(click.Abort):
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                raise click.Abort()
+
+        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+
+    async def test_cleanup_failure_logged_not_raised(self):
+        """Test that cleanup failure is logged but does not propagate."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(side_effect=OSError("Permission denied"))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.logger") as mock_logger:
+            async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                pass
+
+            mock_logger.exception.assert_called_once()
+            assert "Failed to clean up temporary directory" in mock_logger.exception.call_args[0][0]
+
+    async def test_cleanup_failure_preserves_original_exception(self):
+        """Test that when body raises AND cleanup fails, the original exception propagates."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock(side_effect=OSError("Permission denied"))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.logger"):
+            with pytest.raises(RuntimeError, match="original"):
+                async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
+                    raise RuntimeError("original")
+
+    async def test_returns_path_object(self):
+        """Test that __aenter__ returns a Path, not str."""
+        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_cleanup = Mock()
+
+        async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as result:
+            assert isinstance(result, Path)
+            assert str(result) == "/tmp/devdox_abc_test"
+
+    async def test_default_factories(self):
+        """Test that defaults use generate_tmp_path and remove_tmp_files."""
+        manager = TmpCloneManager()
+        assert manager._path_factory is generate_tmp_path
+        assert manager._cleanup_fn is remove_tmp_files
+
+
+# ============================================================================
+# Test _try_remove_stale_entry
+# ============================================================================
+
+
+class TestTryRemoveStaleEntry:
+    """Test suite for the _try_remove_stale_entry helper."""
+
+    def test_removes_stale_matching_directory(self, tmp_path):
+        """Stale devdox_*_test directory is removed and returns True."""
+        stale = tmp_path / "devdox_abc_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        result = _try_remove_stale_entry(stale, time.time(), 3600)
+
+        assert result is True
+        assert not stale.exists()
+
+    def test_skips_regular_file(self, tmp_path):
+        """Non-directory entries are ignored."""
+        f = tmp_path / "devdox_abc_test"
+        f.write_text("not a dir")
+        old_time = time.time() - 7200
+        os.utime(f, (old_time, old_time))
+
+        result = _try_remove_stale_entry(f, time.time(), 3600)
+
+        assert result is False
+        assert f.exists()
+
+    def test_skips_non_matching_name(self, tmp_path):
+        """Directories that don't match devdox_*_test pattern are ignored."""
+        d = tmp_path / "other_dir"
+        d.mkdir()
+        old_time = time.time() - 7200
+        os.utime(d, (old_time, old_time))
+
+        result = _try_remove_stale_entry(d, time.time(), 3600)
+
+        assert result is False
+        assert d.exists()
+
+    def test_skips_fresh_directory(self, tmp_path):
+        """Matching directory below the age threshold is left alone."""
+        fresh = tmp_path / "devdox_fresh_test"
+        fresh.mkdir()
+        # mtime is now — well within any threshold
+
+        result = _try_remove_stale_entry(fresh, time.time(), 3600)
+
+        assert result is False
+        assert fresh.exists()
+
+    def test_returns_false_on_stat_oserror(self, tmp_path):
+        """OSError from stat() is handled gracefully."""
+        entry = tmp_path / "devdox_broken_test"
+        entry.mkdir()
+
+        original_stat = Path.stat
+        call_count = 0
+
+        def stat_side_effect(self, *args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            # First call is from is_dir() — let it through
+            if call_count == 1:
+                return original_stat(self, *args, **kwargs)
+            raise OSError("Permission denied")
+
+        with patch.object(Path, "stat", stat_side_effect):
+            result = _try_remove_stale_entry(entry, time.time(), 3600)
+
+        assert result is False
+
+    def test_returns_false_on_rmtree_oserror(self, tmp_path):
+        """OSError from rmtree() is handled gracefully."""
+        stale = tmp_path / "devdox_locked_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.shutil.rmtree",
+                    side_effect=OSError("Permission denied")):
+            result = _try_remove_stale_entry(stale, time.time(), 3600)
+
+        assert result is False
+        assert stale.exists()
+
+
+# ============================================================================
+# Test sweep_orphaned_tmp_dirs
+# ============================================================================
+
+
+class TestSweepOrphanedTmpDirs:
+    """Test suite for sweep_orphaned_tmp_dirs function."""
+
+    def test_removes_stale_directories(self, tmp_path):
+        """Test that directories older than max_age are removed."""
+        # Create 2 stale dirs matching the pattern
+        stale1 = tmp_path / "devdox_aaa_test"
+        stale2 = tmp_path / "devdox_bbb_test"
+        stale1.mkdir()
+        stale2.mkdir()
+
+        # Set mtime to 2 hours ago
+        old_time = time.time() - 7200
+        os.utime(stale1, (old_time, old_time))
+        os.utime(stale2, (old_time, old_time))
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 2
+        assert not stale1.exists()
+        assert not stale2.exists()
+
+    def test_preserves_fresh_directories(self, tmp_path):
+        """Test that recent directories are NOT removed (might be in use)."""
+        fresh = tmp_path / "devdox_fresh_test"
+        fresh.mkdir()
+        # mtime is now — well within any reasonable threshold
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 0
+        assert fresh.exists()
+
+    def test_ignores_non_matching_directories(self, tmp_path):
+        """Test that dirs without devdox_ prefix or _test suffix are untouched."""
+        other1 = tmp_path / "some_other_dir"
+        other2 = tmp_path / "devdox_no_suffix"
+        other3 = tmp_path / "no_prefix_test"
+        other1.mkdir()
+        other2.mkdir()
+        other3.mkdir()
+
+        # Make them all stale
+        old_time = time.time() - 7200
+        for d in [other1, other2, other3]:
+            os.utime(d, (old_time, old_time))
+
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+
+        assert removed == 0
+        assert other1.exists()
+        assert other2.exists()
+        assert other3.exists()
+
+    def test_handles_empty_directory(self, tmp_path):
+        """Test scanning an empty directory returns 0."""
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path)
+        )
+        assert removed == 0
+
+    def test_on_status_callback_called(self, tmp_path):
+        """Test that on_status receives scan and result messages."""
+        mock_status = Mock()
+
+        sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path), on_status=mock_status
+        )
+
+        assert mock_status.call_count == 2
+        # First call: scanning message
+        assert "Scanning" in mock_status.call_args_list[0][0][0]
+        # Second call: result message
+        assert "No orphaned" in mock_status.call_args_list[1][0][0]
+
+    def test_on_status_reports_removal_count(self, tmp_path):
+        """Test that on_status reports correct removal count."""
+        mock_status = Mock()
+
+        stale = tmp_path / "devdox_stale_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        sweep_orphaned_tmp_dirs(
+            max_age_seconds=3600, tmp_dir=str(tmp_path), on_status=mock_status
+        )
+
+        result_msg = mock_status.call_args_list[1][0][0]
+        assert "Removed 1" in result_msg
+        assert "directory" in result_msg
+
+    def test_custom_max_age(self, tmp_path):
+        """Test that max_age_seconds threshold is respected."""
+        target = tmp_path / "devdox_mid_test"
+        target.mkdir()
+
+        # Set mtime to 120 seconds ago
+        mid_time = time.time() - 120
+        os.utime(target, (mid_time, mid_time))
+
+        # With 300s threshold, 120s-old dir should be preserved
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=300, tmp_dir=str(tmp_path)
+        )
+        assert removed == 0
+        assert target.exists()
+
+        # With 60s threshold, 120s-old dir should be removed
+        removed = sweep_orphaned_tmp_dirs(
+            max_age_seconds=60, tmp_dir=str(tmp_path)
+        )
+        assert removed == 1
+        assert not target.exists()
+
+    def test_handles_permission_error_gracefully(self, tmp_path):
+        """Test that rmtree failure doesn't crash the sweep."""
+        stale = tmp_path / "devdox_perm_test"
+        stale.mkdir()
+        old_time = time.time() - 7200
+        os.utime(stale, (old_time, old_time))
+
+        with patch("devdox_ai_sonar.utils.file_indentation.shutil.rmtree",
+                    side_effect=OSError("Permission denied")):
+            removed = sweep_orphaned_tmp_dirs(
+                max_age_seconds=3600, tmp_dir=str(tmp_path)
+            )
+
+        assert removed == 0
+        # Directory still exists because rmtree was mocked to fail
+        assert stale.exists()
+
+
+# ============================================================================
+# Test cleanup_tmp_py_file
+# ============================================================================
+class TestCleanupTmpPyFile:
+    """Test suite for the gated .tmp.py cleanup function."""
+
+    def test_removes_file_when_enabled(self, tmp_path):
+        """Default behaviour: module flag is True, enabled=None → file removed."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is True
+        assert not tmp_file.exists()
+
+    def test_skips_when_module_flag_disabled(self, tmp_path):
+        """When module-level gate is False and no override, file stays."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch(
+            "devdox_ai_sonar.utils.file_indentation._CLEANUP_TMP_PY_ENABLED", False
+        ):
+            result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is False
+        assert tmp_file.exists()
+
+    def test_field_enabled_overrides_module_disabled(self, tmp_path):
+        """enabled=True takes precedence over module flag=False."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch(
+            "devdox_ai_sonar.utils.file_indentation._CLEANUP_TMP_PY_ENABLED", False
+        ):
+            result = cleanup_tmp_py_file(tmp_file, enabled=True)
+
+        assert result is True
+        assert not tmp_file.exists()
+
+    def test_field_disabled_overrides_module_enabled(self, tmp_path):
+        """enabled=False takes precedence over module flag=True."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        result = cleanup_tmp_py_file(tmp_file, enabled=False)
+
+        assert result is False
+        assert tmp_file.exists()
+
+    def test_nonexistent_file_returns_false(self, tmp_path):
+        """Calling on a non-existent path returns False without error."""
+        nonexistent = tmp_path / "nope.tmp.py"
+
+        result = cleanup_tmp_py_file(nonexistent)
+
+        assert result is False
+
+    def test_handles_oserror_gracefully(self, tmp_path):
+        """OSError during unlink is caught, returns False."""
+        tmp_file = tmp_path / "module.tmp.py"
+        tmp_file.write_text("pass\n")
+
+        with patch.object(Path, "unlink", side_effect=OSError("Permission denied")):
+            result = cleanup_tmp_py_file(tmp_file)
+
+        assert result is False
 
 
 # ============================================================================

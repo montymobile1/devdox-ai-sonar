@@ -14,7 +14,9 @@ _SNAKE_ACRONYM = regex.compile(r"(?>([A-Z]+))([A-Z][a-z])")  # atomic group on a
 _MAX_IDENTIFIER_LENGTH = 256
 
 
-def _collect_used_names(func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef]) -> set[str]:
+def _collect_used_names(
+    func_node: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+) -> set[str]:
     """Collect all Name references inside the function body (excluding the signature)."""
     used = set()
     for node in ast.walk(ast.Module(body=func_node.body, type_ignores=[])):
@@ -453,8 +455,8 @@ def find_function(code: str, function_name: str) -> Optional[Dict[str, Any]]:
         finder = ClassMethodFinder(function_name)
         finder.visit(tree)
         return finder.function_info
-    except SyntaxError as e:
-        print(f"Syntax error in code: {e}")
+    except SyntaxError:
+        logger.warning("Syntax error parsing code for function '%s'", function_name)
         return None
 
 
@@ -472,8 +474,8 @@ def find_all_functions(code: str) -> List[Dict[str, Any]]:
         finder = AllFunctionsFinder()
         finder.visit(tree)
         return finder.functions
-    except SyntaxError as e:
-        print(f"Syntax error: {e}")
+    except SyntaxError:
+        logger.warning("Syntax error parsing code for all-functions scan")
         return []
 
 
@@ -486,7 +488,10 @@ def to_snake_case(name: str) -> str:
         )
     text: str = _SNAKE_LOWER_UPPER.sub(r"\1_\2", name)
     text = _SNAKE_ACRONYM.sub(r"\1_\2", text)
-    return text.lower()
+    # str() wraps regex.sub() output because the `regex` library ships no
+    # type stubs — mypy sees the return as Any instead of str. Without this,
+    # mypy raises [no-any-return]. Do not remove.
+    return str(text.lower())
 
 
 def detect_original_function_type(code: str, target_line: int) -> Dict[str, Any]:
@@ -588,10 +593,10 @@ def find_function_implementations(
             locator.current_file = str(file_path)
             locator.visit(tree)
 
-        except SyntaxError as e:
-            print(f"Syntax error in {file_path}: {e}")
-        except Exception as e:
-            print(f"Error processing {file_path}: {e}")
+        except SyntaxError:
+            logger.warning("Syntax error in %s, skipping", file_path)
+        except Exception:
+            logger.warning("Error processing %s, skipping", file_path, exc_info=True)
 
     return {"definitions": locator.definitions, "calls": locator.calls}
 
@@ -702,8 +707,8 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
 
                             return
 
-            except Exception as e:
-                print(f"Error processing {file_path}: {e}")
+            except Exception:
+                logger.warning("Error processing %s during function definition search", file_path, exc_info=True)
 
     def _analyze_decorators(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]

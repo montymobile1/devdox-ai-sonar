@@ -1,9 +1,15 @@
 from pathlib import Path
+import asyncio
+import os
+import stat
 import shutil
 import tempfile
+import time
 import re
+from urllib.parse import urlparse
 from git import Repo
-from typing import List, Optional, Tuple
+from types import TracebackType
+from typing import Callable, List, Optional, Tuple, Union
 import logging
 from devdox_ai_sonar.models.file_structures import (
     LineRange,
@@ -20,6 +26,34 @@ from devdox_ai_sonar.models.sonar import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_url(url: str) -> str:
+    """Strip credentials from a URL so it is safe to log.
+
+    Handles ``https://token@host/...`` and ``https://user:pass@host/...``.
+    Returns the original string unchanged when parsing fails.
+    """
+    try:
+        parsed = urlparse(url)
+        if not parsed.hostname:
+            return url
+        safe = f"{parsed.scheme}://{parsed.hostname}{parsed.path}"
+        return safe
+    except Exception:
+        return "<unparseable-url>"
+
+
+def _handle_remove_readonly(
+    func: Callable[..., object], path: str, exc_info: object
+) -> None:
+    """Handle read-only files during shutil.rmtree (Windows/macOS compatibility).
+
+    Git creates read-only files in .git/objects/. On Windows (and occasionally
+    macOS), shutil.rmtree fails on these unless we chmod first.
+    """
+    os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+    func(path)
 
 
 def remove_tmp_files(relative_path: str) -> bool:
@@ -57,11 +91,9 @@ def remove_tmp_files(relative_path: str) -> bool:
 
         # Remove based on type
         if resolved_path.is_file():
-            resolved_path.unlink()  # ✅ Remove file
-            print("File removed successfully")
+            resolved_path.unlink()
         elif resolved_path.is_dir():
-            shutil.rmtree(resolved_path)  # ✅ Remove directory tree
-            print("Remove directory tree")
+            shutil.rmtree(resolved_path, onerror=_handle_remove_readonly)
         else:
             raise ValueError(f"Path is neither file nor directory: {resolved_path}")
 
@@ -82,14 +114,189 @@ def generate_tmp_path() -> str:
     return tmp_dir
 
 
+class TmpCloneManager:
+    """Async context manager for temporary directory lifecycle.
+
+    Guarantees cleanup via __aexit__ on all exit paths (success, exception, abort).
+    Dependencies are injectable for testability.
+    """
+
+    def __init__(
+        self,
+        path_factory: Callable[[], str] = generate_tmp_path,
+        cleanup_fn: Callable[[str], bool] = remove_tmp_files,
+        on_cleanup: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        self._path_factory = path_factory
+        self._cleanup_fn = cleanup_fn
+        self._on_cleanup = on_cleanup
+        self._tmp_path: Optional[str] = None
+
+    async def __aenter__(self) -> Path:
+        self._tmp_path = self._path_factory()
+        assert self._tmp_path is not None
+        logger.debug("TmpCloneManager created temp directory: %s", self._tmp_path)
+        return Path(self._tmp_path)
+
+    async def __aexit__(  # NOSONAR — always returning False is intentional; in __aexit__ protocol, False means "do not suppress exceptions"
+        self,
+        exc_type: Optional[type[BaseException]],
+        exc_val: Optional[BaseException],
+        exc_tb: Optional[TracebackType],
+    ) -> bool:
+        if not self._tmp_path:
+            return False
+
+        # Notify callback first (best-effort, must not block cleanup)
+        if self._on_cleanup:
+            try:
+                self._on_cleanup(self._tmp_path)
+            except Exception:
+                logger.exception("on_cleanup callback failed for: %s", self._tmp_path)
+
+        # Run cleanup — catch BaseException so CancelledError (Python 3.9+)
+        # does not skip deletion.
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, self._cleanup_fn, self._tmp_path)
+            logger.debug("TmpCloneManager cleaned up: %s", self._tmp_path)
+        except BaseException:  # NOSONAR — intentional, cleanup must catch all interrupts including CancelledError, KeyboardInterrupt, SystemExit
+            # Executor await was interrupted (CancelledError, KeyboardInterrupt,
+            # etc.) or cleanup_fn raised. Fall back to synchronous removal so
+            # the temp directory is not leaked.
+            try:
+                self._cleanup_fn(self._tmp_path)
+            except Exception:
+                logger.exception(
+                    "Failed to clean up temporary directory: %s", self._tmp_path
+                )
+        return False
+
+
+def _try_remove_stale_entry(entry: Path, now: float, max_age_seconds: int) -> bool:
+    """Check if a directory entry is a stale devdox_*_test dir and remove it.
+
+    Args:
+        entry: Directory entry to evaluate.
+        now: Current timestamp (seconds since epoch).
+        max_age_seconds: Age threshold — entries older than this are removed.
+
+    Returns:
+        True if the entry was identified as stale and successfully removed.
+    """
+    if not entry.is_dir():
+        return False
+    if not (entry.name.startswith("devdox_") and entry.name.endswith("_test")):
+        return False
+    try:
+        age = now - entry.stat().st_mtime
+    except OSError:
+        return False
+    if age < max_age_seconds:
+        return False
+    try:
+        shutil.rmtree(entry)
+        logger.info("Removed orphaned temp directory: %s (age: %.0fs)", entry, age)
+        return True
+    except OSError:
+        logger.warning("Failed to remove orphaned temp directory: %s", entry)
+        return False
+
+
+def sweep_orphaned_tmp_dirs(
+    max_age_seconds: int = 3600,
+    tmp_dir: Optional[str] = None,
+    on_status: Optional[Callable[[str], None]] = None,
+) -> int:
+    """Remove orphaned devdox_*_test directories older than max_age_seconds.
+
+    Scans the system temp directory for directories matching the pattern
+    created by generate_tmp_path(). Directories older than the threshold
+    are assumed to be orphaned (from SIGKILL, OOM, or crashes) and removed.
+
+    Args:
+        max_age_seconds: Age threshold in seconds (default: 1 hour).
+        tmp_dir: Directory to scan (default: system temp dir via tempfile.gettempdir()).
+        on_status: Optional callback for status messages, e.g. console.print.
+
+    Returns:
+        Number of directories removed.
+    """
+    scan_dir = Path(tmp_dir) if tmp_dir else Path(tempfile.gettempdir())
+    now = time.time()
+    removed = 0
+
+    if on_status:
+        on_status(f"Scanning for orphaned temporary directories in {scan_dir}...")
+
+    try:
+        for entry in scan_dir.iterdir():
+            if _try_remove_stale_entry(entry, now, max_age_seconds):
+                removed += 1
+    except OSError:
+        logger.warning("Failed to scan temp directory: %s", scan_dir)
+
+    if on_status:
+        if removed > 0:
+            on_status(
+                f"Removed {removed} orphaned temporary "
+                f"director{'y' if removed == 1 else 'ies'}."
+            )
+        else:
+            on_status("No orphaned temporary directories found.")
+
+    return removed
+
+
+_CLEANUP_TMP_PY_ENABLED = True
+
+
+def cleanup_tmp_py_file(
+    file_path: Union[str, Path], enabled: Optional[bool] = None
+) -> bool:
+    """Remove a .tmp.py intermediate validation file.
+
+    Controlled by a two-level gate:
+      - enabled parameter (when not None) takes precedence
+      - _CLEANUP_TMP_PY_ENABLED module constant is the fallback
+
+    When the gate is closed (False), the file is left on disk.
+    This allows a future feature to retain .tmp.py files for review.
+
+    Args:
+        file_path: Path to the .tmp.py file.
+        enabled: Override the module-level gate. None = use module default.
+
+    Returns:
+        True if file was removed, False if skipped or file didn't exist.
+    """
+    should_cleanup = enabled if enabled is not None else _CLEANUP_TMP_PY_ENABLED
+    if not should_cleanup:
+        return False
+
+    path = Path(file_path)
+    if not path.exists():
+        return False
+
+    try:
+        path.unlink()
+        return True
+    except OSError:
+        logger.warning("Failed to remove tmp py file: %s", path)
+        return False
+
+
 def download_latest_version(
-    repo_url: str, repo_path: str, branch: str
+    repo_url: str, repo_path: str, branch: Optional[str]
 ) -> Optional[Repo]:
+    safe_url = _sanitize_url(repo_url)
+    logger.debug("Cloning %s (branch=%s) into %s", safe_url, branch, repo_path)
     try:
         repo = Repo.clone_from(repo_url, repo_path, branch=branch)
+        logger.debug("Clone succeeded: %s -> %s", safe_url, repo_path)
         return repo
-    except Exception as e:
-        print(f"Error loading files from {repo_url}: {e}")
+    except Exception:
+        logger.exception("Failed to clone repository %s", safe_url)
         return None
 
 
@@ -612,7 +819,7 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
-        print(f"Warning: Invalid start_line {block.start_line}")
+        logger.warning("Invalid start_line %d for file with %d lines", block.start_line, len(lines))
         return lines, block.end_line
 
     # Calculate base indentation from original code
@@ -632,16 +839,17 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
     else:
         lines[start_idx : end_idx + 1] = new_lines
 
-    print(
-        f"[FULL_CODE] Replaced lines {block.start_line}-{block.end_line} "
-        f"({end_idx - start_idx} lines) with {len(new_lines)} lines"
+    logger.debug(
+        "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
+        block.start_line, block.end_line, end_idx - start_idx, len(new_lines),
     )
 
     if len(new_lines) > 1:
         end_idx = len(new_lines) + block.start_line - 1
 
-        print(
-            f"Warning: Full code block has {len(new_lines)} lines, expected {end_idx - start_idx + 1}"
+        logger.warning(
+            "Full code block has %d lines, expected %d",
+            len(new_lines), end_idx - start_idx + 1,
         )
 
     return lines, end_idx
@@ -663,7 +871,7 @@ def _replace_line_preserving_indent(
     else:
         original_indent = calculate_base_indentation(lines[line_idx])
         lines[line_idx] = " " * original_indent + change.new.strip() + "\n"
-    print(f"[DIFF] Replaced line {change.line}: {change.old} -> {change.new}")
+    logger.debug("[DIFF] Replaced line %d: %s -> %s", change.line, change.old, change.new)
 
 
 def _try_replace_at_corrected_line(
@@ -745,7 +953,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
-            print(f"Warning: Invalid line number {change.line}")
+            logger.warning("Invalid line number %d (file has %d lines)", change.line, len(lines))
             continue
 
         if change.action == ChangeAction.REPLACE:
@@ -755,6 +963,7 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         elif change.action == ChangeAction.DELETE:
             _apply_delete_action(lines, change)
 
+    logger.debug("[DIFF] Applied %d change(s) to lines %d-%d", len(sorted_changes), block.start_line, block.end_line)
     return lines
 
 
@@ -772,6 +981,10 @@ def find_line_by_content(lines: list[str], content: str, start_line: int) -> int
 def apply_single_code_block(
     lines: List[str], block: CodeBlock
 ) -> Tuple[List[str], int]:
+    logger.debug(
+        "Applying %s block '%s' on lines %d-%d",
+        block.change_type, block.block_name, block.start_line, block.end_line,
+    )
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 
@@ -780,7 +993,7 @@ def apply_single_code_block(
     elif block.change_type == ChangeType.SEARCH_REPLACE:
         return apply_search_replace_change(lines, block), 0
     else:
-        print(f"Warning: Unknown change_type '{block.change_type}'")
+        logger.warning("Unknown change_type '%s'", block.change_type)
         return lines, 0
 
 

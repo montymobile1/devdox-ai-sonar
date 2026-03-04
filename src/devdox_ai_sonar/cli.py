@@ -27,9 +27,9 @@ from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.models.llm import ProviderType
 from devdox_ai_sonar.utils.file_indentation import (
-    remove_tmp_files,
     download_latest_version,
-    generate_tmp_path,
+    TmpCloneManager,
+    sweep_orphaned_tmp_dirs,
 )
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
@@ -47,7 +47,11 @@ from devdox_ai_sonar.utils.provider_config import (
 )
 
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
-from devdox_ai_sonar.utils.file_filter import is_file_processable
+from devdox_ai_sonar.utils.supported_programming_languages import (
+    PYTHON,
+    IPYTHON,
+    is_file_processable,
+)
 from devdox_ai_sonar.utils.ui import smart_prompt, smart_confirm
 from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
@@ -55,6 +59,18 @@ from devdox_ai_sonar.config import settings
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
 
 console = Console()
+
+
+def _should_skip_file(file_path: Optional[str]) -> bool:
+    """Return True if *file_path* should be skipped during processing."""
+    return bool(
+        file_path
+        and not is_file_processable(
+            file_path,
+            allowed_suffixes=PYTHON.file_extensions | IPYTHON.file_extensions,
+            excluded_prefixes={"test_"},
+        )
+    )
 
 
 def async_command(f: Any) -> Any:
@@ -750,6 +766,10 @@ async def main(  # ← Async main
         "pull_request": pull_request,
         "excluded_rules": excluded_rules,
     }
+
+    # Sweep orphaned temp directories from previous crashed runs
+    sweep_orphaned_tmp_dirs(on_status=lambda msg: console.print(f"[dim]{msg}[/dim]"))
+
     # If command specified, run it directly
     if command:
         await _execute_command_async(ctx, command)
@@ -1422,60 +1442,66 @@ async def _process_and_fix_issues(
     issue_type: IssueType = IssueType.REGULAR,
     download_latest: bool = True,
     system_ask: bool = True,
-    check_tmp_path: bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """Process and fix issues - Refactored."""
-
     services = _initialize_fix_services(auth_config, llm_config)
-    tmp_path = generate_tmp_path()
+
+    branch_downloaded = branch
     if download_latest:
-        tmp_path = generate_tmp_path()
-        branch_downloaded = branch
         if pull_request and int(pull_request) > 0:
             branch_downloaded = services["analyzer"].get_branch_from_pr(
                 project_key=auth_config.project, pull_request=pull_request
             )
-
         if not branch_downloaded:
             console.print("[red]Could not determine branch to download[/red]")
             raise click.Abort()
 
-        console.print(f"Cloning {auth_config.project} to {tmp_path}")
-        downloaded = download_latest_version(
-            auth_config.git_url, tmp_path, branch_downloaded
+    # Orphaned temp dirs (from SIGKILL/OOM) are cleaned by
+    # sweep_orphaned_tmp_dirs() at CLI startup.
+    async with TmpCloneManager(
+        on_cleanup=lambda p: console.print(
+            f"[dim]Cleaning up temporary files: {p}[/dim]"
         )
-        if not downloaded:
-            console.print("Not able to download latest version")
-            raise click.Abort()
+    ) as tmp_path:
+        if download_latest:
+            console.print(f"Cloning {auth_config.project} to {tmp_path}")
+            downloaded = download_latest_version(
+                auth_config.git_url, str(tmp_path), branch_downloaded
+            )
+            if not downloaded:
+                console.print("Not able to download latest version")
+                raise click.Abort()
 
-
-    # Fetch issues based on type
-    issues = _fetch_issues_by_type(
-        services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type
-    )
-    if not issues:
-        msg = (
-            "No fixable security issues found"
-            if issue_type == IssueType.SECURITY
-            else "No fixable issues found"
+        issues = _fetch_issues_by_type(
+            services["analyzer"],
+            auth_config,
+            branch,
+            pull_request,
+            fix_params,
+            issue_type,
         )
-        console.print(f"[yellow]{msg}[/yellow]")
-        remove_tmp_files(tmp_path)
-        return
-    total_issues = sum(len(issue_list) for issue_list in issues.values())
+        if not issues:
+            msg = (
+                "No fixable security issues found"
+                if issue_type == IssueType.SECURITY
+                else "No fixable issues found"
+            )
+            console.print(f"[yellow]{msg}[/yellow]")
+            return
 
-    console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-    await _process_files_with_issues(
-        issues,
-        services,
-        auth_config,
-        fix_params,
-        issue_type,
-        Path(tmp_path),
-        system_ask=system_ask,
-        check_tmp_path=check_tmp_path
-    )
-    remove_tmp_files(tmp_path)
+        total_issues = sum(len(issue_list) for issue_list in issues.values())
+        console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
+        await _process_files_with_issues(
+            issues,
+            services,
+            auth_config,
+            fix_params,
+            issue_type,
+            tmp_path,
+            system_ask=system_ask,
+            check_tmp_path=check_tmp_path,
+        )
 
 
 def _initialize_fix_services(
@@ -1517,7 +1543,7 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path,check_tmp_path
+            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path, system_ask, check_tmp_path
         )
     else:
         issues_by_rule_nested = {
@@ -1596,13 +1622,7 @@ async def _process_issues_for_rule(
     total_issues = len(issues_list)
 
     for idx, issue in enumerate(issues_list, 1):
-        if issue.file and not is_file_processable(
-            issue.file,
-            allowed_suffixes=[".py"],
-            excluded_suffixes=[],
-            allowed_prefixes=[],
-            excluded_prefixes=["test_"],
-        ):
+        if _should_skip_file(issue.file):
             console.print(
                 f"[dim]Skipping {issue.file} "
                 f"(only .py files excluding test_ are processed)[/dim]"
@@ -1668,6 +1688,7 @@ async def _process_security_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
+    system_ask:bool = True,
     check_tmp_path: bool = True
 ) -> None:
     """
@@ -1680,13 +1701,7 @@ async def _process_security_issues(
     for idx, (file_key, issues) in enumerate(issues_by_file.items(), 1):
         console.print(f"\n[blue]Processing ({idx}/{total_files}): {file_key}[/blue]")
         for idx_new, issue in enumerate(issues, 1):
-            if issue.file and not is_file_processable(
-                issue.file,
-                allowed_suffixes=[".py"],
-                excluded_suffixes=[],
-                allowed_prefixes=[],
-                excluded_prefixes=["test_"],
-            ):
+            if _should_skip_file(issue.file):
                 console.print(
                     f"[dim]Skipping {issue.file} "
                     f"(only .py files excluding test_ are processed)[/dim]"
@@ -1705,7 +1720,7 @@ async def _process_security_issues(
                 check_tmp_path=check_tmp_path
             )
 
-            if not await _should_continue_to_next_issue(idx, total_files):
+            if not await _should_continue_to_next_issue(idx, total_files,system_ask=system_ask):
                 break
 
 
@@ -1785,8 +1800,11 @@ async def _should_continue_to_next_issue(
     """Check if should continue to next file."""
     if current_idx >= total_files:
         return False
-    if system_ask:
-        if not await smart_confirm("Continue to next issue?", default=True):
+
+    if not system_ask:
+        return True
+
+    if not await smart_confirm("Continue to next issue?", default=True):
             console.print("[yellow]Stopped processing remaining files[/yellow]")
             return False
 
@@ -1892,6 +1910,7 @@ def _fetch_issues_by_type(
                 branch=branch or "",
                 pull_request=pr_number,
                 max_issues=fix_params["max_fixes"],
+                language=PYTHON,
             )
     else:
         with show_progress(constant.FETCHING_ISSUES) as (progress, task):
@@ -1904,6 +1923,7 @@ def _fetch_issues_by_type(
                 types_list=fix_params["types_list"],
                 rules_excluded=fix_params["exclude_rules"],
                 group_by="rules",
+                languages=[PYTHON.sonar_language_key, IPYTHON.sonar_language_key],
             )
 
 

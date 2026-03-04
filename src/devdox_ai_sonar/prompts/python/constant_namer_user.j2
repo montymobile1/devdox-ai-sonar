@@ -1,0 +1,20 @@
+Name the following Python string literals as SCREAMING_SNAKE_CASE constants.
+
+## File
+`{{ file_path }}`
+
+## Literals to Name
+{% for lit_ctx in literals %}
+- "{{ lit_ctx.literal | replace('"', '\\"') }}" ({{ lit_ctx.occurrences | length }} occurrences)
+{% endfor %}
+
+## Names Already Used in This File (AVOID these)
+{% for name in used_names %}
+- {{ name }}
+{% endfor %}
+
+## Requirements
+- Each literal above MUST appear as a key in your JSON output
+- Each constant name MUST be SCREAMING_SNAKE_CASE with 2-5 words
+- Each name MUST be unique and NOT in the "already used" list
+- Return ONLY a JSON object: {"literal": "CONSTANT_NAME", ...}

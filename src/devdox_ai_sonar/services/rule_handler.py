@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Union
+from typing import List, Dict, Any, Optional, Union, Tuple, Set
+import ast
 import logging
 import re
 
@@ -13,6 +14,7 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     BlockType,
+    PlacementType,
     LineChange,
     ChangeAction,
     SearchReplace,
@@ -23,6 +25,15 @@ from devdox_ai_sonar.utils.function_finder import (
     AsyncConversionAnalyzer,
     _is_param_used_at_callsite,
     to_snake_case,
+)
+from devdox_ai_sonar.services.constant_namer import (
+    ConstantNamingService,
+    LLMFixerAdapter,
+)
+from devdox_ai_sonar.models.constant_naming import (
+    LiteralContext,
+    NamingRequest,
+    NamingResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -218,7 +229,7 @@ class RuleHandler(ABC):
                 )
             )
 
-        logger.debug(f"Built {len(lst_suggestion)} fix suggestions")
+        logger.debug("Built %d fix suggestion(s)", len(lst_suggestion))
         return lst_suggestion
 
 
@@ -285,9 +296,9 @@ class ConvenationNameHandler(RuleHandler):
 
             return None
 
-        except Exception as e:
-            logger.error(
-                "Error in generate_fixes [%s]: %s", self.RULE_ID, e, exc_info=True
+        except Exception:
+            logger.exception(
+                "ConvenationNameHandler failed to generate fixes for %s", self.RULE_ID
             )
             return None
 
@@ -546,7 +557,7 @@ class ConvenationNameHandler(RuleHandler):
                     IMPORT_BLOCK="",
                     FIXED_CODE_BLOCKS=[block],
                     NEW_HELPER_CODE="",
-                    PLACEMENT="SIBLING",
+                    PLACEMENT=PlacementType.SIBLING,
                     EXPLANATION="",
                     CONFIDENCE=0.95,
                 )
@@ -569,7 +580,7 @@ class ConvenationNameHandler(RuleHandler):
                 IMPORT_BLOCK="",
                 FIXED_CODE_BLOCKS=code_blocks,
                 NEW_HELPER_CODE="",
-                PLACEMENT="SIBLING",
+                PLACEMENT=PlacementType.SIBLING,
                 EXPLANATION=explanation,
                 CONFIDENCE=0.95,
             )
@@ -612,7 +623,7 @@ class ConvenationNameHandler(RuleHandler):
                     IMPORT_BLOCK="",
                     FIXED_CODE_BLOCKS=[block],
                     NEW_HELPER_CODE="",
-                    PLACEMENT="SIBLING",
+                    PLACEMENT=PlacementType.SIBLING,
                     EXPLANATION="",
                     CONFIDENCE=0.95,
                 )
@@ -635,7 +646,7 @@ class ConvenationNameHandler(RuleHandler):
                 IMPORT_BLOCK="",
                 FIXED_CODE_BLOCKS=code_blocks,
                 NEW_HELPER_CODE="",
-                PLACEMENT="SIBLING",
+                PLACEMENT=PlacementType.SIBLING,
                 EXPLANATION=explanation,
                 CONFIDENCE=0.95,
             )
@@ -746,6 +757,488 @@ class ConvenationNameHandler(RuleHandler):
         return blocks
 
 
+_S1192_MESSAGE_PATTERN = re.compile(
+    r'Define a constant instead of duplicating this literal "(.*?)" (\d+) times\.'
+)
+
+
+class _LiteralCaches:
+    """Caches for pre-scanned literal AST lookups."""
+
+    def __init__(self) -> None:
+        self.occurrences: Dict[str, List[Tuple[int, int, int]]] = {}
+        self.existing: Dict[str, List[Tuple[str, int]]] = {}
+        self.needing_names: List[LiteralContext] = []
+        self.seen: Set[str] = set()
+
+
+class _FixAccumulator:
+    """Accumulates code blocks, constant defs, and reports during processing."""
+
+    def __init__(self) -> None:
+        self.code_blocks: List[CodeBlock] = []
+        self.constant_defs: List[str] = []
+        self.used_names: Set[str] = set()
+        self.reports: List[Dict[str, Any]] = []
+
+
+class StringLiteralDuplicateHandler(RuleHandler):
+    """
+    Handler for python:S1192 - string literals should not be duplicated.
+
+    This rule flags string literals that appear 3 or more times in a file.
+    The handler extracts each duplicated literal into a module-level constant
+    and replaces all occurrences with the constant name.
+    """
+
+    RULE_ID = "python:S1192"
+    MOIDY_LINE_RANGE = False
+
+    def can_handle(self, rule: str) -> bool:
+        return rule == self.RULE_ID
+
+    async def generate_fixes(
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        context: FixContext,
+        project_path: Path,
+        file_path: Path,
+        llm_caller: Any = None,
+    ) -> Optional[List[SonarFixResponse]]:
+        """Generate fixes for duplicated string literal issues (python:S1192)."""
+        parsed = self._read_and_parse_file(file_path)
+        if parsed is None:
+            return None
+        _, file_lines, tree = parsed
+
+        file_path_str = str(file_path)
+        relative_path = _resolve_relative_path(file_path, project_path)
+
+        existing_names = self._collect_module_level_names(tree)
+        caches = self._prescan_issues(issues, tree)
+        naming_response = self._resolve_names(
+            caches, existing_names, file_path_str, llm_caller
+        )
+
+        result = self._process_issues(
+            issues, caches, naming_response, file_lines, file_path_str
+        )
+        if not result.code_blocks:
+            return None
+
+        return [self._build_response(result, relative_path)]
+
+    @staticmethod
+    def _read_and_parse_file(
+        file_path: Path,
+    ) -> Optional[Tuple[str, List[str], ast.Module]]:
+        """Read and parse a Python source file, returning source, lines, and AST."""
+        try:
+            source = file_path.read_text(encoding="utf-8")
+            file_lines = source.splitlines(keepends=True)
+            tree = ast.parse(source, filename=str(file_path))
+            return source, file_lines, tree
+        except Exception:
+            logger.error("Failed to read/parse %s", file_path, exc_info=True)
+            return None
+
+    @staticmethod
+    def _collect_module_level_names(tree: ast.Module) -> Set[str]:
+        """Collect existing module-level UPPERCASE names to avoid collisions."""
+        names: Set[str] = set()
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1:
+                target = node.targets[0]
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    names.add(target.id)
+            elif isinstance(node, ast.AnnAssign):
+                target = node.target
+                if isinstance(target, ast.Name) and target.id.isupper():
+                    names.add(target.id)
+        return names
+
+    def _prescan_issues(
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        tree: ast.Module,
+    ) -> "_LiteralCaches":
+        """Pre-scan issues to cache AST lookups per unique literal."""
+        caches = _LiteralCaches()
+        for issue in issues:
+            literal = self._extract_literal_from_message(issue.message)
+            if literal is None or literal in caches.seen:
+                continue
+            caches.seen.add(literal)
+
+            occurrences = self._find_string_occurrences(tree, literal)
+            caches.occurrences[literal] = occurrences
+            if not occurrences:
+                continue
+
+            existing = self._find_existing_constant(tree, literal)
+            caches.existing[literal] = existing
+            if len(existing) != 1:
+                caches.needing_names.append(
+                    LiteralContext(literal=literal, occurrences=occurrences)
+                )
+        return caches
+
+    @staticmethod
+    def _resolve_names(
+        caches: "_LiteralCaches",
+        existing_names: Set[str],
+        file_path_str: str,
+        llm_caller: Any,
+    ) -> NamingResponse:
+        """Call the naming service once for all literals needing new names."""
+        naming_service = ConstantNamingService(
+            llm_caller=LLMFixerAdapter(llm_caller) if llm_caller else None,
+        )
+        return naming_service.name_literals(
+            NamingRequest(
+                file_path=file_path_str,
+                literals=caches.needing_names,
+                existing_names=existing_names,
+            )
+        )
+
+    def _process_issues(
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+        caches: "_LiteralCaches",
+        naming_response: NamingResponse,
+        file_lines: List[str],
+        file_path_str: str,
+    ) -> "_FixAccumulator":
+        """Process each issue into code blocks and literal reports."""
+        acc = _FixAccumulator()
+        processed: Set[str] = set()
+
+        for issue in issues:
+            literal = self._extract_literal_from_message(issue.message)
+            if literal is None or literal in processed:
+                continue
+            processed.add(literal)
+
+            self._process_single_literal(
+                issue,
+                literal,
+                caches,
+                naming_response,
+                file_lines,
+                file_path_str,
+                acc,
+            )
+        return acc
+
+    def _process_single_literal(
+        self,
+        issue: Union[SonarIssue, SonarSecurityIssue],
+        literal: str,
+        caches: "_LiteralCaches",
+        naming_response: NamingResponse,
+        file_lines: List[str],
+        file_path_str: str,
+        acc: "_FixAccumulator",
+    ) -> None:
+        """Resolve one literal into replacement blocks and a report entry."""
+        occurrences = caches.occurrences.get(literal, [])
+        if not occurrences:
+            return
+
+        const_name, action, definition_line, occurrences = self._resolve_literal_action(
+            literal, caches, naming_response, acc, occurrences
+        )
+        if not occurrences:
+            return
+
+        self._append_literal_results(
+            issue,
+            literal,
+            const_name,
+            action,
+            definition_line,
+            occurrences,
+            file_lines,
+            file_path_str,
+            acc,
+        )
+
+    def _resolve_literal_action(
+        self,
+        literal: str,
+        caches: "_LiteralCaches",
+        naming_response: NamingResponse,
+        acc: "_FixAccumulator",
+        occurrences: List[Tuple[int, int, int]],
+    ) -> Tuple[str, str, Optional[int], List[Tuple[int, int, int]]]:
+        """Determine constant name, action, and filtered occurrences."""
+        existing = caches.existing.get(literal, [])
+        if len(existing) == 1:
+            const_name = existing[0][0]
+            definition_line = existing[0][1]
+            occurrences = [o for o in occurrences if o[0] != definition_line]
+            return const_name, "reused", definition_line, occurrences
+
+        const_name = naming_response.names.get(
+            literal,
+            self._generate_constant_name(len(acc.constant_defs) + 1, acc.used_names),
+        )
+        acc.used_names.add(const_name)
+        acc.constant_defs.append(f"{const_name} = {repr(literal)}")
+        return const_name, "created", None, occurrences
+
+    @staticmethod
+    def _append_literal_results(
+        issue: Union[SonarIssue, SonarSecurityIssue],
+        literal: str,
+        const_name: str,
+        action: str,
+        definition_line: Optional[int],
+        occurrences: List[Tuple[int, int, int]],
+        file_lines: List[str],
+        file_path_str: str,
+        acc: "_FixAccumulator",
+    ) -> None:
+        """Build replacement blocks and append the report entry."""
+        blocks = StringLiteralDuplicateHandler._build_replacement_blocks(
+            occurrences, file_lines, const_name, file_path_str
+        )
+        acc.code_blocks.extend(blocks)
+        acc.reports.append(
+            {
+                "message": issue.message,
+                "literal": literal,
+                "const_name": const_name,
+                "action": action,
+                "definition_line": definition_line,
+                "lines": [occ[0] for occ in occurrences],
+            }
+        )
+
+    @staticmethod
+    def _build_response(acc: "_FixAccumulator", relative_path: str) -> SonarFixResponse:
+        """Assemble the final SonarFixResponse from accumulated results."""
+        helper_code = "\n".join(acc.constant_defs)
+        all_blocks = list(acc.code_blocks)
+
+        if acc.constant_defs:
+            insert_block = StringLiteralDuplicateHandler._create_constant_insert_block(
+                helper_code, all_blocks
+            )
+            all_blocks.insert(0, insert_block)
+
+        explanation = StringLiteralDuplicateHandler._build_explanation(
+            relative_path, acc.reports
+        )
+        return SonarFixResponse(
+            IMPORT_BLOCK="",
+            FIXED_CODE_BLOCKS=all_blocks,
+            NEW_HELPER_CODE=helper_code,
+            PLACEMENT=PlacementType.GLOBAL_TOP,
+            EXPLANATION=explanation,
+            CONFIDENCE=0.95,
+        )
+
+    @staticmethod
+    def _create_constant_insert_block(
+        helper_code: str, existing_blocks: List[CodeBlock]
+    ) -> CodeBlock:
+        """Create a CodeBlock that inserts constant definitions at module top."""
+        return CodeBlock(
+            block_name="New constants",
+            start_line=0,
+            end_line=0,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.MODULE,
+            file_path=existing_blocks[0].file_path if existing_blocks else None,
+            changes=[
+                LineChange(
+                    line=0,
+                    action=ChangeAction.INSERT,
+                    new=helper_code,
+                )
+            ],
+        )
+
+    @staticmethod
+    def _extract_literal_from_message(message: str) -> Optional[str]:
+        """Extract the duplicated string value from a SonarCloud S1192 message."""
+        match = _S1192_MESSAGE_PATTERN.search(message)
+        if match:
+            return match.group(1)
+        return None
+
+    @staticmethod
+    def _build_explanation(
+        relative_path: str, literal_reports: List[Dict[str, Any]]
+    ) -> str:
+        """Build a structured explanation from per-literal metadata."""
+        parts: List[str] = [f"**File:** `{relative_path}`"]
+        for report in literal_reports:
+            parts.append(StringLiteralDuplicateHandler._format_literal_report(report))
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def _format_literal_report(report: Dict[str, Any]) -> str:
+        """Format a single literal report for the explanation."""
+        lines_list = "\n".join(f"        - {ln}" for ln in report["lines"])
+        if report["action"] == "reused":
+            action_text = (
+                f"Reused existing constant "
+                f"`{report['const_name']}` "
+                f"(defined at line {report['definition_line']})"
+            )
+        else:
+            action_text = (
+                f"Created "
+                f"`{report['const_name']} = {repr(report['literal'])}` "
+                f"at module level"
+            )
+        return (
+            f"> {report['message']}\n"
+            f"    - **Action:** {action_text}\n"
+            f"    - **Lines affected:**\n"
+            f"{lines_list}"
+        )
+
+    @staticmethod
+    def _find_existing_constant(tree: ast.Module, target: str) -> List[Tuple[str, int]]:
+        """
+        Find module-level simple assignments whose value is the target string.
+
+        Walks only top-level statements (direct children of ast.Module) and
+        checks both ast.Assign and ast.AnnAssign nodes for a single ast.Name
+        target with an ast.Constant string value matching the target.
+
+        Args:
+            tree:   Parsed AST of the source file.
+            target: The duplicated string literal to search for.
+
+        Returns:
+            List of (variable_name, line_number) tuples sorted by line number.
+            Empty list if no matching assignments found.
+        """
+        matches: List[Tuple[str, int]] = []
+        for node in tree.body:
+            result = StringLiteralDuplicateHandler._match_assignment_value(node, target)
+            if result is not None:
+                matches.append(result)
+        matches.sort(key=lambda m: m[1])
+        return matches
+
+    @staticmethod
+    def _match_assignment_value(
+        node: ast.stmt, target: str
+    ) -> Optional[Tuple[str, int]]:
+        """Check if a top-level AST node assigns the target string value."""
+        if isinstance(node, ast.Assign):
+            if len(node.targets) != 1:
+                return None
+            name_node = node.targets[0]
+            value_node = node.value
+        elif isinstance(node, ast.AnnAssign):
+            name_node = node.target
+            if node.value is None:
+                return None
+            value_node = node.value
+        else:
+            return None
+
+        if not isinstance(name_node, ast.Name):
+            return None
+        if not isinstance(value_node, ast.Constant):
+            return None
+        if not isinstance(value_node.value, str):
+            return None
+        if value_node.value != target:
+            return None
+        return (name_node.id, node.lineno)
+
+    @staticmethod
+    def _find_string_occurrences(
+        tree: ast.Module, target: str
+    ) -> List[Tuple[int, int, int]]:
+        """
+        Walk the AST and return (lineno, col_offset, end_col_offset) for every
+        ast.Constant node whose value equals the target string.
+        """
+        occurrences: List[Tuple[int, int, int]] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Constant):
+                continue
+            if not isinstance(node.value, str):
+                continue
+            if node.value != target:
+                continue
+            if node.end_col_offset is None:
+                continue
+            occurrences.append((node.lineno, node.col_offset, node.end_col_offset))
+        return occurrences
+
+    @staticmethod
+    def _generate_constant_name(counter: int, used_names: Set[str]) -> str:
+        """Return a sequential constant name like STRING_LITERAL_1."""
+        name = f"STRING_LITERAL_{counter}"
+        while name in used_names:
+            counter += 1
+            name = f"STRING_LITERAL_{counter}"
+        return name
+
+    @staticmethod
+    def _build_replacement_blocks(
+        occurrences: List[Tuple[int, int, int]],
+        file_lines: List[str],
+        constant_name: str,
+        file_path: Optional[str] = None,
+    ) -> List[CodeBlock]:
+        """
+        Build one SEARCH_REPLACE CodeBlock per occurrence.
+
+        Uses the exact quoted representation from the source line (via column
+        offsets) so that both single-quoted and double-quoted strings are
+        handled correctly.
+        """
+        blocks: List[CodeBlock] = []
+        for lineno, col_start, col_end in occurrences:
+            line_idx = lineno - 1
+            if line_idx < 0 or line_idx >= len(file_lines):
+                continue
+            quoted_literal = file_lines[line_idx][col_start:col_end]
+            block = StringLiteralDuplicateHandler._create_replacement_block(
+                lineno, quoted_literal, constant_name, file_path
+            )
+            blocks.append(block)
+        return blocks
+
+    @staticmethod
+    def _create_replacement_block(
+        lineno: int,
+        quoted_literal: str,
+        constant_name: str,
+        file_path: Optional[str],
+    ) -> CodeBlock:
+        """Create a single SEARCH_REPLACE CodeBlock for one occurrence."""
+        return CodeBlock(
+            block_name=constant_name,
+            start_line=lineno,
+            end_line=lineno,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.MODULE,
+            file_path=file_path,
+            replacements=[
+                SearchReplace(
+                    search=quoted_literal,
+                    replace=constant_name,
+                    is_regex=False,
+                    count=1,
+                )
+            ],
+        )
+
+
 class AsyncToSyncHandler(RuleHandler):
     """
     Handler for python:S7503 - unnecessary async functions.
@@ -785,6 +1278,10 @@ class AsyncToSyncHandler(RuleHandler):
             code_blocks = []
             response_lst = []
             source_lines = context.code_content
+            logger.debug(
+                "AsyncToSyncHandler: processing %d issue(s) in %s",
+                len(issues), file_path,
+            )
 
             # Step 1: Detect function type
             function_info = detect_original_function_type(source_lines.strip(), 1)
@@ -821,14 +1318,14 @@ class AsyncToSyncHandler(RuleHandler):
                             IMPORT_BLOCK="",
                             FIXED_CODE_BLOCKS=[block],
                             NEW_HELPER_CODE="",
-                            PLACEMENT="SIBLING",
+                            PLACEMENT=PlacementType.SIBLING,
                             EXPLANATION="",
                             CONFIDENCE=0.95,
                         )
                     )
 
             logger.info(
-                f"Generated {len(code_blocks)} code blocks for async-to-sync conversion"
+                "Generated %d code block(s) for async-to-sync conversion", len(code_blocks)
             )
 
             response_lst.append(
@@ -836,7 +1333,7 @@ class AsyncToSyncHandler(RuleHandler):
                     IMPORT_BLOCK="",
                     FIXED_CODE_BLOCKS=code_blocks,
                     NEW_HELPER_CODE="",
-                    PLACEMENT="SIBLING",
+                    PLACEMENT=PlacementType.SIBLING,
                     EXPLANATION=explanation.format(caller_count=len(caller_blocks)),
                     CONFIDENCE=0.95,
                 )
@@ -844,9 +1341,8 @@ class AsyncToSyncHandler(RuleHandler):
 
             return response_lst
 
-        except Exception as e:
-            print(f"Error in AsyncToSyncHandler: {e}")
-            logger.error(f"Error in AsyncToSyncHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("AsyncToSyncHandler failed to generate fixes")
             return None
 
     def _create_function_definition_block(
@@ -962,8 +1458,8 @@ class CognitiveComplexityHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in CognitiveComplexityHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("CognitiveComplexityHandler failed to generate fixes")
             return None
 
 
@@ -1004,8 +1500,8 @@ class DefaultRuleHandler(RuleHandler):
             )
             return [fix_response]
 
-        except Exception as e:
-            logger.error(f"Error in DefaultRuleHandler: {e}", exc_info=True)
+        except Exception:
+            logger.exception("DefaultRuleHandler failed to generate fixes")
             return None
 
 
@@ -1023,6 +1519,7 @@ class RuleHandlerRegistry:
             AsyncToSyncHandler(),
             CognitiveComplexityHandler(),
             ConvenationNameHandler(),
+            StringLiteralDuplicateHandler(),
             DefaultRuleHandler(),  # Catch-all at the end
         ]
 
@@ -1051,8 +1548,8 @@ class RuleHandlerRegistry:
         """
         for handler in self.handlers:
             if handler.can_handle(rule):
-                logger.debug(f"Using {handler.__class__.__name__} for rule {rule}")
+                logger.debug("Using %s for rule %s", handler.__class__.__name__, rule)
                 return handler
 
-        logger.warning(f"No handler found for rule {rule}, using default")
+        logger.warning("No handler found for rule %s, using default", rule)
         return self.handlers[-1]
