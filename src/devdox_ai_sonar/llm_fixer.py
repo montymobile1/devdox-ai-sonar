@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import sys
 import asyncio
 from collections import defaultdict
 
@@ -1586,7 +1587,7 @@ class LLMFixer:
         """Create a backup of the project."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = project_path.parent / f"{project_path.name}_backup_{timestamp}"
-        shutil.copytree(project_path, backup_path)
+        shutil.copytree(project_path, backup_path, ignore=shutil.ignore_patterns('.git'))
 
         return backup_path
 
@@ -1730,7 +1731,7 @@ class LLMFixer:
         try:
             # 1. Syntax check
             subprocess.run(
-                ["python", "-m", "py_compile", str(file_path)],
+                [sys.executable, "-m", "py_compile", str(file_path)],
                 check=True,
                 capture_output=True,
                 text=True,
