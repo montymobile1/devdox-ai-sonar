@@ -9,7 +9,7 @@ import functools
 import traceback
 
 from rich.console import Console
-import inquirer
+from devdox_ai_sonar.utils.ui_prompts import select_from_list
 from rich.table import Table
 from rich.prompt import Confirm
 from rich.panel import Panel
@@ -267,7 +267,7 @@ async def show_command_selector_async() -> Optional[str]:
 
 def _select_existing_ui(
     field_name: str, message: str, existing_providers: list
-) -> str | Any:
+) -> str:
     """Prompt user to select an existing provider.
 
     Args:
@@ -276,20 +276,11 @@ def _select_existing_ui(
     Returns:
         str: Selected provider name, or empty string if cancelled
     """
-    questions = [
-        inquirer.List(
-            field_name,
-            message=message,
-            choices=existing_providers,
-        )
-    ]
-
-    answers = inquirer.prompt(questions)
-    if not answers or not answers.get(field_name):
+    result = select_from_list(existing_providers, message)
+    if not result:
         console.print("[yellow]⚠ Selection cancelled[/yellow]")
         return ""
-
-    return answers[field_name]
+    return result
 
 
 def _initialize_managers() -> Tuple[

@@ -43,8 +43,8 @@ def mock_prompt():
 
 @pytest.fixture
 def mock_terminal_menu():
-    """Mock TerminalMenu."""
-    with patch('devdox_ai_sonar.utils.provider_config.TerminalMenu') as mock:
+    """Mock select_from_list (formerly TerminalMenu)."""
+    with patch('devdox_ai_sonar.utils.provider_config.select_from_list') as mock:
         yield mock
 
 
@@ -208,22 +208,17 @@ class TestSelectProviderFromList:
     def test_select_provider_success(self, mock_terminal_menu):
         """Test successful provider selection."""
         providers = ["openai", "anthropic", "together"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 1
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = "anthropic"
 
         result = ProviderConfigUI.select_provider_from_list(providers, "Select provider")
 
         assert result == "anthropic"
-        mock_terminal_menu.assert_called_once()
-        mock_menu_instance.show.assert_called_once()
+        mock_terminal_menu.assert_called_once_with(providers, "Select provider")
 
     def test_select_provider_first_item(self, mock_terminal_menu):
         """Test selecting first item from list."""
         providers = ["openai", "anthropic"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 0
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = "openai"
 
         result = ProviderConfigUI.select_provider_from_list(providers, "Select")
 
@@ -232,9 +227,7 @@ class TestSelectProviderFromList:
     def test_select_provider_cancelled(self, mock_terminal_menu):
         """Test when selection is cancelled."""
         providers = ["openai"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = None
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = None
 
         result = ProviderConfigUI.select_provider_from_list(providers, "Select")
 
@@ -242,25 +235,11 @@ class TestSelectProviderFromList:
 
     def test_select_provider_empty_list(self, mock_terminal_menu):
         """Test with empty provider list."""
+        mock_terminal_menu.return_value = None
+
         result = ProviderConfigUI.select_provider_from_list([], "Select")
 
         assert result is None
-        mock_terminal_menu.assert_not_called()
-
-    def test_select_provider_menu_configuration(self, mock_terminal_menu):
-        """Test that menu is configured correctly."""
-        providers = ["openai"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 0
-        mock_terminal_menu.return_value = mock_menu_instance
-
-        ProviderConfigUI.select_provider_from_list(providers, "Test message")
-
-        call_kwargs = mock_terminal_menu.call_args[1]
-        assert call_kwargs['search_key'] == "/"
-        assert call_kwargs['search_case_sensitive'] is False
-        assert call_kwargs['title'] == "Test message"
-        assert call_kwargs['menu_cursor'] == "➤ "
 
 
 class TestConfirmDefault:
@@ -1480,10 +1459,8 @@ class TestErrorPathCoverage:
         """Test with very large provider list."""
         large_list = [f"provider-{i}" for i in range(100)]
 
-        with patch('devdox_ai_sonar.utils.provider_config.TerminalMenu') as mock_menu:
-            mock_menu_instance = Mock()
-            mock_menu_instance.show.return_value = 50
-            mock_menu.return_value = mock_menu_instance
+        with patch('devdox_ai_sonar.utils.provider_config.select_from_list') as mock_select:
+            mock_select.return_value = "provider-50"
 
             result = ProviderConfigUI.select_provider_from_list(large_list, "Select")
 

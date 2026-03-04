@@ -1,5 +1,8 @@
 
 
+import os
+import tempfile
+
 import pytest
 from pathlib import Path
 from contextlib import contextmanager
@@ -147,8 +150,8 @@ def sample_fix_result():
         total_fixes_attempted=1,
         success_rate=1.0,
         backup_created=True,
-        project_path=Path("/tmp/project"),
-        backup_path=Path("/tmp/backup")
+        project_path=Path(tempfile.gettempdir()) / "project",
+        backup_path=Path(tempfile.gettempdir()) / "backup"
     )
 
 @contextmanager
@@ -168,7 +171,7 @@ def mock_show_progress(message: str, total=None):
 
 
 @contextmanager
-def mock_tmp_clone(tmp_path_value="/tmp/fake_devdox"):
+def mock_tmp_clone(tmp_path_value=os.path.join(tempfile.gettempdir(), "fake_devdox")):
     """Mock TmpCloneManager for testing."""
     mock_instance = AsyncMock()
     mock_instance.__aenter__ = AsyncMock(return_value=Path(tmp_path_value))
@@ -184,7 +187,7 @@ def auth_config():
         token="test-token",
         organization="test-org",
         project="test-project",
-        project_path="/tmp/test",
+        project_path=os.path.join(tempfile.gettempdir(), "test"),
         git_url="https://github.com/test-org/test-project.git"
     )
 
@@ -197,7 +200,7 @@ def mock_config_service():
             "token": "test-token",
             "organization": "test-org",
             "project": "test-project",
-            "project_path": "/tmp/project",
+            "project_path": os.path.join(tempfile.gettempdir(), "project"),
             "git_url": "https://github.com/test-org/test-project.git"
         }
         # Sync methods must be Mock() to avoid returning coroutines
@@ -214,7 +217,7 @@ def mock_loaded_config():
     mock_auth.project = "test-project"
     mock_auth.organization = "test-org"
     mock_auth.token = "test-token"
-    mock_auth.project_path = "/tmp/project"
+    mock_auth.project_path = os.path.join(tempfile.gettempdir(), "project")
 
     mock_llm = Mock()
     mock_llm.provider = "openai"
@@ -2340,7 +2343,7 @@ class TestSecurityIssuesProcessing:
         issues_by_file = {}
         md_file_path = Mock()
         await _process_security_issues(
-            issues_by_file, mock_services, auth_config, fix_params, md_file_path, tmp_path=Path("/tmp/new")
+            issues_by_file, mock_services, auth_config, fix_params, md_file_path, tmp_path=Path(tempfile.gettempdir()) / "new"
         )
 
         # Should handle gracefully
@@ -2359,7 +2362,7 @@ class TestSecurityIssuesProcessing:
         }
         md_file_path = Mock()
         await _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path=os.path.join(tempfile.gettempdir(), "new")
         )
 
         # Should still call process_rule
@@ -2388,7 +2391,7 @@ class TestRegularIssuesProcessing:
 
         md_file_path = Mock()
         await _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path=os.path.join(tempfile.gettempdir(), "new")
         )
 
 
@@ -2409,7 +2412,7 @@ class TestRegularIssuesProcessing:
         }
         md_file_path = Mock()
         await _process_regular_issues(
-            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
+            issues_by_rule, mock_services, auth_config, fix_params, md_file_path, tmp_path=os.path.join(tempfile.gettempdir(), "new")
         )
 
         assert mock_process_rule.call_count == 3
@@ -2429,7 +2432,7 @@ class TestRegularIssuesProcessing:
         md_file_path = Mock()
         result = await _process_issues_for_rule(
             "python:S1234", issues_list,
-            mock_services, auth_config, fix_params, md_file_path, tmp_path="/tmp/new"
+            mock_services, auth_config, fix_params, md_file_path, tmp_path=os.path.join(tempfile.gettempdir(), "new")
         )
 
         assert result is False  # Stopped by user
@@ -2440,7 +2443,7 @@ class TestRegularIssuesProcessing:
     @pytest.mark.skip(reason="Need update")
     async def test_process_issues_for_rule_continues(
             self, mock_single_fix, mock_continue,
-            mock_services, auth_config, fix_params,tmp_path="/tmp/new"
+            mock_services, auth_config, fix_params,tmp_path=os.path.join(tempfile.gettempdir(), "new")
     ):
         """Test processing continues to next rule."""
         mock_continue.return_value = True  # Continue all
@@ -2644,7 +2647,7 @@ class TestInspectCommand:
     async def test_run_inspect_empty_analysis(self):
         """Test inspect with empty analysis results"""
         mock_auth_config = Mock()
-        mock_auth_config.project_path = "/tmp/empty"
+        mock_auth_config.project_path = os.path.join(tempfile.gettempdir(), "empty")
         mock_auth_config.token = "token"
         mock_auth_config.organization = "org"
 
@@ -2679,21 +2682,21 @@ class TestInspectCommand:
 class TestSelectExistingUI:
     """Tests for _select_existing_ui"""
 
-    @patch('devdox_ai_sonar.cli.inquirer')
+    @patch('devdox_ai_sonar.cli.select_from_list')
     @patch('devdox_ai_sonar.cli.console')
-    def test_select_existing_ui_success(self, mock_console, mock_inquirer):
+    def test_select_existing_ui_success(self, mock_console, mock_select):
         """Test successful selection"""
-        mock_inquirer.prompt.return_value = {"provider": "openai"}
+        mock_select.return_value = "openai"
 
         result = _select_existing_ui("provider", "Select provider", ["openai", "anthropic"])
 
         assert result == "openai"
 
-    @patch('devdox_ai_sonar.cli.inquirer')
+    @patch('devdox_ai_sonar.cli.select_from_list')
     @patch('devdox_ai_sonar.cli.console')
-    def test_select_existing_ui_cancelled(self, mock_console, mock_inquirer):
+    def test_select_existing_ui_cancelled(self, mock_console, mock_select):
         """Test cancelled selection"""
-        mock_inquirer.prompt.return_value = None
+        mock_select.return_value = None
 
         result = _select_existing_ui("provider", "Select", ["openai"])
 
@@ -2831,7 +2834,7 @@ class TestProcessFunctions:
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with mock_tmp_clone():
-                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/downloaded_repo"):
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=os.path.join(tempfile.gettempdir(), "downloaded_repo")):
 
                                 await _process_and_fix_issues(
                                     auth_config,
@@ -2894,7 +2897,7 @@ class TestProcessFunctions:
                 with patch('devdox_ai_sonar.cli.LLMFixer', return_value=mock_fixer):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with mock_tmp_clone():
-                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/downloaded"):
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=os.path.join(tempfile.gettempdir(), "downloaded")):
                                 with patch('devdox_ai_sonar.cli._display_fix_preview'):
                                     with patch('devdox_ai_sonar.cli.smart_confirm', new=AsyncMock(return_value=False)):
 
@@ -2960,7 +2963,7 @@ class TestProcessFunctions:
                 with patch('devdox_ai_sonar.cli.LLMFixer'):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with mock_tmp_clone() as mock_ctx:
-                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/repo"):
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=os.path.join(tempfile.gettempdir(), "repo")):
                                 with patch('devdox_ai_sonar.cli._fetch_issues_by_type', side_effect=RuntimeError("API error")):
                                     with pytest.raises(RuntimeError, match="API error"):
                                         await _process_and_fix_issues(
@@ -2996,7 +2999,7 @@ class TestProcessFunctions:
                 with patch('devdox_ai_sonar.cli.LLMFixer'):
                     with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
                         with mock_tmp_clone() as mock_ctx:
-                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value="/tmp/repo"):
+                            with patch('devdox_ai_sonar.cli.download_latest_version', return_value=os.path.join(tempfile.gettempdir(), "repo")):
                                 with patch('devdox_ai_sonar.cli._process_files_with_issues', new=AsyncMock(side_effect=RuntimeError("LLM error"))):
                                     with pytest.raises(RuntimeError, match="LLM error"):
                                         await _process_and_fix_issues(
@@ -3188,10 +3191,10 @@ class TestFileProcessing:
                     await _process_files_with_issues(
                         issues_by_file,
                         mock_services,
-                        Mock(project_path="/tmp"),
+                        Mock(project_path=tempfile.gettempdir()),
                         {"apply": False, "dry_run": False},
                         issue_type=IssueType.SECURITY,
-                        tmp_path= Path("/tmp/new")
+                        tmp_path= Path(tempfile.gettempdir()) / "new"
                     )
 
     async def test_generate_fix_for_file_success(self):
@@ -3226,7 +3229,7 @@ class TestFileProcessing:
         mock_services['fixer'].generate_fix_by_file.return_value = mock_fix
 
         with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
-            result = await _generate_fix_for_file(issues, mock_services, Mock(project_path="/tmp"),issue_type=IssueType.SECURITY, tmp_path= Path("/tmp/new"))
+            result = await _generate_fix_for_file(issues, mock_services, Mock(project_path=tempfile.gettempdir()),issue_type=IssueType.SECURITY, tmp_path= Path(tempfile.gettempdir()) / "new")
 
             assert result == mock_fix
 
@@ -3259,8 +3262,8 @@ class TestFileProcessing:
             total_fixes_attempted=1,
             success_rate=1.0,
             backup_created=True,
-            backup_path=Path("/tmp/backup"),
-            project_path=Path("/tmp/backup")
+            backup_path=Path(tempfile.gettempdir()) / "backup",
+            project_path=Path(tempfile.gettempdir()) / "backup"
         )
 
         with patch('devdox_ai_sonar.cli._display_fix_preview'):
@@ -3269,7 +3272,7 @@ class TestFileProcessing:
                     fix,
                     [Mock()],
                     mock_fixer,
-                    Mock(project_path="/tmp"),
+                    Mock(project_path=tempfile.gettempdir()),
                     {"apply": 1, "dry_run": 0, "create_backup": 1}
                 )
 
@@ -5130,7 +5133,7 @@ class TestHelperFunctions:
         }
         await _process_single_fix(
             issues, mock_services, auth_config,
-            fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
+            fix_params, IssueType.SECURITY, "test.py", Path(tempfile.gettempdir()) / "new"
         )
 
         mock_generate.assert_called_once()
@@ -5152,7 +5155,7 @@ class TestHelperFunctions:
         }
         await _process_single_fix(
             issues, mock_services, auth_config,
-            fix_params, IssueType.SECURITY, "test.py", Path("/tmp/new")
+            fix_params, IssueType.SECURITY, "test.py", Path(tempfile.gettempdir()) / "new"
         )
 
         # Should print warning
@@ -5372,9 +5375,9 @@ class TestGenerateFixErrors:
                 result = await _generate_fix_for_file(
                     issues=[Mock()],
                     services={"fixer": AsyncMock()},
-                    auth_config=Mock(project_path="/tmp"),
+                    auth_config=Mock(project_path=tempfile.gettempdir()),
                     issue_type=IssueType.REGULAR,
-                    tmp_path="/tmp/clone",
+                    tmp_path=os.path.join(tempfile.gettempdir(), "clone"),
                     rule_name=None,
                 )
 
@@ -5553,7 +5556,7 @@ class TestProcessAndFixIssuesFlow:
         """Line 1286: pull_request > 0 → calls get_branch_from_pr."""
         # Set up TmpCloneManager as async context manager
         mock_mgr = AsyncMock()
-        mock_mgr.__aenter__.return_value = Path("/tmp/clone")
+        mock_mgr.__aenter__.return_value = Path(tempfile.gettempdir()) / "clone"
         mock_tmp_cls.return_value = mock_mgr
 
         mock_analyzer = Mock()
@@ -5600,7 +5603,7 @@ class TestProcessFilesFlow:
             auth_config,
             {"apply": 0, "dry_run": 0},
             IssueType.REGULAR,
-            Path("/tmp/clone"),
+            Path(tempfile.gettempdir()) / "clone",
         )
 
         mock_regular.assert_called_once()
@@ -5621,7 +5624,7 @@ class TestProcessIssuesForRuleFlow:
             {"analyzer": Mock(), "ruler": Mock(), "fixer": Mock()},
             AuthConfig(token="t", organization="o", project="p",
                        project_path="/tmp", git_url="https://git.example.com"),
-            {"apply": 0}, Path("/tmp/md.md"), Path("/tmp/clone"),
+            {"apply": 0}, Path(tempfile.gettempdir()) / "md.md", Path(tempfile.gettempdir()) / "clone",
         )
 
         mock_fix.assert_not_called()
@@ -5640,7 +5643,7 @@ class TestProcessIssuesForRuleFlow:
             {"analyzer": Mock(), "ruler": Mock(), "fixer": Mock()},
             AuthConfig(token="t", organization="o", project="p",
                        project_path="/tmp", git_url="https://git.example.com"),
-            {"apply": 0}, Path("/tmp/md.md"), Path("/tmp/clone"),
+            {"apply": 0}, Path(tempfile.gettempdir()) / "md.md", Path(tempfile.gettempdir()) / "clone",
         )
 
         mock_fix.assert_called_once()
@@ -5667,7 +5670,7 @@ class TestProcessSecurityIssuesFlow:
             {"handler.js": [issue]},
             {"analyzer": Mock(), "ruler": Mock(), "fixer": Mock()},
             auth_config,
-            {"apply": 0}, Path("/tmp/md.md"), Path("/tmp/clone"),
+            {"apply": 0}, Path(tempfile.gettempdir()) / "md.md", Path(tempfile.gettempdir()) / "clone",
         )
 
         mock_fix.assert_not_called()

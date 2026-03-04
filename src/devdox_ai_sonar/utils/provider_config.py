@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any, Tuple
 from rich.prompt import Confirm, Prompt
 from rich.console import Console
-from simple_term_menu import TerminalMenu
+from devdox_ai_sonar.utils.ui_prompts import select_from_list
 import rich_click as click
 from devdox_ai_sonar.models.llm import ProviderType, ProviderValidator
 from devdox_ai_sonar.models.llm_config import ConfigManager
@@ -44,25 +44,7 @@ class ProviderConfigUI:
     @staticmethod
     def select_provider_from_list(providers: List[str], message: str) -> Optional[str]:
         """Select a provider using terminal menu."""
-        if not providers:
-            return None
-        menu = TerminalMenu(
-            providers,
-            search_key="/",
-            search_case_sensitive=False,
-            show_search_hint=True,
-            show_search_hint_text='Press "/" to search',
-            title=message,
-            menu_cursor="➤ ",
-            menu_cursor_style=("fg_green", "bold"),
-            menu_highlight_style=("fg_green", "bold"),
-        )
-
-        menu_index = menu.show()
-        if menu_index is not None and isinstance(menu_index, int):
-            return providers[menu_index]
-
-        return None
+        return select_from_list(providers, message)
 
     @staticmethod
     def confirm_default(message: str = "Make this the default provider?") -> bool:
