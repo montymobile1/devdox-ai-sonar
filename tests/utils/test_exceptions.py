@@ -3,6 +3,9 @@ Comprehensive tests for devdox_ai_sonar/utils/exceptions.py
 Target Coverage: 100%
 """
 
+import os
+import tempfile
+
 import pytest
 from devdox_ai_sonar.utils.exceptions import (
     DevDoxSonarError,
@@ -169,23 +172,24 @@ class TestFixApplicationError:
 
     def test_create_file_operation_error(self):
         """Should create FixApplicationError"""
-        error = FixApplicationError("File not found", "/tmp/test.py")
+        error = FixApplicationError("File not found", os.path.join(tempfile.gettempdir(), "test.py"))
         assert "File not found" in str(error)
 
     def test_file_operation_error_inherits_devdox_error(self):
         """FixApplicationError should inherit from DevDoxSonarError"""
-        error = FixApplicationError("test","/tmp/test.py")
+        error = FixApplicationError("test", os.path.join(tempfile.gettempdir(), "test.py"))
         assert isinstance(error, DevDoxSonarError)
 
     def test_raise_file_operation_error(self):
         """Should be able to raise FixApplicationError"""
         with pytest.raises(FixApplicationError):
-            raise FixApplicationError("Cannot write file", "/tmp/test.py")
+            raise FixApplicationError("Cannot write file", os.path.join(tempfile.gettempdir(), "test.py"))
 
     def test_file_operation_error_with_path(self):
         """Should handle file path in message"""
-        error = FixApplicationError("Cannot read /tmp/test.py", "/tmp/test.py")
-        assert "/tmp/test.py" in str(error)
+        tmp_test_path = os.path.join(tempfile.gettempdir(), "test.py")
+        error = FixApplicationError(f"Cannot read {tmp_test_path}", tmp_test_path)
+        assert tmp_test_path in str(error)
 
     def test_file_operation_error_permission_denied(self):
         """Should handle permission errors"""

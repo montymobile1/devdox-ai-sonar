@@ -4,6 +4,7 @@
 import pytest
 import json
 import os
+import sys
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch, MagicMock, mock_open, call
 from typing import List, Dict, Any, Union
@@ -1560,11 +1561,8 @@ class TestWriteExplaination:
 
     def test_invalid_file_path(self, fixer):
         """Test with invalid file path"""
-        # Use invalid path (null byte in filename on Unix)
-        if isinstance(Path("/tmp/test\x00.md"), Path):
-            file_md = Path("/tmp/test\x00.md")
-        else:
-            file_md = Path("/dev/null/impossible.md")
+        # Use a path nested under os.devnull (impossible on any OS)
+        file_md = Path(os.devnull).parent / "impossible_dir" / "impossible.md"
 
         issue = SonarIssue(
             key="a",
@@ -2852,7 +2850,10 @@ Hope this helps!
         finally:
             test_file.chmod(0o644)
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
+    @pytest.mark.skipif(
+        sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="Root/admin bypasses filesystem permissions; Windows uses different permission model"
+    )
     def test_write_explaination_io_error(self, fixer, tmp_path):
         """Test handling IO error during explanation writing"""
         file_md = tmp_path / "readonly" / "output.md"
@@ -2912,7 +2913,10 @@ Hope this helps!
         assert context["new_context"][0]["context"] == ""
 
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
+    @pytest.mark.skipif(
+        sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="Root/admin bypasses filesystem permissions; Windows uses different permission model"
+    )
     def test_create_backup_permission_error(self, fixer, tmp_path):
         """Test backup creation with permission issues"""
         # Create directory structure
@@ -3551,7 +3555,7 @@ class TestResolveEffectiveValues:
     def _make_context(self, start_line=1):
         return FixContext(
             file_path=Path("/project/src/test.py"),
-            file_path_tmp=Path("/tmp/test.py"),
+            file_path_tmp=Path(tempfile.gettempdir()) / "test.py",
             line_range={},
             code_content="original code",
             language="python",
@@ -3708,7 +3712,7 @@ class TestMapFixSuggestionToDto:
         fix_response = self._make_fix_response([code_block])
         context = FixContext(
             file_path=Path("/project/src/test.py"),
-            file_path_tmp=Path("/tmp/test.py"),
+            file_path_tmp=Path(tempfile.gettempdir()) / "test.py",
             line_range={},
             code_content="original code",
             language="python",
@@ -3754,7 +3758,7 @@ class TestMapFixSuggestionToDto:
         fix_response = self._make_fix_response([code_block])
         context = FixContext(
             file_path=Path("/project/src/test.py"),
-            file_path_tmp=Path("/tmp/test.py"),
+            file_path_tmp=Path(tempfile.gettempdir()) / "test.py",
             line_range={},
             code_content="code",
             language="python",
@@ -3807,7 +3811,7 @@ class TestBuildFixSuggestionInstance:
         ctx.update(ctx_overrides)
         return FixContext(
             file_path=Path("/project/src/test.py"),
-            file_path_tmp=Path("/tmp/test.py"),
+            file_path_tmp=Path(tempfile.gettempdir()) / "test.py",
             line_range={},
             code_content="original code",
             language="python",
