@@ -40,6 +40,7 @@ def select_from_list(
         choices=choices,
         use_search_filter=use_search,
         use_arrow_keys=True,
+        use_jk_keys=not use_search,
         pointer="➤ ",
         instruction="(Type to filter)" if use_search else None,
         style=_MENU_STYLE,
