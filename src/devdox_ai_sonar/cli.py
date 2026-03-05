@@ -265,7 +265,7 @@ async def show_command_selector_async() -> Optional[str]:
         return None
 
 
-def _select_existing_ui(
+async def _select_existing_ui(
     field_name: str, message: str, existing_providers: list
 ) -> str:
     """Prompt user to select an existing provider.
@@ -276,7 +276,7 @@ def _select_existing_ui(
     Returns:
         str: Selected provider name, or empty string if cancelled
     """
-    result = select_from_list(existing_providers, message)
+    result = await select_from_list(existing_providers, message)
     if not result:
         console.print("[yellow]⚠ Selection cancelled[/yellow]")
         return ""
@@ -370,7 +370,7 @@ async def _configure_providers_loop(
             f"[cyan]Available providers: {', '.join(available_providers)}[/cyan]\n"
         )
 
-        provider_name = ui.select_provider_from_list(
+        provider_name = await ui.select_provider_from_list(
             available_providers, "Select a provider to configure"
         )
 
@@ -407,7 +407,7 @@ async def _handle_provider_configuration(
     Returns:
         bool: True if configuration successful
     """
-    result = provider_manager.configure_new_provider(provider_name)
+    result = await provider_manager.configure_new_provider(provider_name)
 
     if not result:
         return False
@@ -629,7 +629,7 @@ async def update_provider() -> None:
             )
             raise click.Abort()
         _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
-        chosen_provider = _select_existing_ui(
+        chosen_provider = await _select_existing_ui(
             "provider", "Select the provider to update", existing_providers
         )
         if not chosen_provider:

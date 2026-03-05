@@ -18,7 +18,7 @@ _MENU_STYLE = Style([
 ])
 
 
-def select_from_list(
+async def select_from_list(
     choices: List[str],
     message: str,
     use_search: bool = True,
@@ -35,7 +35,7 @@ def select_from_list(
     """
     if not choices:
         return None
-    return questionary.select(
+    return await questionary.select(
         message,
         choices=choices,
         use_search_filter=use_search,
@@ -44,4 +44,4 @@ def select_from_list(
         pointer="➤ ",
         instruction="(Type to filter)" if use_search else None,
         style=_MENU_STYLE,
-    ).ask()
+    ).ask_async()

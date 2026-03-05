@@ -118,7 +118,7 @@ def mock_services():
 def mock_ui():
     """Mock ProviderConfigUI"""
     ui = Mock()
-    ui.select_provider_from_list.return_value = 'openai'
+    ui.select_provider_from_list = AsyncMock(return_value='openai')
     return ui
 
 @pytest.fixture
@@ -285,8 +285,7 @@ def mock_provider_manager():
         mock_instance.get_available_providers.return_value = ["openai", "anthropic"]
         mock_instance.get_existing_providers.return_value = ["openai"]
         mock_instance.update_existing_provider.return_value = True
-        # Sync methods must be Mock() to avoid returning coroutines
-        mock_instance.configure_new_provider = Mock(return_value={
+        mock_instance.configure_new_provider = AsyncMock(return_value={
             "config": {"provider": "openai", "api_key": "test"},
             "set_as_default": True
         })
@@ -874,10 +873,10 @@ class TestConfigurationManagement:
         available_providers = ['openai', 'anthropic']
 
         # Mock the UI to select 'openai', then return None (exit loop)
-        mock_ui.select_provider_from_list.side_effect = ['openai', None]
+        mock_ui.select_provider_from_list = AsyncMock(side_effect=['openai', None])
 
-        # Mock successful configuration - use Mock (not AsyncMock) since configure_new_provider is sync
-        mock_provider_manager.configure_new_provider = Mock(return_value={
+        # Mock successful configuration
+        mock_provider_manager.configure_new_provider = AsyncMock(return_value={
             'config': {'provider': 'openai', 'api_key': 'test-key'},
             'set_as_default': True
         })
@@ -907,8 +906,7 @@ class TestConfigurationManagement:
 
         available_providers = ['openai', 'anthropic']
 
-        # Use Mock (not AsyncMock) since configure_new_provider is sync
-        mock_provider_manager.configure_new_provider = Mock(return_value={
+        mock_provider_manager.configure_new_provider = AsyncMock(return_value={
             'config': {'provider': 'openai', 'api_key': 'test-key'},
             'set_as_default': True
         })
@@ -937,8 +935,7 @@ class TestConfigurationManagement:
 
         available_providers = ['openai']
 
-        # Return None to simulate cancelled/failed configuration - use Mock since sync
-        mock_provider_manager.configure_new_provider = Mock(return_value=None)
+        mock_provider_manager.configure_new_provider = AsyncMock(return_value=None)
 
         result = await _handle_provider_configuration(
             mock_provider_manager,
@@ -2682,23 +2679,23 @@ class TestInspectCommand:
 class TestSelectExistingUI:
     """Tests for _select_existing_ui"""
 
-    @patch('devdox_ai_sonar.cli.select_from_list')
+    @patch('devdox_ai_sonar.cli.select_from_list', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.cli.console')
-    def test_select_existing_ui_success(self, mock_console, mock_select):
+    async def test_select_existing_ui_success(self, mock_console, mock_select):
         """Test successful selection"""
         mock_select.return_value = "openai"
 
-        result = _select_existing_ui("provider", "Select provider", ["openai", "anthropic"])
+        result = await _select_existing_ui("provider", "Select provider", ["openai", "anthropic"])
 
         assert result == "openai"
 
-    @patch('devdox_ai_sonar.cli.select_from_list')
+    @patch('devdox_ai_sonar.cli.select_from_list', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.cli.console')
-    def test_select_existing_ui_cancelled(self, mock_console, mock_select):
+    async def test_select_existing_ui_cancelled(self, mock_console, mock_select):
         """Test cancelled selection"""
         mock_select.return_value = None
 
-        result = _select_existing_ui("provider", "Select", ["openai"])
+        result = await _select_existing_ui("provider", "Select", ["openai"])
 
         assert result == ""
 
@@ -5218,7 +5215,7 @@ class TestConfigureProvidersLoopErrors:
     ):
         """Line 376: failed provider config prints warning."""
         mock_ui = Mock()
-        mock_ui.select_provider_from_list.return_value = "openai"
+        mock_ui.select_provider_from_list = AsyncMock(return_value="openai")
 
         await _configure_providers_loop(
             Mock(), Mock(), mock_ui, ["openai", "anthropic"]
@@ -5404,7 +5401,7 @@ class TestConfigureProvidersLoopFlow:
     async def test_breaks_on_empty_provider_name(self, mock_console):
         """Line 369: empty provider_name → loop breaks."""
         mock_ui = Mock()
-        mock_ui.select_provider_from_list.return_value = ""
+        mock_ui.select_provider_from_list = AsyncMock(return_value="")
 
         with patch(
             'devdox_ai_sonar.cli._handle_provider_configuration',
