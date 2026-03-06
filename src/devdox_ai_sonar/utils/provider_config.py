@@ -42,7 +42,9 @@ class ProviderConfigUI:
             return None
 
     @staticmethod
-    async def select_provider_from_list(providers: List[str], message: str) -> Optional[str]:
+    async def select_provider_from_list(
+        providers: List[str], message: str
+    ) -> Optional[str]:
         """Select a provider using terminal menu."""
         return await select_from_list(providers, message)
 
@@ -99,7 +101,9 @@ class ProviderConfigManager:
 
         return [p["name"] for p in existing_providers]
 
-    async def configure_new_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
+    async def configure_new_provider(
+        self, provider_name: str
+    ) -> Optional[Dict[str, Any]]:
         """Configure a new provider with API key and model selection."""
         try:
             provider_type = ProviderType(provider_name)
@@ -123,7 +127,9 @@ class ProviderConfigManager:
         console.print(f"[green]✓ Found {len(result.models)} models[/green]")
 
         # Select default model
-        default_model = await self.ui.select_provider_from_list(result.models, provider_name)
+        default_model = await self.ui.select_provider_from_list(
+            result.models, provider_name
+        )
         if not default_model:
             console.print("[yellow]⚠ Model selection cancelled[/yellow]")
             return None

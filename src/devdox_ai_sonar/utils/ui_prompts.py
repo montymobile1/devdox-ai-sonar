@@ -12,10 +12,12 @@ import questionary
 from questionary import Style
 
 # Shared style for menu prompts
-_MENU_STYLE = Style([
-    ("pointer", "fg:green bold"),
-    ("highlighted", "fg:green bold"),
-])
+_MENU_STYLE = Style(
+    [
+        ("pointer", "fg:green bold"),
+        ("highlighted", "fg:green bold"),
+    ]
+)
 
 
 async def select_from_list(

@@ -708,7 +708,11 @@ class AsyncConversionAnalyzer(ast.NodeVisitor):
                             return
 
             except Exception:
-                logger.warning("Error processing %s during function definition search", file_path, exc_info=True)
+                logger.warning(
+                    "Error processing %s during function definition search",
+                    file_path,
+                    exc_info=True,
+                )
 
     def _analyze_decorators(
         self, node: Union[ast.FunctionDef, ast.AsyncFunctionDef]
