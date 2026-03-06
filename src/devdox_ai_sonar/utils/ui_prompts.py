@@ -35,7 +35,7 @@ async def select_from_list(
     """
     if not choices:
         return None
-    return await questionary.select(
+    result = await questionary.select(
         message,
         choices=choices,
         use_search_filter=use_search,
@@ -45,3 +45,4 @@ async def select_from_list(
         instruction="(Type to filter)" if use_search else None,
         style=_MENU_STYLE,
     ).ask_async()
+    return str(result) if result is not None else None
