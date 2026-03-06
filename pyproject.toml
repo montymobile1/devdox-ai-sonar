@@ -38,7 +38,7 @@ dependencies = [
     "pydantic==2.9.0",
     "pydantic_core==2.23.2",
     "pydantic-settings==2.12.0",
-    "python-dotenv==1.0.0",
+    "python-dotenv==1.0.1",
     "openai==2.15.0",
     "google-genai==1.60.0",
     "sonar-tools==3.16.2",
