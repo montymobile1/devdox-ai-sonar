@@ -992,7 +992,6 @@ class TestConfigurationManagement:
 
                         # Verify provider selection was prompted
                         mock_select.assert_called_once_with(
-                            "provider",
                             "Select the provider to update",
                             ['openai']
                         )
@@ -2685,7 +2684,7 @@ class TestSelectExistingUI:
         """Test successful selection"""
         mock_select.return_value = "openai"
 
-        result = await _select_existing_ui("provider", "Select provider", ["openai", "anthropic"])
+        result = await _select_existing_ui("Select provider", ["openai", "anthropic"])
 
         assert result == "openai"
 
@@ -2695,7 +2694,7 @@ class TestSelectExistingUI:
         """Test cancelled selection"""
         mock_select.return_value = None
 
-        result = await _select_existing_ui("provider", "Select", ["openai"])
+        result = await _select_existing_ui("Select", ["openai"])
 
         assert result == ""
 

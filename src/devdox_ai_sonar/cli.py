@@ -266,7 +266,7 @@ async def show_command_selector_async() -> Optional[str]:
 
 
 async def _select_existing_ui(
-    field_name: str, message: str, existing_providers: list
+    message: str, existing_providers: list
 ) -> str:
     """Prompt user to select an existing provider.
 
@@ -630,7 +630,7 @@ async def update_provider() -> None:
             raise click.Abort()
         _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
         chosen_provider = await _select_existing_ui(
-            "provider", "Select the provider to update", existing_providers
+            "Select the provider to update", existing_providers
         )
         if not chosen_provider:
             raise click.Abort()
