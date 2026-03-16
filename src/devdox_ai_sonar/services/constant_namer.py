@@ -12,6 +12,7 @@ from typing import Any, Dict, List, Optional, Protocol, Set
 
 import yake
 from jinja2 import Environment, FileSystemLoader, select_autoescape
+from langchain_core.messages import HumanMessage, SystemMessage
 from langdetect import detect
 from langdetect import DetectorFactory
 from pydantic import TypeAdapter
@@ -204,8 +205,13 @@ class LLMCaller(Protocol):
 class LLMFixerAdapter:
     """Adapts an ``LLMFixer`` instance to the :class:`LLMCaller` protocol.
 
-    Reuses the existing provider infrastructure (client, model, API key)
-    but makes a simpler JSON-only call.
+    Uses the cached LangChain model (``LLMFixer._llm``) for all providers —
+    no raw SDK clients (openai.OpenAI, Together, genai.Client) are used.
+
+    This works for all four providers because ``LLMFixer._validate_and_configure_provider``
+    already builds and caches the correct ``BaseChatModel`` on ``self._llm``.
+    The validator (FixValidator) builds its own independent ``_llm`` and can
+    use a completely different provider/model from the fixer.
     """
 
     def __init__(self, llm_fixer: Any) -> None:
@@ -214,57 +220,43 @@ class LLMFixerAdapter:
     def call_for_json(
         self, system_prompt: str, user_prompt: str
     ) -> Optional[Dict[str, str]]:
+        """Invoke the fixer's cached LangChain model and parse the JSON response.
+
+        Sends a two-message conversation (system + human) and expects the model
+        to return a plain JSON object.  The ``_names_adapter`` validates that
+        the response matches ``Dict[str, str]``.
+        """
         try:
-            if self._fixer.provider in ("openai", "togetherai", "openrouter"):
-                return self._call_openai_compatible(system_prompt, user_prompt)
-            elif self._fixer.provider == "gemini":
-                return self._call_gemini(system_prompt, user_prompt)
-            else:
-                logger.error(
-                    "Unknown provider for constant naming: %s",
-                    self._fixer.provider,
-                )
+            llm = self._fixer._llm  # BaseChatModel — provider-agnostic
+            messages = [
+                SystemMessage(content=system_prompt),
+                HumanMessage(content=user_prompt),
+            ]
+            response = llm.invoke(messages)
+
+            # AIMessage.content is always a string for chat models
+            content: str = response.content  # type: ignore[union-attr]
+            if not content:
+                logger.warning("LLMFixerAdapter: empty response from LLM")
                 return None
+
+            # Strip optional markdown fences that some models add
+            content = content.strip()
+            if content.startswith("```"):
+                content = re.sub(r"^```[a-zA-Z]*\n?", "", content)
+                content = re.sub(r"\n?```$", "", content)
+                content = content.strip()
+
+            return _names_adapter.validate_json(content)
+
         except Exception:
-            logger.error("LLM call for constant naming failed", exc_info=True)
+            logger.error(
+                "LLMFixerAdapter.call_for_json failed [provider=%s model=%s]",
+                getattr(self._fixer, "provider", "unknown"),
+                getattr(self._fixer, "model", "unknown"),
+                exc_info=True,
+            )
             return None
-
-    def _call_openai_compatible(
-        self, system_prompt: str, user_prompt: str
-    ) -> Optional[Dict[str, str]]:
-        """Call an OpenAI-compatible chat completions endpoint."""
-        response = self._fixer.client.chat.completions.create(
-            model=self._fixer.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=2000,
-            temperature=0.05,
-        )
-        content = response.choices[0].message.content
-        if content is None:
-            return None
-        return _names_adapter.validate_json(content)
-
-    def _call_gemini(
-        self, system_prompt: str, user_prompt: str
-    ) -> Optional[Dict[str, str]]:
-        """Call the Google Gemini content generation endpoint."""
-        from google.genai import types  # local to avoid hard dep
-
-        response = self._fixer.client.models.generate_content(
-            model=self._fixer.model,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                response_mime_type="application/json",
-            ),
-        )
-        if response.text is None:
-            return None
-        return _names_adapter.validate_json(response.text)
 
 
 # ---------------------------------------------------------------------------

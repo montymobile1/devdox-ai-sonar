@@ -8,6 +8,7 @@ import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
 from pydantic import ValidationError
+from langchain_core.prompts import ChatPromptTemplate
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     SonarSecurityIssue,
@@ -21,37 +22,13 @@ from devdox_ai_sonar.models.sonar import (
 logger = logging.getLogger(__name__)
 
 
-try:
-    from together import Together
-
-    HAS_TOGETHER = True
-except ImportError:
-    HAS_TOGETHER = False
-
-try:
-    import openai
-
-    HAS_OPENAI = True
-except ImportError:
-    HAS_OPENAI = False
-
-try:
-    from google import genai
-    from google.genai import types
-
-    HAS_GEMINI = True
-except ImportError as e:
-    logger.warning(f"Failed to import Gemini library: {e}")
-    HAS_GEMINI = False
-
-
 class ValidationStatus(str, Enum):
     """Status of fix validation."""
 
-    APPROVED = "APPROVED"  # Fix is good as-is
-    MODIFIED = "MODIFIED"  # Fix was improved/corrected
-    REJECTED = "REJECTED"  # Fix is unsafe or incorrect
-    NEEDS_REVIEW = "NEEDS_REVIEW"  # Requires manual review
+    APPROVED = "APPROVED"
+    MODIFIED = "MODIFIED"
+    REJECTED = "REJECTED"
+    NEEDS_REVIEW = "NEEDS_REVIEW"
 
 
 class ValidationResult:
@@ -69,7 +46,6 @@ class ValidationResult:
         self.status = status
         self.original_fix = original_fix
         self.modified_fix = modified_fix or original_fix
-
         self.explanation = explanation
         self.concerns = concerns or []
         self.confidence = confidence
@@ -89,24 +65,24 @@ class ValidationResult:
         return self.status in [ValidationStatus.APPROVED, ValidationStatus.MODIFIED]
 
 
+# ---------------------------------------------------------------------------
+# Formatting helpers (unchanged)
+# ---------------------------------------------------------------------------
+
 def _format_block_header(idx: int, block: CodeBlock) -> str:
-    """Format the header section for a code block."""
-    header = (
+    return (
         f"\n{'=' * 60}\n"
         f"Block {idx}: {block.block_name} (Lines {block.start_line}-{block.end_line})\n"
         f"Type: {block.block_type.value} | Change Type: {block.change_type.value}\n"
         f"Has Changes: {block.has_changes}\n{'=' * 60}\n"
     )
-    return header
 
 
 def _format_full_code_content(block: CodeBlock) -> str:
-    """Format a FULL_CODE block as a fenced code block."""
     return f"```python\n{block.context}\n```\n"
 
 
 def _format_diff_content(block: CodeBlock) -> str:
-    """Format a DIFF block with line-by-line changes."""
     parts = ["Changes:\n"]
     for change in block.changes or []:
         if change.action == ChangeAction.REPLACE:
@@ -124,7 +100,6 @@ def _format_diff_content(block: CodeBlock) -> str:
 
 
 def _format_search_replace_content(block: CodeBlock) -> str:
-    """Format a SEARCH_REPLACE block with replacement operations."""
     parts = ["Search/Replace Operations:\n"]
     for op_idx, repl in enumerate(block.replacements or [], 1):
         regex_marker = " (REGEX)" if repl.is_regex else ""
@@ -136,16 +111,86 @@ def _format_search_replace_content(block: CodeBlock) -> str:
     return "".join(parts)
 
 
+# ---------------------------------------------------------------------------
+# LangChain builder (mirrors build_llm in llm_fixer.py)
+# ---------------------------------------------------------------------------
+
+def _build_validator_llm(
+    provider: str,
+    model: str,
+    api_key: str,
+) -> Any:
+    """
+    Build a LangChain chat model for the validator.
+    Uses with_structured_output(SonarFixResponse) for all providers.
+    Each provider uses its own LangChain library — no raw SDK clients.
+    """
+    from langchain_core.language_models import BaseChatModel
+
+    provider = provider.lower()
+
+    if provider == "openai":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            max_tokens=8000,
+            temperature=0.1,
+        )
+
+    if provider == "togetherai":
+        from langchain_together import ChatTogether
+        return ChatTogether(
+            model=model,
+            together_api_key=api_key,
+            max_tokens=8000,
+            temperature=0.1,
+        )
+
+    if provider == "openrouter":
+        from langchain_openai import ChatOpenAI
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+            max_tokens=8000,
+            temperature=0.1,
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
+        )
+
+    if provider == "gemini":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=model,
+            google_api_key=api_key,
+            max_output_tokens=8000,
+            temperature=0.1,
+        )
+
+    raise ValueError(
+        f"Unsupported provider: {provider}. "
+        "Use 'openai', 'togetherai', 'openrouter', or 'gemini'."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FixValidator
+# ---------------------------------------------------------------------------
+
 class FixValidator:
     """
-    Senior code reviewer agent that validates and potentially improves LLM-generated fixes.
+    Senior code reviewer that validates and potentially improves LLM-generated fixes.
 
-    Acts as a second pair of eyes to catch:
-    - Logic errors in fixes
-    - Security issues
-    - Edge cases not handled
-    - Better alternative solutions
-    - Breaking changes
+    Uses LangChain with_structured_output(SonarFixResponse) for all providers.
+    No raw SDK clients — provider SDKs are accessed only through LangChain.
+
+    LLMFixer and FixValidator are independent: each can use a different
+    provider/model combination. For example:
+        fixer     = LLMFixer(provider="togetherai", model="llama-3-70b")
+        validator = FixValidator(provider="openai",   model="gpt-4o")
     """
 
     def __init__(
@@ -157,11 +202,12 @@ class FixValidator:
     ):
         self.provider = provider.lower()
         self.min_confidence_threshold = min_confidence_threshold
-        self.model: str = ""
+        self.model: str = self._resolve_model(provider, model)
+        self.api_key: str = self._resolve_api_key(provider, api_key)
 
-        self.api_key: Optional[str] = None
+        self._llm = _build_validator_llm(self.provider, self.model, self.api_key)
+        self._structured_llm = self._llm.with_structured_output(SonarFixResponse)
 
-        self.client: Any = None
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(Path(__file__).parent / "prompts")),
             trim_blocks=True,
@@ -169,80 +215,40 @@ class FixValidator:
             keep_trailing_newline=True,
             autoescape=select_autoescape(["html", "xml"]),
         )
-        self._setup_provider(model, api_key)
 
-    def _setup_provider(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if self.provider == "togetherai":
-            self._setup_together_ai(model, api_key)
-        elif self.provider == "openai":
-            self._setup_open_ai(model, api_key)
-        elif self.provider == "gemini":
-            self._setup_gemini(model, api_key)
-        elif self.provider == "openrouter":
-            self._setup_openrouter(model, api_key)
-        else:
-            raise ValueError(
-                f"Unsupported provider: {self.provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'."
-            )
+    # ------------------------------------------------------------------
+    # Provider / model resolution
+    # ------------------------------------------------------------------
 
-    def _setup_together_ai(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_TOGETHER:
-            raise ImportError(
-                "Together AI library not installed. Install with: pip install together"
-            )
-        self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "Together API key not provided. Set TOGETHER_API_KEY environment variable."
-            )
-        self.client = Together(api_key=self.api_key)
+    @staticmethod
+    def _resolve_model(provider: str, model: Optional[str]) -> str:
+        defaults = {
+            "openai":     "gpt-4o",
+            "togetherai": "meta-llama/Llama-3-70b-chat-hf",
+            "openrouter": "anthropic/claude-sonnet-4",
+            "gemini":     "gemini-1.5-flash",
+        }
+        return model or defaults.get(provider.lower(), "gpt-4o")
 
-    def _setup_open_ai(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-        self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
+    @staticmethod
+    def _resolve_api_key(provider: str, api_key: Optional[str]) -> str:
+        env_vars = {
+            "openai":     "OPENAI_API_KEY",
+            "togetherai": "TOGETHER_API_KEY",
+            "openrouter": "OPENROUTER_API_KEY",
+            "gemini":     "GEMINI_KEY",
+        }
+        resolved = api_key or os.getenv(env_vars.get(provider.lower(), ""), "")
+        if not resolved:
             raise ValueError(
-                "OpenAI API key not provided. Set OPENAI_API_KEY environment variable."
+                f"API key not provided for provider '{provider}'. "
+                f"Set the {env_vars.get(provider.lower())} environment variable."
             )
-        self.client = openai.OpenAI(api_key=self.api_key)
+        return resolved
 
-    def _setup_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_GEMINI:
-            raise ImportError(
-                "Gemini library not installed. Install with: pip install google-genai"
-            )
-        self.model = model or "gemini-1.5-flash"
-        self.api_key = api_key
-        if not self.api_key:
-            raise ValueError(
-                "Gemini API key not provided. Set GEMINI_API_KEY environment variable."
-            )
-        self.client = genai.Client(api_key=self.api_key)
-
-    def _setup_openrouter(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-        self.model = model or "anthropic/claude-sonnet-4"
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
-            )
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://devdox.ai",
-                "X-Title": "DevDox AI Sonar",
-            },
-        )
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
 
     def validate_fix(
         self,
@@ -255,46 +261,34 @@ class FixValidator:
         """
         Validate a fix suggestion using a senior code reviewer persona.
 
-        Args:
-            fix: The fix suggestion to validate
-            issue: The original SonarCloud issue
-            file_content: Complete content of the file being fixed
-            context_lines: Number of lines of context to provide
-
-        Returns:
-            ValidationResult with approval status and potential improvements
+        Returns ValidationResult with approval status and potential improvements.
+        Uses LangChain with_structured_output — no raw SDK calls.
         """
-
         try:
-            # Handle None values for line numbers
             first_line = issue.first_line if issue.first_line is not None else 1
             last_line = issue.last_line if issue.last_line is not None else first_line
 
-            # Extract broader context around the fix
             context = self._extract_validation_context(
                 file_content, first_line, last_line, context_lines
             )
-
             formatted_fix = self._format_code_blocks_for_validation(
                 fix.fixed_code_blocks
             )
-
-            # Generate validation prompt
             prompt = self._create_validation_prompt(
                 fix, issue, context, new_error_msg, formatted_fix
             )
 
-            # Call LLM for validation
             validation_response = self._call_llm_validator(prompt)
 
             if not validation_response:
-                logger.warning(f"Failed to validate fix for issue {issue.key}")
+                logger.warning("Failed to validate fix for issue %s", issue.key)
                 return ValidationResult(
                     status=ValidationStatus.NEEDS_REVIEW,
                     original_fix=fix,
                     explanation="Validation failed - manual review required",
                     confidence=0.0,
                 )
+
             modified_fix = fix
             blocks = validation_response.FIXED_CODE_BLOCKS
             for each_block in blocks:
@@ -304,29 +298,21 @@ class FixValidator:
                     and each_block.change_type == ChangeType.FULL_CODE
                 ):
                     matching_block = next(
-                        (
-                            block
-                            for block in fix.fixed_code_blocks
-                            if block.start_line == each_block.start_line
-                        ),
+                        (b for b in fix.fixed_code_blocks
+                         if b.start_line == each_block.start_line),
                         None,
                     )
-
                     if matching_block:
                         each_block.context = matching_block.context
-
                     else:
-                        # Fallback or error handling
-                        print(
-                            f"⚠️ Warning: No matching block found for lines {each_block.start_line}-{each_block.end_line}"
+                        logger.warning(
+                            "No matching block for lines %s-%s",
+                            each_block.start_line, each_block.end_line,
                         )
 
             modified_fix.fixed_code_blocks = blocks
             helper_code = validation_response.NEW_HELPER_CODE
-
-            no_whitespace = "".join(helper_code.split())
-
-            if isinstance(helper_code, str) and no_whitespace:
+            if isinstance(helper_code, str) and "".join(helper_code.split()):
                 modified_fix.helper_code = helper_code
                 modified_fix.placement_helper = validation_response.PLACEMENT.value
 
@@ -338,80 +324,82 @@ class FixValidator:
                 confidence=validation_response.CONFIDENCE,
             )
 
-        except Exception as e:
-            logger.error(
-                f"Error validating fix for issue {issue.key}: {e}", exc_info=True
-            )
+        except Exception as exc:
+            logger.error("Error validating fix for issue %s: %s", issue.key, exc, exc_info=True)
             return ValidationResult(
                 status=ValidationStatus.NEEDS_REVIEW,
                 original_fix=fix,
-                explanation=f"Validation error: {str(e)}",
+                explanation=f"Validation error: {exc}",
                 confidence=0.0,
             )
 
+    # ------------------------------------------------------------------
+    # LLM call — LangChain only, no raw SDK
+    # ------------------------------------------------------------------
+
+    def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
+        """
+        Call the validator LLM using LangChain with_structured_output.
+
+        All four providers (openai, togetherai, openrouter, gemini) use the same
+        chain — provider differences are handled by _build_validator_llm().
+        """
+        system_prompt = (
+            "You are a senior software engineer and security expert "
+            "specializing in code review. Your reviews are thorough, "
+            "critical, and focused on preventing bugs and security issues."
+        )
+        try:
+            chain = ChatPromptTemplate.from_messages([
+                ("system", "{system}"),
+                ("human",  "{prompt}"),
+            ]) | self._structured_llm
+
+            result: SonarFixResponse = chain.invoke({
+                "system": system_prompt,
+                "prompt": prompt,
+            })
+            return result
+        except Exception as exc:
+            logger.error(
+                "Validator LLM call failed [provider=%s model=%s]: %s",
+                self.provider, self.model, exc, exc_info=True,
+            )
+            return None
+
+    # ------------------------------------------------------------------
+    # Prompt / context helpers (unchanged logic)
+    # ------------------------------------------------------------------
+
     def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> str:
-        """
-        Format code blocks into a readable string for validation.
-
-        Args:
-            code_blocks: List of CodeBlock objects
-
-        Returns:
-            Formatted string representation of all fixes
-        """
         formatted_parts = []
-
         for idx, block in enumerate(code_blocks, 1):
             formatted_parts.append(_format_block_header(idx, block))
-
             if block.change_type == ChangeType.FULL_CODE and block.context:
                 formatted_parts.append(_format_full_code_content(block))
             elif block.change_type == ChangeType.DIFF and block.changes:
                 formatted_parts.append(_format_diff_content(block))
             elif block.change_type == ChangeType.SEARCH_REPLACE and block.replacements:
                 formatted_parts.append(_format_search_replace_content(block))
-
             if idx < len(code_blocks):
                 formatted_parts.append("\n" + "-" * 60 + "\n")
-
         return "".join(formatted_parts)
 
     def _extract_validation_context(
         self, file_content: str, first_line: int, last_line: int, context_lines: int
     ) -> Dict[str, Any]:
-        """
-        Extract broader context for validation.
-
-        Args:
-            file_content: Complete file content
-            first_line: First line of the issue
-            last_line: Last line of the issue
-            context_lines: Number of context lines
-
-        Returns:
-            Dictionary with context information
-        """
-
         lines = file_content.split("\n")
-
-        # Convert to 0-indexed
         first_idx = first_line - 1
         last_idx = last_line - 1
-
-        # Calculate boundaries with broader context for validation
         start_idx = max(0, first_idx - context_lines)
         end_idx = min(len(lines), last_idx + context_lines + 1)
-
-        context_text = "\n".join(lines[start_idx:end_idx])
-        problem_lines = "\n".join(lines[first_idx : last_idx + 1])
-
         return {
-            "full_context": context_text,
-            "problem_lines": problem_lines,
-            "start_line": start_idx + 1,
-            "end_line": end_idx,
-            "issue_start": first_line,
-            "issue_end": last_line,
+            "full_context":  "\n".join(lines[start_idx:end_idx]),
+            "problem_lines": "\n".join(lines[first_idx : last_idx + 1]),
+            "start_line":    start_idx + 1,
+            "end_line":      end_idx,
+            "issue_start":   first_line,
+            "issue_end":     last_line,
         }
 
     def _create_validation_prompt(
@@ -422,114 +410,14 @@ class FixValidator:
         new_error: str,
         formatted_fix: str,
     ) -> str:
-        """Create a prompt for fix validation."""
-        severity = getattr(issue, "severity", "N/A")
-        issue_type = getattr(issue, "type", "N/A")
-        context_dic = {
-            "fix": fix,
-            "issue": issue,
-            "severity": severity,
-            "issue_type": issue_type,
-            "context": context,
-            "error_message": new_error,
-            "formatted_fix": formatted_fix,
-        }
         template = self.jinja_env.get_template("python/validator.j2")
-        # Render enhanced content
-        prompt = template.render(**context_dic)
+        prompt = template.render(
+            fix=fix,
+            issue=issue,
+            severity=getattr(issue, "severity", "N/A"),
+            issue_type=getattr(issue, "type", "N/A"),
+            context=context,
+            error_message=new_error,
+            formatted_fix=formatted_fix,
+        )
         return prompt.strip()
-
-    def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        """Call LLM for validation."""
-        try:
-            if not self.client:
-                logger.error(f"{self.provider} client not properly initialized")
-                return None
-
-            if self.provider == "openai":
-                return self._call_openai_validator(prompt)
-
-            if self.provider == "gemini":
-                return self._call_gemini_validator(prompt)
-
-            if self.provider in ("togetherai", "openrouter"):
-                return self._call_openai_compatible_validator(prompt)
-
-            return None
-
-        except Exception as e:
-            logger.error(f"Error calling validator LLM: {e}", exc_info=True)
-            return None
-
-    def _call_gemini_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=SonarFixResponse,
-            ),
-        )
-        return cast(Optional[SonarFixResponse], response.parsed)
-
-    def _call_openai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        response = self.client.responses.parse(
-            model=self.model,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software engineer and security expert "
-                        "specializing in code review. Your reviews are thorough, "
-                        "critical, and focused on preventing bugs and security issues."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            text_format=SonarFixResponse,
-        )
-
-        return cast(Optional[SonarFixResponse], response.output_parsed)
-
-    def _call_openai_compatible_validator(
-        self, prompt: str
-    ) -> Optional[SonarFixResponse]:
-        """Call an OpenAI-compatible validator (used by TogetherAI and OpenRouter)."""
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software engineer and security expert "
-                        "specializing in code review."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=8000,
-            temperature=0.1,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "sonar_fix_response",
-                    "schema": SonarFixResponse.model_json_schema(),
-                    "strict": True,
-                },
-            },
-        )
-        response_json = response.choices[0].message.content
-
-        try:
-            data = json.loads(response_json)
-            return SonarFixResponse(**data)
-
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}")
-
-        except ValidationError as e:
-            raise ValueError(f"Schema validation failed: {e}")
-
-    # Aliases for backward compatibility and test clarity
-    _call_togetherai_validator = _call_openai_compatible_validator
-    _call_openrouter_validator = _call_openai_compatible_validator

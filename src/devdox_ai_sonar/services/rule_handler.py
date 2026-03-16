@@ -261,12 +261,18 @@ class ConvenationNameHandler(RuleHandler):
         Generate fixes for parameter naming/usage violations.
 
         - python:S117  → Rename non-snake_case parameters in definition + call sites.
-        - python:S1542  → Rename non-snake_case function in definition + call sites.
+        - python:S1542 → Rename non-snake_case function in definition + call sites.
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
+
+        Each issue is dispatched independently so mixed-rule batches are handled
+        correctly. All three branches use standalone ``if`` checks (not elif) to
+        avoid accidental fall-through when rules are evaluated in sequence.
         """
         try:
             if len(context.functions) == 0:
-                logger.warning("Could not find functions ")
+                logger.warning(
+                    "ConvenationNameHandler: no functions found in context, skipping"
+                )
                 return None
 
             function_info = find_function_implementations(
@@ -275,25 +281,58 @@ class ConvenationNameHandler(RuleHandler):
 
             if not function_info.get("definitions"):
                 logger.warning(
-                    "Could not find function definitions for %s",
+                    "ConvenationNameHandler: no definitions found for %s",
                     context.functions[0]["name"],
                 )
                 return None
 
+            # Dispatch each issue to the correct sub-fix.  Use independent ``if``
+            # blocks — NOT if/elif — so that every rule is evaluated regardless of
+            # whether a previous one matched.  Return on the first successful result.
             for issue in issues:
                 if issue.rule == "python:S117":
-                    return self._fix_naming_convention(
-                        function_info, context, file_path
-                    )
-                if issue.rule == "python:S1542":
-                    return self._fix_func_naming_convention(
-                        function_info, context, file_path
-                    )
-                elif issue.rule == "python:S1172":
-                    return self._fix_unused_parameters(
+
+                    result = self._fix_naming_convention(
                         function_info, context, file_path
                     )
 
+                    if result is not None:
+                        return result
+                    logger.warning(
+                        "ConvenationNameHandler: _fix_naming_convention returned None "
+                        "for %s (all parameters may already be snake_case)",
+                        file_path,
+                    )
+
+                if issue.rule == "python:S1542":
+                    result = self._fix_func_naming_convention(
+                        function_info, context, file_path
+                    )
+                    if result is not None:
+                        return result
+                    logger.warning(
+                        "ConvenationNameHandler: _fix_func_naming_convention returned "
+                        "None for %s (function name may already be snake_case)",
+                        file_path,
+                    )
+
+                if issue.rule == "python:S1172":
+                    result = self._fix_unused_parameters(
+                        function_info, context, file_path
+                    )
+                    if result is not None:
+                        return result
+                    logger.warning(
+                        "ConvenationNameHandler: _fix_unused_parameters returned None "
+                        "for %s (no safely removable unused parameters found)",
+                        file_path,
+                    )
+
+            logger.warning(
+                "ConvenationNameHandler: no fix produced for issues %s in %s",
+                [i.rule for i in issues],
+                file_path,
+            )
             return None
 
         except Exception:
@@ -595,8 +634,8 @@ class ConvenationNameHandler(RuleHandler):
         file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         """
-        S117: Rename non-snake_case parameters in the function definition
-        and update all keyword argument call sites accordingly.
+        S1542: Rename non-snake_case functions in the definition
+        and update all call sites accordingly.
         """
         code_blocks = []
         response_lst = []

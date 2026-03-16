@@ -24,6 +24,7 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
 from devdox_ai_sonar.llm_fixer import LLMFixer
+from devdox_ai_sonar.agent_supervisor import build_supervisor
 from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.models.llm import ProviderType
 from devdox_ai_sonar.utils.file_indentation import (
@@ -1492,15 +1493,14 @@ async def _process_and_fix_issues(
 
         total_issues = sum(len(issue_list) for issue_list in issues.values())
         console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
-        await _process_files_with_issues(
+
+        await _process_files_with_agent(
             issues,
             services,
             auth_config,
             fix_params,
-            issue_type,
             tmp_path,
-            system_ask=system_ask,
-            check_tmp_path=check_tmp_path,
+            agent_max_retries=2,
         )
 
 
@@ -1519,6 +1519,68 @@ def _initialize_fix_services(
             api_key=llm_config.api_key,
         ),
     }
+
+
+async def _process_files_with_agent(
+    issues_by_file: Dict[str, List[Any]],
+    services: Dict[str, Any],
+    auth_config: AuthConfig,
+    fix_params: Dict[str, Any],
+    tmp_path: Path,
+    agent_max_retries: int = 2,
+) -> None:
+    """
+    Process all issues using the LangGraph AgentSupervisor.
+
+    Flattens all issues across files/rules into a single list, hands them
+    off to AgentSupervisor.run(), which groups by file internally, runs the
+    sonar_agent → validator_agent feedback loop, then calls fixer.apply_fixes().
+    Rich progress is shown during the agentic run.
+    """
+    fixer: LLMFixer = services["fixer"]
+
+    supervisor = build_supervisor(
+        provider=fixer.provider,
+        model=fixer.model,
+        api_key=fixer.api_key,
+        use_validator=True,
+        validator_provider=fixer.provider,
+        validator_model=fixer.model,
+        validator_api_key=fixer.api_key,
+
+    )
+
+    # Flatten: issues_by_file values may be lists of issues or dicts with "issue" key
+    all_issues: List[Any] = []
+    for rule, issue in issues_by_file.items():
+
+            all_issues.extend(issue)
+
+
+
+    if not all_issues:
+        console.print("[yellow]No issues to process with agent[/yellow]")
+        return
+
+    console.print(
+        f"\n[bold cyan]🤖 AgentSupervisor running on {len(all_issues)} issue(s) "
+        f"(max retries: {agent_max_retries})...[/bold cyan]\n"
+    )
+
+    with show_progress(
+        "AgentSupervisor: generating & validating fixes...", total=None
+    ) as (progress, task):
+        result = await supervisor.run(
+            issues=all_issues,
+            project_path=Path(str(auth_config.project_path)),
+            tmp_path=tmp_path,
+            create_backup=bool(fix_params.get("create_backup", False)),
+            dry_run=bool(fix_params.get("dry_run", False)),
+            file_md=Path(str(auth_config.project_path)) / f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+        )
+        progress.update(task, completed=1, total=1)
+
+    _display_fix_results2(result)
 
 
 async def _process_files_with_issues(
@@ -1829,6 +1891,23 @@ def _display_fix_preview(fix: FixSuggestion, issues: Sequence[Any]) -> None:
             )
         )
 
+def _display_fix_preview2(fix: FixSuggestion) -> None:
+    """Display a preview of the fix."""
+    console.print("\n[bold]Fix Preview:[/bold]")
+    console.print(f"File: [cyan]{fix.file_path}[/cyan]")
+    console.print(f"Confidence: [cyan]{fix.confidence:.2f}[/cyan]")
+
+
+    console.print("\n[bold]Changes:[/bold]")
+
+    if fix.explanation and fix.explanation.strip():
+        console.print(
+            Panel(
+                fix.explanation,
+                title="Explanation of changed",
+                border_style="green",
+            )
+        )
 
 def _display_project_header(result: AnalysisResult) -> None:
     """Display project header information."""
@@ -1890,6 +1969,19 @@ def _display_fix_results(result: FixResult) -> None:
     console.print(f"Successful: [green]{len(result.successful_fixes)}[/green]")
     console.print(f"Failed: [red]{len(result.failed_fixes)}[/red]")
     console.print(f"Success Rate: {result.success_rate:.1%}")
+
+def _display_fix_results2(result: FixResult) -> None:
+    """Display fix results."""
+    console.print("\n[bold]Results:[/bold]")
+    console.print(f"Attempted: {result.total_fixes_attempted}")
+    console.print(f"Successful: [green]{len(result.successful_fixes)}[/green]")
+    console.print(f"Failed: [red]{len(result.failed_fixes)}[/red]")
+    console.print(f"Success Rate: {result.success_rate:.1%}")
+
+    for success in result.successful_fixes:
+        _display_fix_preview2(success)
+
+
 
 
 def _fetch_issues_by_type(

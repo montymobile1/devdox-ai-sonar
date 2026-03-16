@@ -37,8 +37,8 @@ class Settings(BaseSettings):
     SONAR_ORGANIZATION: str = Field(default="")
     SONAR_PROJECT_KEY: str = Field(default="")
 
-    MAX_FIXES_LIMIT: int = 20
-    DEFAULT_MAX_FIXES: int = 5
+    MAX_FIXES_LIMIT: int = 500
+    DEFAULT_MAX_FIXES: int = 500
 
     PROJECT_PATH: Path = Path("/your/project/path")
 
