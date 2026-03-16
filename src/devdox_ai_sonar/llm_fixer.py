@@ -3,6 +3,7 @@
 import os
 import re
 import shutil
+import sys
 import asyncio
 from collections import defaultdict
 
@@ -353,7 +354,7 @@ class LLMFixer:
         tmp_path: Path,
         modified_content: str = "",
         file_md: str = "",
-        check_tmp_path:bool = True,
+        check_tmp_path: bool = True,
     ) -> Optional[List[FixSuggestion]]:
         """
         Generate fix suggestions for issues in a single file.
@@ -381,7 +382,7 @@ class LLMFixer:
         try:
             # Step 1: Validate issues and extract file information
             validation = await extractor.validate_issue_group(
-                issues, tmp_path, project_path,check_tmp_path
+                issues, tmp_path, project_path, check_tmp_path
             )
 
             if not validation.is_valid:
@@ -756,7 +757,9 @@ class LLMFixer:
         if first_line_idx >= len(lines) or last_line_idx >= len(lines):
             logger.error(
                 "Line range %d-%d exceeds file length %d",
-                first_line_number, last_line_number, len(lines),
+                first_line_number,
+                last_line_number,
+                len(lines),
             )
             return extractor._get_empty_context(first_line_number)
 
@@ -809,7 +812,10 @@ class LLMFixer:
 
         logger.debug(
             "LLM call — provider=%s, model=%s, language=%s, issues=%d",
-            self.provider, self.model, language, len(issues),
+            self.provider,
+            self.model,
+            language,
+            len(issues),
         )
 
         # Prepare prompt
@@ -867,7 +873,9 @@ class LLMFixer:
 
                 logger.debug(
                     "Token usage — input: %d, output: %d, total: %d",
-                    input_tokens, output_tokens, total_tokens,
+                    input_tokens,
+                    output_tokens,
+                    total_tokens,
                 )
 
                 return self._parse_chat_completion_response(response)
@@ -1586,7 +1594,9 @@ class LLMFixer:
         """Create a backup of the project."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = project_path.parent / f"{project_path.name}_backup_{timestamp}"
-        shutil.copytree(project_path, backup_path)
+        shutil.copytree(
+            project_path, backup_path, ignore=shutil.ignore_patterns(".git")
+        )
 
         return backup_path
 
@@ -1712,7 +1722,12 @@ class LLMFixer:
                     logger.debug("Fix %s failed validation: %s", fix.issue_key, msg)
 
             succeeded = sum(1 for r in results if r.success)
-            logger.debug("Finished %s — %d/%d fixes succeeded", file_path, succeeded, len(results))
+            logger.debug(
+                "Finished %s — %d/%d fixes succeeded",
+                file_path,
+                succeeded,
+                len(results),
+            )
             return all(r.success for r in results), results
 
         except Exception:
@@ -1730,7 +1745,7 @@ class LLMFixer:
         try:
             # 1. Syntax check
             subprocess.run(
-                ["python", "-m", "py_compile", str(file_path)],
+                [sys.executable, "-m", "py_compile", str(file_path)],
                 check=True,
                 capture_output=True,
                 text=True,

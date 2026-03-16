@@ -10,7 +10,7 @@ from pathlib import Path
 class Settings(BaseSettings):
     """Application settings."""
 
-    VERSION: str = "0.0.5"
+    VERSION: str = "0.0.6"
 
     CONFIG_DIR: Path = Field(
         default_factory=lambda: Path.home() / "devdox",
@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     MAX_FIXES_LIMIT: int = 20
     DEFAULT_MAX_FIXES: int = 5
 
-    PROJECT_PATH: Path = Path("/your/project/path")
+    PROJECT_PATH: Path = Path(".")
 
     EXC_INFO: bool = False
 

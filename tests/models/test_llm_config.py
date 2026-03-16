@@ -1,3 +1,5 @@
+import tempfile
+
 import pytest
 import tomli
 import tomli_w
@@ -48,7 +50,7 @@ class TestConfigManagerInit:
 
     def test_config_manager_creation_custom_path(self):
         """Test creating ConfigManager with custom path"""
-        custom_path = Path("/tmp/custom_config.toml")
+        custom_path = Path(tempfile.gettempdir()) / "custom_config.toml"
         manager = ConfigManager(config_path=custom_path)
 
         assert manager.config_path == custom_path

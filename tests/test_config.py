@@ -3,6 +3,9 @@ Comprehensive tests for devdox_ai_sonar/config.py
 Target Coverage: >95%
 """
 
+import os
+import tempfile
+
 import pytest
 from pathlib import Path
 from devdox_ai_sonar.config import Settings, settings
@@ -14,7 +17,7 @@ class TestSettingsDefaults:
     def test_version_default(self):
         """VERSION should be '0.0.1'"""
         s = Settings()
-        assert s.VERSION == "0.0.5"
+        assert s.VERSION == "0.0.6"
         assert isinstance(s.VERSION, str)
 
     def test_config_dir_default(self):
@@ -55,7 +58,7 @@ class TestSettingsDefaults:
     def test_project_path_default(self):
         """PROJECT_PATH should have default"""
         s = Settings()
-        assert s.PROJECT_PATH == Path("/your/project/path")
+        assert s.PROJECT_PATH == Path(".")
         assert isinstance(s.PROJECT_PATH, Path)
 
     def test_exc_info_default_false(self):
@@ -84,7 +87,7 @@ class TestSettingsComputedProperties:
 
     def test_computed_paths_follow_config_dir(self):
         """Computed paths should change with CONFIG_DIR"""
-        custom_dir = Path("/tmp/custom_config")
+        custom_dir = Path(tempfile.gettempdir()) / "custom_config"
         s = Settings(CONFIG_DIR=custom_dir)
 
         assert s.config_file_path == custom_dir / "config.toml"
@@ -96,7 +99,7 @@ class TestSettingsCustomization:
 
     def test_custom_config_dir(self):
         """Should accept custom CONFIG_DIR"""
-        custom_path = Path("/tmp/test_config")
+        custom_path = Path(tempfile.gettempdir()) / "test_config"
         s = Settings(CONFIG_DIR=custom_path)
         assert s.CONFIG_DIR == custom_path
 
@@ -107,13 +110,13 @@ class TestSettingsCustomization:
 
     def test_custom_project_path_as_string(self):
         """Should convert string to Path for PROJECT_PATH"""
-        s = Settings(PROJECT_PATH="/tmp/my_project")
+        s = Settings(PROJECT_PATH=os.path.join(tempfile.gettempdir(), "my_project"))
         assert isinstance(s.PROJECT_PATH, Path)
-        assert s.PROJECT_PATH == Path("/tmp/my_project")
+        assert s.PROJECT_PATH == Path(tempfile.gettempdir()) / "my_project"
 
     def test_custom_project_path_as_path(self):
         """Should accept Path object for PROJECT_PATH"""
-        path_obj = Path("/tmp/my_project")
+        path_obj = Path(tempfile.gettempdir()) / "my_project"
         s = Settings(PROJECT_PATH=path_obj)
         assert s.PROJECT_PATH == path_obj
 
@@ -231,7 +234,7 @@ class TestGlobalSettingsInstance:
     def test_settings_instance_has_defaults(self):
         """Global settings should have default values"""
         from devdox_ai_sonar.config import settings
-        assert settings.VERSION == "0.0.5"
+        assert settings.VERSION == "0.0.6"
         assert settings.MAX_FIXES_LIMIT == 20
 
     def test_settings_is_importable(self):
@@ -268,7 +271,7 @@ class TestSettingsEdgeCases:
 
     def test_path_with_spaces(self):
         """Should handle paths with spaces"""
-        path_with_spaces = Path("/tmp/my project/config")
+        path_with_spaces = Path(tempfile.gettempdir()) / "my project" / "config"
         s = Settings(CONFIG_DIR=path_with_spaces)
         assert s.CONFIG_DIR == path_with_spaces
         assert " " in str(s.CONFIG_DIR)

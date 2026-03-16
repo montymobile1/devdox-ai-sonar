@@ -1,7 +1,7 @@
 from typing import Optional, List, Dict, Any, Tuple
 from rich.prompt import Confirm, Prompt
 from rich.console import Console
-from simple_term_menu import TerminalMenu
+from devdox_ai_sonar.utils.ui_prompts import select_from_list
 import rich_click as click
 from devdox_ai_sonar.models.llm import ProviderType, ProviderValidator
 from devdox_ai_sonar.models.llm_config import ConfigManager
@@ -42,27 +42,11 @@ class ProviderConfigUI:
             return None
 
     @staticmethod
-    def select_provider_from_list(providers: List[str], message: str) -> Optional[str]:
+    async def select_provider_from_list(
+        providers: List[str], message: str
+    ) -> Optional[str]:
         """Select a provider using terminal menu."""
-        if not providers:
-            return None
-        menu = TerminalMenu(
-            providers,
-            search_key="/",
-            search_case_sensitive=False,
-            show_search_hint=True,
-            show_search_hint_text='Press "/" to search',
-            title=message,
-            menu_cursor="➤ ",
-            menu_cursor_style=("fg_green", "bold"),
-            menu_highlight_style=("fg_green", "bold"),
-        )
-
-        menu_index = menu.show()
-        if menu_index is not None and isinstance(menu_index, int):
-            return providers[menu_index]
-
-        return None
+        return await select_from_list(providers, message)
 
     @staticmethod
     def confirm_default(message: str = "Make this the default provider?") -> bool:
@@ -117,7 +101,9 @@ class ProviderConfigManager:
 
         return [p["name"] for p in existing_providers]
 
-    def configure_new_provider(self, provider_name: str) -> Optional[Dict[str, Any]]:
+    async def configure_new_provider(
+        self, provider_name: str
+    ) -> Optional[Dict[str, Any]]:
         """Configure a new provider with API key and model selection."""
         try:
             provider_type = ProviderType(provider_name)
@@ -141,7 +127,9 @@ class ProviderConfigManager:
         console.print(f"[green]✓ Found {len(result.models)} models[/green]")
 
         # Select default model
-        default_model = self.ui.select_provider_from_list(result.models, provider_name)
+        default_model = await self.ui.select_provider_from_list(
+            result.models, provider_name
+        )
         if not default_model:
             console.print("[yellow]⚠ Model selection cancelled[/yellow]")
             return None
@@ -178,7 +166,7 @@ class ProviderConfigManager:
             return False
 
         # Handle model selection
-        self._handle_model_update(ctx)
+        await self._handle_model_update(ctx)
 
         # Handle default provider status
         set_as_default = self.ui.confirm_default("Make this the default provider?")
@@ -189,7 +177,7 @@ class ProviderConfigManager:
         # Apply updates if any
         return await self._apply_provider_updates(ctx, set_as_default)
 
-    def _handle_model_update(self, ctx: ProviderUpdateContext) -> None:
+    async def _handle_model_update(self, ctx: ProviderUpdateContext) -> None:
         """Handle model selection update flow."""
         # Ask if user wants to keep current model
         if Confirm.ask(f"Keep current model '{ctx.current_model}'?", default=True):
@@ -200,7 +188,7 @@ class ProviderConfigManager:
         if not models:
             return
 
-        new_model = self.ui.select_provider_from_list(models, ctx.provider_name)
+        new_model = await self.ui.select_provider_from_list(models, ctx.provider_name)
         if new_model:
             ctx.updates["default_model"] = new_model
             ctx.current_model = new_model

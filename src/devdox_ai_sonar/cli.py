@@ -9,7 +9,7 @@ import functools
 import traceback
 
 from rich.console import Console
-import inquirer
+from devdox_ai_sonar.utils.ui_prompts import select_from_list
 from rich.table import Table
 from rich.prompt import Confirm
 from rich.panel import Panel
@@ -265,9 +265,7 @@ async def show_command_selector_async() -> Optional[str]:
         return None
 
 
-def _select_existing_ui(
-    field_name: str, message: str, existing_providers: list
-) -> str | Any:
+async def _select_existing_ui(message: str, existing_providers: list) -> str:
     """Prompt user to select an existing provider.
 
     Args:
@@ -276,20 +274,11 @@ def _select_existing_ui(
     Returns:
         str: Selected provider name, or empty string if cancelled
     """
-    questions = [
-        inquirer.List(
-            field_name,
-            message=message,
-            choices=existing_providers,
-        )
-    ]
-
-    answers = inquirer.prompt(questions)
-    if not answers or not answers.get(field_name):
+    result = await select_from_list(existing_providers, message)
+    if not result:
         console.print("[yellow]⚠ Selection cancelled[/yellow]")
         return ""
-
-    return answers[field_name]
+    return result
 
 
 def _initialize_managers() -> Tuple[
@@ -379,7 +368,7 @@ async def _configure_providers_loop(
             f"[cyan]Available providers: {', '.join(available_providers)}[/cyan]\n"
         )
 
-        provider_name = ui.select_provider_from_list(
+        provider_name = await ui.select_provider_from_list(
             available_providers, "Select a provider to configure"
         )
 
@@ -416,7 +405,7 @@ async def _handle_provider_configuration(
     Returns:
         bool: True if configuration successful
     """
-    result = provider_manager.configure_new_provider(provider_name)
+    result = await provider_manager.configure_new_provider(provider_name)
 
     if not result:
         return False
@@ -638,8 +627,8 @@ async def update_provider() -> None:
             )
             raise click.Abort()
         _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
-        chosen_provider = _select_existing_ui(
-            "provider", "Select the provider to update", existing_providers
+        chosen_provider = await _select_existing_ui(
+            "Select the provider to update", existing_providers
         )
         if not chosen_provider:
             raise click.Abort()
@@ -1107,7 +1096,7 @@ async def _run_fix_issues(**kwargs: Any) -> None:
             issue_type=IssueType.REGULAR,
             download_latest=True,
             system_ask=True,
-            check_tmp_path=True
+            check_tmp_path=True,
         )
 
     except SwitchCommandException:
@@ -1150,7 +1139,7 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
             issue_type=IssueType.SECURITY,
             download_latest=True,
             system_ask=True,
-            check_tmp_path=True
+            check_tmp_path=True,
         )
 
     except SwitchCommandException:
@@ -1313,7 +1302,7 @@ async def fix_multiple(**kwargs: Any) -> None:
             issue_type=IssueType.REGULAR,
             download_latest=False,
             system_ask=False,
-            check_tmp_path=False
+            check_tmp_path=False,
         )
         # security issues
         await _process_and_fix_issues(
@@ -1325,7 +1314,7 @@ async def fix_multiple(**kwargs: Any) -> None:
             issue_type=IssueType.SECURITY,
             download_latest=False,
             system_ask=False,
-            check_tmp_path=False
+            check_tmp_path=False,
         )
 
     except SwitchCommandException:
@@ -1529,7 +1518,7 @@ async def _process_files_with_issues(
     issue_type: IssueType,
     tmp_path: Path,
     system_ask: bool = True,
-    check_tmp_path: bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """
     Process files with issues.
@@ -1543,7 +1532,14 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params, md_file_path, tmp_path, system_ask, check_tmp_path
+            issues_by_file,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+            system_ask,
+            check_tmp_path,
         )
     else:
         issues_by_rule_nested = {
@@ -1557,7 +1553,7 @@ async def _process_files_with_issues(
             md_file_path,
             tmp_path,
             system_ask,
-            check_tmp_path
+            check_tmp_path,
         )
 
 
@@ -1569,7 +1565,7 @@ async def _process_regular_issues(
     md_file_path: Path,
     tmp_path: Path,
     system_ask: bool = True,
-    check_tmp_path:bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """
     Process regular issues grouped by rule.
@@ -1593,7 +1589,7 @@ async def _process_regular_issues(
             md_file_path,
             tmp_path,
             system_ask,
-            check_tmp_path
+            check_tmp_path,
         )
 
         if not success:
@@ -1609,7 +1605,7 @@ async def _process_issues_for_rule(
     md_file_path: Path,
     tmp_path: Path,
     system_ask: bool = True,
-    check_tmp_path:bool = True
+    check_tmp_path: bool = True,
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1638,7 +1634,7 @@ async def _process_issues_for_rule(
             rule_key=rule_key,
             md_file_path=md_file_path,
             tmp_path=tmp_path,
-            check_tmp_path=check_tmp_path
+            check_tmp_path=check_tmp_path,
         )
 
         if not await _should_continue_to_next_issue(
@@ -1658,7 +1654,7 @@ async def _process_single_fix(
     rule_key: str,
     tmp_path: Path,
     md_file_path: Optional[Path] = None,
-    check_tmp_path: bool = True
+    check_tmp_path: bool = True,
 ) -> None:
     """
     Generate and handle a single fix.
@@ -1671,7 +1667,7 @@ async def _process_single_fix(
         str(tmp_path),
         rule_key,
         md_file_path,
-        check_tmp_path=check_tmp_path
+        check_tmp_path=check_tmp_path,
     )
 
     if fixes:
@@ -1688,8 +1684,8 @@ async def _process_security_issues(
     fix_params: Dict[str, Any],
     md_file_path: Path,
     tmp_path: Path,
-    system_ask:bool = True,
-    check_tmp_path: bool = True
+    system_ask: bool = True,
+    check_tmp_path: bool = True,
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1717,10 +1713,12 @@ async def _process_security_issues(
                 rule_key=file_key,
                 md_file_path=md_file_path,
                 tmp_path=tmp_path,
-                check_tmp_path=check_tmp_path
+                check_tmp_path=check_tmp_path,
             )
 
-            if not await _should_continue_to_next_issue(idx, total_files,system_ask=system_ask):
+            if not await _should_continue_to_next_issue(
+                idx, total_files, system_ask=system_ask
+            ):
                 break
 
 
@@ -1762,7 +1760,7 @@ async def _generate_fix_for_file(
     tmp_path: str,
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
-    check_tmp_path:bool = True
+    check_tmp_path: bool = True,
 ) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
@@ -1777,7 +1775,7 @@ async def _generate_fix_for_file(
             project_path=Path(str(auth_config.project_path)),
             tmp_path=Path(tmp_path),
             file_md=file_md_str,
-            check_tmp_path=check_tmp_path
+            check_tmp_path=check_tmp_path,
         )
         return result
 
@@ -1805,8 +1803,8 @@ async def _should_continue_to_next_issue(
         return True
 
     if not await smart_confirm("Continue to next issue?", default=True):
-            console.print("[yellow]Stopped processing remaining files[/yellow]")
-            return False
+        console.print("[yellow]Stopped processing remaining files[/yellow]")
+        return False
 
     return True
 

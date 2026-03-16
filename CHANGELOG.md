@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+## [0.0.6] - 2026-03-09
+
+### Feat
+
+- Full Windows operating system support — the tool now runs natively on Windows, macOS, and Linux ([#55](https://github.com/montymobile1/devdox-ai-sonar/pull/55))
+- Replace Unix-only `simple-term-menu` and `inquirer` with cross-platform `questionary` ([#55](https://github.com/montymobile1/devdox-ai-sonar/pull/55))
+
+### Fix
+
+- Fix Python file validation not finding the correct interpreter on Windows ([#55](https://github.com/montymobile1/devdox-ai-sonar/pull/55))
+- Replace hardcoded Unix paths with cross-platform equivalents ([#55](https://github.com/montymobile1/devdox-ai-sonar/pull/55))
+
+### CI
+
+- Add Windows to GitHub Actions test matrix ([#55](https://github.com/montymobile1/devdox-ai-sonar/pull/55))
+
+---
 ## [0.0.5] - 2026-03-03
 
 ### CI
@@ -14,6 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add manual inputs pr_number and source_branch to allow targeted fixes on any PR from the Actions UI  ([#54](https://github.com/montymobile1/devdox-ai-sonar/pull/54))
 - Remove job-level if: github.event_name == 'pull_request' condition, no longer needed with single manual trigger([#54](https://github.com/montymobile1/devdox-ai-sonar/pull/54))
 
+---
 
 ## [0.0.4] - 2026-02-27
 
@@ -23,6 +41,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Commit and push sonar fixes directly to a new branch instead of uploading artifacts ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
 - Fix project path to use `/github/workspace` for correct Docker container resolution ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
 - Declare missing inputs in `action.yml` (`pull-number`, `llm-models`, `max-fixes`, `exclude-rules`) ([#52](https://github.com/montymobile1/devdox-ai-sonar/pull/52))
+
+---
 
 ## [0.0.3] -2026-02-27
 
@@ -93,6 +113,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.0.6]: https://github.com/montymobile1/devdox-ai-sonar/compare/0.0.5...0.0.6
+[0.0.5]: https://github.com/montymobile1/devdox-ai-sonar/compare/0.0.4...0.0.5
+[0.0.4]: https://github.com/montymobile1/devdox-ai-sonar/compare/0.0.3...0.0.4
 [0.0.3]: https://github.com/montymobile1/devdox-ai-sonar/compare/0.0.2...0.0.3
 [0.0.2]: https://github.com/montymobile1/devdox-ai-sonar/compare/0.0.1...0.0.2
 [0.0.1]: https://github.com/montymobile1/devdox-ai-sonar/releases/tag/0.0.1

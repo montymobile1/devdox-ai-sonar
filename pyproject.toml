@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devdox_sonar"
-version = "0.0.5"
+version = "0.0.6"
 description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -35,10 +35,10 @@ dependencies = [
     "click==8.1.7",
     "rich-click==1.9.4",
     "requests>=2.32",
-    "pydantic==2.9.0",
-    "pydantic_core==2.23.2",
+    "pydantic==2.10.6",
+    "pydantic_core==2.27.2",
     "pydantic-settings==2.12.0",
-    "python-dotenv==1.0.0",
+    "python-dotenv==1.0.1",
     "openai==2.15.0",
     "google-genai==1.60.0",
     "sonar-tools==3.16.2",
@@ -52,10 +52,8 @@ dependencies = [
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
     "tomli-w==1.2.0",
-    "simple-term-menu==1.6.6",
-    "questionary==2.1.1",
+    "questionary>=2.0.0",
     "tomlkit==0.13.3",
-    "inquirer==3.4.1",
     "aiofiles==25.1.0",
     "langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements
     "yake>=0.4.8",
