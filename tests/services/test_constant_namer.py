@@ -565,68 +565,100 @@ class TestAssignName:
 # ============================================================================
 
 
-class TestLLMFixerAdapterCallOpenaiCompatible:
-    """Tests for _call_openai_compatible micro-method."""
+class TestLLMFixerAdapterCallForJson:
+    """Tests for call_for_json — now LangChain-based, provider-agnostic."""
 
-    def test_successful_call(self):
+    def _make_mock_fixer(self, content: str | None):
+        """Return a mock fixer whose _llm.invoke returns an AIMessage-like object."""
+        from unittest.mock import Mock
+
         mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content='{"hello": "GREETING"}'))]
-        )
+        mock_response = Mock()
+        mock_response.content = content
+        mock_fixer._llm.invoke.return_value = mock_response
+        return mock_fixer
+
+    def test_successful_call_returns_parsed_dict(self):
+        from unittest.mock import Mock
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        mock_fixer = self._make_mock_fixer('{"hello": "GREETING"}')
         adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter._call_openai_compatible("system", "user")
+        result = adapter.call_for_json("system prompt", "user prompt")
         assert result == {"hello": "GREETING"}
 
     def test_none_content_returns_none(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content=None))]
-        )
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter._call_openai_compatible("system", "user")
-        assert result is None
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
 
-
-class TestLLMFixerAdapterCallForJson:
-    """Tests for call_for_json dispatch."""
-
-    def test_dispatches_to_openai(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content='{"k": "V"}'))]
-        )
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter.call_for_json("system", "user")
-        assert result == {"k": "V"}
-
-    def test_dispatches_togetherai(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "togetherai"
-        mock_fixer.model = "model"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content='{"k": "V"}'))]
-        )
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter.call_for_json("system", "user")
-        assert result == {"k": "V"}
-
-    def test_unknown_provider_returns_none(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "unknown_provider"
+        mock_fixer = self._make_mock_fixer(None)
         adapter = LLMFixerAdapter(mock_fixer)
         result = adapter.call_for_json("system", "user")
         assert result is None
 
-    def test_exception_returns_none(self):
+    def test_empty_content_returns_none(self):
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        mock_fixer = self._make_mock_fixer("")
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result is None
+
+    def test_markdown_fenced_json_is_stripped(self):
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        content = '```json\n{"k": "V"}\n```'
+        mock_fixer = self._make_mock_fixer(content)
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result == {"k": "V"}
+
+    def test_markdown_fence_without_language_tag_stripped(self):
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        content = '```\n{"k": "V"}\n```'
+        mock_fixer = self._make_mock_fixer(content)
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result == {"k": "V"}
+
+    def test_invalid_json_returns_none(self):
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        mock_fixer = self._make_mock_fixer("not json at all")
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result is None
+
+    def test_llm_invoke_raises_returns_none(self):
+        from unittest.mock import Mock
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
         mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.client.chat.completions.create.side_effect = RuntimeError("fail")
+        mock_fixer._llm.invoke.side_effect = RuntimeError("network error")
+        adapter = LLMFixerAdapter(mock_fixer)
+        result = adapter.call_for_json("system", "user")
+        assert result is None
+
+    def test_llm_called_with_system_and_human_messages(self):
+        from unittest.mock import Mock, call
+        from langchain_core.messages import HumanMessage, SystemMessage
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        mock_fixer = self._make_mock_fixer('{"k": "V"}')
+        adapter = LLMFixerAdapter(mock_fixer)
+        adapter.call_for_json("my system", "my user")
+
+        invoke_args = mock_fixer._llm.invoke.call_args[0][0]
+        assert isinstance(invoke_args[0], SystemMessage)
+        assert invoke_args[0].content == "my system"
+        assert isinstance(invoke_args[1], HumanMessage)
+        assert invoke_args[1].content == "my user"
+
+    def test_wrong_json_shape_returns_none(self):
+        """LLM returning a list instead of dict[str,str] should return None."""
+        from devdox_ai_sonar.services.constant_namer import LLMFixerAdapter
+
+        mock_fixer = self._make_mock_fixer('[1, 2, 3]')
         adapter = LLMFixerAdapter(mock_fixer)
         result = adapter.call_for_json("system", "user")
         assert result is None
