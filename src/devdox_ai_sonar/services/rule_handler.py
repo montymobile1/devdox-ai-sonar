@@ -1319,7 +1319,8 @@ class AsyncToSyncHandler(RuleHandler):
             source_lines = context.code_content
             logger.debug(
                 "AsyncToSyncHandler: processing %d issue(s) in %s",
-                len(issues), file_path,
+                len(issues),
+                file_path,
             )
 
             # Step 1: Detect function type
@@ -1364,7 +1365,8 @@ class AsyncToSyncHandler(RuleHandler):
                     )
 
             logger.info(
-                "Generated %d code block(s) for async-to-sync conversion", len(code_blocks)
+                "Generated %d code block(s) for async-to-sync conversion",
+                len(code_blocks),
             )
 
             response_lst.append(

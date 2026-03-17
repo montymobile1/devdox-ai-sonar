@@ -824,7 +824,9 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     # Validate indices
     if start_idx < 0 or start_idx >= len(lines):
-        logger.warning("Invalid start_line %d for file with %d lines", block.start_line, len(lines))
+        logger.warning(
+            "Invalid start_line %d for file with %d lines", block.start_line, len(lines)
+        )
         return lines, block.end_line
 
     # Calculate base indentation from original code
@@ -845,7 +847,10 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     logger.debug(
         "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
-        block.start_line, block.end_line, end_idx - start_idx, len(new_lines),
+        block.start_line,
+        block.end_line,
+        end_idx - start_idx,
+        len(new_lines),
     )
 
     if len(new_lines) > 1:
@@ -853,7 +858,8 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
         logger.warning(
             "Full code block has %d lines, expected %d",
-            len(new_lines), end_idx - start_idx + 1,
+            len(new_lines),
+            end_idx - start_idx + 1,
         )
 
     return lines, end_idx
@@ -875,7 +881,9 @@ def _replace_line_preserving_indent(
     else:
         original_indent = calculate_base_indentation(lines[line_idx])
         lines[line_idx] = " " * original_indent + change.new.strip() + "\n"
-    logger.debug("[DIFF] Replaced line %d: %s -> %s", change.line, change.old, change.new)
+    logger.debug(
+        "[DIFF] Replaced line %d: %s -> %s", change.line, change.old, change.new
+    )
 
 
 def _try_replace_at_corrected_line(
@@ -956,7 +964,9 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
-            logger.warning("Invalid line number %d (file has %d lines)", change.line, len(lines))
+            logger.warning(
+                "Invalid line number %d (file has %d lines)", change.line, len(lines)
+            )
             continue
         if change.action == ChangeAction.REPLACE:
             _apply_replace_action(lines, change, block.start_line, block.end_line)
@@ -965,7 +975,12 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         elif change.action == ChangeAction.DELETE:
             _apply_delete_action(lines, change)
 
-    logger.debug("[DIFF] Applied %d change(s) to lines %d-%d", len(sorted_changes), block.start_line, block.end_line)
+    logger.debug(
+        "[DIFF] Applied %d change(s) to lines %d-%d",
+        len(sorted_changes),
+        block.start_line,
+        block.end_line,
+    )
     return lines
 
 
@@ -985,7 +1000,10 @@ def apply_single_code_block(
 ) -> Tuple[List[str], int]:
     logger.debug(
         "Applying %s block '%s' on lines %d-%d",
-        block.change_type, block.block_name, block.start_line, block.end_line,
+        block.change_type,
+        block.block_name,
+        block.start_line,
+        block.end_line,
     )
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)

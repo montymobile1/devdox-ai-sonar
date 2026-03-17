@@ -2617,7 +2617,7 @@ class TestRemoveTmpFiles:
 
     def test_remove_nonexistent_directory_raises_error(self):
         """Test that removing non-existent directory raises ValueError."""
-        nonexistent_path = "/tmp/this_directory_does_not_exist_12345"
+        nonexistent_path = os.path.join(tempfile.gettempdir(), "this_directory_does_not_exist_12345")
 
         with pytest.raises(ValueError) as exc_info:
             remove_tmp_files(nonexistent_path)
@@ -2941,40 +2941,43 @@ class TestTmpCloneManager:
 
     async def test_normal_exit_calls_cleanup(self):
         """Test that cleanup_fn is called on normal exit."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        tmp_test_path = os.path.join(tempfile.gettempdir(), "devdox_abc_test")
+        mock_factory = Mock(return_value=tmp_test_path)
         mock_cleanup = Mock(return_value=True)
 
         async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as tmp_path:
-            assert tmp_path == Path("/tmp/devdox_abc_test")
+            assert tmp_path == Path(tmp_test_path)
 
         mock_factory.assert_called_once()
-        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+        mock_cleanup.assert_called_once_with(tmp_test_path)
 
     async def test_exception_calls_cleanup(self):
         """Test that cleanup_fn is called even when body raises."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        tmp_test_path = os.path.join(tempfile.gettempdir(), "devdox_abc_test")
+        mock_factory = Mock(return_value=tmp_test_path)
         mock_cleanup = Mock(return_value=True)
 
         with pytest.raises(ValueError, match="boom"):
             async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
                 raise ValueError("boom")
 
-        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+        mock_cleanup.assert_called_once_with(tmp_test_path)
 
     async def test_click_abort_calls_cleanup(self):
         """Test cleanup on click.Abort (BaseException subclass)."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        tmp_test_path = os.path.join(tempfile.gettempdir(), "devdox_abc_test")
+        mock_factory = Mock(return_value=tmp_test_path)
         mock_cleanup = Mock(return_value=True)
 
         with pytest.raises(click.Abort):
             async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup):
                 raise click.Abort()
 
-        mock_cleanup.assert_called_once_with("/tmp/devdox_abc_test")
+        mock_cleanup.assert_called_once_with(tmp_test_path)
 
     async def test_cleanup_failure_logged_not_raised(self):
         """Test that cleanup failure is logged but does not propagate."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_factory = Mock(return_value=os.path.join(tempfile.gettempdir(), "devdox_abc_test"))
         mock_cleanup = Mock(side_effect=OSError("Permission denied"))
 
         with patch("devdox_ai_sonar.utils.file_indentation.logger") as mock_logger:
@@ -2986,7 +2989,7 @@ class TestTmpCloneManager:
 
     async def test_cleanup_failure_preserves_original_exception(self):
         """Test that when body raises AND cleanup fails, the original exception propagates."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        mock_factory = Mock(return_value=os.path.join(tempfile.gettempdir(), "devdox_abc_test"))
         mock_cleanup = Mock(side_effect=OSError("Permission denied"))
 
         with patch("devdox_ai_sonar.utils.file_indentation.logger"):
@@ -2996,12 +2999,13 @@ class TestTmpCloneManager:
 
     async def test_returns_path_object(self):
         """Test that __aenter__ returns a Path, not str."""
-        mock_factory = Mock(return_value="/tmp/devdox_abc_test")
+        tmp_test_path = os.path.join(tempfile.gettempdir(), "devdox_abc_test")
+        mock_factory = Mock(return_value=tmp_test_path)
         mock_cleanup = Mock()
 
         async with TmpCloneManager(path_factory=mock_factory, cleanup_fn=mock_cleanup) as result:
             assert isinstance(result, Path)
-            assert str(result) == "/tmp/devdox_abc_test"
+            assert str(result) == tmp_test_path
 
     async def test_default_factories(self):
         """Test that defaults use generate_tmp_path and remove_tmp_files."""
@@ -3332,7 +3336,7 @@ class TestDownloadLatestVersion:
 
         # Test parameters
         repo_url = "https://github.com/user/repo.git"
-        repo_path = "/tmp/test_repo"
+        repo_path = os.path.join(tempfile.gettempdir(), "test_repo")
         branch = "main"
 
         # Call function
@@ -3356,16 +3360,17 @@ class TestDownloadLatestVersion:
 
         for branch in branches:
             mock_repo_class.reset_mock()
+            tmp_repo_path = os.path.join(tempfile.gettempdir(), "test_repo")
 
             result = download_latest_version(
                 "https://github.com/user/repo.git",
-                "/tmp/test_repo",
+                tmp_repo_path,
                 branch
             )
 
             mock_repo_class.clone_from.assert_called_once_with(
                 "https://github.com/user/repo.git",
-                "/tmp/test_repo",
+                tmp_repo_path,
                 branch=branch
             )
             assert result == mock_repo_instance
@@ -3378,10 +3383,11 @@ class TestDownloadLatestVersion:
 
         ssh_url = "git@github.com:user/repo.git"
 
-        result = download_latest_version(ssh_url, "/tmp/test_repo", "main")
+        tmp_repo_path = os.path.join(tempfile.gettempdir(), "test_repo")
+        result = download_latest_version(ssh_url, tmp_repo_path, "main")
 
         mock_repo_class.clone_from.assert_called_once_with(
-            ssh_url, "/tmp/test_repo", branch="main"
+            ssh_url, tmp_repo_path, branch="main"
         )
         assert result == mock_repo_instance
 
@@ -3398,7 +3404,7 @@ class TestDownloadLatestVersion:
         repo_url = "https://github.com/user/nonexistent.git"
 
         # Call function
-        result = download_latest_version(repo_url, "/tmp/test_repo", "main")
+        result = download_latest_version(repo_url, os.path.join(tempfile.gettempdir(), "test_repo"), "main")
 
         # Should return None on error
         assert result is None
@@ -3417,7 +3423,7 @@ class TestDownloadLatestVersion:
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            os.path.join(tempfile.gettempdir(), "test_repo"),
             "main"
         )
 
@@ -3434,7 +3440,7 @@ class TestDownloadLatestVersion:
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            os.path.join(tempfile.gettempdir(), "test_repo"),
             "main"
         )
 
@@ -3450,7 +3456,7 @@ class TestDownloadLatestVersion:
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            os.path.join(tempfile.gettempdir(), "test_repo"),
             "main"
         )
 
@@ -3464,16 +3470,17 @@ class TestDownloadLatestVersion:
         mock_repo_instance = MagicMock(spec=Repo)
         mock_repo_class.clone_from.return_value = mock_repo_instance
 
+        tmp_repo_path = os.path.join(tempfile.gettempdir(), "test_repo")
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            tmp_repo_path,
             ""
         )
 
         # Should still call clone_from with empty branch
         mock_repo_class.clone_from.assert_called_once_with(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            tmp_repo_path,
             branch=""
         )
 
@@ -3483,7 +3490,7 @@ class TestDownloadLatestVersion:
         mock_repo_instance = MagicMock(spec=Repo)
         mock_repo_class.clone_from.return_value = mock_repo_instance
 
-        special_path = "/tmp/test repo with spaces/子目录"
+        special_path = os.path.join(tempfile.gettempdir(), "test repo with spaces", "子目录")
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
@@ -3502,7 +3509,7 @@ class TestDownloadLatestVersion:
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test_repo",
+            os.path.join(tempfile.gettempdir(), "test_repo"),
             "main"
         )
 
@@ -3527,7 +3534,7 @@ class TestDownloadLatestVersion:
         for url in urls:
             mock_repo_class.reset_mock()
 
-            result = download_latest_version(url, "/tmp/test_repo", "main")
+            result = download_latest_version(url, os.path.join(tempfile.gettempdir(), "test_repo"), "main")
 
             mock_repo_class.clone_from.assert_called_once()
             assert result == mock_repo_instance
@@ -3539,7 +3546,7 @@ class TestDownloadLatestVersion:
         repo_url = "https://github.com/specific/repository.git"
         mock_repo_class.clone_from.side_effect = Exception("Test error")
 
-        download_latest_version(repo_url, "/tmp/test", "main")
+        download_latest_version(repo_url, os.path.join(tempfile.gettempdir(), "test"), "main")
 
         error_message = mock_print.call_args[0][0]
         assert repo_url in error_message
@@ -3552,7 +3559,7 @@ class TestDownloadLatestVersion:
 
         download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test",
+            os.path.join(tempfile.gettempdir(), "test"),
             "main"
         )
 
@@ -3568,7 +3575,7 @@ class TestDownloadLatestVersion:
 
         result = download_latest_version(
             "https://github.com/user/repo.git",
-            "/tmp/test",
+            os.path.join(tempfile.gettempdir(), "test"),
             "main"
         )
 
@@ -3595,7 +3602,7 @@ class TestDownloadLatestVersion:
 
             result = download_latest_version(
                 "https://github.com/user/repo.git",
-                "/tmp/test",
+                os.path.join(tempfile.gettempdir(), "test"),
                 "main"
             )
 

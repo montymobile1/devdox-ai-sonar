@@ -1,5 +1,7 @@
 import ast
 import re
+import tempfile
+
 import pytest
 from pathlib import Path
 from unittest.mock import patch, Mock, AsyncMock
@@ -455,7 +457,7 @@ def _make_context(**overrides) -> FixContext:
     """Build a FixContext with sensible defaults, overridable via kwargs."""
     defaults = dict(
         file_path=Path("/project/src/module.py"),
-        file_path_tmp=Path("/tmp/module.py"),
+        file_path_tmp=Path(tempfile.gettempdir()) / "module.py",
         line_range={"first_line": 10, "last_line": 20, "problem_lines": [10, 15]},
         code_content="async def my_func(self, camelCase):\n    return 1\n",
         language="python",

@@ -1,6 +1,7 @@
 
 
 import os
+import sys
 import pytest
 from unittest.mock import Mock, MagicMock, AsyncMock, patch, call
 from pathlib import Path
@@ -1258,7 +1259,10 @@ class TestFileSystemInteractions:
         # Cleanup
         config_path.chmod(0o644)
 
-    @pytest.mark.skipif(os.geteuid() == 0, reason="Root bypasses filesystem permissions")
+    @pytest.mark.skipif(
+        sys.platform == "win32" or (hasattr(os, "geteuid") and os.geteuid() == 0),
+        reason="Root/admin bypasses filesystem permissions; Windows uses different permission model"
+    )
     async def test_save_to_readonly_directory(self, tmp_path):
         """Test saving to read-only directory (should fail)."""
         readonly_dir = tmp_path / "readonly"

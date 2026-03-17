@@ -43,8 +43,8 @@ def mock_prompt():
 
 @pytest.fixture
 def mock_terminal_menu():
-    """Mock TerminalMenu."""
-    with patch('devdox_ai_sonar.utils.provider_config.TerminalMenu') as mock:
+    """Mock select_from_list (formerly TerminalMenu)."""
+    with patch('devdox_ai_sonar.utils.provider_config.select_from_list', new_callable=AsyncMock) as mock:
         yield mock
 
 
@@ -205,62 +205,41 @@ class TestPromptForApiKey:
 class TestSelectProviderFromList:
     """Tests for select_provider_from_list method."""
 
-    def test_select_provider_success(self, mock_terminal_menu):
+    async def test_select_provider_success(self, mock_terminal_menu):
         """Test successful provider selection."""
         providers = ["openai", "anthropic", "together"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 1
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = "anthropic"
 
-        result = ProviderConfigUI.select_provider_from_list(providers, "Select provider")
+        result = await ProviderConfigUI.select_provider_from_list(providers, "Select provider")
 
         assert result == "anthropic"
-        mock_terminal_menu.assert_called_once()
-        mock_menu_instance.show.assert_called_once()
+        mock_terminal_menu.assert_called_once_with(providers, "Select provider")
 
-    def test_select_provider_first_item(self, mock_terminal_menu):
+    async def test_select_provider_first_item(self, mock_terminal_menu):
         """Test selecting first item from list."""
         providers = ["openai", "anthropic"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 0
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = "openai"
 
-        result = ProviderConfigUI.select_provider_from_list(providers, "Select")
+        result = await ProviderConfigUI.select_provider_from_list(providers, "Select")
 
         assert result == "openai"
 
-    def test_select_provider_cancelled(self, mock_terminal_menu):
+    async def test_select_provider_cancelled(self, mock_terminal_menu):
         """Test when selection is cancelled."""
         providers = ["openai"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = None
-        mock_terminal_menu.return_value = mock_menu_instance
+        mock_terminal_menu.return_value = None
 
-        result = ProviderConfigUI.select_provider_from_list(providers, "Select")
+        result = await ProviderConfigUI.select_provider_from_list(providers, "Select")
 
         assert result is None
 
-    def test_select_provider_empty_list(self, mock_terminal_menu):
+    async def test_select_provider_empty_list(self, mock_terminal_menu):
         """Test with empty provider list."""
-        result = ProviderConfigUI.select_provider_from_list([], "Select")
+        mock_terminal_menu.return_value = None
+
+        result = await ProviderConfigUI.select_provider_from_list([], "Select")
 
         assert result is None
-        mock_terminal_menu.assert_not_called()
-
-    def test_select_provider_menu_configuration(self, mock_terminal_menu):
-        """Test that menu is configured correctly."""
-        providers = ["openai"]
-        mock_menu_instance = Mock()
-        mock_menu_instance.show.return_value = 0
-        mock_terminal_menu.return_value = mock_menu_instance
-
-        ProviderConfigUI.select_provider_from_list(providers, "Test message")
-
-        call_kwargs = mock_terminal_menu.call_args[1]
-        assert call_kwargs['search_key'] == "/"
-        assert call_kwargs['search_case_sensitive'] is False
-        assert call_kwargs['title'] == "Test message"
-        assert call_kwargs['menu_cursor'] == "➤ "
 
 
 class TestConfirmDefault:
@@ -423,7 +402,7 @@ class TestConfigureNewProvider:
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.confirm_default')
-    def test_configure_new_provider_success(
+    async def test_configure_new_provider_success(
             self, mock_confirm, mock_select, mock_prompt_key,
             provider_config_manager, mock_console, mock_validator
     ):
@@ -432,7 +411,7 @@ class TestConfigureNewProvider:
         mock_select.return_value = "model-1"
         mock_confirm.return_value = True
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result is not None
         assert result["config"]["name"] == "openai"
@@ -442,28 +421,28 @@ class TestConfigureNewProvider:
         mock_validator.validate.assert_called_once()
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_configure_new_provider_invalid_name(
+    async def test_configure_new_provider_invalid_name(
             self, mock_prompt_key, provider_config_manager, mock_console
     ):
         """Test with invalid provider name."""
-        result = provider_config_manager.configure_new_provider("invalid_provider")
+        result = await provider_config_manager.configure_new_provider("invalid_provider")
 
         assert result is None
         mock_console.print.assert_called_with("[red]❌ Unknown provider: invalid_provider[/red]")
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_configure_new_provider_no_api_key(
+    async def test_configure_new_provider_no_api_key(
             self, mock_prompt_key, provider_config_manager
     ):
         """Test when API key prompt is cancelled."""
         mock_prompt_key.return_value = None
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result is None
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_configure_new_provider_validation_failed(
+    async def test_configure_new_provider_validation_failed(
             self, mock_prompt_key, provider_config_manager, mock_validator, mock_console
     ):
         """Test when API key validation fails."""
@@ -471,21 +450,21 @@ class TestConfigureNewProvider:
         mock_validator.validate.return_value.success = False
         mock_validator.validate.return_value.error_message = "Invalid API key"
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result is None
         mock_console.print.assert_any_call("[red]❌ Invalid API key[/red]")
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
-    def test_configure_new_provider_model_selection_cancelled(
+    async def test_configure_new_provider_model_selection_cancelled(
             self, mock_select, mock_prompt_key, provider_config_manager, mock_console
     ):
         """Test when model selection is cancelled."""
         mock_prompt_key.return_value = "test-key"
         mock_select.return_value = None
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result is None
         mock_console.print.assert_called_with("[yellow]⚠ Model selection cancelled[/yellow]")
@@ -493,7 +472,7 @@ class TestConfigureNewProvider:
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.confirm_default')
-    def test_configure_new_provider_not_default(
+    async def test_configure_new_provider_not_default(
             self, mock_confirm, mock_select, mock_prompt_key, provider_config_manager
     ):
         """Test configuring provider without setting as default."""
@@ -501,7 +480,7 @@ class TestConfigureNewProvider:
         mock_select.return_value = "model-1"
         mock_confirm.return_value = False
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result["set_as_default"] is False
 
@@ -948,20 +927,20 @@ class TestHandleModelUpdate:
     """Tests for _handle_model_update method."""
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
-    def test_handle_model_update_keep_current(
+    async def test_handle_model_update_keep_current(
             self, mock_confirm, provider_config_manager, sample_provider_config
     ):
         """Test keeping current model."""
         mock_confirm.return_value = True
         ctx = ProviderUpdateContext(sample_provider_config, "openai")
 
-        provider_config_manager._handle_model_update(ctx)
+        await provider_config_manager._handle_model_update(ctx)
 
         assert "default_model" not in ctx.updates
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
-    def test_handle_model_update_change_model(
+    async def test_handle_model_update_change_model(
             self, mock_select, mock_confirm, provider_config_manager, sample_provider_config
     ):
         """Test changing to new model."""
@@ -970,14 +949,14 @@ class TestHandleModelUpdate:
         ctx = ProviderUpdateContext(sample_provider_config, "openai")
         ctx.available_models = sample_provider_config["models"]
 
-        provider_config_manager._handle_model_update(ctx)
+        await provider_config_manager._handle_model_update(ctx)
 
         assert ctx.updates["default_model"] == "gpt-3.5-turbo"
         assert ctx.current_model == "gpt-3.5-turbo"
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
-    def test_handle_model_update_selection_cancelled(
+    async def test_handle_model_update_selection_cancelled(
             self, mock_select, mock_confirm, provider_config_manager, sample_provider_config
     ):
         """Test cancelling model selection."""
@@ -986,7 +965,7 @@ class TestHandleModelUpdate:
         ctx = ProviderUpdateContext(sample_provider_config, "openai")
         ctx.available_models = ["model-1"]
 
-        provider_config_manager._handle_model_update(ctx)
+        await provider_config_manager._handle_model_update(ctx)
 
         assert "default_model" not in ctx.updates
 
@@ -1443,7 +1422,7 @@ class TestErrorPathCoverage:
     """Tests for various error handling paths"""
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_configure_new_provider_api_key_validation_exception(
+    async def test_configure_new_provider_api_key_validation_exception(
             self, mock_prompt_key, provider_config_manager, mock_validator, mock_console
     ):
         """Test exception during API key validation."""
@@ -1451,7 +1430,7 @@ class TestErrorPathCoverage:
         mock_validator.validate.side_effect = Exception("Network error")
 
         with pytest.raises(Exception):
-            provider_config_manager.configure_new_provider("openai")
+            await provider_config_manager.configure_new_provider("openai")
 
     @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
     async def test_update_existing_provider_confirm_exception(
@@ -1476,16 +1455,14 @@ class TestErrorPathCoverage:
 
         assert result == []
 
-    def test_select_provider_from_list_large_list(self):
+    async def test_select_provider_from_list_large_list(self):
         """Test with very large provider list."""
         large_list = [f"provider-{i}" for i in range(100)]
 
-        with patch('devdox_ai_sonar.utils.provider_config.TerminalMenu') as mock_menu:
-            mock_menu_instance = Mock()
-            mock_menu_instance.show.return_value = 50
-            mock_menu.return_value = mock_menu_instance
+        with patch('devdox_ai_sonar.utils.provider_config.select_from_list', new_callable=AsyncMock) as mock_select:
+            mock_select.return_value = "provider-50"
 
-            result = ProviderConfigUI.select_provider_from_list(large_list, "Select")
+            result = await ProviderConfigUI.select_provider_from_list(large_list, "Select")
 
             assert result == "provider-50"
 
@@ -1496,9 +1473,9 @@ class TestErrorPathCoverage:
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
-    def test_empty_provider_name(self, provider_config_manager, mock_console):
+    async def test_empty_provider_name(self, provider_config_manager, mock_console):
         """Test with empty provider name."""
-        result = provider_config_manager.configure_new_provider("")
+        result = await provider_config_manager.configure_new_provider("")
         assert result is None
 
     def test_special_characters_in_api_key(self, mock_prompt):
@@ -1520,7 +1497,7 @@ class TestEdgeCases:
         assert result == long_key
 
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
-    def test_validation_exception_handling(
+    async def test_validation_exception_handling(
             self, mock_prompt_key, provider_config_manager, mock_validator, mock_console
     ):
         """Test handling of validation exceptions."""
@@ -1528,7 +1505,7 @@ class TestEdgeCases:
         mock_validator.validate.side_effect = Exception("Validation error")
 
         with pytest.raises(Exception):
-            provider_config_manager.configure_new_provider("openai")
+            await provider_config_manager.configure_new_provider("openai")
 
     async def test_branch_or_pr_with_special_clone_type_values(
             self, provider_config_manager, mock_config_manager
@@ -1607,7 +1584,7 @@ class TestIntegration:
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.confirm_default')
-    def test_complete_provider_setup_workflow(
+    async def test_complete_provider_setup_workflow(
             self, mock_confirm, mock_select, mock_prompt_key,
             provider_config_manager, mock_validator
     ):
@@ -1625,7 +1602,7 @@ class TestIntegration:
         # User sets as default
         mock_confirm.return_value = True
 
-        result = provider_config_manager.configure_new_provider("openai")
+        result = await provider_config_manager.configure_new_provider("openai")
 
         assert result is not None
         assert result["config"]["api_key"] == "test-api-key"
@@ -1687,7 +1664,7 @@ class TestConsoleOutputVerification:
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.prompt_for_api_key')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.select_provider_from_list')
     @patch('devdox_ai_sonar.utils.provider_config.ProviderConfigUI.confirm_default')
-    def test_configure_new_provider_prints_model_count(
+    async def test_configure_new_provider_prints_model_count(
             self, mock_confirm, mock_select, mock_prompt_key,
             provider_config_manager, mock_console, mock_validator
     ):
@@ -1697,7 +1674,7 @@ class TestConsoleOutputVerification:
         mock_confirm.return_value = False
         mock_validator.validate.return_value.models = ["m1", "m2", "m3", "m4", "m5"]
 
-        provider_config_manager.configure_new_provider("openai")
+        await provider_config_manager.configure_new_provider("openai")
 
         # Should print number of models found
         mock_console.print.assert_any_call("[green]✓ Found 5 models[/green]")

@@ -4,6 +4,7 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-green.svg)](LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/devdox-sonar)](https://pypi.org/project/devdox-sonar/)
 [![Build](https://github.com/montymobile1/devdox-ai-sonar/actions/workflows/build.yml/badge.svg)](https://github.com/montymobile1/devdox-ai-sonar/actions/workflows/build.yml)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey.svg)]()
 
 DevDox AI Sonar is a command-line tool that reads the analysis reports SonarCloud has already produced for your project — every bug, code smell, and security vulnerability it found — and sends each issue to a Large Language Model along with the relevant source code and context. The LLM generates a structured fix with code blocks, line numbers, and a confidence score. You review it, apply it if it looks good, and a markdown changelog documents everything.
 
@@ -86,7 +87,7 @@ SonarCloud must have already scanned your project before DevDox AI Sonar can do 
 
 ```
 SonarCloud          Fetch Issues       Clone Repo        Extract Code       Build Prompt
-(already scanned) ──► from report ────► to /tmp ────────► + Context ────────► (Jinja2)
+(already scanned) ──► from report ────► to temp dir ────► + Context ────────► (Jinja2)
                                                                                  │
                                                                                  ▼
                   ┌── Apply + Changelog ◄── YES ── Preview ◄── Validate ◄── Call LLM
@@ -114,7 +115,7 @@ SonarCloud          Fetch Issues       Clone Repo        Extract Code       Buil
 
 ## Prerequisites
 
-**Python 3.12 or higher**
+**Python 3.12 or higher** — Works on Linux, macOS, and Windows.
 
 ```bash
 python --version
@@ -147,8 +148,10 @@ Verify:
 
 ```bash
 devdox_sonar --version
-# devdox_sonar, version 0.0.1-beta
+# devdox_sonar, version 0.0.5
 ```
+
+> **Windows note:** If `pip` is not on your PATH, use `python -m pip install devdox_sonar` instead. If `devdox_sonar` is not recognized after install, try `python -m devdox_ai_sonar`.
 
 For contributors installing from source:
 
@@ -179,7 +182,7 @@ The wizard walks you through three steps.
 | Token | [sonarcloud.io/account/security](https://sonarcloud.io/account/security) | `squ_abc123def456...` |
 | Organization Key | Your SonarCloud dashboard URL | `my-company` |
 | Project Key | Your project's SonarCloud page | `my-company_my-app` |
-| Project Path | Absolute path to the code on your machine | `/home/user/projects/my-app` |
+| Project Path | Absolute path to the code on your machine | `/home/user/projects/my-app` or `C:\Users\user\projects\my-app` |
 | Git URL | Repository clone URL | `https://github.com/my-org/my-app.git` |
 
 Saved to `~/devdox/auth.json`.
@@ -220,7 +223,13 @@ To reconfigure, either use the menu options (Add Provider, Update Provider, Chan
 
 ### Configuration Files
 
-All configuration lives in `~/devdox/`:
+All configuration lives in `~/devdox/` (your home directory):
+
+| OS | Config directory |
+|---|---|
+| Linux | `/home/<user>/devdox/` |
+| macOS | `/Users/<user>/devdox/` |
+| Windows | `C:\Users\<user>\devdox\` |
 
 ```
 ~/devdox/
@@ -237,6 +246,14 @@ All configuration lives in `~/devdox/`:
   "SONAR_PROJ": "your-project-key",
   "PROJECT_PATH": "/home/user/projects/my-app",
   "GIT_URL": "https://github.com/your-org/my-app.git"
+}
+```
+
+On Windows, `PROJECT_PATH` uses backslashes or forward slashes:
+
+```json
+{
+  "PROJECT_PATH": "C:\\Users\\user\\projects\\my-app"
 }
 ```
 
@@ -326,7 +343,7 @@ On first run, the setup wizard runs (see [First-Time Setup](#first-time-setup)).
   ❌ Exit
 ```
 
-Use arrow keys to navigate, Enter to select. Type `/` during any prompt to switch to a different command. Press Ctrl+C to exit.
+Use arrow keys to navigate, Enter to select. Type to filter options in any selection prompt. Press Ctrl+C to exit.
 
 ### Direct Mode
 
@@ -387,7 +404,7 @@ These options can be passed with any direct mode command to override your saved 
   Load Config (auth.json + config.toml)
            │
            ▼
-  Clone Repo (git clone to /tmp)
+  Clone Repo (git clone to temp dir)
            │
            ▼
   Fetch Issues from SonarCloud report
@@ -621,7 +638,7 @@ The underlying `SonarCloudAnalyzer` class accepts a `base_url` parameter. If you
 Every fix includes a confidence score. The validator agent catches many issues. You can enable backups before applying. `--dry-run` lets you run the full pipeline without writing any files.
 
 **Does it modify my working directory?**
-The tool clones your repo to `/tmp` for code extraction. Applied fixes are written to the path specified in `PROJECT_PATH`. The clone step does not affect your local uncommitted changes.
+The tool clones your repo to a temporary directory for code extraction. Applied fixes are written to the path specified in `PROJECT_PATH`. The clone step does not affect your local uncommitted changes.
 
 **Does SonarCloud need to have scanned my project first?**
 Yes. DevDox AI Sonar reads SonarCloud's existing analysis report. It does not perform code analysis itself. If SonarCloud has not scanned your project, there are no issues to fix.

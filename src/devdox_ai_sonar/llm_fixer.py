@@ -4,6 +4,7 @@ import os
 import re
 import sys
 import shutil
+import sys
 import asyncio
 from collections import defaultdict
 
@@ -812,7 +813,9 @@ class LLMFixer:
         if first_line_idx >= len(lines) or last_line_idx >= len(lines):
             logger.error(
                 "Line range %d-%d exceeds file length %d",
-                first_line_number, last_line_number, len(lines),
+                first_line_number,
+                last_line_number,
+                len(lines),
             )
             return extractor._get_empty_context(first_line_number)
 
@@ -856,7 +859,10 @@ class LLMFixer:
 
         logger.debug(
             "LLM call — provider=%s, model=%s, language=%s, issues=%d",
-            self.provider, self.model, language, len(issues),
+            self.provider,
+            self.model,
+            language,
+            len(issues),
         )
 
         prompt, system_template = self._create_fix_prompt_list(
@@ -1307,7 +1313,10 @@ class LLMFixer:
     def _create_backup(self, project_path: Path) -> Path:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_path = project_path.parent / f"{project_path.name}_backup_{timestamp}"
-        shutil.copytree(project_path, backup_path)
+        shutil.copytree(
+            project_path, backup_path, ignore=shutil.ignore_patterns(".git")
+        )
+
         return backup_path
 
     def _try_stored_file_path(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
@@ -1385,7 +1394,12 @@ class LLMFixer:
                     logger.debug("Fix %s failed validation: %s", fix.issue_key, msg)
 
             succeeded = sum(1 for r in results if r.success)
-            logger.debug("Finished %s — %d/%d fixes succeeded", file_path, succeeded, len(results))
+            logger.debug(
+                "Finished %s — %d/%d fixes succeeded",
+                file_path,
+                succeeded,
+                len(results),
+            )
             return all(r.success for r in results), results
 
         except Exception:
