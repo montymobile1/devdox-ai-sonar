@@ -2369,7 +2369,7 @@ class ContextExtractor:
         js_match = re.search(r"function\s+(\w+)", function_line)
         if js_match:
             return js_match.group(1)
-        assignment_match = re.search(r"([a-zA-Z_][a-zA-Z0-9_]{0,99})\s{0,20}[:=]", function_line)
+        assignment_match = re.search(r"([a-zA-Z_]\w{0,99})\s{0,20}[:=]", function_line)
         if assignment_match:
             return assignment_match.group(1)
         method_match = re.search(r"\b(\w+)\s*\([^)]*\)\s*\{?", function_line)
