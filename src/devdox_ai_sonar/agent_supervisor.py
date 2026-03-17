@@ -169,7 +169,6 @@ def build_tools(
         """
         issues: List[IssueUnion] = state["issues"]
         project_path: Path = state["project_path"]
-        tmp_path: Path = state["tmp_path"]
         validation = state["validation"]
         modified_content: str = state.get("modified_content", "")
         file_md: str = state.get("file_md", "")
