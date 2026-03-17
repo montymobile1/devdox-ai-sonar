@@ -50,8 +50,8 @@ class TestSettingsDefaults:
     def test_max_fixes_defaults(self):
         """Max fixes limits should have correct defaults"""
         s = Settings()
-        assert s.MAX_FIXES_LIMIT == 20
-        assert s.DEFAULT_MAX_FIXES == 5
+        assert s.MAX_FIXES_LIMIT == 500
+        assert s.DEFAULT_MAX_FIXES == 500
         assert isinstance(s.MAX_FIXES_LIMIT, int)
         assert isinstance(s.DEFAULT_MAX_FIXES, int)
 
@@ -235,7 +235,7 @@ class TestGlobalSettingsInstance:
         """Global settings should have default values"""
         from devdox_ai_sonar.config import settings
         assert settings.VERSION == "0.0.6"
-        assert settings.MAX_FIXES_LIMIT == 20
+        assert settings.MAX_FIXES_LIMIT == 500
 
     def test_settings_is_importable(self):
         """Should be able to import settings"""
