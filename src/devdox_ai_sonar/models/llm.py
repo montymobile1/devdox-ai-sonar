@@ -2,10 +2,13 @@ from enum import Enum
 from typing import Optional, List
 from dataclasses import dataclass
 from pydantic import BaseModel
-from google import genai
-import openai
-from openai import OpenAI
-from together import Together
+# from google import genai
+# import openai
+# from openai import OpenAI
+from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_together import ChatTogether
+# from together import Together
 
 API_KEY_EMPTY = "API key cannot be empty"
 NO_MODELS_FOUND = "No models found for this API key"
@@ -54,8 +57,9 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-            client = OpenAI(api_key=api_key)
-            models = client.models.list().data
+            # ChatOpenAI wraps openai.OpenAI; .client exposes the underlying SDK client.
+            wrapper = ChatOpenAI(api_key=api_key, model="gpt-4o")
+            models = wrapper.client.models.list().data
             model_list = [model.id for model in models]
 
             if not model_list:
@@ -63,20 +67,13 @@ class ProviderValidator:
 
             return ProviderValidationResult.success_result(model_list)
 
-        except openai.AuthenticationError:
-            return ProviderValidationResult.failure_result(
-                "Invalid API key - authentication failed"
-            )
-        except openai.APIError as e:
-            return ProviderValidationResult.failure_result(f"API error: {str(e)}")
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "OpenAI package not installed"
-            )
         except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Unexpected error: {str(e)}"
-            )
+            error_msg = str(e).lower()
+            if "authentication" in error_msg or "api key" in error_msg or "401" in error_msg:
+                return ProviderValidationResult.failure_result(
+                    "Invalid API key - authentication failed"
+                )
+            return ProviderValidationResult.failure_result(f"Unexpected error: {str(e)}")
 
     @staticmethod
     def validate_gemini(api_key: str) -> ProviderValidationResult:
@@ -85,22 +82,23 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-            client = genai.Client(api_key=api_key)
-            models = client.models.list()
+            # ChatGoogleGenerativeAI wraps google.genai.Client;
+            # .client exposes the underlying SDK client for model listing.
+            wrapper = ChatGoogleGenerativeAI(
+                model="gemini-1.5-flash", google_api_key=api_key
+            )
+            models = wrapper.client.models.list()
             model_list = [
                 model.name.replace("models/", "")
                 for model in models
                 if model.name is not None
             ]
+
             if not model_list:
                 return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
 
             return ProviderValidationResult.success_result(model_list)
 
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "Google GenAI package not installed"
-            )
         except Exception as e:
             return ProviderValidationResult.failure_result(
                 f"Validation error: {str(e)}"
@@ -113,8 +111,12 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-            client = Together(api_key=api_key)
-            models = client.models.list()
+            # ChatTogether wraps together.Together;
+            # .client exposes the underlying SDK client for model listing.
+            wrapper = ChatTogether(
+                model="meta-llama/Llama-3-70b-chat-hf", together_api_key=api_key
+            )
+            models = wrapper.client.models.list()
             model_list = [model.id for model in models]
 
             if not model_list:
@@ -122,10 +124,6 @@ class ProviderValidator:
 
             return ProviderValidationResult.success_result(model_list)
 
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "Together package not installed"
-            )
         except Exception as e:
             return ProviderValidationResult.failure_result(
                 f"Validation error: {str(e)}"
@@ -138,11 +136,18 @@ class ProviderValidator:
             return ProviderValidationResult.failure_result(API_KEY_EMPTY)
 
         try:
-            client = OpenAI(
+            # OpenRouter is OpenAI-compatible — use ChatOpenAI with base_url override.
+            # .client exposes the underlying openai.OpenAI SDK client.
+            wrapper = ChatOpenAI(
                 api_key=api_key,
+                model="anthropic/claude-sonnet-4",
                 base_url="https://openrouter.ai/api/v1",
+                default_headers={
+                    "HTTP-Referer": "https://devdox.ai",
+                    "X-Title": "DevDox AI Sonar",
+                },
             )
-            models = client.models.list().data
+            models = wrapper.client.models.list().data
             model_list = [model.id for model in models]
 
             if not model_list:
@@ -150,16 +155,13 @@ class ProviderValidator:
 
             return ProviderValidationResult.success_result(model_list)
 
-        except openai.AuthenticationError:
-            return ProviderValidationResult.failure_result(
-                "Invalid API key - authentication failed"
-            )
-        except openai.APIError as e:
-            return ProviderValidationResult.failure_result(f"API error: {str(e)}")
         except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Unexpected error: {str(e)}"
-            )
+            error_msg = str(e).lower()
+            if "authentication" in error_msg or "api key" in error_msg or "401" in error_msg:
+                return ProviderValidationResult.failure_result(
+                    "Invalid API key - authentication failed"
+                )
+            return ProviderValidationResult.failure_result(f"Unexpected error: {str(e)}")
 
     @classmethod
     def validate(cls, provider: ProviderType, api_key: str) -> ProviderValidationResult:

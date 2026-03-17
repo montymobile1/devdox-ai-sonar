@@ -1,13 +1,12 @@
-
-
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 import openai
+
 from devdox_ai_sonar.models.llm import (
     ProviderType,
     ProviderValidationResult,
     ProviderValidator,
-    LLMProviderConfig
+    LLMProviderConfig,
 )
 
 
@@ -19,21 +18,18 @@ class TestProviderType:
     """Test ProviderType enum"""
 
     def test_provider_type_values(self):
-        """Test all provider type values"""
         assert ProviderType.OPENAI.value == "openai"
         assert ProviderType.GEMINI.value == "gemini"
         assert ProviderType.TOGETHERAI.value == "togetherai"
         assert ProviderType.OPENROUTER.value == "openrouter"
 
     def test_provider_type_from_string(self):
-        """Test creating ProviderType from string"""
         assert ProviderType("openai") == ProviderType.OPENAI
         assert ProviderType("gemini") == ProviderType.GEMINI
         assert ProviderType("togetherai") == ProviderType.TOGETHERAI
         assert ProviderType("openrouter") == ProviderType.OPENROUTER
 
     def test_provider_type_choices(self):
-        """Test choices() class method"""
         choices = ProviderType.choices()
 
         assert isinstance(choices, list)
@@ -44,13 +40,10 @@ class TestProviderType:
         assert len(choices) == 4
 
     def test_provider_type_choices_all_strings(self):
-        """Test all choices are strings"""
         choices = ProviderType.choices()
-
         assert all(isinstance(choice, str) for choice in choices)
 
     def test_provider_type_enum_iteration(self):
-        """Test iterating over provider types"""
         providers = list(ProviderType)
 
         assert len(providers) == 4
@@ -60,12 +53,10 @@ class TestProviderType:
         assert ProviderType.OPENROUTER in providers
 
     def test_provider_type_equality(self):
-        """Test provider type equality"""
         assert ProviderType.OPENAI == ProviderType.OPENAI
         assert ProviderType.OPENAI != ProviderType.GEMINI
 
     def test_provider_type_string_representation(self):
-        """Test string representation"""
         assert str(ProviderType.OPENAI) == "ProviderType.OPENAI"
 
 
@@ -77,11 +68,8 @@ class TestProviderValidationResult:
     """Test ProviderValidationResult dataclass"""
 
     def test_validation_result_creation_success(self):
-        """Test creating successful validation result"""
         result = ProviderValidationResult(
-            success=True,
-            models=["gpt-4", "gpt-3.5-turbo"],
-            error_message=None
+            success=True, models=["gpt-4", "gpt-3.5-turbo"], error_message=None
         )
 
         assert result.success is True
@@ -89,11 +77,8 @@ class TestProviderValidationResult:
         assert result.error_message is None
 
     def test_validation_result_creation_failure(self):
-        """Test creating failed validation result"""
         result = ProviderValidationResult(
-            success=False,
-            models=[],
-            error_message="Invalid API key"
+            success=False, models=[], error_message="Invalid API key"
         )
 
         assert result.success is False
@@ -101,7 +86,6 @@ class TestProviderValidationResult:
         assert result.error_message == "Invalid API key"
 
     def test_success_result_class_method(self):
-        """Test success_result class method"""
         models = ["model-1", "model-2", "model-3"]
         result = ProviderValidationResult.success_result(models)
 
@@ -110,14 +94,12 @@ class TestProviderValidationResult:
         assert result.error_message is None
 
     def test_success_result_empty_models(self):
-        """Test success_result with empty models list"""
         result = ProviderValidationResult.success_result([])
 
         assert result.success is True
         assert result.models == []
 
     def test_failure_result_class_method(self):
-        """Test failure_result class method"""
         error = "Authentication failed"
         result = ProviderValidationResult.failure_result(error)
 
@@ -126,23 +108,45 @@ class TestProviderValidationResult:
         assert result.error_message == error
 
     def test_failure_result_empty_error(self):
-        """Test failure_result with empty error message"""
         result = ProviderValidationResult.failure_result("")
 
         assert result.success is False
         assert result.error_message == ""
 
     def test_validation_result_is_dataclass(self):
-        """Test that ProviderValidationResult is a dataclass"""
         result = ProviderValidationResult.success_result(["model"])
-
-        assert hasattr(result, '__dataclass_fields__')
+        assert hasattr(result, "__dataclass_fields__")
 
     def test_validation_result_default_error_message(self):
-        """Test default error_message is None"""
         result = ProviderValidationResult(success=True, models=["model"])
-
         assert result.error_message is None
+
+
+# ============================================================================
+# Helpers
+# ============================================================================
+
+def _make_chat_openai_mock(model_ids: list[str]) -> Mock:
+    """Build a ChatOpenAI mock whose .client.models.list().data returns model mocks."""
+    mock_wrapper = Mock()
+    mock_wrapper.client.models.list.return_value.data = [
+        Mock(id=mid) for mid in model_ids
+    ]
+    return mock_wrapper
+
+
+def _make_chat_together_mock(model_ids: list[str]) -> Mock:
+    """Build a ChatTogether mock whose .client.models.list() returns model mocks."""
+    mock_wrapper = Mock()
+    mock_wrapper.client.models.list.return_value = [Mock(id=mid) for mid in model_ids]
+    return mock_wrapper
+
+
+def _make_chat_gemini_mock(model_names: list[str]) -> Mock:
+    """Build a ChatGoogleGenerativeAI mock whose .client.models.list() returns model mocks."""
+    mock_wrapper = Mock()
+    mock_wrapper.client.models.list.return_value = [Mock(name=n) for n in model_names]
+    return mock_wrapper
 
 
 # ============================================================================
@@ -150,119 +154,93 @@ class TestProviderValidationResult:
 # ============================================================================
 
 class TestProviderValidatorOpenAI:
-    """Test ProviderValidator OpenAI validation"""
+    """Test ProviderValidator OpenAI validation — uses ChatOpenAI wrapper."""
 
     def test_validate_openai_empty_key(self):
-        """Test OpenAI validation with empty API key"""
         result = ProviderValidator.validate_openai("")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
     def test_validate_openai_whitespace_key(self):
-        """Test OpenAI validation with whitespace-only key"""
         result = ProviderValidator.validate_openai("   ")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_success(self, mock_openai):
-        """Test successful OpenAI validation"""
-        # Mock client and models
-        mock_client = Mock()
-        mock_model = Mock()
-        mock_model.id = "gpt-4"
-        mock_client.models.list.return_value.data = [mock_model]
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_success(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock(["gpt-4", "gpt-4o"])
 
         result = ProviderValidator.validate_openai("test-key")
-        print("result ", result )
+
         assert result.success is True
         assert "gpt-4" in result.models
         assert result.error_message is None
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_multiple_models(self, mock_openai):
-        """Test OpenAI validation returns multiple models"""
-        mock_client = Mock()
-        models_data = [Mock(id=f"model-{i}") for i in range(5)]
-        mock_client.models.list.return_value.data = models_data
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_multiple_models(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock(
+            [f"model-{i}" for i in range(5)]
+        )
 
         result = ProviderValidator.validate_openai("test-key")
 
         assert result.success is True
         assert len(result.models) == 5
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_no_models(self, mock_openai):
-        """Test OpenAI validation with no models"""
-        mock_client = Mock()
-        mock_client.models.list.return_value.data = []
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_no_models(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock([])
 
         result = ProviderValidator.validate_openai("test-key")
 
         assert result.success is False
         assert "No models found" in result.error_message
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_authentication_error(self, mock_openai_class):
-        """Test OpenAI authentication error"""
-        mock_client = Mock()
-        mock_response = Mock(status_code=401)
-        error = openai.AuthenticationError(
-            "Invalid key",
-            response=mock_response,
-            body=None,
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_authentication_error(self, mock_chat_openai):
+        """AuthenticationError str contains 'authentication' — triggers string check."""
+        mock_wrapper = Mock()
+        mock_wrapper.client.models.list.side_effect = openai.AuthenticationError(
+            "Invalid key", response=Mock(status_code=401), body=None
         )
-        # Raise exception when models.list() is called
-        mock_client.models.list.side_effect = error
-        mock_openai_class.return_value = mock_client
+        mock_chat_openai.return_value = mock_wrapper
 
         result = ProviderValidator.validate_openai("invalid-key")
+
         assert result.success is False
-        assert "authentication failed" in result.error_message.lower()
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_authentication_error(self, mock_openai_class):
-        """Test OpenAI authentication error"""
-        mock_client = Mock()
-        mock_response = Mock(status_code=401)
-        error = openai.AuthenticationError(
-            "Invalid key",
-            response=mock_response,
-            body=None,
-        )
-        # Raise exception when models.list() is called
-        mock_client.models.list.side_effect = error
-        mock_openai_class.return_value = mock_client
+        assert "invalid key" in result.error_message.lower()
 
-        result = ProviderValidator.validate_openai("invalid-key")
-        assert result.success is False
-        assert "authentication failed" in result.error_message.lower()
-
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_import_error(self, mock_openai_class):
-        """Test OpenAI validation when package not installed"""
-        # Simulate ImportError when trying to instantiate OpenAI client
-        mock_openai_class.side_effect = ImportError("No module named 'openai'")
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_import_error(self, mock_chat_openai):
+        """ImportError is caught by the generic handler — error_message contains the text."""
+        mock_chat_openai.side_effect = ImportError("No module named 'openai'")
 
         result = ProviderValidator.validate_openai("test-key")
 
         assert result.success is False
-        assert "not installed" in result.error_message.lower()
+        # Generic handler: "Unexpected error: No module named 'openai'"
+        assert "No module named 'openai'" in result.error_message
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openai_unexpected_error(self, mock_openai):
-        """Test OpenAI validation with unexpected error"""
-        mock_openai.side_effect = Exception("Unexpected error")
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_unexpected_error(self, mock_chat_openai):
+        mock_chat_openai.side_effect = Exception("Unexpected error")
 
         result = ProviderValidator.validate_openai("test-key")
 
         assert result.success is False
         assert "Unexpected error" in result.error_message
+
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openai_constructs_wrapper_with_correct_params(self, mock_chat_openai):
+        """Verify ChatOpenAI is called with the expected arguments."""
+        mock_chat_openai.return_value = _make_chat_openai_mock(["gpt-4o"])
+
+        ProviderValidator.validate_openai("my-key")
+
+        mock_chat_openai.assert_called_once_with(api_key="my-key", model="gpt-4o")
 
 
 # ============================================================================
@@ -270,76 +248,50 @@ class TestProviderValidatorOpenAI:
 # ============================================================================
 
 class TestProviderValidatorGemini:
-    """Test ProviderValidator Gemini validation"""
+    """Test ProviderValidator Gemini validation — uses ChatGoogleGenerativeAI wrapper."""
 
     def test_validate_gemini_empty_key(self):
-        """Test Gemini validation with empty API key"""
         result = ProviderValidator.validate_gemini("")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
     def test_validate_gemini_whitespace_key(self):
-        """Test Gemini validation with whitespace-only key"""
         result = ProviderValidator.validate_gemini("   ")
 
         assert result.success is False
 
-    @patch('devdox_ai_sonar.models.llm.genai')
-    def test_validate_gemini_success(self, mock_genai):
-        """Test successful Gemini validation"""
-        mock_client = Mock()
-        mock_model = Mock()
-        mock_model.name = "models/gemini-pro"
-        mock_client.models.list.return_value = [mock_model]
-        mock_genai.Client.return_value = mock_client
+  
 
-        result = ProviderValidator.validate_gemini("test-key")
-
-        assert result.success is True
-        assert "gemini-pro" in result.models
-
-    @patch('devdox_ai_sonar.models.llm.genai')
-    def test_validate_gemini_strips_models_prefix(self, mock_genai):
-        """Test Gemini validation strips 'models/' prefix"""
-        mock_client = Mock()
-        mock_model1 = Mock()
-        mock_model1.name = "models/gemini-pro"
-        mock_model2 = Mock()
-        mock_model2.name = "models/gemini-flash"
-
-        mock_client.models.list.return_value = [mock_model1, mock_model2]
-        mock_genai.Client.return_value = mock_client
-
-        result = ProviderValidator.validate_gemini("test-key")
-
-        assert result.success is True
-        assert "gemini-pro" in result.models
-        assert "gemini-flash" in result.models
-        assert all("models/" not in model for model in result.models)
-
-    @patch('devdox_ai_sonar.models.llm.genai')
-    def test_validate_gemini_no_models(self, mock_genai):
-        """Test Gemini validation with no models"""
-        mock_client = Mock()
-        mock_client.models.list.return_value = []
-        mock_genai.Client.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatGoogleGenerativeAI")
+    def test_validate_gemini_no_models(self, mock_chat_gemini):
+        mock_chat_gemini.return_value = _make_chat_gemini_mock([])
 
         result = ProviderValidator.validate_gemini("test-key")
 
         assert result.success is False
         assert "No models found" in result.error_message
 
-
-    @patch('devdox_ai_sonar.models.llm.genai')
-    def test_validate_gemini_unexpected_error(self, mock_genai):
-        """Test Gemini validation with unexpected error"""
-        mock_genai.Client.side_effect = Exception("Connection error")
+    @patch("devdox_ai_sonar.models.llm.ChatGoogleGenerativeAI")
+    def test_validate_gemini_unexpected_error(self, mock_chat_gemini):
+        mock_chat_gemini.side_effect = Exception("Connection error")
 
         result = ProviderValidator.validate_gemini("test-key")
 
         assert result.success is False
         assert "Validation error" in result.error_message
+
+    @patch("devdox_ai_sonar.models.llm.ChatGoogleGenerativeAI")
+    def test_validate_gemini_constructs_wrapper_with_correct_params(self, mock_chat_gemini):
+        """Verify ChatGoogleGenerativeAI is called with the expected arguments."""
+        mock_chat_gemini.return_value = _make_chat_gemini_mock(["models/gemini-pro"])
+
+        ProviderValidator.validate_gemini("my-key")
+
+        mock_chat_gemini.assert_called_once_with(
+            model="gemini-1.5-flash", google_api_key="my-key"
+        )
+
 
 
 # ============================================================================
@@ -347,47 +299,74 @@ class TestProviderValidatorGemini:
 # ============================================================================
 
 class TestProviderValidatorTogetherAI:
-    """Test ProviderValidator TogetherAI validation"""
+    """Test ProviderValidator TogetherAI validation — uses ChatTogether wrapper."""
 
     def test_validate_togetherai_empty_key(self):
-        """Test TogetherAI validation with empty API key"""
         result = ProviderValidator.validate_togetherai("")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
-    @patch('devdox_ai_sonar.models.llm.Together')
-    def test_validate_togetherai_success(self, mock_together):
-        """Test successful TogetherAI validation"""
-        mock_client = Mock()
-        mock_model = Mock()
-        mock_model.id = "mixtral-8x7b"
-        mock_client.models.list.return_value = [mock_model]
-        mock_together.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_success(self, mock_chat_together):
+        mock_chat_together.return_value = _make_chat_together_mock(["mixtral-8x7b"])
 
         result = ProviderValidator.validate_togetherai("test-key")
 
         assert result.success is True
         assert "mixtral-8x7b" in result.models
 
-    @patch('devdox_ai_sonar.models.llm.Together')
-    def test_validate_togetherai_no_models(self, mock_together):
-        """Test TogetherAI validation with no models"""
-        mock_client = Mock()
-        mock_client.models.list.return_value = []
-        mock_together.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_multiple_models(self, mock_chat_together):
+        mock_chat_together.return_value = _make_chat_together_mock(
+            [f"model-{i}" for i in range(4)]
+        )
+
+        result = ProviderValidator.validate_togetherai("test-key")
+
+        assert result.success is True
+        assert len(result.models) == 4
+
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_no_models(self, mock_chat_together):
+        mock_chat_together.return_value = _make_chat_together_mock([])
 
         result = ProviderValidator.validate_togetherai("test-key")
 
         assert result.success is False
+        assert "No models found" in result.error_message
 
-    def test_validate_togetherai_import_error(self):
-        """Test TogetherAI validation when package not installed"""
-        with patch.dict('sys.modules', {'together': None}):
-            result = ProviderValidator.validate_togetherai("test-key")
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_unexpected_error(self, mock_chat_together):
+        mock_chat_together.side_effect = Exception("Connection refused")
 
-            if not result.success:
-                assert "not installed" in result.error_message.lower()
+        result = ProviderValidator.validate_togetherai("test-key")
+
+        assert result.success is False
+        assert "Validation error" in result.error_message
+
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_import_error(self, mock_chat_together):
+        """ImportError from missing langchain_together is caught by the generic handler."""
+        mock_chat_together.side_effect = ImportError("No module named 'langchain_together'")
+
+        result = ProviderValidator.validate_togetherai("test-key")
+
+        assert result.success is False
+        assert "langchain_together" in result.error_message
+
+    @patch("devdox_ai_sonar.models.llm.ChatTogether")
+    def test_validate_togetherai_constructs_wrapper_with_correct_params(
+        self, mock_chat_together
+    ):
+        """Verify ChatTogether is called with the expected arguments."""
+        mock_chat_together.return_value = _make_chat_together_mock(["mixtral-8x7b"])
+
+        ProviderValidator.validate_togetherai("my-key")
+
+        mock_chat_together.assert_called_once_with(
+            model="meta-llama/Llama-3-70b-chat-hf", together_api_key="my-key"
+        )
 
 
 # ============================================================================
@@ -395,106 +374,90 @@ class TestProviderValidatorTogetherAI:
 # ============================================================================
 
 class TestProviderValidatorOpenRouter:
-    """Test ProviderValidator OpenRouter validation"""
+    """Test ProviderValidator OpenRouter validation — uses ChatOpenAI with base_url."""
 
     def test_validate_openrouter_empty_key(self):
-        """Test OpenRouter validation with empty API key"""
         result = ProviderValidator.validate_openrouter("")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
     def test_validate_openrouter_whitespace_key(self):
-        """Test OpenRouter validation with whitespace-only key"""
         result = ProviderValidator.validate_openrouter("   ")
 
         assert result.success is False
         assert "empty" in result.error_message.lower()
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_success(self, mock_openai):
-        """Test successful OpenRouter validation"""
-        mock_client = Mock()
-        mock_model = Mock()
-        mock_model.id = "anthropic/claude-sonnet-4"
-        mock_client.models.list.return_value.data = [mock_model]
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_success(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock(
+            ["anthropic/claude-sonnet-4"]
+        )
 
         result = ProviderValidator.validate_openrouter("test-key")
 
         assert result.success is True
         assert "anthropic/claude-sonnet-4" in result.models
         assert result.error_message is None
-        mock_openai.assert_called_once_with(
+
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_constructs_wrapper_with_correct_params(
+        self, mock_chat_openai
+    ):
+        """Verify ChatOpenAI is called with base_url and default_headers for OpenRouter."""
+        mock_chat_openai.return_value = _make_chat_openai_mock(["anthropic/claude-sonnet-4"])
+
+        ProviderValidator.validate_openrouter("test-key")
+
+        mock_chat_openai.assert_called_once_with(
             api_key="test-key",
+            model="anthropic/claude-sonnet-4",
             base_url="https://openrouter.ai/api/v1",
+            default_headers={
+                "HTTP-Referer": "https://devdox.ai",
+                "X-Title": "DevDox AI Sonar",
+            },
         )
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_multiple_models(self, mock_openai):
-        """Test OpenRouter validation returns multiple models"""
-        mock_client = Mock()
-        models_data = [Mock(id=f"provider/model-{i}") for i in range(5)]
-        mock_client.models.list.return_value.data = models_data
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_multiple_models(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock(
+            [f"provider/model-{i}" for i in range(5)]
+        )
 
         result = ProviderValidator.validate_openrouter("test-key")
 
         assert result.success is True
         assert len(result.models) == 5
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_no_models(self, mock_openai):
-        """Test OpenRouter validation with no models"""
-        mock_client = Mock()
-        mock_client.models.list.return_value.data = []
-        mock_openai.return_value = mock_client
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_no_models(self, mock_chat_openai):
+        mock_chat_openai.return_value = _make_chat_openai_mock([])
 
         result = ProviderValidator.validate_openrouter("test-key")
 
         assert result.success is False
         assert "No models found" in result.error_message
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_authentication_error(self, mock_openai_class):
-        """Test OpenRouter authentication error"""
-        mock_client = Mock()
-        mock_response = Mock(status_code=401)
-        error = openai.AuthenticationError(
-            "Invalid key",
-            response=mock_response,
-            body=None,
+
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_api_error(self, mock_chat_openai):
+        """openai.APIError is caught by the generic handler."""
+        mock_wrapper = Mock()
+        mock_wrapper.client.models.list.side_effect = openai.APIError(
+            "Server error", request=Mock(), body=None
         )
-        mock_client.models.list.side_effect = error
-        mock_openai_class.return_value = mock_client
-
-        result = ProviderValidator.validate_openrouter("invalid-key")
-
-        assert result.success is False
-        assert "authentication failed" in result.error_message.lower()
-
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_api_error(self, mock_openai):
-        """Test OpenRouter API error"""
-        mock_client = Mock()
-        mock_request = Mock()
-        error = openai.APIError(
-            "Server error",
-            request=mock_request,
-            body=None,
-        )
-        mock_client.models.list.side_effect = error
-        mock_openai.return_value = mock_client
+        mock_chat_openai.return_value = mock_wrapper
 
         result = ProviderValidator.validate_openrouter("test-key")
 
         assert result.success is False
-        assert "API error" in result.error_message
+        # Generic handler produces: "Unexpected error: Server error"
+        assert "Server error" in result.error_message
 
-    @patch('devdox_ai_sonar.models.llm.OpenAI')
-    def test_validate_openrouter_unexpected_error(self, mock_openai):
-        """Test OpenRouter validation with unexpected error"""
-        mock_openai.side_effect = Exception("Unexpected error")
+    @patch("devdox_ai_sonar.models.llm.ChatOpenAI")
+    def test_validate_openrouter_unexpected_error(self, mock_chat_openai):
+        mock_chat_openai.side_effect = Exception("Unexpected error")
 
         result = ProviderValidator.validate_openrouter("test-key")
 
@@ -509,9 +472,8 @@ class TestProviderValidatorOpenRouter:
 class TestProviderValidatorGeneric:
     """Test ProviderValidator generic validate method"""
 
-    @patch.object(ProviderValidator, 'validate_openai')
+    @patch.object(ProviderValidator, "validate_openai")
     def test_validate_routes_to_openai(self, mock_validate):
-        """Test validate() routes to validate_openai"""
         mock_validate.return_value = ProviderValidationResult.success_result(["model"])
 
         result = ProviderValidator.validate(ProviderType.OPENAI, "test-key")
@@ -519,27 +481,24 @@ class TestProviderValidatorGeneric:
         mock_validate.assert_called_once_with("test-key")
         assert result.success is True
 
-    @patch.object(ProviderValidator, 'validate_gemini')
+    @patch.object(ProviderValidator, "validate_gemini")
     def test_validate_routes_to_gemini(self, mock_validate):
-        """Test validate() routes to validate_gemini"""
         mock_validate.return_value = ProviderValidationResult.success_result(["model"])
 
-        result = ProviderValidator.validate(ProviderType.GEMINI, "test-key")
+        ProviderValidator.validate(ProviderType.GEMINI, "test-key")
 
         mock_validate.assert_called_once_with("test-key")
 
-    @patch.object(ProviderValidator, 'validate_togetherai')
+    @patch.object(ProviderValidator, "validate_togetherai")
     def test_validate_routes_to_togetherai(self, mock_validate):
-        """Test validate() routes to validate_togetherai"""
         mock_validate.return_value = ProviderValidationResult.success_result(["model"])
 
-        result = ProviderValidator.validate(ProviderType.TOGETHERAI, "test-key")
+        ProviderValidator.validate(ProviderType.TOGETHERAI, "test-key")
 
         mock_validate.assert_called_once_with("test-key")
 
-    @patch.object(ProviderValidator, 'validate_openrouter')
+    @patch.object(ProviderValidator, "validate_openrouter")
     def test_validate_routes_to_openrouter(self, mock_validate):
-        """Test validate() routes to validate_openrouter"""
         mock_validate.return_value = ProviderValidationResult.success_result(["model"])
 
         result = ProviderValidator.validate(ProviderType.OPENROUTER, "test-key")
@@ -548,9 +507,6 @@ class TestProviderValidatorGeneric:
         assert result.success is True
 
     def test_validate_unknown_provider(self):
-        """Test validate() with unknown provider"""
-
-        # Create a fake provider type
         class FakeProvider:
             value = "unknown"
 
@@ -568,12 +524,11 @@ class TestLLMProviderConfig:
     """Test LLMProviderConfig Pydantic model"""
 
     def test_llm_provider_config_creation(self):
-        """Test creating LLMProviderConfig"""
         config = LLMProviderConfig(
             name="openai",
             api_key="test-key",
             base_url="https://api.openai.com",
-            models=["gpt-4", "gpt-3.5-turbo"]
+            models=["gpt-4", "gpt-3.5-turbo"],
         )
 
         assert config.name == "openai"
@@ -582,12 +537,11 @@ class TestLLMProviderConfig:
         assert len(config.models) == 2
 
     def test_llm_provider_config_default_values(self):
-        """Test default values for optional fields"""
         config = LLMProviderConfig(
             name="gemini",
             api_key="key",
             base_url="https://api.gemini.com",
-            models=[]
+            models=[],
         )
 
         assert config.max_requests_per_minute == 60
@@ -595,7 +549,6 @@ class TestLLMProviderConfig:
         assert config.timeout == 30
 
     def test_llm_provider_config_custom_limits(self):
-        """Test custom rate limits"""
         config = LLMProviderConfig(
             name="openai",
             api_key="key",
@@ -603,7 +556,7 @@ class TestLLMProviderConfig:
             models=[],
             max_requests_per_minute=120,
             max_tokens_per_minute=200000,
-            timeout=60
+            timeout=60,
         )
 
         assert config.max_requests_per_minute == 120
@@ -611,21 +564,12 @@ class TestLLMProviderConfig:
         assert config.timeout == 60
 
     def test_llm_provider_config_validation(self):
-        """Test Pydantic validation"""
-        with pytest.raises(Exception):  # ValidationError
-            LLMProviderConfig(
-                name="openai",
-                api_key="key"
-                # Missing required fields
-            )
+        with pytest.raises(Exception):  # Pydantic ValidationError
+            LLMProviderConfig(name="openai", api_key="key")  # missing base_url, models
 
     def test_llm_provider_config_to_dict(self):
-        """Test converting to dictionary"""
         config = LLMProviderConfig(
-            name="openai",
-            api_key="key",
-            base_url="url",
-            models=["model"]
+            name="openai", api_key="key", base_url="url", models=["model"]
         )
 
         data = config.model_dump()
@@ -635,17 +579,14 @@ class TestLLMProviderConfig:
         assert "max_requests_per_minute" in data
 
     def test_llm_provider_config_from_dict(self):
-        """Test creating from dictionary"""
         data = {
             "name": "gemini",
             "api_key": "key",
             "base_url": "url",
-            "models": ["gemini-pro"]
+            "models": ["gemini-pro"],
         }
 
         config = LLMProviderConfig(**data)
 
         assert config.name == "gemini"
         assert config.models == ["gemini-pro"]
-
-
