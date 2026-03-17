@@ -1448,12 +1448,10 @@ class LLMFixer:
         test_env_file = test_path / ".env"
         if env_file.exists():
             dotenv_vars = self._load_dotenv_file(env_file)
-            print("dotenv_vars", dotenv_vars)
             env.update(dotenv_vars)
             logger.debug("Loaded %d vars from %s", len(dotenv_vars), env_file)
         elif test_env_file.exists():
             dotenv_vars = self._load_dotenv_file(test_env_file)
-            print("dotenv_vars", dotenv_vars)
             env.update(dotenv_vars)
             logger.debug("Loaded %d vars from %s", len(dotenv_vars), test_env_file)
         # Layer 3: venv activation (overrides PATH / interpreter resolution)

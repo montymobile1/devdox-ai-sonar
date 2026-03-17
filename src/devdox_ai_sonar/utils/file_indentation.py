@@ -583,7 +583,6 @@ def apply_complex_fix(
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
     modified_blocks = fix.fixed_code_blocks
-
     for block in modified_blocks:
         lines, end_line = apply_single_code_block(lines, block)
         if end_line == 0:
@@ -593,6 +592,7 @@ def apply_complex_fix(
 
     # Step 2: Apply helper code if present
     if fix.helper_code:
+
         lines = apply_helper_code(lines, line_range, fix)
 
     if fix.import_block_code:
@@ -705,10 +705,15 @@ def _apply_single_pattern(text: str, pattern: SearchReplace) -> str:
         count = pattern.count if pattern.count else 0
         return re.sub(pattern.search, pattern.replace, text, count=count)
 
-    if pattern.count is not None:
-        return text.replace(pattern.search, pattern.replace, pattern.count)
+    # For plain string replacement, decode escape sequences so that
+    # patterns like Header\\("ar"\\) match the literal Header("ar")
+    search = pattern.search.encode().decode("unicode_escape")
+    replace = pattern.replace.encode().decode("unicode_escape")
 
-    return text.replace(pattern.search, pattern.replace)
+    if pattern.count is not None:
+        return text.replace(search, replace, pattern.count)
+
+    return text.replace(search, replace)
 
 
 def _apply_all_patterns(text: str, patterns: List[SearchReplace]) -> str:
@@ -828,7 +833,6 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     # Normalize and indent the fixed code
     fixed_code = normalize_code(block.context)
-
     new_lines = fixed_code.split("\n")
 
     new_lines = [line + "\n" for line in new_lines]
@@ -908,7 +912,6 @@ def _apply_replace_action(
         return
 
     line_idx = change.line - 1
-
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
     else:
@@ -955,7 +958,6 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         if line_idx < 0 or line_idx >= len(lines):
             logger.warning("Invalid line number %d (file has %d lines)", change.line, len(lines))
             continue
-
         if change.action == ChangeAction.REPLACE:
             _apply_replace_action(lines, change, block.start_line, block.end_line)
         elif change.action == ChangeAction.INSERT:
