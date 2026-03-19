@@ -1490,7 +1490,7 @@ class CognitiveComplexityHandler(RuleHandler):
             return None
 
         try:
-            fix_response = llm_caller._call_llm_list(
+            fix_response = await llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,
@@ -1532,7 +1532,7 @@ class DefaultRuleHandler(RuleHandler):
             return None
 
         try:
-            fix_response = llm_caller._call_llm_list(
+            fix_response = await llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,

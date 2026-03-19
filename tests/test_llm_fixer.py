@@ -672,7 +672,7 @@ class TestLLMAPICalls:
         return LLMFixer(provider="gemini", api_key="test-key", model="gemini-pro")
 
     @pytest.mark.skip(reason="Need update")
-    def test_call_llm_openai_success(self, fixer_openai):
+    async def test_call_llm_openai_success(self, fixer_openai):
         """Test successful OpenAI API call"""
         mock_response = Mock()
         mock_response.choices = [
@@ -699,7 +699,7 @@ class TestLLMAPICalls:
         )
         context_dict = {"context": "original code", "start_line": 1, "end_line": 5}
 
-        result = fixer_openai._call_llm_list(
+        result = await fixer_openai._call_llm_list(
             [issue],
             context_dict,
             ".py",
@@ -712,7 +712,7 @@ class TestLLMAPICalls:
         assert result["confidence"] == 0.95
 
     @pytest.mark.skip(reason="Need update")
-    def test_call_llm_openai_api_error(self, fixer_openai):
+    async def test_call_llm_openai_api_error(self, fixer_openai):
         """Test OpenAI API error handling"""
         fixer_openai.client.chat.completions.create = Mock(side_effect=Exception("API Error"))
 
@@ -734,7 +734,7 @@ class TestLLMAPICalls:
                         "problem_line_content": [],
                         }
 
-        result = fixer_openai._call_llm_list(
+        result = await fixer_openai._call_llm_list(
             [issue],
             context_dict['context_dict'],
             ".py",
@@ -745,7 +745,7 @@ class TestLLMAPICalls:
         assert result is None
 
     @pytest.mark.skip(reason="Need update")
-    def test_call_llm_gemini_success(self, fixer_gemini):
+    async def test_call_llm_gemini_success(self, fixer_gemini):
         """Test successful Gemini API call"""
 
         # Create mock response with proper text attribute
@@ -780,7 +780,7 @@ class TestLLMAPICalls:
         context_dict = {"context": "code", "start_line": 1, "end_line": 5}
 
         # Execute
-        result = fixer_gemini._call_llm_list(
+        result = await fixer_gemini._call_llm_list(
             [issue],
             context_dict,
             ".py",

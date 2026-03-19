@@ -2,7 +2,6 @@
 
 import os
 import re
-import sys
 import shutil
 import sys
 import asyncio
@@ -158,7 +157,7 @@ def build_llm(
         )
 
 
-def call_llm_with_graph(
+async def call_llm_with_graph(
     provider: str,
     model: str,
     api_key: str,
@@ -189,7 +188,7 @@ def call_llm_with_graph(
         "attempt": 0,
     }
 
-    final_state = _FIX_GRAPH.invoke(initial_state)
+    final_state = await _get_fix_graph().ainvoke(initial_state)
 
     if final_state["fix_result"] is None:
         logger.error(
@@ -306,8 +305,14 @@ def build_fix_graph():
     graph.add_edge("retry", "fix")
     return graph.compile()
 
+_FIX_GRAPH = None
+def _get_fix_graph():
+    global _FIX_GRAPH
+    if _FIX_GRAPH is None:
+        _FIX_GRAPH = build_fix_graph()
+    return _FIX_GRAPH
 
-_FIX_GRAPH = build_fix_graph()
+
 
 
 class LLMFixer:
@@ -837,7 +842,7 @@ class LLMFixer:
             first_line_idx, last_line_idx, context_lines
         )
 
-    def _call_llm_list(
+    async def _call_llm_list(
         self,
         issues: Union[List[SonarIssue], List[SonarSecurityIssue]],
         context: FixContext,
@@ -870,7 +875,7 @@ class LLMFixer:
         )
         prompt_system = system_template.render()
 
-        return call_llm_with_graph(
+        return await call_llm_with_graph(
             provider=self.provider,
             model=self.model,
             api_key=self.api_key,
