@@ -1490,6 +1490,7 @@ async def _process_and_fix_issues(
             fix_params,
             tmp_path,
             agent_max_retries=2,
+            system_ask=system_ask
         )
 
 
@@ -1517,6 +1518,7 @@ async def _process_files_with_agent(
     fix_params: Dict[str, Any],
     tmp_path: Path,
     agent_max_retries: int = 2,
+    system_ask:bool=True
 ) -> None:
     """
     Process all issues using the LangGraph AgentSupervisor.
@@ -1556,20 +1558,29 @@ async def _process_files_with_agent(
         f"(max retries: {agent_max_retries})...[/bold cyan]\n"
     )
 
-    with show_progress(
-        "AgentSupervisor: generating & validating fixes...", total=None
-    ) as (progress, task):
-        result = await supervisor.run(
-            issues=all_issues,
-            project_path=Path(str(auth_config.project_path)),
-            tmp_path=tmp_path,
-            create_backup=bool(fix_params.get("create_backup", False)),
-            dry_run=bool(fix_params.get("dry_run", False)),
-            file_md=Path(str(auth_config.project_path)) / f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
-        )
-        progress.update(task, completed=1, total=1)
+    file_md = Path(str(auth_config.project_path)) / f"CHANGES_{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.md"
+    for idx, issue in enumerate(all_issues, 1):
+        with show_progress(
+                f"Processing issue {idx}/{len(all_issues)}...", total=1
+        ) as (progress, task):
+            result = await supervisor.run(
+                issues=[issue],
+                project_path=Path(str(auth_config.project_path)),
+                tmp_path=tmp_path,
+                create_backup=bool(fix_params.get("create_backup", False)),
+                dry_run=bool(fix_params.get("dry_run", False)),
+                file_md=file_md,
+            )
+            progress.update(task, completed=1)
 
-    _display_fix_results2(result)
+
+        _display_fix_results2(result)
+
+        issue_details = all_issues[idx]
+        if idx < len(all_issues) and system_ask:
+            if not await smart_confirm(f"Continue to next issue {issue_details.rule} in {issue_details.file}?", default=True):
+                console.print("[yellow]Stopped processing remaining issues[/yellow]")
+                break
 
 
 async def _process_files_with_issues(
