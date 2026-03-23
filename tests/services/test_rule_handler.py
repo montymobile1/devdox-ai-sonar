@@ -16,6 +16,7 @@ from devdox_ai_sonar.services.rule_handler import (
     RuleHandlerRegistry,
     _resolve_effective_values,
     _resolve_relative_path,
+    _count_helper_functions,
     _LiteralCaches,
     _FixAccumulator,
 )
@@ -666,8 +667,29 @@ class TestCanHandle:
 # ============================================================================
 
 
+class TestCountHelperFunctions:
+    """Tests for _count_helper_functions utility."""
+
+    def test_empty_string(self):
+        assert _count_helper_functions("") == 0
+
+    def test_single_helper(self):
+        assert _count_helper_functions("def foo():\n    pass\n") == 1
+
+    def test_multiple_helpers(self):
+        code = "def foo():\n    pass\n\n\ndef bar():\n    pass\n"
+        assert _count_helper_functions(code) == 2
+
+    def test_none_like_empty(self):
+        assert _count_helper_functions("") == 0
+
+    def test_ignores_indented_defs(self):
+        code = "def foo():\n    def inner():\n        pass\n"
+        assert _count_helper_functions(code) == 1
+
+
 class TestCognitiveComplexityHandlerGenerateFixes:
-    """Tests for CognitiveComplexityHandler.generate_fixes (lines 634-650)."""
+    """Tests for CognitiveComplexityHandler.generate_fixes."""
 
     def setup_method(self):
         self.handler = CognitiveComplexityHandler()
@@ -684,10 +706,13 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         )
         assert result is None
 
-    async def test_calls_llm_returns_response(self):
+    async def test_calls_llm_and_rebuilds_response(self):
         mock_llm = Mock()
-        fix_response = _make_fix_response()
-        mock_llm._call_llm_list.return_value = fix_response
+        raw_response = _make_fix_response(
+            PLACEMENT="GLOBAL_TOP",
+            CONFIDENCE=0.80,
+        )
+        mock_llm._call_llm_list.return_value = raw_response
 
         result = await self.handler.generate_fixes(
             self.issues,
@@ -696,8 +721,87 @@ class TestCognitiveComplexityHandlerGenerateFixes:
             Path("/project/src/module.py"),
             llm_caller=mock_llm,
         )
-        assert result == [fix_response]
+        assert result is not None
+        assert len(result) == 1
+        response = result[0]
+        assert response.PLACEMENT == PlacementType.SIBLING
+        assert response.CONFIDENCE == 0.95
         mock_llm._call_llm_list.assert_called_once()
+
+    async def test_forces_full_code_change_type(self):
+        mock_llm = Mock()
+        block = _make_code_block(change_type=ChangeType.DIFF)
+        raw_response = _make_fix_response(FIXED_CODE_BLOCKS=[block])
+        mock_llm._call_llm_list.return_value = raw_response
+
+        result = await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+        )
+        assert result[0].FIXED_CODE_BLOCKS[0].change_type == ChangeType.FULL_CODE
+
+    async def test_forces_function_block_type(self):
+        mock_llm = Mock()
+        block = _make_code_block(block_type=BlockType.MODULE)
+        raw_response = _make_fix_response(FIXED_CODE_BLOCKS=[block])
+        mock_llm._call_llm_list.return_value = raw_response
+
+        result = await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+        )
+        assert result[0].FIXED_CODE_BLOCKS[0].block_type == BlockType.FUNCTION
+
+    async def test_preserves_helper_code(self):
+        mock_llm = Mock()
+        helper = "def _helper():\n    pass\n"
+        raw_response = _make_fix_response(NEW_HELPER_CODE=helper)
+        mock_llm._call_llm_list.return_value = raw_response
+
+        result = await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+        )
+        assert result[0].NEW_HELPER_CODE == helper
+
+    async def test_builds_structured_explanation(self):
+        mock_llm = Mock()
+        raw_response = _make_fix_response()
+        mock_llm._call_llm_list.return_value = raw_response
+
+        result = await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+        )
+        explanation = result[0].EXPLANATION
+        assert "### Issue: python:S3776" in explanation
+        assert "### Fix:" in explanation
+        assert "### Validation:" in explanation
+
+    async def test_returns_none_when_llm_returns_none(self):
+        mock_llm = Mock()
+        mock_llm._call_llm_list.return_value = None
+
+        result = await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+        )
+        assert result is None
 
     async def test_returns_none_on_exception(self):
         mock_llm = Mock()

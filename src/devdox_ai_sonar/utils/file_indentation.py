@@ -308,6 +308,7 @@ def read_file_lines(file_path: Path) -> List[str]:
 
 def write_file_lines(file_path: Path, lines: List[str]) -> None:
     """Write lines to file."""
+    logger.debug("write_file_lines: %s (%d lines)", file_path, len(lines))
     content = "".join(lines)
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(content)
@@ -583,6 +584,12 @@ def apply_complex_fix(
 ) -> List[str]:
     """Apply a complex fix with potential helper code."""
     modified_blocks = fix.fixed_code_blocks
+    logger.debug(
+        "apply_complex_fix: %d block(s), helper_code=%s, import_block=%s",
+        len(modified_blocks),
+        bool(fix.helper_code),
+        bool(fix.import_block_code),
+    )
 
     for block in modified_blocks:
         lines, end_line = apply_single_code_block(lines, block)
@@ -620,6 +627,10 @@ def apply_helper_code(
     """
     helper_code = (fix.helper_code or "").replace("\\n", "\n")
     placement = fix.placement_helper
+    logger.debug(
+        "apply_helper_code: placement=%s, line_range=%d-%d",
+        placement, line_range.start, line_range.end,
+    )
     if placement == "GLOBAL_TOP":
         return apply_global_top_helper(
             lines=lines,
@@ -1070,6 +1081,10 @@ def apply_import_block(
 
     # Find end of existing imports
     import_end_idx = end_block_import
+    logger.debug(
+        "apply_import_block: %d import line(s), insert at line %d",
+        len(import_lines), import_end_idx,
+    )
     if import_end_idx == 0:
         # No existing imports - insert at top (after shebang/encoding if present)
         insert_idx = find_code_start(lines)

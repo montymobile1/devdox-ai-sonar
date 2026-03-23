@@ -526,6 +526,17 @@ class LLMFixer:
                 effective_file_path, project_path
             )
 
+            logger.debug(
+                "FixSuggestion: file=%s, lines=%s-%s, placement=%s, "
+                "helper_code_len=%d, blocks=%d",
+                relative_file_path,
+                effective_start_line,
+                effective_last_line,
+                fix_response_single.PLACEMENT,
+                len(fix_response_single.NEW_HELPER_CODE or ""),
+                len(code_blocks),
+            )
+
             lst_suggestion.append(
                 self._map_fix_suggestion_to_fix_suggestion_dto(
                     line_range=line_range,

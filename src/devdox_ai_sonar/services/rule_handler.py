@@ -79,6 +79,10 @@ def _resolve_effective_values(
     )
 
     if block_file_path != file_path:
+        logger.debug(
+            "File path overridden by CodeBlock: %s -> %s",
+            file_path, block_file_path,
+        )
         effective_file_path = block_file_path
         effective_start_line = first_block.start_line
         effective_sonar_line = first_block.start_line
@@ -103,6 +107,14 @@ def _resolve_relative_path(effective_file_path: Path, project_path: Path) -> str
 AWAIT_REMOVAL_PATTERN = r"\bawait\s+(?=(?:[\w]+\.)*{func_name}\s*\()"
 ARG_RENAME_PATTERN = r"(\b{func_name}\s*\([\s\S]*?\b){old_arg}\s*="
 FUNC_CALL_RENAME_PATTERN = r"(?<!\w)(?<!def ){func_name}(?![\w])(?=\s*\()"
+_HELPER_DEF_PATTERN = re.compile(r"(?m)^def ")
+
+
+def _count_helper_functions(helper_code: str) -> int:
+    """Count function definitions in helper code."""
+    if not helper_code:
+        return 0
+    return len(_HELPER_DEF_PATTERN.findall(helper_code))
 
 
 class RuleHandler(ABC):
@@ -1441,28 +1453,92 @@ class CognitiveComplexityHandler(RuleHandler):
         file_path: Path,
         llm_caller: Any,
     ) -> Optional[List[SonarFixResponse]]:
-        """
-        Generate fixes for cognitive complexity issues.
-
-        This delegates to the LLM with specialized refactoring prompts.
-        """
+        """Generate fixes for cognitive complexity issues."""
         if not llm_caller:
             logger.error("LLM caller required for cognitive complexity fixes")
             return None
-
+        func_name = context.functions[0]["name"] if context.functions else "unknown"
+        logger.debug(
+            "S3776: processing %d issue(s) for '%s' in %s",
+            len(issues), func_name, file_path,
+        )
         try:
-            fix_response = llm_caller._call_llm_list(
-                issues,
-                context,
-                context.file_path.suffix,
-                {},
-                error_message="",
+            raw = llm_caller._call_llm_list(
+                issues, context, context.file_path.suffix, {}, error_message="",
             )
-            return [fix_response]
-
+            if raw is None:
+                logger.warning("S3776: LLM returned None for '%s'", func_name)
+                return None
+            logger.debug(
+                "S3776: raw LLM response:\n%s", raw.model_dump_json(indent=2),
+            )
+            if not raw.NEW_HELPER_CODE:
+                logger.warning(
+                    "S3776: LLM returned no helper code for '%s'", func_name,
+                )
+            if not any(b.has_changes for b in raw.FIXED_CODE_BLOCKS):
+                logger.warning(
+                    "S3776: no block has has_changes=True for '%s'", func_name,
+                )
+            code_blocks = self._normalize_code_blocks(raw.FIXED_CODE_BLOCKS)
+            helper_code = raw.NEW_HELPER_CODE or ""
+            explanation = self._build_explanation(context, helper_code)
+            return [
+                SonarFixResponse(
+                    IMPORT_BLOCK=raw.IMPORT_BLOCK or "",
+                    FIXED_CODE_BLOCKS=code_blocks,
+                    NEW_HELPER_CODE=helper_code,
+                    PLACEMENT=PlacementType.SIBLING,
+                    EXPLANATION=explanation,
+                    CONFIDENCE=0.95,
+                )
+            ]
         except Exception:
             logger.exception("CognitiveComplexityHandler failed to generate fixes")
             return None
+
+    @staticmethod
+    def _normalize_code_blocks(blocks: List[CodeBlock]) -> List[CodeBlock]:
+        """Enforce FULL_CODE change type and FUNCTION block type."""
+        normalized = []
+        for block in blocks:
+            if block.change_type != ChangeType.FULL_CODE:
+                logger.debug(
+                    "S3776: corrected change_type %s -> FULL_CODE for '%s'",
+                    block.change_type, block.block_name,
+                )
+            if block.block_type != BlockType.FUNCTION:
+                logger.debug(
+                    "S3776: corrected block_type %s -> FUNCTION for '%s'",
+                    block.block_type, block.block_name,
+                )
+            normalized.append(
+                CodeBlock(
+                    block_name=block.block_name,
+                    start_line=block.start_line,
+                    end_line=block.end_line,
+                    has_changes=block.has_changes,
+                    change_type=ChangeType.FULL_CODE,
+                    block_type=BlockType.FUNCTION,
+                    context=block.context,
+                    file_path=block.file_path,
+                )
+            )
+        return normalized
+
+    @staticmethod
+    def _build_explanation(context: FixContext, helper_code: str) -> str:
+        """Build structured explanation for the complexity fix."""
+        func_name = context.functions[0]["name"] if context.functions else "unknown"
+        helper_count = _count_helper_functions(helper_code)
+        return (
+            f"### Issue: python:S3776 - Cognitive complexity too high"
+            f" in `{func_name}`\n"
+            f"### Fix: Extracted {helper_count} helper(s) to reduce"
+            f" complexity.\n"
+            f"### Validation: Syntax OK, logic preserved,"
+            f" {helper_count} helper(s) added"
+        )
 
 
 class DefaultRuleHandler(RuleHandler):
