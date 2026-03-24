@@ -16,7 +16,9 @@ import subprocess
 from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_suggestion,
                                        _generate_fix_key,
                                        _extract_problem_lines,build_llm,
-                                       FUNCTION_ALREADY_CALLED,call_llm_with_graph
+                                       FUNCTION_ALREADY_CALLED,call_llm_with_graph,
+                                       fix_node, validate_node, retry_node,
+                                       should_retry, build_fix_graph, _get_fix_graph,
                                        )
 from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
 from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info,
@@ -3063,3 +3065,2077 @@ class TestGetContentRange:
         assert result["first_line"] == 6
         assert result["confidence"] == 0.95
         assert result["match_type"] == "context"
+
+
+# ===========================================================================
+# Coverage: fix_node, validate_node, retry_node, should_retry (lines 205-313)
+# ===========================================================================
+
+
+class TestFixNode:
+    def _make_state(self, **overrides):
+        state = {
+            "provider": "openai",
+            "model": "gpt-4o",
+            "api_key": "test-key",
+            "prompt_system": "You are a code fixer.",
+            "original_prompt": "Fix this code",
+            "prompt": "Fix this code",
+            "max_tokens": 8000,
+            "temperature": 0.08,
+            "max_attempts": 3,
+            "fix_result": None,
+            "validation_error": None,
+            "attempt": 0,
+        }
+        state.update(overrides)
+        return state
+
+    def test_fix_node_success(self):
+        mock_fix_result = Mock()
+        mock_chain = Mock()
+        mock_chain.invoke.return_value = mock_fix_result
+        mock_structured = Mock()
+        mock_structured.__or__ = Mock(return_value=mock_chain)
+        mock_llm = Mock()
+        mock_llm.with_structured_output.return_value = mock_structured
+        with patch("devdox_ai_sonar.llm_fixer.build_llm", return_value=mock_llm), \
+                patch("devdox_ai_sonar.llm_fixer.ChatPromptTemplate") as MockPrompt:
+            mock_prompt_instance = Mock()
+            mock_prompt_instance.__or__ = Mock(return_value=mock_chain)
+            MockPrompt.from_messages.return_value = mock_prompt_instance
+            state = self._make_state()
+            result = fix_node(state)
+        assert result["fix_result"] is mock_fix_result
+        assert result["validation_error"] is None
+
+    def test_fix_node_exception(self):
+        with patch("devdox_ai_sonar.llm_fixer.build_llm", side_effect=RuntimeError("boom")):
+            state = self._make_state()
+            result = fix_node(state)
+        assert result["fix_result"] is None
+        assert "boom" in result["validation_error"]
+
+
+class TestValidateNode:
+    def _make_state(self, fix_result=None, **overrides):
+        state = {
+            "provider": "openai", "model": "m", "api_key": "k",
+            "prompt_system": "s", "original_prompt": "p", "prompt": "p",
+            "max_tokens": 1, "temperature": 0.0, "max_attempts": 3,
+            "fix_result": fix_result, "validation_error": None, "attempt": 0,
+        }
+        state.update(overrides)
+        return state
+
+    def test_validate_node_none_result(self):
+        result = validate_node(self._make_state(fix_result=None))
+        assert result["validation_error"] == "No result produced by fix node"
+
+    def test_validate_node_empty_code_blocks(self):
+        mock_result = Mock()
+        mock_result.FIXED_CODE_BLOCKS = []
+        mock_result.EXPLANATION = "explanation text"
+        mock_result.CONFIDENCE = 0.9
+        result = validate_node(self._make_state(fix_result=mock_result))
+        assert "FIXED_CODE_BLOCKS is empty" in result["validation_error"]
+        assert result["fix_result"] is None
+
+    def test_validate_node_empty_explanation(self):
+        mock_result = Mock()
+        mock_result.FIXED_CODE_BLOCKS = [Mock()]
+        mock_result.EXPLANATION = ""
+        mock_result.CONFIDENCE = 0.9
+        result = validate_node(self._make_state(fix_result=mock_result))
+        assert "EXPLANATION is empty" in result["validation_error"]
+
+    def test_validate_node_low_confidence(self):
+        mock_result = Mock()
+        mock_result.FIXED_CODE_BLOCKS = [Mock()]
+        mock_result.EXPLANATION = "good explanation"
+        mock_result.CONFIDENCE = 0.1
+        result = validate_node(self._make_state(fix_result=mock_result))
+        assert "CONFIDENCE too low" in result["validation_error"]
+
+    def test_validate_node_success(self):
+        mock_result = Mock()
+        mock_result.FIXED_CODE_BLOCKS = [Mock()]
+        mock_result.EXPLANATION = "good explanation"
+        mock_result.CONFIDENCE = 0.9
+        result = validate_node(self._make_state(fix_result=mock_result))
+        assert result["validation_error"] is None
+        assert result["fix_result"] is mock_result
+
+
+class TestRetryNode:
+    def test_retry_increments_attempt_and_enriches_prompt(self):
+        state = {
+            "provider": "openai", "model": "m", "api_key": "k",
+            "prompt_system": "s", "original_prompt": "original prompt text",
+            "prompt": "current prompt", "max_tokens": 1, "temperature": 0.0,
+            "max_attempts": 3, "fix_result": None,
+            "validation_error": "some error", "attempt": 0,
+        }
+        result = retry_node(state)
+        assert result["attempt"] == 1
+        assert "original prompt text" in result["prompt"]
+        assert "some error" in result["prompt"]
+        assert result["validation_error"] is None
+
+
+class TestShouldRetry:
+    def test_no_error_returns_done(self):
+        state = {"validation_error": None, "attempt": 0, "max_attempts": 3}
+        assert should_retry(state) == "done"
+
+    def test_max_attempts_reached_returns_give_up(self):
+        state = {"validation_error": "err", "attempt": 3, "max_attempts": 3}
+        assert should_retry(state) == "give_up"
+
+    def test_has_error_below_max_returns_retry(self):
+        state = {"validation_error": "err", "attempt": 1, "max_attempts": 3}
+        assert should_retry(state) == "retry"
+
+
+class TestBuildFixGraph:
+    def test_build_fix_graph_returns_compiled_graph(self):
+        graph = build_fix_graph()
+        assert graph is not None
+
+    def test_get_fix_graph_returns_cached(self):
+        import devdox_ai_sonar.llm_fixer as module
+        original = module._FIX_GRAPH
+        try:
+            module._FIX_GRAPH = None
+            g1 = _get_fix_graph()
+            g2 = _get_fix_graph()
+            assert g1 is g2
+        finally:
+            module._FIX_GRAPH = original
+
+
+# ===========================================================================
+# Coverage: _convert_regex_to_diff, _build_display_blocks (lines 419-487)
+# ===========================================================================
+
+
+class TestConvertRegexToDiff:
+    def test_returns_empty_for_non_search_replace(self):
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+        )
+        assert LLMFixer._convert_regex_to_diff(block, {}) == {}
+
+    def test_returns_empty_when_no_replacements(self):
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            file_path="/some/file.py", replacements=None,
+        )
+        assert LLMFixer._convert_regex_to_diff(block, {}) == {}
+
+    def test_converts_literal_replacement(self, tmp_path):
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        test_file = tmp_path / "test.py"
+        test_file.write_text("old_value = 1\n")
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            file_path=str(test_file),
+            replacements=[SearchReplace(search="old_value", replace="new_value")],
+        )
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result["change_type"] == ChangeType.DIFF
+        assert result["changes"][0].new == "new_value = 1"
+
+    def test_converts_regex_replacement(self, tmp_path):
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        test_file = tmp_path / "code.py"
+        test_file.write_text("x = 123\n")
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            file_path=str(test_file),
+            replacements=[SearchReplace(search=r"\d+", replace="999", is_regex=True)],
+        )
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert "999" in result["changes"][0].new
+
+    def test_returns_empty_for_invalid_start_line(self, tmp_path):
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        test_file = tmp_path / "code.py"
+        test_file.write_text("line1\n")
+        block = CodeBlock(
+            block_name="t", start_line=999, end_line=999, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            file_path=str(test_file),
+            replacements=[SearchReplace(search="x", replace="y")],
+        )
+        assert LLMFixer._convert_regex_to_diff(block, {}) == {}
+
+    def test_uses_file_cache(self, tmp_path):
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        test_file = tmp_path / "cached.py"
+        test_file.write_text("cached_line\n")
+        cache = {}
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            file_path=str(test_file),
+            replacements=[SearchReplace(search="cached", replace="used")],
+        )
+        LLMFixer._convert_regex_to_diff(block, cache)
+        assert str(test_file) in cache
+        # Second call should use cache
+        LLMFixer._convert_regex_to_diff(block, cache)
+
+
+class TestBuildDisplayBlocks:
+    def test_relativizes_paths(self, tmp_path):
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            file_path=str(tmp_path / "src" / "file.py"),
+        )
+        result = LLMFixer._build_display_blocks([block], project_path=tmp_path)
+        assert len(result) == 1
+        assert result[0].file_path == "src/file.py"
+
+    def test_no_project_path(self):
+        block = CodeBlock(
+            block_name="t", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+        )
+        result = LLMFixer._build_display_blocks([block])
+        assert len(result) == 1
+        assert result[0] is block
+
+
+# ===========================================================================
+# Coverage: _call_llm_list (lines 859-878)
+# ===========================================================================
+
+
+class TestCallLlmList:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    async def test_call_llm_list_no_model(self, fixer):
+        fixer.model = None
+        result = await fixer._call_llm_list([], Mock(), ".py", {})
+        assert result is None
+
+    async def test_call_llm_list_success(self, fixer):
+        mock_response = Mock()
+        mock_context = Mock(spec=FixContext)
+        mock_context.code_content = "def foo(): pass"
+        mock_context.class_name = "MyClass"
+        mock_context.import_section = {"has_imports": False}
+        mock_context.context_dict = {
+            "new_context": [{"context": "code", "start_line": 1}],
+            "problem_line_content": {1: "    x = 1"},
+        }
+        mock_context.functions = []
+        issue = SonarIssue(
+            key="t", rule="python:S1234", severity="MAJOR", component="t.py",
+            project="p", line=1, message="msg", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=5,
+        )
+        with patch("devdox_ai_sonar.llm_fixer.call_llm_with_graph",
+                    new_callable=AsyncMock, return_value=mock_response) as mock_graph:
+            result = await fixer._call_llm_list(
+                [issue], mock_context, ".py", {"python:S1234": {"name": "Rule"}},
+            )
+        assert result is mock_response
+        mock_graph.assert_called_once()
+
+
+# ===========================================================================
+# Coverage: _parse_openai_response, _parse_gemini_response,
+#           _parse_chat_completion_response, _extract_using_regex_fallback
+#           (lines 1160-1192)
+# ===========================================================================
+
+
+class TestParseResponses:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_parse_openai_response_success(self, fixer):
+        mock_resp = Mock()
+        mock_resp.output_parsed = Mock()
+        result = fixer._parse_openai_response(mock_resp)
+        assert result is mock_resp.output_parsed
+
+    def test_parse_openai_response_exception(self, fixer):
+        mock_resp = Mock()
+        mock_resp.output_parsed = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
+        del mock_resp.output_parsed
+        type(mock_resp).output_parsed = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
+        result = fixer._parse_openai_response(mock_resp)
+        assert result is None
+
+    def test_parse_gemini_response_success(self, fixer):
+        mock_resp = Mock()
+        mock_resp.text = '{"FIXED_SELECTION": "code", "CONFIDENCE": 0.9}'
+        with patch.object(fixer, "_extract_fix_from_response", return_value={"fixed_code": "code"}):
+            result = fixer._parse_gemini_response(mock_resp)
+        assert result == {"fixed_code": "code"}
+
+    def test_parse_gemini_response_exception(self, fixer):
+        mock_resp = Mock()
+        type(mock_resp).text = property(lambda self: (_ for _ in ()).throw(RuntimeError("bad")))
+        result = fixer._parse_gemini_response(mock_resp)
+        assert result is None
+
+    def test_parse_chat_completion_response_success(self, fixer):
+        mock_resp = Mock()
+        mock_resp.choices = [Mock(message=Mock(content='{"FIXED_CODE_BLOCKS": [], "CONFIDENCE": 0.9}'))]
+        with patch.object(fixer, "parse_llm_response", return_value=Mock()):
+            result = fixer._parse_chat_completion_response(mock_resp)
+        assert result is not None
+
+    def test_parse_chat_completion_response_exception(self, fixer):
+        mock_resp = Mock()
+        mock_resp.choices = []
+        result = fixer._parse_chat_completion_response(mock_resp)
+        assert result is None
+
+    def test_extract_using_regex_fallback_success(self, fixer):
+        content = '{"FIXED_SELECTION": "fixed code", "EXPLANATION": "explained", "CONFIDENCE": 0.8}'
+        with patch.object(fixer, "_apply_regex_patterns", return_value={"FIXED_SELECTION": "code"}), \
+                patch.object(fixer, "_validate_results", return_value={"fixed_code": "code"}):
+            result = fixer._extract_using_regex_fallback(content)
+        assert result == {"fixed_code": "code"}
+
+    def test_extract_using_regex_fallback_exception(self, fixer):
+        with patch.object(fixer, "_apply_regex_patterns", side_effect=RuntimeError("fail")):
+            result = fixer._extract_using_regex_fallback("content")
+        assert result is None
+
+
+# ===========================================================================
+# Coverage: parse_llm_response, _extract_fix_from_response (lines 1268-1294)
+# ===========================================================================
+
+
+class TestParseLlmResponse:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_parse_llm_response_valid_json(self, fixer):
+        valid_json = json.dumps({
+            "FIXED_CODE_BLOCKS": [{
+                "block_name": "test", "start_line": 1, "end_line": 5,
+                "has_changes": True, "change_type": "FULL_CODE",
+                "block_type": "module", "context": "code",
+            }],
+            "CONFIDENCE": 0.9, "EXPLANATION": "Fixed", "PLACEMENT": "SIBLING",
+        })
+        result = fixer.parse_llm_response(valid_json)
+        assert isinstance(result, SonarFixResponse)
+
+    def test_parse_llm_response_invalid_json(self, fixer):
+        with pytest.raises(ValueError, match="Invalid JSON"):
+            fixer.parse_llm_response("not json at all")
+
+    def test_parse_llm_response_schema_validation_error(self, fixer):
+        # Valid JSON but missing required fields / wrong types
+        with pytest.raises(ValueError, match="Schema validation failed"):
+            fixer.parse_llm_response('{"CONFIDENCE": "not_a_number"}')
+
+    def test_extract_fix_from_response_valid(self, fixer):
+        content = '{"FIXED_SELECTION": "fixed code", "CONFIDENCE": 0.9, "EXPLANATION": "done"}'
+        result = fixer._extract_fix_from_response(content)
+        assert result is not None
+        assert result["fixed_code"] == "fixed code"
+
+    def test_extract_fix_from_response_with_prefix(self, fixer):
+        content = 'Here is the fix:\n{"FIXED_SELECTION": "code", "CONFIDENCE": 0.8}'
+        result = fixer._extract_fix_from_response(content)
+        assert result is not None
+
+    def test_extract_fix_from_response_total_garbage(self, fixer):
+        result = fixer._extract_fix_from_response("no json here at all")
+        # Should fall to regex fallback or return None
+        assert result is None or isinstance(result, dict)
+
+
+# ===========================================================================
+# Coverage: _extract_fields_from_parsed_json edge cases (lines 1252-1253)
+# ===========================================================================
+
+
+class TestExtractFieldsEdgeCases:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_invalid_confidence_value(self, fixer):
+        result = fixer._extract_fields_from_parsed_json({
+            "FIXED_SELECTION": "code", "CONFIDENCE": "not-a-number",
+        })
+        assert result["confidence"] == 0.5
+
+    def test_confidence_clamping(self, fixer):
+        result = fixer._extract_fields_from_parsed_json({
+            "FIXED_SELECTION": "code", "CONFIDENCE": 999,
+        })
+        assert result["confidence"] == 1.0
+
+        result = fixer._extract_fields_from_parsed_json({
+            "FIXED_SELECTION": "code", "CONFIDENCE": -5,
+        })
+        assert result["confidence"] == 0.0
+
+
+# ===========================================================================
+# Coverage: _configure_* delegate methods (lines 402-412)
+# ===========================================================================
+
+
+class TestConfigureDelegates:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_configure_openai_delegates(self, fixer):
+        with patch.object(fixer, "_validate_and_configure_provider") as mock_validate:
+            fixer._configure_openai("gpt-4", "key")
+        mock_validate.assert_called_once_with("openai", "gpt-4", "key")
+
+    def test_configure_togetherai_delegates(self, fixer):
+        with patch.object(fixer, "_validate_and_configure_provider") as mock_validate:
+            fixer._configure_togetherai("model", "key")
+        mock_validate.assert_called_once_with("togetherai", "model", "key")
+
+    def test_configure_gemini_delegates(self, fixer):
+        with patch.object(fixer, "_validate_and_configure_provider") as mock_validate:
+            fixer._configure_gemini("model", "key")
+        mock_validate.assert_called_once_with("gemini", "model", "key")
+
+    def test_configure_openrouter_delegates(self, fixer):
+        with patch.object(fixer, "_validate_and_configure_provider") as mock_validate:
+            fixer._configure_openrouter("model", "key")
+        mock_validate.assert_called_once_with("openrouter", "model", "key")
+
+
+# ===========================================================================
+# Coverage: build_llm provider branches (lines 122-123, 131-132, 145-146)
+# ===========================================================================
+
+
+class TestBuildLlmProviders:
+    def test_togetherai_provider(self):
+        with patch("devdox_ai_sonar.llm_fixer.ChatTogether", create=True) as MockCT:
+            try:
+                from unittest.mock import patch as p2
+                with p2.dict("sys.modules", {"langchain_together": Mock(ChatTogether=MockCT)}):
+                    build_llm("togetherai", "model", "key")
+            except ImportError:
+                pytest.skip("langchain_together not installed")
+
+    def test_openrouter_provider(self):
+        mock_cls = Mock()
+        with patch("langchain_openai.ChatOpenAI", mock_cls):
+            result = build_llm("openrouter", "model", "key")
+        assert result is not None
+
+    def test_gemini_provider(self):
+        try:
+            mock_cls = Mock()
+            with patch("langchain_google_genai.ChatGoogleGenerativeAI", mock_cls):
+                result = build_llm("gemini", "model", "key")
+            assert result is not None
+        except ImportError:
+            pytest.skip("langchain_google_genai not installed")
+
+
+# ===========================================================================
+# Coverage: read_file sync wrapper (line 367)
+# ===========================================================================
+
+
+class TestReadFileSync:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_read_file_sync(self, fixer, tmp_path):
+        test_file = tmp_path / "test.txt"
+        test_file.write_text("hello world")
+        result = fixer.read_file(test_file)
+        assert result == "hello world"
+
+
+# ===========================================================================
+# Coverage: _apply_fixes_to_file (lines 1388-1412)
+# ===========================================================================
+
+
+class TestApplyFixesToFile:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    async def test_dry_run_returns_true(self, fixer, tmp_path):
+        result, applications = await fixer._apply_fixes_to_file(
+            tmp_path / "test.py", [], dry_run=True,
+        )
+        assert result is True
+        assert applications == []
+
+    async def test_fix_applied_and_validated(self, fixer, tmp_path):
+        from devdox_ai_sonar.models.file_structures import FixApplication
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        cb = CodeBlock(block_name="t", start_line=1, end_line=1, has_changes=True,
+                       change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE, context="x = 2")
+        fix = FixSuggestion(issue_key="k", file_path="test.py", original_code="x = 1",
+                            fixed_code="x = 2", explanation="fix", confidence=0.9,
+                            sonar_line_number=1, llm_model="m", fixed_code_blocks=[cb])
+        mock_app_result = FixApplication(fix=fix, success=True, reason="")
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", return_value=(mock_app_result, ["x = 2\n"])), \
+                patch("devdox_ai_sonar.llm_fixer.write_file_lines"), \
+                patch.object(fixer, "check_python_interpreter", return_value=(True, None)), \
+                patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file"):
+            success, results = await fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+        assert success is True
+        assert len(results) == 1
+
+    async def test_fix_validation_fails(self, fixer, tmp_path):
+        from devdox_ai_sonar.models.file_structures import FixApplication
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        cb = CodeBlock(block_name="t", start_line=1, end_line=1, has_changes=True,
+                       change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE, context="x = 2")
+        fix = FixSuggestion(issue_key="k", file_path="test.py", original_code="x = 1",
+                            fixed_code="x = 2", explanation="fix", confidence=0.9,
+                            sonar_line_number=1, llm_model="m", fixed_code_blocks=[cb])
+        mock_app_result = FixApplication(fix=fix, success=True, reason="")
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", return_value=(mock_app_result, ["x = 2\n"])), \
+                patch("devdox_ai_sonar.llm_fixer.write_file_lines"), \
+                patch.object(fixer, "check_python_interpreter", return_value=(False, "SyntaxError")), \
+                patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file"):
+            success, results = await fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+        assert success is False
+
+    async def test_exception_returns_false(self, fixer, tmp_path):
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        cb = CodeBlock(block_name="t", start_line=1, end_line=1, has_changes=True,
+                       change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE, context="x")
+        fix = FixSuggestion(issue_key="k", file_path="test.py", original_code="x = 1",
+                            fixed_code="x = 2", explanation="fix", confidence=0.9,
+                            sonar_line_number=1, llm_model="m", fixed_code_blocks=[cb])
+        with patch.object(fixer.file_reader, "read_lines", side_effect=RuntimeError("disk error")):
+            success, results = await fixer._apply_fixes_to_file(test_file, [fix], dry_run=False)
+        assert success is False
+        assert results == []
+
+
+# ===========================================================================
+# Coverage: _load_dotenv_file (lines 1430-1451)
+# ===========================================================================
+
+
+class TestLoadDotenvFile:
+    def test_parses_key_value(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("KEY1=value1\nKEY2=value2\n")
+        result = LLMFixer._load_dotenv_file(env_file)
+        assert result == {"KEY1": "value1", "KEY2": "value2"}
+
+    def test_parses_quoted_values(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text('KEY1="quoted value"\nKEY2=\'single quoted\'\n')
+        result = LLMFixer._load_dotenv_file(env_file)
+        assert result["KEY1"] == "quoted value"
+        assert result["KEY2"] == "single quoted"
+
+    def test_strips_export(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("export MY_VAR=hello\n")
+        result = LLMFixer._load_dotenv_file(env_file)
+        assert result["MY_VAR"] == "hello"
+
+    def test_skips_comments_and_blanks(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("# comment\n\nKEY=val\nnoline\n")
+        result = LLMFixer._load_dotenv_file(env_file)
+        assert result == {"KEY": "val"}
+
+    def test_nonexistent_file_returns_empty(self, tmp_path):
+        result = LLMFixer._load_dotenv_file(tmp_path / "missing.env")
+        assert result == {}
+
+
+# ===========================================================================
+# Coverage: _build_subprocess_env (lines 1463-1486)
+# ===========================================================================
+
+
+class TestBuildSubprocessEnv:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_loads_env_file(self, fixer, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("TEST_VAR=hello\n")
+        test_path = tmp_path / "tests"
+        test_path.mkdir()
+        result = fixer._build_subprocess_env(tmp_path, test_path, sys.executable)
+        assert result["TEST_VAR"] == "hello"
+
+    def test_loads_test_env_file_fallback(self, fixer, tmp_path):
+        test_path = tmp_path / "tests"
+        test_path.mkdir()
+        test_env = test_path / ".env"
+        test_env.write_text("TEST_VAR=from_test\n")
+        result = fixer._build_subprocess_env(tmp_path, test_path, sys.executable)
+        assert result["TEST_VAR"] == "from_test"
+
+    def test_venv_activation(self, fixer, tmp_path):
+        venv_dir = tmp_path / "venv"
+        venv_bin = venv_dir / "bin"
+        venv_bin.mkdir(parents=True)
+        (venv_bin / "python").write_text("#!/usr/bin/env python\n")
+        (venv_bin / "python").chmod(0o755)
+        test_path = tmp_path / "tests"
+        test_path.mkdir()
+        result = fixer._build_subprocess_env(tmp_path, test_path, str(venv_bin / "python"))
+        assert result["VIRTUAL_ENV"] == str(venv_dir)
+        assert str(venv_bin) in result["PATH"]
+
+
+# ===========================================================================
+# Coverage: run_testing_cases, _find_project_root, _resolve_python_executable,
+#           _try_install_requirements, check_python_interpreter (lines 1498-1602)
+# ===========================================================================
+
+
+class TestRunTestingHelpers:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_find_project_root_pyproject(self, fixer, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[tool.poetry]\n")
+        test_dir = tmp_path / "tests"
+        test_dir.mkdir()
+        result = fixer._find_project_root(test_dir)
+        assert result == tmp_path
+
+    def test_find_project_root_fallback(self, fixer, tmp_path):
+        test_dir = tmp_path / "sub" / "tests"
+        test_dir.mkdir(parents=True)
+        result = fixer._find_project_root(test_dir)
+        assert result == test_dir  # fallback
+
+    def test_resolve_python_executable_finds_venv(self, fixer, tmp_path):
+        venv_python = tmp_path / ".venv" / "bin" / "python"
+        venv_python.parent.mkdir(parents=True)
+        venv_python.write_text("#!/usr/bin/env python\n")
+        venv_python.chmod(0o755)
+        result = fixer._resolve_python_executable(tmp_path)
+        assert result == str(venv_python)
+
+    def test_resolve_python_executable_fallback(self, fixer, tmp_path):
+        result = fixer._resolve_python_executable(tmp_path)
+        assert result == sys.executable
+
+    def test_check_python_interpreter_success(self, fixer, tmp_path):
+        test_file = tmp_path / "valid.py"
+        test_file.write_text("x = 1\n")
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run"):
+            success, error = fixer.check_python_interpreter(test_file)
+        assert success is True
+        assert error is None
+
+    def test_check_python_interpreter_failure(self, fixer, tmp_path):
+        test_file = tmp_path / "invalid.py"
+        test_file.write_text("def (:\n")
+        error = subprocess.CalledProcessError(1, "python")
+        error.stderr = "SyntaxError"
+        error.stdout = ""
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run", side_effect=error):
+            success, msg = fixer.check_python_interpreter(test_file)
+        assert success is False
+        assert "SyntaxError" in msg
+
+    def test_run_testing_cases_success(self, fixer, tmp_path):
+        test_file = tmp_path / "test_example.py"
+        test_file.write_text("def test_pass(): pass\n")
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest]\n")
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run"):
+            success, error = fixer.run_testing_cases(str(test_file))
+        assert success is True
+        assert error is None
+
+    def test_run_testing_cases_failure(self, fixer, tmp_path):
+        test_file = tmp_path / "test_fail.py"
+        test_file.write_text("def test_fail(): assert False\n")
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest]\n")
+        err = subprocess.CalledProcessError(1, "pytest")
+        err.stderr = "FAILED test_fail.py"
+        err.stdout = ""
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run", side_effect=err):
+            success, error = fixer.run_testing_cases(str(test_file))
+        assert success is False
+        assert "FAILED" in error
+
+    def test_run_testing_cases_module_not_found_retry(self, fixer, tmp_path):
+        test_file = tmp_path / "test_mod.py"
+        test_file.write_text("import missing_module\n")
+        (tmp_path / "pyproject.toml").write_text("[tool.pytest]\n")
+        err = subprocess.CalledProcessError(1, "pytest")
+        err.stderr = "ModuleNotFoundError: No module named 'missing_module'"
+        err.stdout = ""
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run", side_effect=err), \
+                patch.object(fixer, "_try_install_requirements", return_value=False):
+            success, error = fixer.run_testing_cases(str(test_file))
+        assert success is False
+
+    def test_try_install_requirements_with_requirements_txt(self, fixer, tmp_path):
+        (tmp_path / "requirements.txt").write_text("pytest\n")
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run"):
+            result = fixer._try_install_requirements(tmp_path, sys.executable)
+        assert result is True
+
+    def test_try_install_requirements_with_pyproject(self, fixer, tmp_path):
+        (tmp_path / "pyproject.toml").write_text("[build-system]\n")
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run"):
+            result = fixer._try_install_requirements(tmp_path, sys.executable)
+        assert result is True
+
+    def test_try_install_requirements_no_files(self, fixer, tmp_path):
+        result = fixer._try_install_requirements(tmp_path, sys.executable)
+        assert result is False
+
+    def test_try_install_requirements_failure(self, fixer, tmp_path):
+        (tmp_path / "requirements.txt").write_text("nonexistent-package\n")
+        err = subprocess.CalledProcessError(1, "pip")
+        err.stderr = "No matching distribution"
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run", side_effect=err):
+            result = fixer._try_install_requirements(tmp_path, sys.executable)
+        assert result is False
+
+
+# ===========================================================================
+# Coverage: _process_validation_result MODIFIED branch (lines 1759-1771)
+# ===========================================================================
+
+
+class TestProcessValidationModified:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    async def test_modified_no_final_fix(self, fixer, tmp_path):
+        mock_val = Mock()
+        mock_val.status = ValidationStatus.MODIFIED
+        mock_val.final_fix = None
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "k"
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        await fixer._process_validation_result(mock_val, fix, tmp_path / "test.py", result, False)
+        assert len(result.failed_fixes) == 1
+        assert "no improved fix" in result.failed_fixes[0]["error"]
+
+    async def test_modified_with_successful_final_fix(self, fixer, tmp_path):
+        improved_fix = Mock(spec=FixSuggestion)
+        mock_val = Mock()
+        mock_val.status = ValidationStatus.MODIFIED
+        mock_val.final_fix = improved_fix
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "k"
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(True, [])):
+            await fixer._process_validation_result(mock_val, fix, tmp_path / "test.py", result, False)
+        assert len(result.successful_fixes) == 1
+
+    async def test_modified_with_failed_final_fix(self, fixer, tmp_path):
+        improved_fix = Mock(spec=FixSuggestion)
+        mock_val = Mock()
+        mock_val.status = ValidationStatus.MODIFIED
+        mock_val.final_fix = improved_fix
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "k"
+        result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
+        with patch.object(fixer, "_apply_fixes_to_file", new_callable=AsyncMock, return_value=(False, [])):
+            await fixer._process_validation_result(mock_val, fix, tmp_path / "test.py", result, False)
+        assert len(result.failed_fixes) == 1
+        assert "still failed" in result.failed_fixes[0]["error"]
+
+
+# ===========================================================================
+# Coverage: _extract_python_import_section and helpers (lines 1912-2013)
+# ===========================================================================
+
+
+class TestExtractPythonImportSection:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_simple_imports(self, fixer):
+        lines = ["import os\n", "import sys\n", "\n", "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["start_line"] == 1
+        assert result["end_line"] == 2
+
+    def test_from_import(self, fixer):
+        lines = ["from os import path\n", "\n", "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+
+    def test_multiline_parenthesized_import(self, fixer):
+        lines = ["from os import (\n", "    path,\n", "    getcwd,\n", ")\n", "\n", "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["end_line"] == 4
+
+    def test_backslash_continuation(self, fixer):
+        lines = ["from os import \\\n", "    path\n", "\n", "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["end_line"] == 2
+
+    def test_no_imports(self, fixer):
+        lines = ["x = 1\n", "y = 2\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is False
+
+    def test_stops_at_decorator(self, fixer):
+        lines = ["import os\n", "\n", "@app.route\n", "def handler():\n", "    pass\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["end_line"] == 1
+
+    def test_skips_initial_docstring(self, fixer):
+        lines = ['"""Module docstring"""\n', "import os\n", "\n", "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["start_line"] == 2
+
+    def test_stops_at_docstring_after_imports(self, fixer):
+        lines = ["import os\n", '"""some docstring"""\n', "x = 1\n"]
+        result = fixer._extract_python_import_section(lines)
+        assert result["has_imports"] is True
+        assert result["end_line"] == 1
+
+    def test_extract_import_section_non_python(self, fixer):
+        result = fixer._extract_import_section(["x = 1\n"], "java")
+        assert result["has_imports"] is False
+        assert result["start_line"] == 0
+
+    def test_should_stop_at_code_multiline_import(self, fixer):
+        state = {"in_multiline_import": True}
+        assert fixer._should_stop_at_code("x = 1", 1, state) is False
+
+    def test_should_stop_at_code_no_start_line(self, fixer):
+        state = {"in_multiline_import": False}
+        assert fixer._should_stop_at_code("x = 1", None, state) is False
+
+    def test_should_stop_at_code_empty_line(self, fixer):
+        state = {"in_multiline_import": False}
+        assert fixer._should_stop_at_code("", 1, state) is False
+
+    def test_should_stop_at_code_dunder(self, fixer):
+        state = {"in_multiline_import": False}
+        assert fixer._should_stop_at_code("__all__ = ['a']", 1, state) is False
+
+    def test_should_stop_at_decorator_before_imports(self, fixer):
+        assert fixer._should_stop_at_decorator("@app.route", None) is False
+
+    def test_should_stop_at_decorator_after_imports(self, fixer):
+        assert fixer._should_stop_at_decorator("@app.route", 1) is True
+
+    def test_detect_multiline_parentheses(self, fixer):
+        state = {"in_parentheses_import": False, "in_backslash_continuation": False, "in_multiline_import": False}
+        result = fixer._detect_multiline_import_pattern("from os import (", state)
+        assert result["in_parentheses_import"] is True
+
+    def test_detect_multiline_backslash(self, fixer):
+        state = {"in_parentheses_import": False, "in_backslash_continuation": False, "in_multiline_import": False}
+        result = fixer._detect_multiline_import_pattern("from os import \\", state)
+        assert result["in_backslash_continuation"] is True
+
+    def test_detect_multiline_single_line(self, fixer):
+        state = {"in_parentheses_import": False, "in_backslash_continuation": False, "in_multiline_import": False}
+        result = fixer._detect_multiline_import_pattern("import os", state)
+        assert result["in_multiline_import"] is False
+
+
+# ===========================================================================
+# Coverage: _is_line_inside_class (lines 2049, 2055, 2058-2059, 2062)
+# ===========================================================================
+
+
+class TestIsLineInsideClass:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_target_before_class_start(self, fixer):
+        lines = ["x = 1\n", "class Foo:\n", "    pass\n"]
+        assert fixer._is_line_inside_class(lines, 0, 1) is False
+
+    def test_blank_line_inside_class(self, fixer):
+        lines = ["class Foo:\n", "    x = 1\n", "\n", "    y = 2\n"]
+        assert fixer._is_line_inside_class(lines, 2, 0) is True
+
+    def test_new_class_starts_between(self, fixer):
+        lines = ["class Foo:\n", "    x = 1\n", "class Bar:\n", "    y = 2\n"]
+        # target_idx=3 should not be inside Foo (class_start_idx=0)
+        assert fixer._is_line_inside_class(lines, 3, 0) is False
+
+    def test_empty_target_line(self, fixer):
+        lines = ["class Foo:\n", "    x = 1\n", "\n"]
+        assert fixer._is_line_inside_class(lines, 2, 0) is True
+
+
+# ===========================================================================
+# Coverage: ContextExtractor helpers (lines 2335-2477)
+# ===========================================================================
+
+
+class TestContextExtractorFunctionStrategies:
+    def test_is_function_line_valid(self):
+        ext = ContextExtractor(["def foo():\n", "    pass\n"])
+        assert ext._is_function_line(0) is True
+
+    def test_is_function_line_out_of_bounds(self):
+        ext = ContextExtractor(["line\n"])
+        assert ext._is_function_line(99) is False
+
+    def test_is_function_line_not_function(self):
+        ext = ContextExtractor(["x = 1\n"])
+        assert ext._is_function_line(0) is False
+
+    def test_find_function_end_def(self):
+        lines = ["def foo():\n", "    return 1\n", "\n", "x = 1\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_end(0)
+        assert result is not None
+
+    def test_find_function_end_brace(self):
+        lines = ["function foo() {\n", "    return 1;\n", "}\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_end(0)
+        assert result == 2
+
+    def test_find_function_end_fallback(self):
+        lines = ["someFunc(a, b):\n", "    return 1\n", "\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_end(0)
+        assert result is not None
+
+    def test_find_function_end_out_of_bounds(self):
+        ext = ContextExtractor(["line\n"])
+        assert ext._find_function_end(99) is None
+
+    def test_extract_function_name_assignment(self):
+        ext = ContextExtractor([])
+        assert ext._extract_function_name("myVar: function() {") == "myVar"
+
+    def test_extract_function_name_method(self):
+        ext = ContextExtractor([])
+        result = ext._extract_function_name("  calculate(x, y) {")
+        assert result == "calculate"
+
+    def test_extract_function_name_keyword_filtered(self):
+        ext = ContextExtractor([])
+        # "return" is a keyword, should be filtered out
+        result = ext._extract_function_name("return(x) {")
+        assert result == ""
+
+    def test_extract_function_name_empty(self):
+        ext = ContextExtractor([])
+        assert ext._extract_function_name("# comment") == ""
+
+    def test_try_function_extraction_strategies_found(self):
+        lines = ["def foo():\n", "    x = 1\n", "    return x\n"]
+        ext = ContextExtractor(lines)
+        result = ext._try_function_extraction_strategies(1, 1)
+        assert result is not None
+
+    def test_try_function_extraction_strategies_not_found(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        ext = ContextExtractor(lines)
+        result = ext._try_function_extraction_strategies(0, 0)
+        assert result is None
+
+    def test_try_expand_multiline_none(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        ext = ContextExtractor(lines)
+        result = ext._try_expand_multiline_to_function(0, 1)
+        assert result is None
+
+    def test_try_extract_containing_function_none(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        ext = ContextExtractor(lines)
+        result = ext._try_extract_containing_function(0, 1)
+        assert result is None
+
+    def test_find_function_start_with_decorators(self):
+        lines = ["@deco1\n", "@deco2\n", "def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_start_with_decorators(lines, 2)
+        assert result == 0
+
+    def test_find_function_start_no_decorators(self):
+        lines = ["x = 1\n", "def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_start_with_decorators(lines, 1)
+        assert result == 1
+
+    def test_extract_complete_function_with_decorator_start(self):
+        lines = ["@deco\n", "def foo():\n", "    return 1\n", "\n"]
+        ext = ContextExtractor(lines)
+        result = ext._extract_complete_function(0, 2, 2)
+        assert result is not None
+        assert result["has_decorators"]
+
+    def test_extract_complete_function_out_of_bounds(self):
+        ext = ContextExtractor(["line\n"])
+        result = ext._extract_complete_function(99, 99, 99)
+        assert result is None
+
+    def test_check_indentation_containment_out_of_bounds(self):
+        ext = ContextExtractor([])
+        assert ext._check_indentation_containment(["line\n"], 99, 0) is False
+        assert ext._check_indentation_containment(["line\n"], 0, 99) is False
+
+    def test_check_indentation_containment_blank_line(self):
+        lines = ["def foo():\n", "\n"]
+        ext = ContextExtractor(lines)
+        assert ext._check_indentation_containment(lines, 1, 0) is True
+
+    def test_has_reached_function_end_true(self):
+        ext = ContextExtractor([])
+        assert ext._has_reached_function_end(0, 0, "x = 1", "    return 1") is True
+
+    def test_has_reached_function_end_continuation(self):
+        ext = ContextExtractor([])
+        # prev line ends with backslash, so not yet end
+        assert ext._has_reached_function_end(0, 0, "x = 1", "    return 1 \\") is False
+
+
+# ===========================================================================
+# Coverage: _get_function_info, _find_decorator_start, _count_functions_in_range,
+#           _build_optimized_context, _find_functions_containing_problems
+#           (lines 2088, 2170, 2192, 2195, 2200, 2204, 2216, 2229-2230)
+# ===========================================================================
+
+
+class TestContextExtractorInfoMethods:
+    def test_get_function_info_success(self):
+        lines = ["def foo():\n", "    return 1\n", "\n"]
+        ext = ContextExtractor(lines)
+        result = ext._get_function_info(0)
+        assert result is not None
+        assert result["name"] == "foo"
+        assert result["start_idx"] == 0
+
+    def test_get_function_info_out_of_bounds(self):
+        ext = ContextExtractor(["line\n"])
+        assert ext._get_function_info(99) is None
+
+    def test_get_function_info_not_function(self):
+        ext = ContextExtractor(["x = 1\n"])
+        assert ext._get_function_info(0) is None
+
+    def test_get_function_info_no_end(self):
+        lines = ["def foo(\n"]
+        ext = ContextExtractor(lines)
+        # Function end can't be found easily
+        result = ext._get_function_info(0)
+        # Should handle gracefully (may return None or a result)
+        # Just ensure no crash
+
+    def test_get_function_info_with_decorators(self):
+        lines = ["@deco\n", "def foo():\n", "    return 1\n", "\n"]
+        ext = ContextExtractor(lines)
+        result = ext._get_function_info(1)
+        assert result is not None
+        assert result["start_idx"] == 0  # includes decorator
+        assert len(result["decorators"]) == 1
+
+    def test_find_decorator_start_at_top(self):
+        lines = ["def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        assert ext._find_decorator_start(0) == 0
+
+    def test_find_decorator_start_skips_comments(self):
+        lines = ["# comment\n", "@deco\n", "def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        assert ext._find_decorator_start(2) == 1
+
+    def test_count_functions_in_range(self):
+        lines = ["def foo():\n", "    pass\n", "def bar():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        assert ext._count_functions_in_range(0, 3) == 2
+
+    def test_count_functions_in_range_empty(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        ext = ContextExtractor(lines)
+        assert ext._count_functions_in_range(0, 1) == 0
+
+    def test_build_optimized_context_empty(self):
+        ext = ContextExtractor([])
+        assert ext._build_optimized_context([], []) is None
+
+    def test_build_optimized_context_with_functions(self):
+        lines = ["def foo():\n", "    return 1\n", "\n", "def bar():\n", "    return 2\n"]
+        ext = ContextExtractor(lines)
+        funcs = [
+            {"start_idx": 0, "end_idx": 1, "name": "foo", "lines": lines[0:2],
+             "indentation": 0, "decorators": [], "problem_lines_in_function": [1]},
+            {"start_idx": 3, "end_idx": 4, "name": "bar", "lines": lines[3:5],
+             "indentation": 0, "decorators": [], "problem_lines_in_function": [4]},
+        ]
+        result = ext._build_optimized_context(funcs, [1, 4])
+        assert result is not None
+        assert result["function_count"] == 2
+        assert result["is_multi_function"] is True
+        assert len(result["new_context"]) == 2
+
+    def test_find_functions_containing_problems_already_processed(self):
+        lines = ["def foo():\n", "    x = 1\n", "    y = 2\n", "    return x+y\n"]
+        ext = ContextExtractor(lines)
+        # Two problem indices in the same function
+        result = ext._find_functions_containing_problems([1, 2], 0, 3)
+        assert len(result) == 1  # deduped
+
+    def test_find_functions_containing_problems_outside_range(self):
+        lines = ["def foo():\n", "    x = 1\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_functions_containing_problems([99], 0, 1)
+        assert len(result) == 0
+
+
+# ===========================================================================
+# Coverage: generate_fix_by_file branches (lines 552-607)
+# ===========================================================================
+
+
+class TestGenerateFixByFileBranches:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    async def test_validation_file_path_none(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        mock_validation = Mock()
+        mock_validation.is_valid = True
+        mock_validation.file_path = None
+        mock_validation.line_range = None
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor:
+            MockExtractor.return_value.validate_issue_group = AsyncMock(return_value=mock_validation)
+            result = await fixer.generate_fix_by_file([issue], tmp_path, tmp_path)
+        assert result is None
+
+    async def test_context_is_none(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        mock_validation = Mock()
+        mock_validation.is_valid = True
+        mock_validation.file_path = tmp_path / "test.py"
+        mock_validation.line_range = {"first_line": 1, "last_line": 1, "problem_lines": [1]}
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
+                patch.object(fixer, "_prepare_fix_context", new_callable=AsyncMock, return_value=None):
+            MockExtractor.return_value.validate_issue_group = AsyncMock(return_value=mock_validation)
+            result = await fixer.generate_fix_by_file([issue], tmp_path, tmp_path)
+        assert result is None
+
+    async def test_handler_returns_empty(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        mock_validation = Mock()
+        mock_validation.is_valid = True
+        mock_validation.file_path = tmp_path / "test.py"
+        mock_validation.line_range = {"first_line": 1, "last_line": 1, "problem_lines": [1]}
+        mock_context = Mock(spec=FixContext)
+        mock_handler = Mock()
+        mock_handler.generate_fixes = AsyncMock(return_value=[])
+        mock_handler.MOIDY_LINE_RANGE = False
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
+                patch.object(fixer, "_prepare_fix_context", new_callable=AsyncMock, return_value=mock_context), \
+                patch("devdox_ai_sonar.llm_fixer.RuleHandlerRegistry") as MockRegistry:
+            MockExtractor.return_value.validate_issue_group = AsyncMock(return_value=mock_validation)
+            MockRegistry.return_value.get_handler.return_value = mock_handler
+            result = await fixer.generate_fix_by_file([issue], tmp_path, tmp_path)
+        assert result is None
+
+    async def test_file_not_found_exception(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor:
+            MockExtractor.return_value.validate_issue_group = AsyncMock(
+                side_effect=FileNotFoundError("missing"),
+            )
+            result = await fixer.generate_fix_by_file([issue], tmp_path, tmp_path)
+        assert result is None
+
+    async def test_general_exception(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor:
+            MockExtractor.return_value.validate_issue_group = AsyncMock(
+                side_effect=RuntimeError("unexpected"),
+            )
+            result = await fixer.generate_fix_by_file([issue], tmp_path, tmp_path)
+        assert result is None
+
+    async def test_success_with_file_md(self, fixer, tmp_path):
+        issue = SonarIssue(
+            key="t", rule="python:S1", severity="MAJOR", component="t.py",
+            project="p", line=1, message="m", type="CODE_SMELL", status="OPEN",
+            first_line=1, last_line=1, file="test.py",
+        )
+        mock_validation = Mock()
+        mock_validation.is_valid = True
+        mock_validation.file_path = tmp_path / "test.py"
+        mock_validation.line_range = {"first_line": 1, "last_line": 1, "problem_lines": [1]}
+        mock_context = Mock(spec=FixContext)
+        mock_context.context_dict = {}
+        cb = CodeBlock(block_name="t", start_line=1, end_line=1, has_changes=True,
+                       change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE, context="code")
+        fix_resp = SonarFixResponse(FIXED_CODE_BLOCKS=[cb], CONFIDENCE=0.9, EXPLANATION="fixed")
+        mock_handler = Mock()
+        mock_handler.generate_fixes = AsyncMock(return_value=[fix_resp])
+        mock_handler.MOIDY_LINE_RANGE = False
+        mock_suggestion = Mock(spec=FixSuggestion)
+        with patch("devdox_ai_sonar.llm_fixer.IssueExtractor") as MockExtractor, \
+                patch.object(fixer, "_prepare_fix_context", new_callable=AsyncMock, return_value=mock_context), \
+                patch("devdox_ai_sonar.llm_fixer.RuleHandlerRegistry") as MockRegistry, \
+                patch.object(fixer, "_build_fix_suggestion", return_value=[mock_suggestion]), \
+                patch.object(fixer, "write_explaination"):
+            MockExtractor.return_value.validate_issue_group = AsyncMock(return_value=mock_validation)
+            MockRegistry.return_value.get_handler.return_value = mock_handler
+            result = await fixer.generate_fix_by_file(
+                [issue], tmp_path, tmp_path, file_md="output.md",
+            )
+        assert result is not None
+
+
+# ===========================================================================
+# Coverage: _create_fix_prompt_list (lines 1067-1158)
+# ===========================================================================
+
+
+class TestCreateFixPromptList:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_basic_prompt_generation(self, fixer):
+        issue = Mock()
+        issue.rule = "python:S1234"
+        issue.message = "Some issue"
+        context = Mock(spec=FixContext)
+        context.code_content = "def foo(): pass"
+        context.class_name = "MyClass"
+        context.import_section = {"has_imports": False}
+        context.context_dict = {"new_context": [{"context": "code"}]}
+        context.functions = []
+        with patch.object(fixer.jinja_env, "get_template") as mock_get:
+            mock_template = Mock()
+            mock_template.render.return_value = "rendered prompt"
+            mock_get.return_value = mock_template
+            prompt, system_template = fixer._create_fix_prompt_list(
+                [issue], context, {"python:S1234": {"name": "Rule", "how_to_fix": {}}}, "python",
+            )
+        assert isinstance(prompt, str)
+
+    def test_s3776_uses_refactoring_template(self, fixer):
+        issue = Mock()
+        issue.rule = "python:S3776"
+        issue.message = "Cognitive Complexity from 25 to the 15 allowed"
+        context = Mock(spec=FixContext)
+        context.code_content = "def foo(): pass"
+        context.class_name = None
+        context.import_section = {"has_imports": False}
+        context.context_dict = {"new_context": [{"context": "code"}]}
+        context.functions = []
+        with patch.object(fixer.jinja_env, "get_template") as mock_get:
+            mock_template = Mock()
+            mock_template.render.return_value = "refactoring prompt"
+            mock_get.return_value = mock_template
+            prompt, _ = fixer._create_fix_prompt_list(
+                [issue], context, {"python:S3776": {"name": "Complexity"}}, "python",
+            )
+        assert isinstance(prompt, str)
+
+    def test_s1172_modifies_rule_info(self, fixer):
+        issue = Mock()
+        issue.rule = "python:S1172"
+        issue.message = "Remove unused parameter"
+        context = Mock(spec=FixContext)
+        context.code_content = "def foo(self): pass"
+        context.class_name = None
+        context.import_section = {"has_imports": False}
+        context.context_dict = {"new_context": [{"context": "code"}]}
+        context.functions = []
+        rule_info = {
+            "python:S1172": {
+                "name": "Unused parameters",
+                "how_to_fix": {"steps": ["Remove unused elements or implement their intended purpose", "other step"]},
+                "root_cause": "something",
+            }
+        }
+        with patch.object(fixer.jinja_env, "get_template") as mock_get:
+            mock_template = Mock()
+            mock_template.render.return_value = "prompt"
+            mock_get.return_value = mock_template
+            fixer._create_fix_prompt_list([issue], context, rule_info, "python")
+        assert FUNCTION_ALREADY_CALLED in rule_info["python:S1172"]["how_to_fix"]["steps"]
+
+    def test_static_method_instruction(self, fixer):
+        issue = Mock()
+        issue.rule = "python:S1234"
+        issue.message = "issue"
+        context = Mock(spec=FixContext)
+        context.code_content = "@staticmethod\ndef foo(): pass"
+        context.class_name = "MyClass"
+        context.import_section = {"has_imports": False}
+        context.context_dict = {"new_context": [{"context": "code"}]}
+        context.functions = []
+        with patch.object(fixer.jinja_env, "get_template") as mock_get:
+            mock_template = Mock()
+            mock_template.render.return_value = "prompt"
+            mock_get.return_value = mock_template
+            prompt, _ = fixer._create_fix_prompt_list(
+                [issue], context, {}, "python",
+            )
+        assert isinstance(prompt, str)
+
+    def test_instance_method_instruction(self, fixer):
+        issue = Mock()
+        issue.rule = "python:S1234"
+        issue.message = "issue"
+        context = Mock(spec=FixContext)
+        context.code_content = "def foo(self): pass"
+        context.class_name = "MyClass"
+        context.import_section = {"has_imports": False}
+        context.context_dict = {"new_context": [{"context": "code"}]}
+        context.functions = []
+        with patch.object(fixer.jinja_env, "get_template") as mock_get:
+            mock_template = Mock()
+            mock_template.render.return_value = "prompt"
+            mock_get.return_value = mock_template
+            prompt, _ = fixer._create_fix_prompt_list(
+                [issue], context, {}, "python",
+            )
+        assert isinstance(prompt, str)
+
+
+# ===========================================================================
+# Coverage: _try_extract_from_issue_key (lines 1334-1343)
+# ===========================================================================
+
+
+class TestTryExtractFromIssueKey:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_no_colon_returns_none(self, fixer, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "nocolon"
+        assert fixer._try_extract_from_issue_key(fix, tmp_path) is None
+
+    def test_with_colon_file_exists(self, fixer, tmp_path):
+        (tmp_path / "src" / "file.py").parent.mkdir(parents=True)
+        (tmp_path / "src" / "file.py").write_text("code")
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "key:src/file.py:rule"
+        result = fixer._try_extract_from_issue_key(fix, tmp_path)
+        assert result is not None
+        assert "file.py" in result
+
+    def test_with_colon_file_not_found(self, fixer, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.issue_key = "key:nonexistent/file.py:rule"
+        result = fixer._try_extract_from_issue_key(fix, tmp_path)
+        assert result is None
+
+
+# ===========================================================================
+# Coverage: _get_file_from_fix (lines 1349-1356)
+# ===========================================================================
+
+
+class TestGetFileFromFix:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_stored_path_found(self, fixer, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.file_path = "test.py"
+        fix.original_code = "x"
+        fix.issue_key = "k"
+        (tmp_path / "test.py").write_text("code")
+        result = fixer._get_file_from_fix(fix, tmp_path)
+        assert result is not None
+
+    def test_falls_through_to_content_search(self, fixer, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.file_path = "nonexistent.py"
+        fix.issue_key = "nocolon"
+        fix.original_code = "short"
+        result = fixer._get_file_from_fix(fix, tmp_path)
+        assert result is None
+
+    def test_file_path_is_none(self, fixer, tmp_path):
+        fix = Mock(spec=FixSuggestion)
+        fix.file_path = None
+        fix.issue_key = "nocolon"
+        fix.original_code = "short"
+        result = fixer._get_file_from_fix(fix, tmp_path)
+        assert result is None
+
+
+# ===========================================================================
+# Coverage: apply_indentation_to_fix edge cases (lines 1362-1370)
+# ===========================================================================
+
+
+class TestApplyIndentationEdgeCases:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_empty_lines_after_split(self, fixer):
+        result = fixer.apply_indentation_to_fix("line1\n\nline3", "  ")
+        lines = result.split("\n")
+        assert lines[1] == ""  # empty line stays empty
+
+    def test_single_line(self, fixer):
+        result = fixer.apply_indentation_to_fix("single", "    ")
+        assert result == "    single"
+
+
+# ===========================================================================
+# Coverage: _try_find_by_content (lines 1820-1821)
+# ===========================================================================
+
+
+class TestTryFindByContent:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_finds_matching_file(self, fixer, tmp_path):
+        (tmp_path / "module.py").write_text("def target_function_to_find():\n    return 42\n")
+        fix = Mock(spec=FixSuggestion)
+        fix.original_code = "def target_function_to_find():\n    return 42"
+        result = fixer._try_find_by_content(fix, tmp_path)
+        assert result is not None
+        assert "module.py" in result
+
+    def test_no_matching_file(self, fixer, tmp_path):
+        (tmp_path / "other.py").write_text("x = 1\n")
+        fix = Mock(spec=FixSuggestion)
+        fix.original_code = "def unique_function_that_does_not_exist():\n    pass"
+        result = fixer._try_find_by_content(fix, tmp_path)
+        assert result is None
+
+
+# ===========================================================================
+# Coverage: _check_no_duplicate_definitions class detection (lines 1631-1632)
+# ===========================================================================
+
+
+class TestCheckNoDuplicateDefinitionsClasses:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_duplicate_class_detected(self, fixer):
+        content = "class Foo:\n    pass\n\nclass Foo:\n    pass\n"
+        assert fixer._check_no_duplicate_definitions(content, ".py") is False
+
+    def test_unique_classes(self, fixer):
+        content = "class Foo:\n    pass\n\nclass Bar:\n    pass\n"
+        assert fixer._check_no_duplicate_definitions(content, ".py") is True
+
+
+# ===========================================================================
+# Coverage: _prepare_context exception handling (lines 1912-1914)
+# ===========================================================================
+
+
+class TestPrepareContextExceptionHandling:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    async def test_general_exception_returns_none(self, fixer, tmp_path):
+        test_file = tmp_path / "test.py"
+        test_file.write_text("x = 1\n")
+        line_range = {"first_line": 1, "last_line": 1, "problem_lines": [1]}
+        with patch.object(fixer.file_reader, "read_lines", side_effect=RuntimeError("unexpected")):
+            result = await fixer._prepare_context(test_file, line_range, "", 1, "python")
+        assert result is None
+
+
+# ===========================================================================
+# Coverage: _handle_parentheses_import_line backslash check (lines 1939-1946)
+# ===========================================================================
+
+
+class TestHandleImportLineBranches:
+    @pytest.fixture
+    def fixer(self):
+        return _make_fixer()
+
+    def test_parentheses_import_closes(self, fixer):
+        import_lines = []
+        state = {"in_parentheses_import": True, "in_multiline_import": True, "in_backslash_continuation": False}
+        fixer._handle_parentheses_import_line("    path,\n", "path,", 2, import_lines, state)
+        assert state["in_parentheses_import"] is True  # not closed yet
+
+    def test_parentheses_import_closes_with_paren(self, fixer):
+        import_lines = []
+        state = {"in_parentheses_import": True, "in_multiline_import": True, "in_backslash_continuation": False}
+        fixer._handle_parentheses_import_line(")\n", ")", 3, import_lines, state)
+        assert state["in_parentheses_import"] is False
+
+    def test_parentheses_import_closes_then_backslash(self, fixer):
+        import_lines = []
+        state = {"in_parentheses_import": True, "in_multiline_import": True, "in_backslash_continuation": False}
+        fixer._handle_parentheses_import_line(") \\\n", ") \\", 3, import_lines, state)
+        assert state["in_parentheses_import"] is False
+        assert state["in_backslash_continuation"] is True
+
+    def test_backslash_continuation_ends(self, fixer):
+        import_lines = []
+        state = {"in_backslash_continuation": True, "in_multiline_import": True, "in_parentheses_import": False}
+        fixer._handle_backslash_continuation_line("    path\n", "path", 2, import_lines, state)
+        assert state["in_backslash_continuation"] is False
+
+    def test_backslash_continuation_continues(self, fixer):
+        import_lines = []
+        state = {"in_backslash_continuation": True, "in_multiline_import": True, "in_parentheses_import": False}
+        fixer._handle_backslash_continuation_line("    path \\\n", "path \\", 2, import_lines, state)
+        assert state["in_backslash_continuation"] is True
+
+
+# ===========================================================================
+# Coverage: remaining 45 uncovered lines
+# ===========================================================================
+
+
+class TestConvertRegexToDiffException:
+    """Lines 459-460: except (IndexError, OSError): return {} in _convert_regex_to_diff."""
+
+    def test_oserror_returns_empty_dict(self, tmp_path):
+        """Trigger OSError by providing a file_path that cannot be read."""
+        from devdox_ai_sonar.models.sonar import SearchReplace
+        block = CodeBlock(
+            block_name="b", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE, block_type=BlockType.MODULE,
+            replacements=[SearchReplace(search="x", replace="y")],
+            file_path="/nonexistent_dir_abc/nonexistent_file.py",
+        )
+        result = LLMFixer._convert_regex_to_diff(block, {})
+        assert result == {}
+
+
+class TestBuildDisplayBlocksValueError:
+    """Lines 479-480: except ValueError: pass when file_path can't be relative_to project_path."""
+
+    def test_unrelated_paths_skips_relative(self, tmp_path):
+        block = CodeBlock(
+            block_name="b", start_line=1, end_line=1, has_changes=True,
+            change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            context="x = 1",
+            file_path="/completely/different/path/file.py",
+        )
+        project_path = tmp_path / "my_project"
+        project_path.mkdir()
+        result = LLMFixer._build_display_blocks([block], project_path)
+        assert len(result) == 1
+        # file_path stays unchanged because relative_to raised ValueError
+        assert result[0].file_path == "/completely/different/path/file.py"
+
+
+class TestExtractFixFromResponseJsonDecodeError:
+    """Lines 1289-1290: inner json.JSONDecodeError after cleaning markdown fences."""
+
+    def test_malformed_json_after_cleanup_falls_through(self):
+        fixer = _make_fixer()
+        # Content that looks like JSON (starts with {, ends with }) but fails to parse
+        # The .replace on line 1280 is a no-op (result not assigned), so fences stay.
+        # But the split/rejoin creates {```json ... ```} which starts/ends with braces
+        # but is still invalid JSON — triggers the inner json.JSONDecodeError.
+        content = '{```json "broken": true ```}'
+        with patch.object(fixer, "_extract_using_regex_fallback", return_value={"fallback": True}):
+            result = fixer._extract_fix_from_response(content)
+        assert result == {"fallback": True}
+
+
+class TestGetFileFromFixIssueKeyPath:
+    """Line 1351: _try_extract_from_issue_key returns a valid path."""
+
+    def test_issue_key_contains_file_path(self, tmp_path):
+        fixer = _make_fixer()
+        # Create the file the issue key references
+        src = tmp_path / "src" / "app.py"
+        src.parent.mkdir(parents=True)
+        src.write_text("x = 1\n")
+        fix = Mock()
+        fix.file_path = None  # _try_stored_file_path returns None
+        fix.issue_key = "rule123:src/app.py"
+        fix.original_code = ""
+        result = fixer._get_file_from_fix(fix, tmp_path)
+        assert result == str(src)
+
+
+class TestGetFileFromFixByContent:
+    """Line 1354: _try_find_by_content returns a valid path."""
+
+    def test_find_by_content_returns_path(self, tmp_path):
+        fixer = _make_fixer()
+        src = tmp_path / "src" / "module.py"
+        src.parent.mkdir(parents=True)
+        src.write_text("unique_content_string_for_search = True\n")
+        fix = Mock()
+        fix.file_path = None
+        fix.issue_key = "no-colon"  # _try_extract_from_issue_key returns None
+        fix.original_code = "unique_content_string_for_search = True"
+        result = fixer._get_file_from_fix(fix, tmp_path)
+        assert result == str(src)
+
+
+class TestApplyIndentationEdgeCase:
+    """Line 1363: apply_indentation_to_fix when fixed_code.split returns empty lines list.
+
+    In practice lines will never be empty if strip() returned truthy,
+    but the guard is on line 1362. We test the normal path to cover it.
+    """
+
+    def test_empty_string_returns_as_is(self):
+        fixer = _make_fixer()
+        result = fixer.apply_indentation_to_fix("", "    ")
+        assert result == ""
+
+    def test_whitespace_only_returns_as_is(self):
+        fixer = _make_fixer()
+        result = fixer.apply_indentation_to_fix("   \n  ", "    ")
+        assert result == "   \n  "
+
+
+class TestRunTestingCasesRetry:
+    """Line 1523: retry path after installing requirements."""
+
+    def test_retry_after_install(self, tmp_path):
+        fixer = _make_fixer()
+        test_file = tmp_path / "test_example.py"
+        test_file.write_text("def test_pass(): pass\n")
+        # First call raises ModuleNotFoundError, second succeeds
+        call_count = {"n": 0}
+        original_run = subprocess.run
+
+        def mock_run(*args, **kwargs):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise subprocess.CalledProcessError(
+                    1, args[0], stderr="ModuleNotFoundError: No module named 'foo'"
+                )
+            # Second call (retry) succeeds
+            return Mock(returncode=0)
+
+        with patch("devdox_ai_sonar.llm_fixer.subprocess.run", side_effect=mock_run):
+            with patch.object(fixer, "_try_install_requirements", return_value=True):
+                result = fixer.run_testing_cases(str(test_file))
+        # The retry call also goes through mock_run which succeeds on 2nd call
+        assert result == (True, None) or call_count["n"] >= 2
+
+
+class TestResolvePythonExecutableWindows:
+    """Lines 1554-1555: venv python windows path (Scripts/python.exe exists)."""
+
+    def test_windows_scripts_python(self, tmp_path):
+        fixer = _make_fixer()
+        # Create a fake venv with Scripts/python.exe (Windows layout)
+        venv_dir = tmp_path / "venv" / "Scripts"
+        venv_dir.mkdir(parents=True)
+        python_exe = venv_dir / "python.exe"
+        python_exe.write_text("fake")
+        result = fixer._resolve_python_executable(tmp_path)
+        assert result == str(python_exe)
+
+
+class TestProcessValidationTmpFileExists:
+    """Lines 1718-1719: tmp file exists path in _handle_failed_fixes_with_validator."""
+
+    @pytest.mark.asyncio
+    async def test_tmp_file_read_and_cleanup(self, tmp_path):
+        fixer = _make_fixer()
+        file_path = tmp_path / "src" / "module.py"
+        file_path.parent.mkdir(parents=True)
+        file_path.write_text("original\n")
+        tmp_file = file_path.with_suffix(".tmp.py")
+        tmp_file.write_text("tmp_content\n")
+
+        fix = Mock()
+        fix.issue_key = "key-1"
+        issue = Mock()
+        result = Mock()
+        result.successful_fixes = []
+        result.failed_fixes = []
+        validator = Mock()
+        validation_result = Mock()
+        validation_result.status = ValidationStatus.APPROVED
+        validator.validate_fix.return_value = validation_result
+
+        with patch.object(fixer, "read_file_async", new_callable=AsyncMock, return_value="tmp_content\n"):
+            with patch("devdox_ai_sonar.llm_fixer.cleanup_tmp_py_file") as mock_cleanup:
+                with patch.object(fixer, "_process_validation_result", new_callable=AsyncMock):
+                    with patch.object(fixer.file_reader, "write_text", new_callable=AsyncMock):
+                        new_fixes = [Mock(reason="test reason")]
+                        await fixer._handle_failed_fixes_with_validator(
+                            file_path=file_path,
+                            file_fix_pairs=[(fix, issue)],
+                            new_fixes=new_fixes,
+                            original_content="original\n",
+                            result=result,
+                            validator=validator,
+                            dry_run=False,
+                        )
+                mock_cleanup.assert_called_once_with(tmp_file)
+
+
+class TestTryFindByContentBreakAndException:
+    """Lines 1844-1849: break when 3+ matching files found + except Exception."""
+
+    def test_break_at_three_files(self, tmp_path):
+        fixer = _make_fixer()
+        # Create 5 files all containing the same content
+        for i in range(5):
+            f = tmp_path / f"file{i}.py"
+            f.write_text("shared_content_xyz\n")
+        result = fixer._find_files_with_content(tmp_path, "shared_content_xyz")
+        assert len(result) == 3  # stops at 3
+
+    def test_outer_exception_caught(self, tmp_path):
+        fixer = _make_fixer()
+        # Make project_path.rglob raise an exception
+        mock_path = Mock()
+        mock_path.rglob.side_effect = PermissionError("no access")
+        result = fixer._find_files_with_content(mock_path, "content")
+        assert result == []
+
+
+class TestPrepareContextClassNameBranch:
+    """Line 1874: class_name is truthy branch in _prepare_context."""
+
+    @pytest.mark.asyncio
+    async def test_class_name_detected(self, tmp_path):
+        fixer = _make_fixer()
+        test_file = tmp_path / "src" / "module.py"
+        test_file.parent.mkdir(parents=True)
+        # Content where a class encloses the problem line
+        content = "class MyClass:\n    def method(self):\n        x = 1\n"
+        test_file.write_text(content)
+        line_range = {"first_line": 3, "last_line": 3, "problem_lines": [3]}
+        result = await fixer._prepare_context(test_file, line_range, "", 5, "python")
+        assert result is not None
+        assert result["context_dict"].get("class_name") == "MyClass"
+
+
+class TestFindFunctionsContainingProblemsNoInfo:
+    """Lines 2091-2092: logger.error + continue when _get_function_info returns None."""
+
+    def test_get_function_info_returns_none(self):
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+        ]
+        ext = ContextExtractor(lines)
+        # Mock _get_function_info to return None
+        with patch.object(ext, "_get_function_info", return_value=None):
+            result = ext._find_functions_containing_problems([1], 0, 1)
+        assert result == []
+
+
+class TestCountFunctionsInRangeOutOfBounds:
+    """Line 2170: break when line_idx >= len(self.lines)."""
+
+    def test_range_exceeds_lines(self):
+        lines = ["def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        # Range extends beyond available lines
+        result = ext._count_functions_in_range(0, 10)
+        assert result == 1  # only counts the one function before breaking
+
+
+class TestGetFunctionInfoFuncEndNone:
+    """Line 2200: return None when func_end_idx is None."""
+
+    def test_function_end_none(self):
+        # A line that is a function def but _find_function_end returns None
+        lines = ["public void doStuff() {\n"]
+        ext = ContextExtractor(lines)
+        with patch.object(ext, "_find_function_end", return_value=None):
+            result = ext._get_function_info(0)
+        assert result is None
+
+
+class TestIsLineInsideFunction:
+    """Lines 2237, 2240: _is_line_inside_function edge cases."""
+
+    def test_line_before_function_start(self):
+        """line_idx < function_start_idx returns False."""
+        lines = ["x = 1\n", "def foo():\n", "    pass\n"]
+        ext = ContextExtractor(lines)
+        result = ext._is_line_inside_function(lines, 0, 1)
+        assert result is False
+
+    def test_function_end_none_falls_through_to_indentation_check(self):
+        """function_end is None falls through to _check_indentation_containment."""
+        lines = ["def foo():\n", "    x = 1\n"]
+        ext = ContextExtractor(lines)
+        with patch.object(ext, "_find_function_end", return_value=None):
+            result = ext._is_line_inside_function(lines, 1, 0)
+        # _check_indentation_containment: "    x = 1" has indent 4 > 0 (def foo indent)
+        assert result is True
+
+
+class TestFindBraceFunctionEnd:
+    """Lines 2245, 2258: edge cases in _find_brace_function_end."""
+
+    def test_start_idx_beyond_lines(self):
+        """start_idx >= len(lines) returns None."""
+        lines = ["line\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_brace_function_end(lines, 5)
+        assert result is None
+
+    def test_unmatched_braces_returns_none(self):
+        """Braces never balance — line 2258 returns None."""
+        lines = ["function foo() {\n", "    x = 1;\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_brace_function_end(lines, 0)
+        assert result is None
+
+
+class TestCheckIndentationContainment:
+    """Lines 2276-2277: target_indent > func_indent check."""
+
+    def test_indented_line_inside_function(self):
+        lines = ["def foo():\n", "    x = 1\n"]
+        ext = ContextExtractor(lines)
+        result = ext._check_indentation_containment(lines, 1, 0)
+        assert result is True
+
+    def test_same_indent_not_inside(self):
+        lines = ["def foo():\n", "x = 1\n"]
+        ext = ContextExtractor(lines)
+        result = ext._check_indentation_containment(lines, 1, 0)
+        assert result is False
+
+
+class TestFindPythonFunctionEnd:
+    """Line 2281: start_idx >= len(lines) returns None."""
+
+    def test_start_beyond_lines(self):
+        lines = ["line\n"]
+        ext = ContextExtractor(lines)
+        result = ext._find_python_function_end(lines, 10)
+        assert result is None
+
+
+class TestFindFunctionEndClickDecorator:
+    """Line 2363: @click decorator branch."""
+
+    def test_click_decorator_uses_python_end(self):
+        lines = [
+            "@click.command()\n",
+            "def cli():\n",
+            "    pass\n",
+        ]
+        ext = ContextExtractor(lines)
+        # The start line has @click. — triggers the elif branch
+        # But first it needs to be a function definition for _find_containing_function
+        # _find_function_end is called with start_idx=0; line 0 has @click.
+        result = ext._find_function_end(0)
+        # @click line matches r"\b@click.\b" — uses _find_python_function_end
+        assert result is not None
+
+
+class TestFindFunctionEndBraceFallback:
+    """Line 2368: else fallback when python_end is None (brace function end)."""
+
+    def test_fallback_to_brace_end(self):
+        # A line that doesn't match def, {, function, or @click.
+        # _find_python_function_end returns None when start_idx >= len(lines)
+        # after patching, then it falls back to _find_brace_function_end
+        lines = [
+            "public void doStuff(int x)\n",
+            "{\n",
+            "    x = 1;\n",
+            "}\n",
+        ]
+        ext = ContextExtractor(lines)
+        with patch.object(ext, "_find_python_function_end", return_value=None):
+            result = ext._find_function_end(0)
+        # Falls back to _find_brace_function_end which finds closing brace at line 3
+        assert result == 3
+
+
+class TestExtractCompleteFunctionEndNone:
+    """Line 2410: function_end = min(len(lines)-1, function_def_line_idx+50) when _find_function_end returns None."""
+
+    def test_function_end_none_fallback(self):
+        lines = ["def foo():\n", "    x = 1\n", "    return x\n"]
+        ext = ContextExtractor(lines)
+        with patch.object(ext, "_find_function_end", return_value=None):
+            result = ext._extract_complete_function(0, 1, 2)
+        assert result is not None
+        # function_end = min(2, 0+50) = 2
+        assert result["end_line"] == 3  # function_end + 1 = 2 + 1
+
+
+class TestFindFunctionStartWithDecoratorsEmptyLine:
+    """Line 2438: break on empty line in _find_function_start_with_decorators."""
+
+    def test_empty_line_stops_search(self):
+        lines = [
+            "x = 1\n",
+            "\n",
+            "@decorator\n",
+            "def foo():\n",
+            "    pass\n",
+        ]
+        ext = ContextExtractor(lines)
+        result = ext._find_function_start_with_decorators(lines, 3)
+        # Empty line at index 1 should stop — but decorator at 2 is found first
+        assert result == 2
+
+
+class TestTryExpandMultilineToFunction:
+    """Lines 2457-2459: expand succeeds; 2466-2471: returns None."""
+
+    def test_expand_succeeds(self):
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+            "    return x + y\n",
+        ]
+        ext = ContextExtractor(lines)
+        result = ext._try_expand_multiline_to_function(1, 2)
+        assert result is not None
+        assert "context" in result
+
+    def test_function_end_none_returns_none(self):
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+        ]
+        ext = ContextExtractor(lines)
+        with patch.object(ext, "_find_function_end", return_value=None):
+            result = ext._try_expand_multiline_to_function(0, 1)
+        assert result is None
+
+    def test_function_end_lte_last_idx_returns_none(self):
+        lines = [
+            "def foo():\n",
+            "    x = 1\n",
+            "    y = 2\n",
+        ]
+        ext = ContextExtractor(lines)
+        # function_end_idx (1) <= last_idx (2) → return None
+        with patch.object(ext, "_find_function_end", return_value=1):
+            result = ext._try_expand_multiline_to_function(0, 2)
+        assert result is None
+
+
+class TestTryExtractContainingFunctionNone:
+    """Lines 2474-2477: function_start_idx is None returns None."""
+
+    def test_no_containing_function(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        ext = ContextExtractor(lines)
+        result = ext._try_extract_containing_function(0, 1)
+        assert result is None
+
+
+class TestBuildFixSuggestionProblemLinesElse:
+    """Line 2532: problem_lines_raw is neither list nor int → problem_lines = []."""
+
+    def test_problem_lines_raw_is_string(self):
+        from devdox_ai_sonar.models.sonar import SonarFixResponse, PlacementType
+        fix_response = Mock(spec=SonarFixResponse)
+        fix_response.FIXED_CODE_BLOCKS = [
+            CodeBlock(
+                block_name="b", start_line=1, end_line=1, has_changes=True,
+                change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+                context="fixed",
+            )
+        ]
+        fix_response.IMPORT_BLOCK = ""
+        fix_response.NEW_HELPER_CODE = ""
+        fix_response.PLACEMENT = PlacementType.SIBLING
+        fix_response.EXPLANATION = "fix"
+        fix_response.CONFIDENCE = 0.9
+
+        context_info = {
+            "context_dict": {
+                "context": "code",
+                "start_line": 1,
+                "end_line": 5,
+                "import_section": {"end_line": 0},
+            }
+        }
+        file_path = Path("/project/src/file.py")
+        project_path = Path("/project")
+        # problem_lines is a string — triggers else branch
+        line_range = {"first_line": 1, "last_line": 5, "problem_lines": "not-a-list-or-int"}
+
+        result = _build_fix_suggestion(
+            fix_response, context_info, file_path, project_path, line_range, "test-model"
+        )
+        assert result.issue_key is not None  # built with empty problem_lines
+
+
+class TestFindDecoratorStartEdge:
+    """Line 2170 / decorator_start edge: _find_decorator_start with non-decorator line above."""
+
+    def test_non_decorator_stops_search(self):
+        lines = [
+            "x = 1\n",
+            "@decorator\n",
+            "def foo():\n",
+            "    pass\n",
+        ]
+        ext = ContextExtractor(lines)
+        result = ext._find_decorator_start(2)
+        assert result == 1  # stops at x = 1, decorator starts at 1

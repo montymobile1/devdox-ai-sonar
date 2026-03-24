@@ -64,7 +64,13 @@ from devdox_ai_sonar.cli import (
     _process_regular_issues,
     _handle_provider_configuration,
     _configure_providers_loop,
-
+    show_command_selector_async,
+    _execute_command_async,
+    fix_multiple,
+    _process_files_with_agent,
+    _display_fix_preview2,
+    _display_fix_results2,
+    _process_interactive_command_async,
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -5720,4 +5726,783 @@ class TestFetchIssuesByTypeRegular:
 
         assert len(result) == 1
         mock_analyzer.get_fixable_issues_by_types.assert_called_once()
+
+
+# ============================================================================
+# NEW COVERAGE TESTS — Uncovered lines 164-262, 657, 667, 669, 677, 683-684,
+# 866-897, 1008-1010, 1068-1127, 1273-1276, 1314-1391, 1553, 1601,
+# 1621-1626, 1688-1694
+# ============================================================================
+
+
+class TestShowCommandSelectorAsync:
+    """Tests for show_command_selector_async (lines 164-262)."""
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_questionary_import_error_falls_back(self, mock_console):
+        """Lines 164-172: questionary ImportError triggers fallback."""
+        with patch.dict('sys.modules', {'questionary': None}):
+            with patch(
+                'devdox_ai_sonar.cli._fallback_command_selector',
+                return_value='analyze',
+            ) as mock_fallback:
+                # Force re-import failure inside the function
+                import builtins
+                original_import = builtins.__import__
+
+                def mock_import(name, *args, **kwargs):
+                    if name == 'questionary':
+                        raise ImportError("No module named 'questionary'")
+                    return original_import(name, *args, **kwargs)
+
+                with patch('builtins.__import__', side_effect=mock_import):
+                    result = await show_command_selector_async()
+
+                assert result == 'analyze'
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_returns_command_value_on_selection(self, mock_console):
+        """Lines 242-257: user selects a valid command."""
+        mock_questionary = MagicMock()
+        mock_select = MagicMock()
+        mock_select.ask_async = AsyncMock(
+            return_value="🔧 Fix Issues - Generate and apply LLM-powered fixes"
+        )
+        mock_questionary.select.return_value = mock_select
+        mock_questionary.Style = MagicMock()
+
+        with patch.dict('sys.modules', {'questionary': mock_questionary}):
+            with patch('devdox_ai_sonar.cli.console'):
+                # Re-import to pick up the mock
+                import importlib
+                import devdox_ai_sonar.cli as cli_module
+                # Call directly but mock the questionary inside
+                import builtins
+                original_import = builtins.__import__
+
+                def mock_import(name, *args, **kwargs):
+                    if name == 'questionary':
+                        return mock_questionary
+                    return original_import(name, *args, **kwargs)
+
+                with patch('builtins.__import__', side_effect=mock_import):
+                    result = await show_command_selector_async()
+
+        assert result == 'fix_issues'
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_returns_none_on_cancel(self, mock_console):
+        """Lines 252-253: user cancels selection (choice is None)."""
+        mock_questionary = MagicMock()
+        mock_select = MagicMock()
+        mock_select.ask_async = AsyncMock(return_value=None)
+        mock_questionary.select.return_value = mock_select
+        mock_questionary.Style = MagicMock()
+
+        import builtins
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == 'questionary':
+                return mock_questionary
+            return original_import(name, *args, **kwargs)
+
+        with patch('builtins.__import__', side_effect=mock_import):
+            result = await show_command_selector_async()
+
+        assert result is None
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_returns_none_on_keyboard_interrupt(self, mock_console):
+        """Lines 261-262: KeyboardInterrupt returns None."""
+        mock_questionary = MagicMock()
+        mock_select = MagicMock()
+        mock_select.ask_async = AsyncMock(side_effect=KeyboardInterrupt())
+        mock_questionary.select.return_value = mock_select
+        mock_questionary.Style = MagicMock()
+
+        import builtins
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == 'questionary':
+                return mock_questionary
+            return original_import(name, *args, **kwargs)
+
+        with patch('builtins.__import__', side_effect=mock_import):
+            result = await show_command_selector_async()
+
+        assert result is None
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_returns_none_for_unknown_choice(self, mock_console):
+        """Lines 258-259: choice doesn't match any command returns None."""
+        mock_questionary = MagicMock()
+        mock_select = MagicMock()
+        mock_select.ask_async = AsyncMock(return_value="Unknown Option")
+        mock_questionary.select.return_value = mock_select
+        mock_questionary.Style = MagicMock()
+
+        import builtins
+        original_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == 'questionary':
+                return mock_questionary
+            return original_import(name, *args, **kwargs)
+
+        with patch('builtins.__import__', side_effect=mock_import):
+            result = await show_command_selector_async()
+
+        assert result is None
+
+
+class TestExecuteInteractiveIterationHandlers:
+    """Tests for _execute_interactive_iteration_async exception handlers
+    (lines 667, 669)."""
+
+    @patch('devdox_ai_sonar.cli._process_interactive_command_async')
+    @patch('devdox_ai_sonar.cli._handle_keyboard_interrupt', new_callable=AsyncMock)
+    async def test_keyboard_interrupt_handled(self, mock_handle_kb, mock_process):
+        """Line 667: KeyboardInterrupt calls _handle_keyboard_interrupt."""
+        mock_process.side_effect = KeyboardInterrupt()
+        mock_handle_kb.return_value = False
+
+        result = await _execute_interactive_iteration_async(Mock())
+
+        assert result is False
+        mock_handle_kb.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._process_interactive_command_async')
+    @patch('devdox_ai_sonar.cli._handle_interactive_error', new_callable=AsyncMock)
+    async def test_generic_exception_handled(self, mock_handle_err, mock_process):
+        """Line 669: generic Exception calls _handle_interactive_error."""
+        mock_process.side_effect = RuntimeError("Unexpected")
+        mock_handle_err.return_value = False
+
+        result = await _execute_interactive_iteration_async(Mock())
+
+        assert result is False
+        mock_handle_err.assert_called_once()
+
+
+class TestProcessInteractiveCommandAsync:
+    """Tests for _process_interactive_command_async (lines 677, 683-684)."""
+
+    @patch('devdox_ai_sonar.cli._exit_application')
+    @patch('devdox_ai_sonar.cli.show_command_selector_async', new_callable=AsyncMock)
+    async def test_exit_on_none_command(self, mock_selector, mock_exit):
+        """Line 677: None command exits and returns True."""
+        mock_selector.return_value = None
+        mock_exit.side_effect = None  # Don't actually exit
+
+        result = await _process_interactive_command_async(Mock(spec=click.Context))
+
+        mock_exit.assert_called_once()
+        assert result is True
+
+    @patch('devdox_ai_sonar.cli._exit_application')
+    @patch('devdox_ai_sonar.cli._should_continue_to_menu', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli._execute_interactive_command_async', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli.show_command_selector_async', new_callable=AsyncMock)
+    async def test_returns_true_when_user_declines_menu(
+        self, mock_selector, mock_exec, mock_continue, mock_exit
+    ):
+        """Lines 683-684: user declines continue-to-menu -> exit and return True."""
+        mock_selector.return_value = 'analyze'
+        mock_continue.return_value = False
+        mock_exit.side_effect = None
+
+        result = await _process_interactive_command_async(Mock(spec=click.Context))
+
+        mock_exit.assert_called_once()
+        assert result is True
+
+
+class TestRunInteractiveModeReturn:
+    """Test _run_interactive_mode_async loop exit (line 657)."""
+
+    @patch('devdox_ai_sonar.cli._execute_interactive_iteration_async', new_callable=AsyncMock)
+    async def test_returns_when_iteration_returns_true(self, mock_iteration):
+        """Line 657: iteration returns True -> loop exits."""
+        mock_iteration.return_value = True
+
+        # Should return without looping forever
+        await _run_interactive_mode_async(Mock(spec=click.Context))
+
+        mock_iteration.assert_called_once()
+
+
+class TestExecuteCommandAsync:
+    """Tests for _execute_command_async (lines 866-897)."""
+
+    @patch('devdox_ai_sonar.cli._run_fix_issues', new_callable=AsyncMock)
+    async def test_fix_issues_command(self, mock_fix):
+        """Line 871: fix_issues command dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "fix_issues")
+
+        mock_fix.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._run_fix_security_issues', new_callable=AsyncMock)
+    async def test_fix_security_issues_command(self, mock_fix_sec):
+        """Line 873: fix_security_issues dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "fix_security_issues")
+
+        mock_fix_sec.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._run_analyze', new_callable=AsyncMock)
+    async def test_analyze_command(self, mock_analyze):
+        """Line 875: analyze dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "analyze")
+
+        mock_analyze.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli._run_inspect', new_callable=AsyncMock)
+    async def test_inspect_command(self, mock_inspect):
+        """Line 877: inspect dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "inspect")
+
+        mock_inspect.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.add_provider', new_callable=AsyncMock)
+    async def test_add_provider_command(self, mock_add):
+        """Line 879: add_provider dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "add_provider")
+
+        mock_add.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.update_provider', new_callable=AsyncMock)
+    async def test_update_provider_command(self, mock_update):
+        """Line 881: update_provider dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "update_provider")
+
+        mock_update.assert_called_once()
+
+    @patch('devdox_ai_sonar.cli.change_parameters', new_callable=AsyncMock)
+    async def test_change_parameters_command(self, mock_change):
+        """Line 883: change_parameters dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {"key": "value"}}
+
+        await _execute_command_async(ctx, "change_parameters")
+
+        mock_change.assert_called_once_with(key="value")
+
+    @patch('devdox_ai_sonar.cli.fix_multiple', new_callable=AsyncMock)
+    async def test_fix_multiple_command(self, mock_fm):
+        """Line 885: fix_multiple dispatches correctly."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "fix_multiple")
+
+        mock_fm.assert_called_once()
+
+    async def test_unknown_command_exits(self):
+        """Lines 886-888: unknown command prints error and exits."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        await _execute_command_async(ctx, "nonexistent_command")
+
+        ctx.exit.assert_called_once_with(1)
+
+    async def test_exception_verbose_prints_traceback(self):
+        """Lines 891-894: exception with verbose prints traceback."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": True, "options": {}}
+
+        with patch(
+            'devdox_ai_sonar.cli._run_fix_issues',
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Test error"),
+        ):
+            await _execute_command_async(ctx, "fix_issues")
+
+        ctx.exit.assert_called_once_with(1)
+
+    async def test_exception_non_verbose_prints_short_error(self):
+        """Lines 895-897: exception without verbose prints short error."""
+        ctx = Mock(spec=click.Context)
+        ctx.obj = {"verbose": False, "options": {}}
+
+        with patch(
+            'devdox_ai_sonar.cli._run_fix_issues',
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Test error"),
+        ):
+            await _execute_command_async(ctx, "fix_issues")
+
+        ctx.exit.assert_called_once_with(1)
+
+
+class TestRunAnalyzeLimitError:
+    """Tests for _run_analyze limit parsing error (lines 1008-1010)."""
+
+    async def test_invalid_limit_value_uses_default(self):
+        """Lines 1008-1010: ValueError/IndexError uses default limit."""
+        from devdox_ai_sonar.config import settings
+
+        mock_auth = Mock()
+        mock_auth.project = "proj"
+        mock_auth.organization = "org"
+        mock_auth.token = "tok"
+
+        with patch(
+            'devdox_ai_sonar.cli._load_and_validate_config',
+            new_callable=AsyncMock,
+            return_value=(mock_auth, Mock(), {"max_fixes": 10}),
+        ):
+            with patch(
+                'devdox_ai_sonar.cli.smart_prompt',
+                new_callable=AsyncMock,
+                return_value="not_a_number",
+            ):
+                with patch('devdox_ai_sonar.cli.SonarCloudAnalyzer') as mock_cls:
+                    mock_analyzer = Mock()
+                    mock_analyzer.get_project_issues.return_value = None
+                    mock_cls.return_value = mock_analyzer
+
+                    with patch('devdox_ai_sonar.cli.show_progress', mock_show_progress):
+                        with patch('devdox_ai_sonar.cli.console'):
+                            await _run_analyze()
+
+                    call_kwargs = mock_analyzer.get_project_issues.call_args
+                    assert call_kwargs[1]["max_issues"] == settings.MAX_FIXES_LIMIT
+
+
+class TestFixMultiple:
+    """Tests for fix_multiple function (lines 1068-1127)."""
+
+    @patch('devdox_ai_sonar.cli._process_and_fix_issues', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_fix_multiple_success(self, mock_console, mock_process):
+        """Lines 1068-1122: successful fix_multiple call."""
+        await fix_multiple(
+            sonar_token="tok",
+            sonar_org="org",
+            sonar_project="proj",
+            project_path="/tmp/proj",
+            llm_provider="openai",
+            llm_api_key="key",
+            llm_default_model="gpt-4",
+            branch="main",
+            pull_request=0,
+            max_fixes=5,
+            types="BUG",
+            severity="CRITICAL",
+            excluded_rules="python:S1234",
+            apply=1,
+            dry_run=False,
+        )
+
+        # Should call _process_and_fix_issues twice (regular + security)
+        assert mock_process.call_count == 2
+
+    @patch('devdox_ai_sonar.cli._process_and_fix_issues', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_fix_multiple_defaults(self, mock_console, mock_process):
+        """Lines 1071-1097: fix_multiple with default kwargs."""
+        await fix_multiple()
+
+        assert mock_process.call_count == 2
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_fix_multiple_switch_command_exception(self, mock_console):
+        """Lines 1124-1127: SwitchCommandException re-raised."""
+        with patch(
+            'devdox_ai_sonar.cli._process_and_fix_issues',
+            new_callable=AsyncMock,
+            side_effect=SwitchCommandException(),
+        ):
+            with pytest.raises(SwitchCommandException):
+                await fix_multiple()
+
+
+class TestProcessAndFixIssuesWithAgent:
+    """Tests for _process_and_fix_issues calling _process_files_with_agent
+    (lines 1273-1276)."""
+
+    @patch('devdox_ai_sonar.cli._process_files_with_agent', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli._fetch_issues_by_type')
+    @patch('devdox_ai_sonar.cli.download_latest_version')
+    @patch('devdox_ai_sonar.cli.TmpCloneManager')
+    @patch('devdox_ai_sonar.cli._initialize_fix_services')
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_found_issues_calls_agent(
+        self, mock_console, mock_init_svc, mock_tmp_cls,
+        mock_download, mock_fetch, mock_agent
+    ):
+        """Lines 1273-1276: issues found -> total printed, agent called."""
+        mock_mgr = AsyncMock()
+        mock_mgr.__aenter__.return_value = Path(tempfile.gettempdir()) / "clone"
+        mock_tmp_cls.return_value = mock_mgr
+
+        mock_download.return_value = True
+        mock_fetch.return_value = {"file.py": [Mock(), Mock()]}
+
+        mock_init_svc.return_value = {
+            "analyzer": Mock(),
+            "ruler": Mock(),
+            "fixer": Mock(),
+        }
+
+        auth_config = AuthConfig(
+            token="t", organization="o", project="p",
+            project_path="/tmp", git_url="https://git.example.com"
+        )
+
+        await _process_and_fix_issues(
+            auth_config, Mock(), "main", "0",
+            {"max_fixes": 10}, issue_type=IssueType.REGULAR,
+        )
+
+        mock_agent.assert_called_once()
+        # Verify total issues message was printed
+        call_args = str(mock_console.print.call_args_list)
+        assert "2 fixable issues" in call_args
+
+
+class TestProcessFilesWithAgent:
+    """Tests for _process_files_with_agent (lines 1314-1391)."""
+
+    @patch('devdox_ai_sonar.cli.build_supervisor')
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_no_issues_prints_warning(self, mock_console, mock_build):
+        """Lines 1330-1332: empty issues prints warning and returns."""
+        mock_services = {"fixer": Mock(provider="openai", model="gpt-4", api_key="key")}
+
+        await _process_files_with_agent(
+            {}, mock_services,
+            AuthConfig(token="t", organization="o", project="p",
+                       project_path="/tmp", git_url="https://git.example.com"),
+            {"create_backup": False, "dry_run": False},
+            Path(tempfile.gettempdir()) / "clone",
+        )
+
+        call_args = str(mock_console.print.call_args_list)
+        assert "No issues to process" in call_args
+
+    @patch('devdox_ai_sonar.cli._display_fix_results2')
+    @patch('devdox_ai_sonar.cli.build_supervisor')
+    @patch('devdox_ai_sonar.cli.show_progress', mock_show_progress)
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_processes_single_issue(
+        self, mock_console, mock_build, mock_display
+    ):
+        """Lines 1334-1379: processes an issue through the supervisor."""
+        mock_supervisor = AsyncMock()
+        mock_result = FixResult(
+            successful_fixes=[], failed_fixes=[], skipped_files=[],
+            total_fixes_attempted=1, success_rate=0.0,
+            backup_created=False,
+            project_path=Path(tempfile.gettempdir()),
+            backup_path=None,
+        )
+        mock_supervisor.run.return_value = mock_result
+        mock_build.return_value = mock_supervisor
+
+        issue = Mock()
+        issue.rule = "python:S1234"
+        issue.file_path = "handler.py"
+
+        mock_fixer = Mock(provider="openai", model="gpt-4", api_key="key")
+        mock_services = {"fixer": mock_fixer}
+
+        await _process_files_with_agent(
+            {"handler.py": [issue]}, mock_services,
+            AuthConfig(token="t", organization="o", project="p",
+                       project_path="/tmp", git_url="https://git.example.com"),
+            {"create_backup": False, "dry_run": False},
+            Path(tempfile.gettempdir()) / "clone",
+            system_ask=False,
+        )
+
+        mock_supervisor.run.assert_called_once()
+        mock_display.assert_called_once_with(mock_result)
+
+    @patch('devdox_ai_sonar.cli.smart_confirm', new_callable=AsyncMock, return_value=False)
+    @patch('devdox_ai_sonar.cli._display_fix_results2')
+    @patch('devdox_ai_sonar.cli.build_supervisor')
+    @patch('devdox_ai_sonar.cli.show_progress', mock_show_progress)
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_user_stops_processing_early(
+        self, mock_console, mock_build, mock_display, mock_confirm
+    ):
+        """Lines 1382-1391: user declines to continue -> remaining skipped."""
+        mock_supervisor = AsyncMock()
+        mock_result = FixResult(
+            successful_fixes=[], failed_fixes=[], skipped_files=[],
+            total_fixes_attempted=1, success_rate=0.0,
+            backup_created=False,
+            project_path=Path(tempfile.gettempdir()),
+            backup_path=None,
+        )
+        mock_supervisor.run.return_value = mock_result
+        mock_build.return_value = mock_supervisor
+
+        issue1 = Mock(rule="python:S1234", file_path="a.py")
+        issue2 = Mock(rule="python:S5678", file_path="b.py")
+
+        mock_fixer = Mock(provider="openai", model="gpt-4", api_key="key")
+        mock_services = {"fixer": mock_fixer}
+
+        await _process_files_with_agent(
+            {"a.py": [issue1], "b.py": [issue2]}, mock_services,
+            AuthConfig(token="t", organization="o", project="p",
+                       project_path="/tmp", git_url="https://git.example.com"),
+            {"create_backup": False, "dry_run": False},
+            Path(tempfile.gettempdir()) / "clone",
+            system_ask=True,
+        )
+
+        # Should only run once because user stops
+        assert mock_supervisor.run.call_count == 1
+        call_args = str(mock_console.print.call_args_list)
+        assert "remaining issues skipped" in call_args
+
+
+class TestHandleFixSkipped:
+    """Test handle_fix skipped branch (line 1553)."""
+
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_handle_fix_not_applied_shows_skipped(self, mock_console):
+        """Line 1553: apply is falsy -> prints SKIPPED."""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="Fixed",
+            confidence=0.9,
+            llm_model="gpt-4",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(
+                block_name="test", start_line="1", end_line="10",
+                has_changes=True, change_type=ChangeType.FULL_CODE,
+                block_type=BlockType.MODULE, context="new_code"
+            )]
+        )
+
+        with patch('devdox_ai_sonar.cli._display_fix_preview'):
+            await handle_fix(
+                fix, [Mock()], Mock(),
+                Mock(project_path="/tmp"),
+                {"apply": 0, "dry_run": 0, "create_backup": 0}
+            )
+
+        call_args = str(mock_console.print.call_args_list)
+        assert constant.SKIPPED in call_args
+
+
+class TestShouldContinueToNextIssueNoAsk:
+    """Test _should_continue_to_next_issue system_ask=False (line 1601)."""
+
+    async def test_returns_true_when_system_ask_false(self):
+        """Line 1601: system_ask=False -> returns True without prompting."""
+        result = await _should_continue_to_next_issue(1, 5, system_ask=False)
+        assert result is True
+
+
+class TestDisplayFixPreview2:
+    """Tests for _display_fix_preview2 (lines 1621-1626)."""
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_display_fix_preview2_with_explanation(self, mock_console):
+        """Lines 1621-1628: displays preview with explanation panel."""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="This fixes the issue",
+            confidence=0.95,
+            llm_model="gpt-4",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(
+                block_name="test", start_line="1", end_line="10",
+                has_changes=True, change_type=ChangeType.FULL_CODE,
+                block_type=BlockType.MODULE, context="new_code"
+            )]
+        )
+
+        with patch('devdox_ai_sonar.cli.Panel'):
+            _display_fix_preview2(fix)
+
+        assert mock_console.print.called
+
+    @patch('devdox_ai_sonar.cli.console')
+    def test_display_fix_preview2_empty_explanation(self, mock_console):
+        """Lines 1625-1626: empty explanation does not show panel."""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="",
+            confidence=0.95,
+            llm_model="gpt-4",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(
+                block_name="test", start_line="1", end_line="10",
+                has_changes=True, change_type=ChangeType.FULL_CODE,
+                block_type=BlockType.MODULE, context="new_code"
+            )]
+        )
+
+        with patch('devdox_ai_sonar.cli.Panel') as mock_panel:
+            _display_fix_preview2(fix)
+
+        mock_panel.assert_not_called()
+
+
+class TestDisplayFixResults2:
+    """Tests for _display_fix_results2 (lines 1688-1694)."""
+
+    @patch('devdox_ai_sonar.cli._display_fix_preview2')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_display_fix_results2_with_successes(self, mock_console, mock_preview):
+        """Lines 1688-1694: displays results and calls preview for successes."""
+        fix = FixSuggestion(
+            issue_key="issue-1",
+            rule="python:S1234",
+            file_path="test.py",
+            original_code="old",
+            fixed_code="new",
+            explanation="Fixed",
+            confidence=0.95,
+            llm_model="gpt-4",
+            sonar_line_number=10,
+            fixed_code_blocks=[CodeBlock(
+                block_name="test", start_line="1", end_line="10",
+                has_changes=True, change_type=ChangeType.FULL_CODE,
+                block_type=BlockType.MODULE, context="new_code"
+            )]
+        )
+
+        result = FixResult(
+            successful_fixes=[fix],
+            failed_fixes=[],
+            skipped_files=[],
+            total_fixes_attempted=1,
+            success_rate=1.0,
+            backup_created=False,
+            project_path=Path(tempfile.gettempdir()),
+            backup_path=None,
+        )
+
+        _display_fix_results2(result)
+
+        assert mock_console.print.called
+        mock_preview.assert_called_once_with(fix)
+
+    @patch('devdox_ai_sonar.cli._display_fix_preview2')
+    @patch('devdox_ai_sonar.cli.console')
+    def test_display_fix_results2_no_successes(self, mock_console, mock_preview):
+        """Lines 1688-1692: displays results with no successes."""
+        result = FixResult(
+            successful_fixes=[],
+            failed_fixes=[],
+            skipped_files=[],
+            total_fixes_attempted=0,
+            success_rate=0.0,
+            backup_created=False,
+            project_path=Path(tempfile.gettempdir()),
+            backup_path=None,
+        )
+
+        _display_fix_results2(result)
+
+        assert mock_console.print.called
+        mock_preview.assert_not_called()
+
+
+class TestProcessInteractiveCommandAsyncReturnsFalse:
+    """Test _process_interactive_command_async returns False (line 684)."""
+
+    @patch('devdox_ai_sonar.cli._should_continue_to_menu', new_callable=AsyncMock, return_value=True)
+    @patch('devdox_ai_sonar.cli._execute_interactive_command_async', new_callable=AsyncMock)
+    @patch('devdox_ai_sonar.cli.show_command_selector_async', new_callable=AsyncMock)
+    async def test_returns_false_when_user_continues(
+        self, mock_selector, mock_exec, mock_continue
+    ):
+        """Line 684: user selects a non-exit command and then continues -> returns False."""
+        mock_selector.return_value = 'analyze'
+        mock_continue.return_value = True
+
+        result = await _process_interactive_command_async(Mock(spec=click.Context))
+
+        mock_exec.assert_called_once()
+        assert result is False
+
+
+class TestProcessFilesWithAgentFlushesPhaseMessages:
+    """Test _process_files_with_agent flushes buffered phase messages (lines 1375-1377)."""
+
+    @patch('devdox_ai_sonar.cli._display_fix_results2')
+    @patch('devdox_ai_sonar.cli.build_supervisor')
+    @patch('devdox_ai_sonar.cli.show_progress', mock_show_progress)
+    @patch('devdox_ai_sonar.cli.console')
+    async def test_phase_messages_flushed_after_spinner(
+        self, mock_console, mock_build, mock_display
+    ):
+        """Lines 1375-1377: non-empty phase_messages are printed after the spinner closes."""
+        mock_result = FixResult(
+            successful_fixes=[], failed_fixes=[], skipped_files=[],
+            total_fixes_attempted=1, success_rate=0.0,
+            backup_created=False,
+            project_path=Path(tempfile.gettempdir()),
+            backup_path=None,
+        )
+
+        async def fake_run(**kwargs):
+            reporter = kwargs.get("status_reporter")
+            if reporter:
+                reporter("[bold green]Phase 1 done[/bold green]")
+                reporter("[bold green]Phase 2 done[/bold green]")
+            return mock_result
+
+        mock_supervisor = AsyncMock()
+        mock_supervisor.run.side_effect = fake_run
+        mock_build.return_value = mock_supervisor
+
+        issue = Mock(rule="python:S1234", file_path="handler.py")
+        mock_fixer = Mock(provider="openai", model="gpt-4", api_key="key")
+        mock_services = {"fixer": mock_fixer}
+
+        await _process_files_with_agent(
+            {"handler.py": [issue]}, mock_services,
+            AuthConfig(token="t", organization="o", project="p",
+                       project_path="/tmp", git_url="https://git.example.com"),
+            {"create_backup": False, "dry_run": False},
+            Path(tempfile.gettempdir()) / "clone",
+            system_ask=False,
+        )
+
+        # Verify the phase messages were printed to the console
+        printed_args = [str(c) for c in mock_console.print.call_args_list]
+        printed_text = " ".join(printed_args)
+        assert "Phase 1 done" in printed_text
+        assert "Phase 2 done" in printed_text
 
