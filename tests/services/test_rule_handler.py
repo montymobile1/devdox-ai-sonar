@@ -685,7 +685,7 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         assert result is None
 
     async def test_calls_llm_returns_response(self):
-        mock_llm = Mock()
+        mock_llm = AsyncMock()
         fix_response = _make_fix_response()
         mock_llm._call_llm_list.return_value = fix_response
 
@@ -700,7 +700,7 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         mock_llm._call_llm_list.assert_called_once()
 
     async def test_returns_none_on_exception(self):
-        mock_llm = Mock()
+        mock_llm = AsyncMock()
         mock_llm._call_llm_list.side_effect = RuntimeError("LLM error")
 
         result = await self.handler.generate_fixes(
@@ -737,7 +737,7 @@ class TestDefaultRuleHandlerGenerateFixes:
         assert result is None
 
     async def test_calls_llm_returns_response(self):
-        mock_llm = Mock()
+        mock_llm = AsyncMock()
         fix_response = _make_fix_response()
         mock_llm._call_llm_list.return_value = fix_response
 
@@ -751,7 +751,7 @@ class TestDefaultRuleHandlerGenerateFixes:
         assert result == [fix_response]
 
     async def test_returns_none_on_exception(self):
-        mock_llm = Mock()
+        mock_llm = AsyncMock()
         mock_llm._call_llm_list.side_effect = RuntimeError("boom")
 
         result = await self.handler.generate_fixes(
@@ -2086,6 +2086,88 @@ class TestConvenationNameHandlerDispatch:
             self.file_path,
             llm_caller=None,
         )
+        assert result is None
+
+
+# ============================================================================
+# _dispatch_issue (extracted helper for generate_fixes)
+# ============================================================================
+
+
+class TestDispatchIssue:
+    """Tests for ConvenationNameHandler._dispatch_issue."""
+
+    def setup_method(self):
+        self.handler = ConvenationNameHandler()
+        self.file_path = Path("/project/src/module.py")
+        self.function_info = {
+            "definitions": [
+                {
+                    "file": str(self.file_path),
+                    "function": "my_func",
+                    "line": 10,
+                    "decorators": [],
+                    "args": ["self", "camelCase"],
+                }
+            ],
+            "calls": [],
+        }
+        self.context = _make_context(
+            functions=[{"name": "my_func", "start_line": 10}],
+        )
+
+    def test_s117_dispatches_to_fix_naming_convention(self):
+        issue = Mock(rule="python:S117")
+        sentinel = [_make_fix_response()]
+        with patch.object(
+            self.handler, "_fix_naming_convention", return_value=sentinel
+        ) as mock_fix:
+            result = self.handler._dispatch_issue(
+                issue, self.function_info, self.context, self.file_path
+            )
+        assert result is sentinel
+        mock_fix.assert_called_once_with(self.function_info, self.context, self.file_path)
+
+    def test_s1542_dispatches_to_fix_func_naming_convention(self):
+        issue = Mock(rule="python:S1542")
+        sentinel = [_make_fix_response()]
+        with patch.object(
+            self.handler, "_fix_func_naming_convention", return_value=sentinel
+        ) as mock_fix:
+            result = self.handler._dispatch_issue(
+                issue, self.function_info, self.context, self.file_path
+            )
+        assert result is sentinel
+        mock_fix.assert_called_once_with(self.function_info, self.context, self.file_path)
+
+    def test_s1172_dispatches_to_fix_unused_parameters(self):
+        issue = Mock(rule="python:S1172")
+        sentinel = [_make_fix_response()]
+        with patch.object(
+            self.handler, "_fix_unused_parameters", return_value=sentinel
+        ) as mock_fix:
+            result = self.handler._dispatch_issue(
+                issue, self.function_info, self.context, self.file_path
+            )
+        assert result is sentinel
+        mock_fix.assert_called_once_with(self.function_info, self.context, self.file_path)
+
+    def test_unknown_rule_returns_none(self):
+        issue = Mock(rule="python:S9999")
+        result = self.handler._dispatch_issue(
+            issue, self.function_info, self.context, self.file_path
+        )
+        assert result is None
+
+    def test_returns_none_and_logs_when_fix_method_returns_none(self):
+        issue = Mock(rule="python:S117")
+        mock_fix = Mock(return_value=None, __name__="_fix_naming_convention")
+        with patch.object(
+            self.handler, "_fix_naming_convention", mock_fix
+        ):
+            result = self.handler._dispatch_issue(
+                issue, self.function_info, self.context, self.file_path
+            )
         assert result is None
 
 
