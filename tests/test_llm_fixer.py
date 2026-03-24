@@ -2656,19 +2656,25 @@ class TestBuildLlm:
 
 
 class TestCallLlmWithGraph:
-    def test_success_returns_fix_result(self):
+    async def test_success_returns_fix_result(self):
         mock_result = Mock()
-        with patch("devdox_ai_sonar.llm_fixer._FIX_GRAPH") as mock_graph:
-            mock_graph.invoke.return_value = {"fix_result": mock_result, "validation_error": None,
-                                              "attempt": 0, "max_attempts": 3}
-            result = call_llm_with_graph("openai", "gpt-4o", "key", "system", "user")
+        mock_graph = Mock()
+        mock_graph.ainvoke = AsyncMock(return_value={
+            "fix_result": mock_result, "validation_error": None,
+            "attempt": 0, "max_attempts": 3,
+        })
+        with patch("devdox_ai_sonar.llm_fixer._get_fix_graph", return_value=mock_graph):
+            result = await call_llm_with_graph("openai", "gpt-4o", "key", "system", "user")
         assert result is mock_result
 
-    def test_failure_returns_none(self):
-        with patch("devdox_ai_sonar.llm_fixer._FIX_GRAPH") as mock_graph:
-            mock_graph.invoke.return_value = {"fix_result": None, "validation_error": "failed",
-                                              "attempt": 3, "max_attempts": 3}
-            result = call_llm_with_graph("openai", "gpt-4o", "key", "system", "user")
+    async def test_failure_returns_none(self):
+        mock_graph = Mock()
+        mock_graph.ainvoke = AsyncMock(return_value={
+            "fix_result": None, "validation_error": "failed",
+            "attempt": 3, "max_attempts": 3,
+        })
+        with patch("devdox_ai_sonar.llm_fixer._get_fix_graph", return_value=mock_graph):
+            result = await call_llm_with_graph("openai", "gpt-4o", "key", "system", "user")
         assert result is None
 
 
