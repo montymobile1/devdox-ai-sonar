@@ -265,8 +265,7 @@ class ConvenationNameHandler(RuleHandler):
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
 
         Each issue is dispatched independently so mixed-rule batches are handled
-        correctly. All three branches use standalone ``if`` checks (not elif) to
-        avoid accidental fall-through when rules are evaluated in sequence.
+        correctly.
         """
         try:
             if len(context.functions) == 0:
@@ -286,47 +285,10 @@ class ConvenationNameHandler(RuleHandler):
                 )
                 return None
 
-            # Dispatch each issue to the correct sub-fix.  Use independent ``if``
-            # blocks — NOT if/elif — so that every rule is evaluated regardless of
-            # whether a previous one matched.  Return on the first successful result.
             for issue in issues:
-                if issue.rule == "python:S117":
-
-                    result = self._fix_naming_convention(
-                        function_info, context, file_path
-                    )
-
-                    if result is not None:
-                        return result
-                    logger.warning(
-                        "ConvenationNameHandler: _fix_naming_convention returned None "
-                        "for %s (all parameters may already be snake_case)",
-                        file_path,
-                    )
-
-                if issue.rule == "python:S1542":
-                    result = self._fix_func_naming_convention(
-                        function_info, context, file_path
-                    )
-                    if result is not None:
-                        return result
-                    logger.warning(
-                        "ConvenationNameHandler: _fix_func_naming_convention returned "
-                        "None for %s (function name may already be snake_case)",
-                        file_path,
-                    )
-
-                if issue.rule == "python:S1172":
-                    result = self._fix_unused_parameters(
-                        function_info, context, file_path
-                    )
-                    if result is not None:
-                        return result
-                    logger.warning(
-                        "ConvenationNameHandler: _fix_unused_parameters returned None "
-                        "for %s (no safely removable unused parameters found)",
-                        file_path,
-                    )
+                result = self._dispatch_issue(issue, function_info, context, file_path)
+                if result is not None:
+                    return result
 
             logger.warning(
                 "ConvenationNameHandler: no fix produced for issues %s in %s",
@@ -340,6 +302,45 @@ class ConvenationNameHandler(RuleHandler):
                 "ConvenationNameHandler failed to generate fixes for %s", self.RULE_ID
             )
             return None
+
+    def _dispatch_issue(
+        self,
+        issue: Union[SonarIssue, SonarSecurityIssue],
+        function_info: Dict,
+        context: FixContext,
+        file_path: Path,
+    ) -> Optional[List[SonarFixResponse]]:
+        """Dispatch a single issue to the appropriate fix handler by rule."""
+        dispatch = {
+            "python:S117": (
+                self._fix_naming_convention,
+                "all parameters may already be snake_case",
+            ),
+            "python:S1542": (
+                self._fix_func_naming_convention,
+                "function name may already be snake_case",
+            ),
+            "python:S1172": (
+                self._fix_unused_parameters,
+                "no safely removable unused parameters found",
+            ),
+        }
+        entry = dispatch.get(issue.rule)
+        if entry is None:
+            return None
+
+        fix_method, fallback_reason = entry
+        result = fix_method(function_info, context, file_path)
+        if result is not None:
+            return result
+
+        logger.warning(
+            "ConvenationNameHandler: %s returned None for %s (%s)",
+            fix_method.__name__,
+            file_path,
+            fallback_reason,
+        )
+        return None
 
     def _fix_unused_parameters(
         self,
