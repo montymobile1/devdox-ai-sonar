@@ -54,8 +54,9 @@ State keys:
 from __future__ import annotations
 
 import logging
+import operator
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, List, Optional, TypedDict, Union, Annotated
 
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
@@ -86,6 +87,20 @@ MAX_RETRIES = 2
 StatusReporter = Callable[[str], None]
 
 
+def keep_last(left: Any, right: Any) -> Any:
+    """
+    Always keep the most recent write.
+
+    Use for scalar fields that:
+      a) are set once in initial_state and should never be overridden, OR
+      b) are deliberately updated by a node during the run.
+
+    In both cases, the last explicit write is the correct one.
+    Do NOT use keep_first — it silently keeps a wrong default (e.g. Path("."))
+    if a node accidentally emits the field before the real value is set.
+    """
+    return right
+
 def _noop_reporter(msg: str) -> None:  # noqa: D401
     """Default reporter — does nothing (keeps graph hermetic when no UI is attached)."""
 
@@ -97,21 +112,23 @@ def _noop_reporter(msg: str) -> None:  # noqa: D401
 
 class SonarState(TypedDict, total=False):
     # Inputs
-    issues: List[IssueUnion]
-    project_path: Path
-    tmp_path: Path
-    modified_content: str
-    file_md: str
+    issues: Annotated[List[IssueUnion], operator.add]
+    fixes: Annotated[List[FixSuggestion], operator.add]  # single declaration
+    accepted_fixes: Annotated[List[FixSuggestion], operator.add]
+    project_path: Annotated[Path, keep_last]
+    tmp_path: Annotated[Path, keep_last]
+    modified_content: Annotated[str, keep_last]
+    file_md: Annotated[str, keep_last]
     # Set during graph execution
-    validation: Any          # ValidationResult from IssueExtractor
-    fixes: List[FixSuggestion]
-    syntax_err: Optional[str]
-    accepted_fixes: List[FixSuggestion]
-    error: str
-    retry_count: int
-    error_feedback: str
+    validation: Annotated[Any, keep_last]
+    syntax_err: Annotated[Optional[str], keep_last]
+    error: Annotated[str, keep_last]
+    retry_count: Annotated[int, keep_last]
+    error_feedback: Annotated[str, keep_last]
+
+
     # UI callback — not serialised, lives only in-process
-    _report: Optional[StatusReporter]
+    _report: Annotated[Optional[StatusReporter], keep_last]
 
 
 # ---------------------------------------------------------------------------
@@ -147,7 +164,7 @@ def build_tools(
 
         rule = issues[0].rule if issues else "?"
         file_hint = getattr(issues[0], "file_path", getattr(issues[0], "file", "?")) if issues else "?"
-        report(f"[bold cyan]  ▶ Phase 1/5 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]")
+        report(f"[bold cyan]  ▶ Phase 1/6 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]")
 
         extractor = IssueExtractor(fixer.file_reader)
         validation = await extractor.validate_issue_group(issues, tmp_path, project_path)
@@ -193,7 +210,7 @@ def build_tools(
         file_md: str = state.get("file_md", "")
 
         handler = registry.get_handler(issues[0].rule)
-        report(f"[bold cyan]  ▶ Phase 2/5 — Applying AST fix[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]")
+        report(f"[bold cyan]  ▶ Phase 2/6 — Applying AST fix[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]")
 
         logger.info("Automated handler: %s for rule %s", handler.__class__.__name__, issues[0].rule)
 
@@ -251,7 +268,7 @@ def build_tools(
         phase_label = (
             f"[bold yellow]  ↻ Retry {retry_count}/{MAX_RETRIES} — Generating LLM fix[/bold yellow]"
             if retry_count > 0
-            else "[bold cyan]  ▶ Phase 2/5 — Generating LLM fix[/bold cyan]"
+            else "[bold cyan]  ▶ Phase 2/6 — Generating LLM fix[/bold cyan]"
         )
         report(f"{phase_label}  handler=[yellow]{handler.__class__.__name__}[/yellow]")
 
@@ -307,7 +324,7 @@ def build_tools(
         fixes: List[FixSuggestion] = state.get("fixes", [])
         project_path: Path = state["project_path"]
 
-        report("[bold cyan]  ▶ Phase 3/5 — Checking syntax[/bold cyan]  (python -m py_compile)")
+        report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
 
         if not fixes:
             logger.warning("check_syntax_tool: no fixes to check")
