@@ -232,6 +232,20 @@ Only if STEP 1 passes, check for syntax and indentation errors:
 - If it's a SyntaxError: Check for missing colons, parentheses, or quotes
 {% endif %}
 
+{% if test_error %}
+## TEST FAILURE FROM pytest
+The fix compiles successfully but **breaks existing tests**. Here is the pytest output:
+```
+{{ test_error }}
+```
+
+**How to Address This Test Failure:**
+- Identify which test(s) failed and why
+- Check if the fix changed a function signature, return value, or side effect that existing tests depend on
+- Preserve the original function behavior while still fixing the SonarQube issue
+- Do NOT modify tests — fix the code so existing tests pass
+{% endif %}
+
 {% if strategy_text %}
 ## ADDITIONAL STRATEGIES
 {{ strategy_text }}

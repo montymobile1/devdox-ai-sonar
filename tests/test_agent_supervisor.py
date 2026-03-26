@@ -64,6 +64,7 @@ def _make_state(**overrides):
         "retry_count": 0,
         "error_feedback": "",
         "syntax_err": None,
+        "test_err": None,
         "_report": _noop_reporter,
     }
     defaults.update(overrides)
@@ -356,7 +357,7 @@ class TestCheckTestingImpl:
         fixer = MagicMock()
         state = _make_state(fixes=[])
         result = _check_testing_impl(state, fixer)
-        assert result == {"syntax_err": None}
+        assert result == {"test_err": None}
 
     def test_tests_dir_exists(self, tmp_path):
         (tmp_path / "tests").mkdir()
@@ -365,10 +366,10 @@ class TestCheckTestingImpl:
         state = _make_state(fixes=[fix], project_path=tmp_path)
         with patch(
             "devdox_ai_sonar.agent_supervisor._run_test_suite",
-            return_value={"syntax_err": None},
+            return_value={"test_err": None},
         ) as mock_run:
             result = _check_testing_impl(state, fixer)
-        assert result == {"syntax_err": None}
+        assert result == {"test_err": None}
 
     def test_falls_back_to_test_dir(self, tmp_path):
         (tmp_path / "test").mkdir()
@@ -377,7 +378,7 @@ class TestCheckTestingImpl:
         state = _make_state(fixes=[fix], project_path=tmp_path)
         with patch(
             "devdox_ai_sonar.agent_supervisor._run_test_suite",
-            return_value={"syntax_err": None},
+            return_value={"test_err": None},
         ) as mock_run:
             _check_testing_impl(state, fixer)
         call_path = mock_run.call_args[0][0]
@@ -396,7 +397,7 @@ class TestRunTestSuite:
         result = _run_test_suite(
             tmp_path, fixer, _noop_reporter, tmp_path,
         )
-        assert result == {"syntax_err": None}
+        assert result == {"test_err": None}
 
     def test_tests_fail(self, tmp_path):
         fixer = MagicMock()
@@ -404,7 +405,7 @@ class TestRunTestSuite:
         result = _run_test_suite(
             tmp_path, fixer, _noop_reporter, tmp_path,
         )
-        assert result["syntax_err"] == "AssertionError"
+        assert result["test_err"] == "AssertionError"
 
     def test_exception(self, tmp_path):
         fixer = MagicMock()
@@ -412,7 +413,7 @@ class TestRunTestSuite:
         result = _run_test_suite(
             tmp_path, fixer, _noop_reporter, tmp_path,
         )
-        assert "crash" in result["syntax_err"]
+        assert "crash" in result["test_err"]
 
 
 # ===========================================================================
@@ -557,6 +558,28 @@ class TestValidateFixImpl:
         result = _validate_fix_impl(state, validator)
         assert len(result["accepted_fixes"]) == 1
 
+    def test_forwards_test_err_to_validator(self):
+        fix = _make_fix()
+        issue = _make_issue()
+        vresult = MagicMock(should_apply=True, final_fix=fix)
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        validation = _make_validation()
+        validation.file_path = MagicMock()
+        validation.file_path.read_text.return_value = "code"
+
+        test_error = "FAILED tests/test_app.py::test_login - AssertionError"
+        state = _make_state(
+            fixes=[fix], issues=[issue], validation=validation,
+            test_err=test_error,
+        )
+        _validate_fix_impl(state, validator)
+        validator.validate_fix.assert_called_once_with(
+            fix=fix, issue=issue,
+            file_content="code", new_error_msg="",
+            test_err=test_error,
+        )
+
 
 # ===========================================================================
 # TestRouteAfterValidation
@@ -616,11 +639,11 @@ class TestRouteAfterSyntax:
 
 class TestRouteAfterTest:
     def test_tests_passed_routes_to_accept(self):
-        state = _make_state(syntax_err=None)
+        state = _make_state(test_err=None)
         assert route_after_test(state) == "accept"
 
     def test_tests_failed_routes_to_validate(self):
-        state = _make_state(syntax_err="test failure output")
+        state = _make_state(test_err="test failure output")
         assert route_after_test(state) == "validate"
 
 
@@ -793,7 +816,7 @@ class TestBuildTools:
         tools = build_tools(fixer, validator, registry)
         state = _make_state(fixes=[])
         result = tools["check_testing_tool"].invoke({"state": state})
-        assert result == {"syntax_err": None}
+        assert result == {"test_err": None}
 
     def test_validate_fix_tool_no_validator(self):
         fixer = MagicMock()

@@ -257,6 +257,7 @@ class FixValidator:
         file_content: str,
         context_lines: int = 20,
         new_error_msg: str = "",
+        test_err: str = "",
     ) -> ValidationResult:
         """
         Validate a fix suggestion using a senior code reviewer persona.
@@ -275,7 +276,8 @@ class FixValidator:
                 fix.fixed_code_blocks
             )
             prompt = self._create_validation_prompt(
-                fix, issue, context, new_error_msg, formatted_fix
+                fix, issue, context, new_error_msg, formatted_fix,
+                test_err=test_err,
             )
 
             validation_response = self._call_llm_validator(prompt)
@@ -409,6 +411,7 @@ class FixValidator:
         context: Dict[str, Any],
         new_error: str,
         formatted_fix: str,
+        test_err: str = "",
     ) -> str:
         template = self.jinja_env.get_template("python/validator.j2")
         prompt = template.render(
@@ -418,6 +421,7 @@ class FixValidator:
             issue_type=getattr(issue, "type", "N/A"),
             context=context,
             error_message=new_error,
+            test_error=test_err,
             formatted_fix=formatted_fix,
         )
         return prompt.strip()

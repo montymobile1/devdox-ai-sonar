@@ -43,16 +43,14 @@ State keys:
     file_md
     validation      — ValidationResult from extractor (set by validate_issue_tool)
     fixes           — List[FixSuggestion] (set by run_automated_tool / run_llm_tool)
-    syntax_err      — str | None (set by check_syntax_tool / check_testing_tool)
+    syntax_err      — str | None (set by check_syntax_tool)
+    test_err        — str | None (set by check_testing_tool)
     accepted_fixes  — List[FixSuggestion] (final output)
     error           — str (set on any fatal error)
     retry_count     — int (incremented on each retry)
     error_feedback  — str (REJECTED explanation passed back to llm tool on retry)
     _report         — Callable[[str], None] | None  (phase status reporter)
 """
-
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, TypedDict, Union
@@ -106,6 +104,7 @@ class SonarState(TypedDict, total=False):
     validation: Any          # ValidationResult from IssueExtractor
     fixes: List[FixSuggestion]
     syntax_err: Optional[str]
+    test_err: Optional[str]
     accepted_fixes: List[FixSuggestion]
     error: str
     retry_count: int
@@ -269,7 +268,7 @@ def _check_testing_impl(state: dict, fixer: LLMFixer) -> dict:
     if not fixes:
         logger.warning("check_testing_tool: no fixes to check — skipping tests")
         report("[dim]    ↳ No fixes to check — skipping tests[/dim]")
-        return {"syntax_err": None}
+        return {"test_err": None}
 
     testing_path = project_path / "tests"
     if not testing_path.exists():
@@ -282,20 +281,20 @@ def _run_test_suite(
     testing_path: Path, fixer: LLMFixer,
     report: StatusReporter, project_path: Path,
 ) -> dict:
-    """Execute pytest and return syntax_err result."""
+    """Execute pytest and return test_err result."""
     try:
         ok, err = fixer.run_testing_cases(str(testing_path))
         if ok:
             logger.info("Test suite passed")
             report("[green]  ✓ All tests passed[/green]")
-            return {"syntax_err": None}
+            return {"test_err": None}
         logger.warning("Test suite failed: %s", err)
         report("[yellow]  ⚠ Tests failed[/yellow] — forwarding to validator")
-        return {"syntax_err": err}
+        return {"test_err": err}
     except Exception as exc:
         logger.error("Test suite exception: %s", exc)
         report(f"[red]  ✗ Test runner raised exception:[/red] {exc}")
-        return {"syntax_err": str(exc)}
+        return {"test_err": str(exc)}
     finally:
         logger.debug("check_testing_tool finished for %s", project_path)
 
@@ -316,7 +315,8 @@ def _validate_fix_impl(state: dict, validator: Optional[FixValidator]) -> dict:
 
     file_content = _read_file_for_validation(state.get("validation"))
     accepted, last_explanation = _run_validation_loop(
-        fixes, state["issues"], validator, file_content, state.get("syntax_err") or "",
+        fixes, state["issues"], validator, file_content,
+        state.get("syntax_err") or "", state.get("test_err") or "",
     )
     return _build_validation_result(accepted, last_explanation, fixes, state, report)
 
@@ -333,7 +333,8 @@ def _read_file_for_validation(validation: Any) -> str:
 
 def _run_validation_loop(
     fixes: List[FixSuggestion], issues: List[IssueUnion],
-    validator: FixValidator, file_content: str, syntax_err: str,
+    validator: FixValidator, file_content: str,
+    syntax_err: str, test_err: str = "",
 ) -> tuple:
     """Validate each fix and return (accepted, last_explanation)."""
     accepted: List[FixSuggestion] = []
@@ -342,6 +343,7 @@ def _run_validation_loop(
         result = validator.validate_fix(
             fix=fix, issue=issues[0],
             file_content=file_content, new_error_msg=syntax_err,
+            test_err=test_err,
         )
         if result.should_apply:
             accepted.append(result.final_fix)
@@ -484,10 +486,10 @@ def route_after_test(state: SonarState) -> str:
     - "accept"   → all tests passed, fix is good
     - "validate" → tests failed, forward failure output to FixValidator
     """
-    if state.get("syntax_err") is None:
+    if state.get("test_err") is None:
         logger.info("Routing → accept (tests passed)")
         return "accept"
-    logger.info("Routing → validate (test failure: %s)", state["syntax_err"])
+    logger.info("Routing → validate (test failure: %s)", state["test_err"])
     return "validate"
 
 
