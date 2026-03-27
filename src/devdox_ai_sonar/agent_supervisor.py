@@ -112,9 +112,9 @@ def _noop_reporter(msg: str) -> None:  # noqa: D401
 
 class SonarState(TypedDict, total=False):
     # Inputs
-    issues: Annotated[List[IssueUnion], operator.add]
-    fixes: Annotated[List[FixSuggestion], operator.add]  # single declaration
-    accepted_fixes: Annotated[List[FixSuggestion], operator.add]
+    issues: Annotated[List[IssueUnion], keep_last]
+    fixes: Annotated[List[FixSuggestion], keep_last]  # single declaration
+    accepted_fixes: Annotated[List[FixSuggestion], keep_last]
     project_path: Annotated[Path, keep_last]
     tmp_path: Annotated[Path, keep_last]
     modified_content: Annotated[str, keep_last]
@@ -415,7 +415,6 @@ def build_tools(
         report: StatusReporter = state.get("_report") or _noop_reporter
 
         report("[bold cyan]  ▶ Phase 5/5 — Validating fix quality[/bold cyan]  (FixValidator)")
-
         if validator is None:
             report("[dim]    ↳ No validator configured — accepting all fixes[/dim]")
             return {

@@ -2180,6 +2180,7 @@ class ContextExtractor:
         functions_with_issues = self._find_functions_containing_problems(
             problem_indices, first_idx, last_idx
         )
+
         if not functions_with_issues:
             logger.warning(
                 "No functions found containing problem lines %s in range %d-%d",
@@ -2195,7 +2196,7 @@ class ContextExtractor:
         if not self._is_function_definition(func_line):
             return None
         func_name = self._extract_function_name(func_line)
-        decorator_start_idx = self._find_decorator_start(func_start_idx)
+        decorator_start_idx = self._find_decorator_start2(func_start_idx)
         func_end_idx = self._find_function_end(func_start_idx)
         if func_end_idx is None:
             return None
@@ -2211,6 +2212,113 @@ class ContextExtractor:
             "indentation": base_indent,
             "decorators": decorators,
         }
+
+    def _find_decorator_start2(self, func_def_idx: int) -> int:
+        if func_def_idx == 0:
+            return func_def_idx
+
+        func_line = self.lines[func_def_idx].rstrip()
+        func_indent = len(func_line) - len(func_line.lstrip())
+        current_idx = func_def_idx - 1
+        decorator_start = func_def_idx
+
+        while current_idx >= 0:
+            line = self.lines[current_idx].rstrip()
+
+            # blank lines / comments between decorators — skip
+            if not line or line.lstrip().startswith("#"):
+                current_idx -= 1
+                continue
+
+            stripped = line.lstrip()
+            line_indent = len(line) - len(stripped)
+
+            if stripped.startswith("@") and line_indent == func_indent:
+                # This is a decorator line at the correct indent — record and keep going
+                decorator_start = current_idx
+                current_idx -= 1
+                continue
+
+            # Not a "@" line — check if we're inside a multi-line decorator
+            # by counting unmatched closing brackets below this line down
+            # to the last recorded decorator_start boundary.
+            # Simpler: scan from current_idx downward until we hit a "@" line
+            # at the right indent, counting parens to confirm continuity.
+            if self._is_inside_multiline_decorator(
+                   current_idx, func_def_idx, func_indent
+            ):
+                current_idx -= 1
+                continue
+
+            break
+
+        return decorator_start
+
+    def _is_inside_multiline_decorator(
+            self,
+            line_idx: int,
+            func_def_idx: int,
+            func_indent: int,
+    ) -> bool:
+        """
+        Check if line_idx is a continuation line of a multi-line decorator.
+
+        Strategy: scan FORWARD from line_idx toward func_def_idx and track
+        paren depth. If we reach a '@' line at the correct indent with
+        unclosed parens that eventually close, we're inside a decorator.
+        """
+        paren_depth = 0
+
+        for i in range(line_idx, func_def_idx):
+            for ch in self.lines[i]:
+                if ch == "(":
+                    paren_depth += 1
+                elif ch == ")":
+                    paren_depth -= 1
+
+        # If paren_depth > 0 after scanning forward to the def line,
+        # the parens opened somewhere after line_idx and never closed —
+        # meaning line_idx is still inside an open decorator call.
+        # But we need the inverse: parens opened ON or BEFORE line_idx
+        # and closed somewhere between line_idx+1 and func_def_idx.
+        # Recalculate: count only from line_idx itself.
+        depth_from_here = 0
+        for i in range(line_idx, func_def_idx):
+            for ch in self.lines[i]:
+                if ch == "(":
+                    depth_from_here += 1
+                elif ch == ")":
+                    depth_from_here -= 1
+
+        # If net depth is positive after scanning to the def, there's an
+        # unclosed paren — this line opened something that closes later.
+        # That means we're inside a multi-line call.
+        if depth_from_here > 0:
+            return True
+
+        # Also handle the case where this line only has closing parens
+        # (i.e. it's the tail end of a multi-line decorator argument list).
+        # Check if scanning BACKWARD from line_idx eventually hits a "@".
+        stripped = self.lines[line_idx].lstrip()
+        # Count net parens on just this line
+        net = stripped.count("(") - stripped.count(")")
+        if net < 0:
+            # More closing than opening — this is a tail line of a call.
+            # Verify by scanning backward for the matching "@" line.
+            depth = 0
+            for i in range(line_idx, -1, -1):
+                for ch in reversed(self.lines[i]):
+                    if ch == ")":
+                        depth += 1
+                    elif ch == "(":
+                        depth -= 1
+                        if depth == 0:
+                            break
+                if depth == 0:
+                    candidate = self.lines[i].lstrip()
+                    candidate_indent = len(self.lines[i]) - len(self.lines[i].lstrip())
+                    return candidate.startswith("@") and candidate_indent == func_indent
+        return False
 
     def _find_decorator_start(self, func_def_idx: int) -> int:
         if func_def_idx == 0:
