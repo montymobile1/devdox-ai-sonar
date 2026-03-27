@@ -52,8 +52,9 @@ State keys:
     _report         — Callable[[str], None] | None  (phase status reporter)
 """
 import logging
+import operator
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict, Union
+from typing import Any, Callable, Dict, List, Optional, TypedDict, Union, Annotated
 
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
@@ -84,6 +85,20 @@ MAX_RETRIES = 2
 StatusReporter = Callable[[str], None]
 
 
+def keep_last(left: Any, right: Any) -> Any:
+    """
+    Always keep the most recent write.
+
+    Use for scalar fields that:
+      a) are set once in initial_state and should never be overridden, OR
+      b) are deliberately updated by a node during the run.
+
+    In both cases, the last explicit write is the correct one.
+    Do NOT use keep_first — it silently keeps a wrong default (e.g. Path("."))
+    if a node accidentally emits the field before the real value is set.
+    """
+    return right
+
 def _noop_reporter(msg: str) -> None:  # noqa: D401
     """Default reporter — does nothing (keeps graph hermetic when no UI is attached)."""
 
@@ -95,22 +110,22 @@ def _noop_reporter(msg: str) -> None:  # noqa: D401
 
 class SonarState(TypedDict, total=False):
     # Inputs
-    issues: List[IssueUnion]
-    project_path: Path
-    tmp_path: Path
-    modified_content: str
-    file_md: str
+    issues: Annotated[List[IssueUnion], keep_last]
+    fixes: Annotated[List[FixSuggestion], keep_last]  # single declaration
+    accepted_fixes: Annotated[List[FixSuggestion], keep_last]
+    project_path: Annotated[Path, keep_last]
+    tmp_path: Annotated[Path, keep_last]
+    modified_content: Annotated[str, keep_last]
+    file_md: Annotated[str, keep_last]
     # Set during graph execution
-    validation: Any          # ValidationResult from IssueExtractor
-    fixes: List[FixSuggestion]
-    syntax_err: Optional[str]
-    test_err: Optional[str]
-    accepted_fixes: List[FixSuggestion]
-    error: str
-    retry_count: int
-    error_feedback: str
+    validation: Annotated[Any, keep_last]
+    syntax_err: Annotated[Optional[str], keep_last]
+    test_err: Annotated[Optional[str], keep_last]
+    error: Annotated[str, keep_last]
+    retry_count: Annotated[int, keep_last]
+    error_feedback: Annotated[str, keep_last]
     # UI callback — not serialised, lives only in-process
-    _report: Optional[StatusReporter]
+    _report: Annotated[Optional[StatusReporter], keep_last]
 
 
 # ---------------------------------------------------------------------------

@@ -22,9 +22,9 @@ You are a senior software engineer fixing SonarQube issues. Return valid JSON on
     "end_line": 50,
     "has_changes": true,
     "change_type": "FULL_CODE|DIFF|SEARCH_REPLACE",
-    "context": "full code (FULL_CODE only)",
-    "changes": [{"line": 10, "action": "replace", "old": "x", "new": "y"}],
-    "replacements": [{"search": "old", "replace": "new"}]
+    "context": "full code (FULL_CODE only)",#only for FULL_CODE
+    "changes": [{"line": 10, "action": "replace", "old": "x", "new": "y"}], # only for DIFF
+    "replacements": [{"search": "old", "replace": "new"}] # only for SEARCH_REPLACE
   }],
   "NEW_HELPER_CODE": "constants here",
   "PLACEMENT": "GLOBAL_TOP|GLOBAL_BOTTOM|SIBLING",
@@ -42,15 +42,14 @@ You are a senior software engineer fixing SonarQube issues. Return valid JSON on
 >150 | SEARCH_REPLACE | Patterns in replacements array
 
 
-
-
 ## RULES
 - FULL_CODE: Return complete function with \n
 - DIFF: Return exact line numbers and content
 - Always include NEW_HELPER_CODE if extracting constants
 - In case of DIFF Be sure to return the correct line numbers with same index as original code
+- NEW_HELPER_CODE ↔ FIXED_CODE_BLOCKS binding: If a variable, constant, or helper is defined in NEW_HELPER_CODE, it must be explicitly referenced by that exact name in the corresponding FIXED_CODE_BLOCKS entry
+- Never define something in NEW_HELPER_CODE that is not consumed in FIXED_CODE_BLOCKS, and never reference in FIXED_CODE_BLOCKS a name that isn't either already in the original file or defined in NEW_HELPER_CODE / IMPORT_BLOCK
 - Preserve original logic exactly
-
 
 ### If Code Too Large
 EXPLANATION will be short

@@ -843,7 +843,17 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
     if start_idx > end_idx:
         lines[start_idx:end_idx] = new_lines
     else:
-        lines[start_idx : end_idx + 1] = new_lines
+        lines[start_idx: end_idx + 1] = new_lines
+
+        if end_idx + 1 < len(lines) and (
+                lines[end_idx + 1].startswith("@") or
+                lines[end_idx + 1].startswith("def ") or
+                lines[end_idx + 1].startswith("class ")
+        ):
+            lines[start_idx: end_idx + 1] = new_lines
+            end_idx = start_idx + len(new_lines) - 1
+
+
 
     logger.debug(
         "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
