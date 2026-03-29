@@ -1015,6 +1015,17 @@ def apply_single_code_block(
         block.start_line,
         block.end_line,
     )
+    print(
+        f"Applying {block.change_type} block {block.block_name} on lines {block.start_line}-{block.end_line}"
+        )
+
+    if block.context is not None:
+        block.change_type = ChangeType.FULL_CODE
+    elif block.changes is not None:
+        block.change_type = ChangeType.DIFF
+    else:
+        block.change_type = ChangeType.SEARCH_REPLACE
+
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 

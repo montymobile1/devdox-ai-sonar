@@ -63,6 +63,7 @@ from langgraph.graph import END, StateGraph
 
 from devdox_ai_sonar.fix_validator import FixValidator
 from devdox_ai_sonar.llm_fixer import LLMFixer
+from devdox_ai_sonar.utils.file_indentation import apply_single_fix
 from devdox_ai_sonar.models.sonar import FixResult, FixSuggestion, SonarIssue, SonarSecurityIssue
 from devdox_ai_sonar.services.extractor import IssueExtractor
 from devdox_ai_sonar.services.rule_handler import RuleHandlerRegistry
@@ -122,6 +123,7 @@ class SonarState(TypedDict, total=False):
     # Set during graph execution
     validation: Annotated[Any, keep_last]
     syntax_err: Annotated[Optional[str], keep_last]
+    skip_tests: Annotated[bool, keep_last]
     error: Annotated[str, keep_last]
     retry_count: Annotated[int, keep_last]
     error_feedback: Annotated[str, keep_last]
@@ -323,38 +325,49 @@ def build_tools(
         report: StatusReporter = state.get("_report") or _noop_reporter
         fixes: List[FixSuggestion] = state.get("fixes", [])
         project_path: Path = state["project_path"]
-
-        report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
-
         if not fixes:
             logger.warning("check_syntax_tool: no fixes to check")
             report("[dim]    ↳ No fixes to check — skipping[/dim]")
             return {"syntax_err": None}
 
-        fix = fixes[0]
-        code = fix.original_code or ""
-        if fix.helper_code:
-            code = fix.helper_code + "\n" + code
 
-        tmp_file = project_path / ".supervisor_tmp.py"
-        try:
-            tmp_file.write_text(code, encoding="utf-8")
-            ok, err = fixer.check_python_interpreter(str(tmp_file))
+        for fix in fixes:
 
-            if ok:
-                logger.info("Syntax check passed")
-                report("[green]  ✓ Syntax OK[/green]")
-                return {"syntax_err": None}
-            logger.warning("Syntax check failed: %s", err)
-            report(f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]")
-            return {"syntax_err": err}
-        except Exception as exc:
-            logger.error("Syntax check exception: %s", exc)
-            report(f"[red]  ✗ Syntax check raised exception:[/red] {exc}")
-            return {"syntax_err": str(exc)}
-        finally:
-            tmp_file.unlink(missing_ok=True)
+            content = ""
+            file_path = project_path / fix.file_path
+            with open(str(file_path), "r", encoding="utf-8") as f:
+                content = f.read()
 
+            content = content.replace("\r\n", "\n").replace("\r", "\n")
+            lines = content.splitlines(keepends=True)
+            result, lines = apply_single_fix(lines, fix)
+
+
+            report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
+
+
+
+            tmp_file = project_path / ".supervisor_tmp.py"
+
+            try:
+
+                tmp_file.write_text("".join(lines), encoding="utf-8")
+                ok, err = fixer.check_python_interpreter(str(tmp_file))
+
+                if ok:
+                    logger.info("Syntax check passed")
+                    report("[green]  ✓ Syntax OK[/green]")
+                else:
+                    logger.warning("Syntax check failed: %s", err)
+                    report(f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]")
+                    return {"syntax_err": err}
+            except Exception as exc:
+                logger.error("Syntax check exception: %s", exc)
+                report(f"[red]  ✗ Syntax check raised exception:[/red] {exc}")
+                return {"syntax_err": str(exc)}
+            finally:
+                tmp_file.unlink(missing_ok=True)
+        return {"syntax_err": None}
     # ------------------------------------------------------------------ #
     # Tool 4: check_testing_tool
     # ------------------------------------------------------------------ #
@@ -370,7 +383,9 @@ def build_tools(
         report: StatusReporter = state.get("_report") or _noop_reporter
         fixes: List[FixSuggestion] = state.get("fixes", [])
         project_path: Path = state["project_path"]
-
+        skip_tests = state.get("skip_tests", False)
+        if skip_tests:
+            return {"syntax_err": None}
         report("[bold cyan]  ▶ Phase 4/5 — Running test suite[/bold cyan]  (pytest)")
 
         if not fixes:
@@ -454,6 +469,15 @@ def build_tools(
             else:
                 last_explanation = result.explanation
                 logger.warning(
+                    "Validator rejected fix for %s: %s  "
+                    "(confidence=%.2f, issues=%s)",
+                    issues[0].rule,
+                    result.explanation,  # ← ADD THIS
+                    result.confidence,
+                    issues
+                )
+
+                logger.warning(
                     "Validator rejected fix for %s: %s", issues[0].rule, result.explanation
                 )
 
@@ -524,15 +548,24 @@ def route_by_rule(state: SonarState) -> str:
 
 def route_after_syntax(state: SonarState) -> str:
     """
-    Edge after check_syntax_tool.
-    - "testing"  → syntax OK, run the test suite before accepting
-    - "validate" → syntax error present, run FixValidator immediately
-    """
-    if state.get("syntax_err") is None:
-        logger.info("Routing → testing (syntax OK)")
-        return "testing"
-    logger.info("Routing → validate (syntax_err=%s)", state["syntax_err"])
-    return "validate"
+       Edge after check_syntax_tool.
+       - automated rule + syntax OK  → "accept"   (no LLM, no validator needed)
+       - llm rule + syntax OK        → "testing"  (run tests before accepting)
+       - syntax error (any source)   → "validate" (forward to FixValidator)
+       """
+    if state.get("syntax_err") is not None:
+        logger.info("Routing → validate (syntax_err=%s)", state["syntax_err"])
+        return "validate"
+
+    rule = state["issues"][0].rule
+    if rule in _AUTOMATED_RULES:
+        logger.info("Routing → accept (automated rule, syntax OK)")
+        return "accept"
+
+    logger.info("Routing → testing (llm rule, syntax OK)")
+    return "testing"
+
+
 
 
 def route_after_test(state: SonarState) -> str:
@@ -541,6 +574,7 @@ def route_after_test(state: SonarState) -> str:
     - "accept"   → all tests passed, fix is good
     - "validate" → tests failed, forward failure output to FixValidator
     """
+
     if state.get("syntax_err") is None:
         logger.info("Routing → accept (tests passed)")
         return "accept"
@@ -695,7 +729,7 @@ def build_graph(
     graph.add_conditional_edges(
         "check_syntax",
         route_after_syntax,
-        {"testing": "check_testing", "validate": "validate_fix"},
+        {"accept": "accept", "testing": "check_testing", "validate": "validate_fix"},
     )
 
     # Bug fix: tests pass → accept; tests fail → send failure output to validator
@@ -796,6 +830,7 @@ class AgentSupervisor:
             "retry_count": 0,
             "error_feedback": "",
             "syntax_err": None,
+            "skip_tests":True,
             "_report": status_reporter,
         }
 
