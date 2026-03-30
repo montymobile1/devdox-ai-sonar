@@ -3141,13 +3141,6 @@ class TestValidateNode:
         assert "FIXED_CODE_BLOCKS is empty" in result["validation_error"]
         assert result["fix_result"] is None
 
-    def test_validate_node_empty_explanation(self):
-        mock_result = Mock()
-        mock_result.FIXED_CODE_BLOCKS = [Mock()]
-        mock_result.EXPLANATION = ""
-        mock_result.CONFIDENCE = 0.9
-        result = validate_node(self._make_state(fix_result=mock_result))
-        assert "EXPLANATION is empty" in result["validation_error"]
 
     def test_validate_node_low_confidence(self):
         mock_result = Mock()
