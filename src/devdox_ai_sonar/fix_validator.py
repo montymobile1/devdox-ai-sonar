@@ -275,9 +275,13 @@ class FixValidator:
                 file_content, first_line, last_line, context_lines
             )
 
-            formatted_fix = self._format_code_blocks_for_validation(
+            formatted_fix, start_line, end_line = self._format_code_blocks_for_validation(
                 fix.fixed_code_blocks
             )
+            if formatted_fix!="":
+                context["start_line"] = start_line
+                context["end_line"] = end_line
+
 
             # Generate validation prompt
             prompt = self._create_validation_prompt(
@@ -360,8 +364,18 @@ class FixValidator:
             Formatted string representation of all fixes
         """
         formatted_parts = []
+        if not code_blocks:
+            return "", 0, 0
 
+        start_line = code_blocks[0].start_line
+        end_line = code_blocks[0].end_line
         for idx, block in enumerate(code_blocks, 1):
+
+            if block.start_line < start_line:
+                start_line = block.start_line
+
+            if block.end_line > end_line:
+                end_line = block.end_line
             formatted_parts.append(_format_block_header(idx, block))
 
             if block.change_type == ChangeType.FULL_CODE and block.context:
@@ -374,7 +388,7 @@ class FixValidator:
             if idx < len(code_blocks):
                 formatted_parts.append("\n" + "-" * 60 + "\n")
 
-        return "".join(formatted_parts)
+        return "".join(formatted_parts), start_line, end_line
 
     def _extract_validation_context(
         self, file_content: str, first_line: int, last_line: int, context_lines: int
@@ -437,6 +451,7 @@ class FixValidator:
         template = self.jinja_env.get_template("python/validator.j2")
         # Render enhanced content
         prompt = template.render(**context_dic)
+
         return prompt.strip()
 
     def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
@@ -507,7 +522,7 @@ class FixValidator:
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=8000,
+            #max_tokens=8000,
             temperature=0.1,
             response_format={
                 "type": "json_schema",
