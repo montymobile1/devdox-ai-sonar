@@ -612,6 +612,49 @@ class TestBranchOrPrPrompt:
 
 
 
+class TestSkipTestsPrompt:
+    """Tests for skip_tests_prompt method."""
+
+    @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
+    async def test_skip_tests_default_true_user_skips(
+            self, mock_confirm, provider_config_manager,
+            mock_config_manager, mock_console
+    ):
+        """Test default skip_tests=True, user confirms skipping."""
+        mock_config_manager.get_value.return_value = True
+        mock_confirm.return_value = False
+
+        result = await provider_config_manager.skip_tests_prompt()
+
+        assert result is True
+
+    @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
+    async def test_skip_tests_user_wants_to_run(
+            self, mock_confirm, provider_config_manager,
+            mock_config_manager, mock_console
+    ):
+        """Test user chooses to run tests."""
+        mock_config_manager.get_value.return_value = True
+        mock_confirm.return_value = True
+
+        result = await provider_config_manager.skip_tests_prompt()
+
+        assert result is False
+
+    @patch('devdox_ai_sonar.utils.provider_config.Confirm.ask')
+    async def test_skip_tests_no_saved_value(
+            self, mock_confirm, provider_config_manager,
+            mock_config_manager, mock_console
+    ):
+        """Test when no saved value exists, defaults to skip."""
+        mock_config_manager.get_value.return_value = None
+        mock_confirm.return_value = False
+
+        result = await provider_config_manager.skip_tests_prompt()
+
+        assert result is True
+
+
 class TestBranchOrPr:
     """Tests for branch_or_pr method """
 

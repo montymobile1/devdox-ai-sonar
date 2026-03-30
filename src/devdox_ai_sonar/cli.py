@@ -818,6 +818,8 @@ async def change_parameters(
             multiple=False,
         )
 
+        await provider_manager.skip_tests_prompt()
+
         console.print(
             "Rules to be excluded  ([yellow]comma-separated[/yellow], "
             "or [bold cyan]NONE[/bold cyan] for no exclusions)"
@@ -1176,6 +1178,7 @@ async def _load_and_validate_config(
 
     params["branch"] = branch
     params["pull_request"] = pull_request
+    params["skip_tests"] = await provider_manager.skip_tests_prompt()
 
     console.print("[green]✓[/green] Configuration loaded\n")
     return auth_config, llm_config, params
@@ -1207,6 +1210,9 @@ def display_configuration(
     console.print(f"  Max Fixes: [cyan]{parameters.get('max_fixes')}[/cyan]")
     console.print(f"  Apply: [cyan]{apply_value}[/cyan]")
     console.print(f"  Dry Run: [cyan]{dry_run}[/cyan]")
+    skip_tests = parameters.get("skip_tests", True)
+    run_tests_label = "No" if skip_tests else "Yes"
+    console.print(f"  Run Tests: [cyan]{run_tests_label}[/cyan]")
 
     return {
         "pull_request": pull_request,
@@ -1218,6 +1224,7 @@ def display_configuration(
         "dry_run": dry_run,
         "exclude_rules": parameters.get("exclude_rules", None),
         "create_backup": 0,
+        "skip_tests": skip_tests,
     }
 
 
@@ -1363,9 +1370,7 @@ async def _process_files_with_agent(
                 create_backup=bool(fix_params.get("create_backup", False)),
                 dry_run=bool(fix_params.get("dry_run", False)),
                 file_md=file_md,
-                # Append to the buffer instead of printing directly.
-                # The spinner is still alive here, so direct console.print
-                # would interleave with the progress bar render.
+                skip_tests=bool(fix_params.get("skip_tests", True)),
                 status_reporter=phase_messages.append,
             )
             progress.update(task, completed=1, total=1)

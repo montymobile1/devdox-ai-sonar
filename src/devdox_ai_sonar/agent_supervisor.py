@@ -1004,6 +1004,7 @@ class AgentSupervisor:
         dry_run: bool = False,
         modified_content: str = "",
         file_md: str = "",
+        skip_tests: bool = True,
         status_reporter: Optional[StatusReporter] = None,
     ) -> FixResult:
         """Entry point — groups issues by file then runs the graph per group."""
@@ -1013,6 +1014,7 @@ class AgentSupervisor:
             accepted = await self._run_for_file_group(
                 file_issues, project_path, tmp_path,
                 modified_content, file_md,
+                skip_tests=skip_tests,
                 status_reporter=status_reporter or _noop_reporter,
             )
             all_accepted.extend(accepted)
@@ -1032,6 +1034,7 @@ class AgentSupervisor:
         tmp_path: Path,
         modified_content: str,
         file_md: str,
+        skip_tests: bool = True,
         status_reporter: StatusReporter = _noop_reporter,
     ) -> List[FixSuggestion]:
         initial_state: SonarState = {
@@ -1047,7 +1050,7 @@ class AgentSupervisor:
             "error_feedback": "",
             "syntax_err": None,
             "test_err": None,
-            "skip_tests":True,
+            "skip_tests": skip_tests,
             "_report": status_reporter,
         }
 

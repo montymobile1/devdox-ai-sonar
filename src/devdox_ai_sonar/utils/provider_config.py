@@ -13,6 +13,7 @@ CONFIG_PROVIDERS = "llm.providers"
 CONFIG_DEFAULT_BRANCH = "sonar.default_branch"
 CONFIG_DEFAULT_PULL = "sonar.default_pull"
 CONFIG_CLONE_TYPE = "sonar.sonar_options.clone_type"
+CONFIG_SKIP_TESTS = "sonar.skip_tests"
 
 
 class ProviderUpdateContext:
@@ -301,6 +302,26 @@ class ProviderConfigManager:
             return await self._handle_pull_request_selection()
 
         return await self._handle_branch_selection()
+
+    async def skip_tests_prompt(self) -> bool:
+        """Prompt user whether to skip tests after applying fixes."""
+        saved = await self.config_manager.get_value(CONFIG_SKIP_TESTS)
+        default_skip = saved if saved is not None else True
+
+        run_tests = Confirm.ask(
+            "Run tests after applying fixes?",
+            default=not default_skip,
+        )
+        skip = not run_tests
+
+        await self._save_as_default_if_changed(
+            config_key=CONFIG_SKIP_TESTS,
+            new_value=skip,
+            current_default=saved,
+            display_name="",
+            confirm=False,
+        )
+        return skip
 
     async def _handle_branch_selection(self) -> Tuple[str, int]:
         """Handle branch selection workflow."""

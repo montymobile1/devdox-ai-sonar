@@ -759,6 +759,46 @@ class TestAgentSupervisor:
         initial_state = call_args[0][0]
         assert initial_state["_report"] is reporter
 
+    @pytest.mark.asyncio
+    async def test_run_passes_skip_tests_true(self):
+        fixer = MagicMock()
+        validator = MagicMock()
+        sup = AgentSupervisor(fixer=fixer, validator=validator)
+        sup._graph = MagicMock()
+        sup._graph.ainvoke = AsyncMock(
+            return_value={"accepted_fixes": []},
+        )
+        issue = _make_issue(rule="python:S3776", file_path="src/app.py")
+        await sup.run(
+            issues=[issue],
+            project_path=Path("/proj"),
+            tmp_path=Path("/tmp"),
+            skip_tests=True,
+        )
+        call_args = sup._graph.ainvoke.call_args
+        initial_state = call_args[0][0]
+        assert initial_state["skip_tests"] is True
+
+    @pytest.mark.asyncio
+    async def test_run_passes_skip_tests_false(self):
+        fixer = MagicMock()
+        validator = MagicMock()
+        sup = AgentSupervisor(fixer=fixer, validator=validator)
+        sup._graph = MagicMock()
+        sup._graph.ainvoke = AsyncMock(
+            return_value={"accepted_fixes": []},
+        )
+        issue = _make_issue(rule="python:S3776", file_path="src/app.py")
+        await sup.run(
+            issues=[issue],
+            project_path=Path("/proj"),
+            tmp_path=Path("/tmp"),
+            skip_tests=False,
+        )
+        call_args = sup._graph.ainvoke.call_args
+        initial_state = call_args[0][0]
+        assert initial_state["skip_tests"] is False
+
 
 # ===========================================================================
 # TestGroupByFile
