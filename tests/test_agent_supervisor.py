@@ -649,6 +649,163 @@ class TestBuildTools:
         result = await tools["run_automated_tool"].ainvoke({"state": state})
         assert "fixes" in result
 
+    @pytest.mark.asyncio
+    async def test_run_automated_tool_no_context(self):
+        fixer = MagicMock()
+        fixer._prepare_fix_context = AsyncMock(return_value=None)
+        registry = MagicMock()
+        registry.get_handler.return_value = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        state = _make_state(validation=_make_validation())
+        result = await tools["run_automated_tool"].ainvoke({"state": state})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_automated_tool_no_fixes(self):
+        fixer = MagicMock()
+        context = MagicMock()
+        context.context_dict = {}
+        fixer._prepare_fix_context = AsyncMock(return_value=context)
+        handler = MagicMock()
+        handler.generate_fixes = AsyncMock(return_value=[])
+        registry = MagicMock()
+        registry.get_handler.return_value = handler
+        tools = build_tools(fixer, None, registry)
+        state = _make_state(validation=_make_validation())
+        result = await tools["run_automated_tool"].ainvoke({"state": state})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_llm_tool_no_context(self):
+        fixer = MagicMock()
+        fixer._prepare_fix_context = AsyncMock(return_value=None)
+        registry = MagicMock()
+        registry.get_handler.return_value = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        state = _make_state(validation=_make_validation())
+        result = await tools["run_llm_tool"].ainvoke({"state": state})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_llm_tool_no_fixes(self):
+        fixer = MagicMock()
+        context = MagicMock()
+        context.context_dict = {}
+        fixer._prepare_fix_context = AsyncMock(return_value=context)
+        handler = MagicMock()
+        handler.generate_fixes = AsyncMock(return_value=[])
+        registry = MagicMock()
+        registry.get_handler.return_value = handler
+        tools = build_tools(fixer, None, registry)
+        state = _make_state(validation=_make_validation())
+        result = await tools["run_llm_tool"].ainvoke({"state": state})
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_run_llm_tool_injects_error_feedback(self):
+        fixer = MagicMock()
+        context = MagicMock()
+        context.context_dict = {}
+        fixer._prepare_fix_context = AsyncMock(return_value=context)
+        fixer._build_fix_suggestion = MagicMock(return_value=["fix1"])
+        fixer.write_explaination = MagicMock()
+        handler = MagicMock()
+        handler.MOIDY_LINE_RANGE = False
+        handler.generate_fixes = AsyncMock(return_value=["resp"])
+        registry = MagicMock()
+        registry.get_handler.return_value = handler
+        tools = build_tools(fixer, None, registry)
+        state = _make_state(
+            validation=_make_validation(),
+            error_feedback="previous rejection",
+        )
+        await tools["run_llm_tool"].ainvoke({"state": state})
+        assert context.context_dict["error_feedback"] == "previous rejection"
+
+    def test_check_syntax_tool_exception(self, tmp_path):
+        fixer = MagicMock()
+        fixer.check_python_interpreter.side_effect = RuntimeError("boom")
+        registry = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        fix = _make_fix(original_code="x = 1")
+        fix.file_path = "app.py"
+        (tmp_path / "app.py").write_text("x = 1\n")
+        state = _make_state(fixes=[fix], project_path=tmp_path)
+        with patch("devdox_ai_sonar.agent_supervisor.apply_single_fix", return_value=(True, ["x = 1\n"])):
+            result = tools["check_syntax_tool"].invoke({"state": state})
+        assert "boom" in result["syntax_err"]
+
+    def test_check_testing_tool_tests_pass(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.return_value = (True, "")
+        registry = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        (tmp_path / "tests").mkdir()
+        fix = _make_fix()
+        state = _make_state(fixes=[fix], project_path=tmp_path, skip_tests=False)
+        result = tools["check_testing_tool"].invoke({"state": state})
+        assert result == {"test_err": None}
+
+    def test_check_testing_tool_tests_fail(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.return_value = (False, "AssertionError")
+        registry = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        (tmp_path / "tests").mkdir()
+        fix = _make_fix()
+        state = _make_state(fixes=[fix], project_path=tmp_path, skip_tests=False)
+        result = tools["check_testing_tool"].invoke({"state": state})
+        assert result["test_err"] == "AssertionError"
+
+    def test_check_testing_tool_exception(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.side_effect = RuntimeError("crash")
+        registry = MagicMock()
+        tools = build_tools(fixer, None, registry)
+        (tmp_path / "tests").mkdir()
+        fix = _make_fix()
+        state = _make_state(fixes=[fix], project_path=tmp_path, skip_tests=False)
+        result = tools["check_testing_tool"].invoke({"state": state})
+        assert "crash" in result["test_err"]
+
+    def test_validate_fix_tool_all_rejected_retries_left(self):
+        fixer = MagicMock()
+        fix = _make_fix()
+        vresult = MagicMock(should_apply=False, explanation="bad fix",
+                            confidence=0.5)
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        registry = MagicMock()
+        tools = build_tools(fixer, validator, registry)
+        validation = _make_validation()
+        validation.file_path = MagicMock()
+        validation.file_path.read_text.return_value = "code"
+        state = _make_state(
+            fixes=[fix], validation=validation, retry_count=0,
+        )
+        result = tools["validate_fix_tool"].invoke({"state": state})
+        assert result["accepted_fixes"] == []
+        assert "bad fix" in result["error_feedback"]
+
+    def test_validate_fix_tool_all_rejected_retries_exhausted(self):
+        fixer = MagicMock()
+        fix = _make_fix()
+        vresult = MagicMock(should_apply=False, explanation="still bad",
+                            confidence=0.3)
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        registry = MagicMock()
+        tools = build_tools(fixer, validator, registry)
+        validation = _make_validation()
+        validation.file_path = MagicMock()
+        validation.file_path.read_text.return_value = "code"
+        state = _make_state(
+            fixes=[fix], validation=validation, retry_count=MAX_RETRIES,
+        )
+        result = tools["validate_fix_tool"].invoke({"state": state})
+        assert result["accepted_fixes"] == []
+        assert "still bad" in result["error_feedback"]
+
 
 # ===========================================================================
 # TestBuildGraph
