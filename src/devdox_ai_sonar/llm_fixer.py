@@ -2262,26 +2262,8 @@ class ContextExtractor:
     ) -> bool:
         """
         Check if line_idx is a continuation line of a multi-line decorator.
-
-        Strategy: scan FORWARD from line_idx toward func_def_idx and track
-        paren depth. If we reach a '@' line at the correct indent with
-        unclosed parens that eventually close, we're inside a decorator.
         """
-        paren_depth = 0
 
-        for i in range(line_idx, func_def_idx):
-            for ch in self.lines[i]:
-                if ch == "(":
-                    paren_depth += 1
-                elif ch == ")":
-                    paren_depth -= 1
-
-        # If paren_depth > 0 after scanning forward to the def line,
-        # the parens opened somewhere after line_idx and never closed —
-        # meaning line_idx is still inside an open decorator call.
-        # But we need the inverse: parens opened ON or BEFORE line_idx
-        # and closed somewhere between line_idx+1 and func_def_idx.
-        # Recalculate: count only from line_idx itself.
         depth_from_here = 0
         for i in range(line_idx, func_def_idx):
             for ch in self.lines[i]:

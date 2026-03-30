@@ -220,14 +220,14 @@ def build_tools(
             validation.file_path, validation.line_range, modified_content
         )
         if not context:
-            report(f"[red]  ✗ Could not prepare fix context[/red]")
+            report("[red]  ✗ Could not prepare fix context[/red]")
             return {"error": f"Could not prepare fix context for {issues[0].rule}"}
 
         fix_response_lst = await handler.generate_fixes(
             issues, context, project_path, validation.file_path, llm_caller=fixer
         )
         if not fix_response_lst:
-            report(f"[red]  ✗ AST handler returned no fixes[/red]")
+            report("[red]  ✗ AST handler returned no fixes[/red]")
             return {"error": f"{handler.__class__.__name__} returned no fixes"}
 
         if file_md:
@@ -283,18 +283,18 @@ def build_tools(
             validation.file_path, validation.line_range, modified_content
         )
         if not context:
-            report(f"[red]  ✗ Could not prepare fix context[/red]")
+            report("[red]  ✗ Could not prepare fix context[/red]")
             return {"error": f"Could not prepare fix context for {issues[0].rule}"}
 
         if error_feedback:
             context.context_dict["error_feedback"] = error_feedback
-            report(f"[dim]    ↳ Injecting previous rejection feedback into prompt[/dim]")
+            report("[dim]    ↳ Injecting previous rejection feedback into prompt[/dim]")
 
         fix_response_lst = await handler.generate_fixes(
             issues, context, project_path, validation.file_path, llm_caller=fixer
         )
         if not fix_response_lst:
-            report(f"[red]  ✗ LLM handler returned no fixes[/red]")
+            report("[red]  ✗ LLM handler returned no fixes[/red]")
             return {"error": f"{handler.__class__.__name__} returned no fixes"}
 
         if file_md:
@@ -340,7 +340,7 @@ def build_tools(
 
             content = content.replace("\r\n", "\n").replace("\r", "\n")
             lines = content.splitlines(keepends=True)
-            result, lines = apply_single_fix(lines, fix)
+            _, lines = apply_single_fix(lines, fix)
 
 
             report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
@@ -407,7 +407,7 @@ def build_tools(
                 report("[green]  ✓ All tests passed[/green]")
                 return {"syntax_err": None}
             logger.warning("Test suite failed: %s", err)
-            report(f"[yellow]  ⚠ Tests failed[/yellow] — forwarding to validator")
+            report("[yellow]  ⚠ Tests failed[/yellow] — forwarding to validator")
             return {"syntax_err": err}
         except Exception as exc:
             logger.error("Test suite exception: %s", exc)
