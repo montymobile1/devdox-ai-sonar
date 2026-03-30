@@ -355,6 +355,7 @@ class LLMFixer:
         modified_content: str = "",
         file_md: str = "",
         check_tmp_path: bool = True,
+        rule_info: Optional[Dict[str, Any]] = None
     ) -> Optional[List[FixSuggestion]]:
         """
         Generate fix suggestions for issues in a single file.
@@ -413,6 +414,7 @@ class LLMFixer:
                 project_path,
                 validation.file_path,
                 llm_caller=self,  # Pass self for LLM access
+                rule_info= rule_info
             )
 
             if not fix_response_lst or len(fix_response_lst) == 0:
@@ -817,7 +819,6 @@ class LLMFixer:
             language,
             len(issues),
         )
-
         # Prepare prompt
         prompt, system_template = self._create_fix_prompt_list(
             issues, context, rule_info_dict, language, error_message
@@ -1082,103 +1083,6 @@ class LLMFixer:
                     "- Update original function to call them all",
                 ]
             )
-        # # Cognitive Complexity
-        # if "cognitive complexity" in msg_lower:
-        #     # Extract numbers if available
-        #     comp_info = self._extract_complexity_info(getattr(issue, "message", ""))
-        #     target = comp_info.get("target", "15")
-        #
-        #     strategies_list.extend([
-        #             f"TARGET: Reduce complexity to <{target}",
-        #             "• Extract complex logic to separate helper methods",
-        #             "• ONLY extract helper methods from THIS function",
-        #             "• If original code CALLS a method (e.g., self.validate(), self.normalize()), that method ALREADY EXISTS - DO NOT recreate it",
-        #             "• Keep all original logic working",
-        #             "• Keep all original parameteres and print or log them to be sure that they are used",
-        #             "• Be sure to have same parameters and type of each parameters in the definition and implementation",
-        #             "• Avoid using variable not found in the function or method",
-        #             "• Use early returns to reduce nesting",
-        #
-        #             "",
-        #             "🚨 CRITICAL: HELPER METHOD CONSISTENCY RULE 🚨",
-        #             "",
-        #             "IF ORIGINAL METHOD USES 'self':",
-        #             "•  Extract code that references variables NOT in helper's parameters → FORBIDDEN"
-        #             "•  Helper method must receive ALL data it needs as parameters",
-        #             "•  NO accessing parent function's local variables",
-        #             "•  NO assuming variables exist in scope",
-        #             "• ALL helpers MUST be instance methods (with 'self' parameter)",
-        #             f"• NO {STATICMETHOD_DECORATOR} decorators on ANY helpers",
-        #             "• ALL helpers use PLACEMENT: SIBLING",
-        #             "• Call ALL helpers as: self._helper_name(args)",
-        #             "",
-        #             "Example - Original uses 'self':",
-        #             f"{PYTHON_CODE_BLOCK}",
-        #             "# ORIGINAL (has self):",
-        #             "async def get_user_esims(self, user_id: str):",
-        #             "    profiles = self._fetch_profiles(user_id)",
-        #             "    return self._process(profiles)",
-        #             "",
-        #             "# FIXED_SELECTION (keep self):",
-        #             "async def get_user_esims(self, user_id: str):",
-        #             "    profiles = self._fetch_profiles(user_id)",
-        #             "    sorted_profiles = self._sort_by_date(profiles)  # ✅ Using self",
-        #             "    return self._process(sorted_profiles)",
-        #             "",
-        #             f"# NEW_HELPER_CODE (ALL have self, NO {STATICMETHOD_DECORATOR}):",
-        #             "def _sort_by_date(self, profiles):  # ✅ Has self parameter",
-        #             "    return sorted(profiles, key=lambda p: p.created_at)",
-        #             "",
-        #             "# PLACEMENT: SIBLING",
-        #             "```",
-        #             "",
-        #             f"IF ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
-        #             f"• ALL helpers MUST be {STATICMETHOD_DECORATOR}",
-        #             "• NO 'self' parameters on ANY helpers",
-        #             "• ALL helpers use PLACEMENT: SIBLING",
-        #             "• Call ALL helpers as: ClassName._helper_name(args)",
-        #             "",
-        #             f"Example - Original is {STATICMETHOD_DECORATOR}:",
-        #             f"{PYTHON_CODE_BLOCK}",
-        #             f"# ORIGINAL ({STATICMETHOD_DECORATOR}):",
-        #             f"{STATICMETHOD_DECORATOR}",
-        #             "def calculate_total(items):",
-        #             "    return sum(item.price for item in items)",
-        #             "",
-        #             f"# FIXED_SELECTION (keep {STATICMETHOD_DECORATOR}):",
-        #             f"{STATICMETHOD_DECORATOR}",
-        #             "def calculate_total(items):",
-        #             "    filtered = MyClass._filter_valid(items)  # ✅ Using ClassName",
-        #             "    return sum(item.price for item in filtered)",
-        #             "",
-        #             f"# NEW_HELPER_CODE (ALL {STATICMETHOD_DECORATOR}):",
-        #             f"{STATICMETHOD_DECORATOR}",
-        #             "def _filter_valid(items):  # ✅ No self",
-        #             "    return [i for i in items if i.is_valid]",
-        #             "",
-        #             "# PLACEMENT: SIBLING",
-        #             "```",
-        #             "",
-        #             "🚨 FORBIDDEN PATTERNS:",
-        #             f"❌ Mixing {STATICMETHOD_DECORATOR} helpers with self-based original method",
-        #             f"❌ Mixing self-based helpers with {STATICMETHOD_DECORATOR} original method",
-        #             f"❌ Calling self._helper() when helper is {STATICMETHOD_DECORATOR}",
-        #             "❌ Calling ClassName._helper() when helper has self parameter",
-        #             "",
-        #             "✅ CONSISTENCY RULE:",
-        #             "Original has 'self' → ALL helpers have 'self' → ALL calls use 'self._helper()'",
-        #             f"Original is '{STATICMETHOD_DECORATOR}' → ALL helpers are '{STATICMETHOD_DECORATOR}' → ALL calls use 'ClassName._helper()'",
-        #             ""
-        #         ])
-        #
-
-        # else:
-        #     strategies_list.extend([
-        #         "PLACEMENT GUIDE:",
-        #         "• SIBLING = helper needs 'self' (calls self.something)",
-        #         "• GLOBAL_TOP = imports or constants",
-        #         "• GLOBAL_BOTTOM = pure utility (no 'self')",
-        #     ])
 
         # Unused Code
         elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
@@ -1702,7 +1606,6 @@ class LLMFixer:
             results = []
             for fix in fixes:
                 result, lines = apply_single_fix(lines, fix)
-
                 if not result.success:
                     logger.warning("Fix %s skipped: %s", fix.issue_key, result.reason)
                     continue
