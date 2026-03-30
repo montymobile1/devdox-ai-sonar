@@ -8,11 +8,20 @@ from devdox_ai_sonar.agent_supervisor import (
     MAX_RETRIES,
     _AUTOMATED_RULES,
     _accept_node,
+    _build_rejection_result,
+    _check_syntax_for_fix,
+    _check_validation_result,
     _error_node,
+    _generate_and_build_fixes,
     _make_node,
     _make_sync_node,
     _noop_reporter,
+    _read_file_for_validation,
     _retry_node,
+    _run_handler_impl,
+    _run_test_suite,
+    _run_validation_loop,
+    _validate_issue_impl,
     build_graph,
     build_supervisor,
     build_tools,
@@ -805,6 +814,322 @@ class TestBuildTools:
         result = tools["validate_fix_tool"].invoke({"state": state})
         assert result["accepted_fixes"] == []
         assert "still bad" in result["error_feedback"]
+
+
+# ===========================================================================
+# TestCheckValidationResult
+# ===========================================================================
+
+
+class TestCheckValidationResult:
+    def test_invalid_returns_error(self):
+        v = MagicMock(is_valid=False, error="bad issue")
+        result = _check_validation_result(v, _noop_reporter)
+        assert result == {"error": "bad issue"}
+
+    def test_valid_but_no_file_path(self):
+        v = MagicMock(is_valid=True, file_path=None, line_range={"first_line": 1})
+        result = _check_validation_result(v, _noop_reporter)
+        assert "error" in result
+
+    def test_valid_but_no_line_range(self):
+        v = MagicMock(is_valid=True, file_path=Path("/f.py"), line_range=None)
+        result = _check_validation_result(v, _noop_reporter)
+        assert "error" in result
+
+    def test_valid_returns_validation(self):
+        v = MagicMock(is_valid=True, file_path=Path("/f.py"),
+                      line_range={"first_line": 1, "last_line": 10})
+        result = _check_validation_result(v, _noop_reporter)
+        assert result["validation"] is v
+
+
+# ===========================================================================
+# TestValidateIssueImpl
+# ===========================================================================
+
+
+class TestValidateIssueImpl:
+    @pytest.mark.asyncio
+    async def test_delegates_to_extractor(self):
+        fixer = MagicMock()
+        validation = MagicMock(is_valid=True, file_path=Path("/f.py"),
+                               line_range={"first_line": 1, "last_line": 5})
+        mock_extractor = MagicMock()
+        mock_extractor.validate_issue_group = AsyncMock(return_value=validation)
+        state = _make_state()
+        with patch(
+            "devdox_ai_sonar.agent_supervisor.IssueExtractor",
+            return_value=mock_extractor,
+        ):
+            result = await _validate_issue_impl(state, fixer)
+        assert result["validation"] is validation
+
+    @pytest.mark.asyncio
+    async def test_returns_error_on_invalid(self):
+        fixer = MagicMock()
+        validation = MagicMock(is_valid=False, error="invalid")
+        mock_extractor = MagicMock()
+        mock_extractor.validate_issue_group = AsyncMock(return_value=validation)
+        state = _make_state()
+        with patch(
+            "devdox_ai_sonar.agent_supervisor.IssueExtractor",
+            return_value=mock_extractor,
+        ):
+            result = await _validate_issue_impl(state, fixer)
+        assert "error" in result
+
+
+# ===========================================================================
+# TestRunHandlerImpl
+# ===========================================================================
+
+
+class TestRunHandlerImpl:
+    @pytest.mark.asyncio
+    async def test_returns_fixes(self):
+        fixer = MagicMock()
+        context = MagicMock()
+        context.context_dict = {}
+        fixer._prepare_fix_context = AsyncMock(return_value=context)
+        fixer._build_fix_suggestion = MagicMock(return_value=["fix1"])
+        fixer.write_explaination = MagicMock()
+        handler = MagicMock()
+        handler.MOIDY_LINE_RANGE = False
+        handler.generate_fixes = AsyncMock(return_value=["resp"])
+        registry = MagicMock()
+        registry.get_handler.return_value = handler
+        state = _make_state(validation=_make_validation())
+        result = await _run_handler_impl(state, fixer, registry, "LLM fix")
+        assert "fixes" in result
+
+    @pytest.mark.asyncio
+    async def test_returns_error_no_context(self):
+        fixer = MagicMock()
+        fixer._prepare_fix_context = AsyncMock(return_value=None)
+        registry = MagicMock()
+        registry.get_handler.return_value = MagicMock()
+        state = _make_state(validation=_make_validation())
+        result = await _run_handler_impl(state, fixer, registry, "LLM fix")
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_injects_error_feedback(self):
+        fixer = MagicMock()
+        context = MagicMock()
+        context.context_dict = {}
+        fixer._prepare_fix_context = AsyncMock(return_value=context)
+        fixer._build_fix_suggestion = MagicMock(return_value=["fix1"])
+        fixer.write_explaination = MagicMock()
+        handler = MagicMock()
+        handler.MOIDY_LINE_RANGE = False
+        handler.generate_fixes = AsyncMock(return_value=["resp"])
+        registry = MagicMock()
+        registry.get_handler.return_value = handler
+        state = _make_state(
+            validation=_make_validation(), error_feedback="previous rejection",
+        )
+        await _run_handler_impl(state, fixer, registry, "LLM fix")
+        assert context.context_dict["error_feedback"] == "previous rejection"
+
+
+# ===========================================================================
+# TestGenerateAndBuildFixes
+# ===========================================================================
+
+
+class TestGenerateAndBuildFixes:
+    @pytest.mark.asyncio
+    async def test_returns_fixes(self):
+        fixer = MagicMock()
+        fixer._build_fix_suggestion.return_value = ["fix1", "fix2"]
+        fixer.write_explaination = MagicMock()
+        handler = MagicMock()
+        handler.MOIDY_LINE_RANGE = False
+        handler.generate_fixes = AsyncMock(return_value=["resp"])
+        context = MagicMock()
+        context.context_dict = {}
+        state = _make_state(validation=_make_validation())
+        result = await _generate_and_build_fixes(
+            handler, fixer, state, context, _noop_reporter, "test",
+        )
+        assert result["fixes"] == ["fix1", "fix2"]
+
+    @pytest.mark.asyncio
+    async def test_returns_error_no_fixes(self):
+        handler = MagicMock()
+        handler.generate_fixes = AsyncMock(return_value=[])
+        fixer = MagicMock()
+        context = MagicMock()
+        state = _make_state(validation=_make_validation())
+        result = await _generate_and_build_fixes(
+            handler, fixer, state, context, _noop_reporter, "test",
+        )
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_writes_docs_when_file_md(self):
+        fixer = MagicMock()
+        fixer._build_fix_suggestion.return_value = []
+        handler = MagicMock()
+        handler.MOIDY_LINE_RANGE = False
+        handler.generate_fixes = AsyncMock(return_value=["resp"])
+        context = MagicMock()
+        context.context_dict = {}
+        state = _make_state(validation=_make_validation(), file_md="docs/fix.md")
+        await _generate_and_build_fixes(
+            handler, fixer, state, context, _noop_reporter, "test",
+        )
+        fixer.write_explaination.assert_called_once()
+
+
+# ===========================================================================
+# TestCheckSyntaxForFix
+# ===========================================================================
+
+
+class TestCheckSyntaxForFix:
+    def test_syntax_ok(self, tmp_path):
+        fixer = MagicMock()
+        fixer.check_python_interpreter.return_value = (True, "")
+        fix = _make_fix(original_code="x = 1")
+        fix.file_path = "app.py"
+        (tmp_path / "app.py").write_text("x = 1\n")
+        with patch("devdox_ai_sonar.agent_supervisor.apply_single_fix", return_value=(True, ["x = 1\n"])):
+            result = _check_syntax_for_fix(fix, tmp_path, fixer, _noop_reporter)
+        assert result is None
+
+    def test_syntax_error(self, tmp_path):
+        fixer = MagicMock()
+        fixer.check_python_interpreter.return_value = (False, "SyntaxError")
+        fix = _make_fix(original_code="def :")
+        fix.file_path = "app.py"
+        (tmp_path / "app.py").write_text("def :\n")
+        with patch("devdox_ai_sonar.agent_supervisor.apply_single_fix", return_value=(True, ["def :\n"])):
+            result = _check_syntax_for_fix(fix, tmp_path, fixer, _noop_reporter)
+        assert result["syntax_err"] == "SyntaxError"
+
+    def test_exception(self, tmp_path):
+        fixer = MagicMock()
+        fixer.check_python_interpreter.side_effect = RuntimeError("boom")
+        fix = _make_fix(original_code="x = 1")
+        fix.file_path = "app.py"
+        (tmp_path / "app.py").write_text("x = 1\n")
+        with patch("devdox_ai_sonar.agent_supervisor.apply_single_fix", return_value=(True, ["x = 1\n"])):
+            result = _check_syntax_for_fix(fix, tmp_path, fixer, _noop_reporter)
+        assert "boom" in result["syntax_err"]
+
+
+# ===========================================================================
+# TestRunTestSuite
+# ===========================================================================
+
+
+class TestRunTestSuite:
+    def test_tests_pass(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.return_value = (True, "")
+        result = _run_test_suite(tmp_path, fixer, _noop_reporter, tmp_path)
+        assert result == {"test_err": None}
+
+    def test_tests_fail(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.return_value = (False, "AssertionError")
+        result = _run_test_suite(tmp_path, fixer, _noop_reporter, tmp_path)
+        assert result["test_err"] == "AssertionError"
+
+    def test_exception(self, tmp_path):
+        fixer = MagicMock()
+        fixer.run_testing_cases.side_effect = RuntimeError("crash")
+        result = _run_test_suite(tmp_path, fixer, _noop_reporter, tmp_path)
+        assert "crash" in result["test_err"]
+
+
+# ===========================================================================
+# TestRunValidationLoop
+# ===========================================================================
+
+
+class TestRunValidationLoop:
+    def test_all_accepted(self):
+        fix = _make_fix()
+        issue = _make_issue()
+        vresult = MagicMock(should_apply=True, final_fix=fix)
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        accepted, explanation = _run_validation_loop(
+            [fix], [issue], validator, "content", "", "",
+        )
+        assert len(accepted) == 1
+        assert explanation == ""
+
+    def test_all_rejected(self):
+        fix = _make_fix()
+        issue = _make_issue()
+        vresult = MagicMock(should_apply=False, explanation="bad fix")
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        accepted, explanation = _run_validation_loop(
+            [fix], [issue], validator, "content", "", "",
+        )
+        assert len(accepted) == 0
+        assert explanation == "bad fix"
+
+    def test_passes_test_err(self):
+        fix = _make_fix()
+        issue = _make_issue()
+        vresult = MagicMock(should_apply=True, final_fix=fix)
+        validator = MagicMock()
+        validator.validate_fix.return_value = vresult
+        _run_validation_loop(
+            [fix], [issue], validator, "content", "syntax", "test fail",
+        )
+        validator.validate_fix.assert_called_once_with(
+            fix=fix, issue=issue,
+            file_content="content", new_error_msg="syntax",
+            test_err="test fail",
+        )
+
+
+# ===========================================================================
+# TestBuildRejectionResult
+# ===========================================================================
+
+
+class TestBuildRejectionResult:
+    def test_retries_left(self):
+        state = _make_state(retry_count=0)
+        result = _build_rejection_result("bad", state, _noop_reporter)
+        assert result["accepted_fixes"] == []
+        assert "bad" in result["error_feedback"]
+
+    def test_retries_exhausted(self):
+        state = _make_state(retry_count=MAX_RETRIES)
+        result = _build_rejection_result("bad", state, _noop_reporter)
+        assert result["accepted_fixes"] == []
+        assert "bad" in result["error_feedback"]
+
+
+# ===========================================================================
+# TestReadFileForValidation
+# ===========================================================================
+
+
+class TestReadFileForValidation:
+    def test_reads_existing_file(self, tmp_path):
+        f = tmp_path / "code.py"
+        f.write_text("hello")
+        validation = MagicMock()
+        validation.file_path = f
+        assert _read_file_for_validation(validation) == "hello"
+
+    def test_returns_empty_on_none(self):
+        assert _read_file_for_validation(None) == ""
+
+    def test_returns_empty_on_missing_file(self):
+        validation = MagicMock()
+        validation.file_path = Path("/nonexistent/file.py")
+        assert _read_file_for_validation(validation) == ""
 
 
 # ===========================================================================

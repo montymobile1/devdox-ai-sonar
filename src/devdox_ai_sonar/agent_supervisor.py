@@ -131,7 +131,216 @@ class SonarState(TypedDict, total=False):
 
 
 # ---------------------------------------------------------------------------
-# Tool factory — tools are closures over fixer / validator / registry
+# Tool helper functions (extracted for low cognitive complexity)
+# ---------------------------------------------------------------------------
+
+
+async def _validate_issue_impl(state: dict, fixer: LLMFixer) -> dict:
+    """Validate issues and extract file/line info."""
+    report: StatusReporter = state.get("_report") or _noop_reporter
+    issues: List[IssueUnion] = state["issues"]
+
+    rule = issues[0].rule if issues else "?"
+    file_hint = getattr(issues[0], "file_path", getattr(issues[0], "file", "?")) if issues else "?"
+    report(f"[bold cyan]  ▶ Phase 1/6 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]")
+
+    extractor = IssueExtractor(fixer.file_reader)
+    validation = await extractor.validate_issue_group(
+        issues, state["tmp_path"], state["project_path"],
+    )
+    return _check_validation_result(validation, report)
+
+
+def _check_validation_result(validation: Any, report: StatusReporter) -> dict:
+    """Check validation result and return state patch."""
+    if not validation.is_valid:
+        logger.error("Issue validation failed: %s", validation.error)
+        report(f"[red]  ✗ Validation failed:[/red] {validation.error}")
+        return {"error": validation.error}
+    if validation.file_path is None or validation.line_range is None:
+        err = "Validation succeeded but file_path or line_range is None"
+        logger.error(err)
+        report(f"[red]  ✗ {err}[/red]")
+        return {"error": err}
+    report(
+        f"[green]  ✓ Issue validated[/green]  "
+        f"lines {validation.line_range.get('first_line')}–{validation.line_range.get('last_line')}"
+    )
+    logger.info(
+        "Validated: file=%s lines=%s-%s",
+        validation.file_path,
+        validation.line_range.get("first_line"),
+        validation.line_range.get("last_line"),
+    )
+    return {"validation": validation}
+
+
+async def _run_handler_impl(
+    state: dict, fixer: LLMFixer, registry: RuleHandlerRegistry,
+    handler_label: str,
+) -> dict:
+    """Shared logic for both automated and LLM handler tools."""
+    report: StatusReporter = state.get("_report") or _noop_reporter
+    issues: List[IssueUnion] = state["issues"]
+    validation = state["validation"]
+    handler = registry.get_handler(issues[0].rule)
+
+    report(f"[bold cyan]  ▶ Phase 2/6 — {handler_label}[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]")
+    logger.info("%s: %s for rule %s", handler_label, handler.__class__.__name__, issues[0].rule)
+
+    context = await fixer._prepare_fix_context(
+        validation.file_path, validation.line_range, state.get("modified_content", ""),
+    )
+    if not context:
+        report("[red]  ✗ Could not prepare fix context[/red]")
+        return {"error": f"Could not prepare fix context for {issues[0].rule}"}
+
+    error_feedback = state.get("error_feedback", "")
+    if error_feedback:
+        context.context_dict["error_feedback"] = error_feedback
+        report("[dim]    ↳ Injecting previous rejection feedback into prompt[/dim]")
+
+    return await _generate_and_build_fixes(
+        handler, fixer, state, context, report, handler_label,
+    )
+
+
+async def _generate_and_build_fixes(
+    handler: Any, fixer: LLMFixer, state: dict,
+    context: Any, report: StatusReporter, handler_label: str,
+) -> dict:
+    """Generate fixes from handler, write docs, build suggestions."""
+    issues = state["issues"]
+    project_path = state["project_path"]
+    fix_response_lst = await handler.generate_fixes(
+        issues, context, project_path,
+        state["validation"].file_path, llm_caller=fixer,
+    )
+    if not fix_response_lst:
+        report(f"[red]  ✗ {handler_label} returned no fixes[/red]")
+        return {"error": f"{handler.__class__.__name__} returned no fixes"}
+
+    file_md: str = state.get("file_md", "")
+    if file_md:
+        fixer.write_explaination(
+            project_path / file_md, fix_response_lst, issues,
+            context.context_dict, project_path=project_path,
+        )
+
+    modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
+    fixes = fixer._build_fix_suggestion(
+        fix_response_lst, context, state["validation"].file_path,
+        project_path, state["validation"].line_range, modify_line_range,
+    )
+    report(f"[green]  ✓ {handler_label} generated[/green]  ({len(fixes)} suggestion(s))")
+    logger.info("%s produced %d fix(es)", handler_label, len(fixes))
+    return {"fixes": fixes}
+
+
+def _check_syntax_for_fix(fix: Any, project_path: Path, fixer: LLMFixer,
+                          report: StatusReporter) -> Optional[dict]:
+    """Check syntax for a single fix. Returns error dict or None on success."""
+    file_path = project_path / fix.file_path
+    with open(str(file_path), "r", encoding="utf-8") as f:
+        content = f.read()
+
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    lines = content.splitlines(keepends=True)
+    _, lines = apply_single_fix(lines, fix)
+
+    report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
+    tmp_file = project_path / ".supervisor_tmp.py"
+    try:
+        tmp_file.write_text("".join(lines), encoding="utf-8")
+        ok, err = fixer.check_python_interpreter(str(tmp_file))
+        if ok:
+            logger.info("Syntax check passed")
+            report("[green]  ✓ Syntax OK[/green]")
+            return None
+        logger.warning("Syntax check failed: %s", err)
+        report(f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]")
+        return {"syntax_err": err}
+    except Exception as exc:
+        logger.error("Syntax check exception: %s", exc)
+        report(f"[red]  ✗ Syntax check raised exception:[/red] {exc}")
+        return {"syntax_err": str(exc)}
+    finally:
+        tmp_file.unlink(missing_ok=True)
+
+
+def _run_test_suite(testing_path: Path, fixer: LLMFixer,
+                    report: StatusReporter, project_path: Path) -> dict:
+    """Execute pytest and return test_err result."""
+    try:
+        ok, err = fixer.run_testing_cases(str(testing_path))
+        if ok:
+            logger.info("Test suite passed")
+            report("[green]  ✓ All tests passed[/green]")
+            return {"test_err": None}
+        logger.warning("Test suite failed: %s", err)
+        report("[yellow]  ⚠ Tests failed[/yellow] — forwarding to validator")
+        return {"test_err": err}
+    except Exception as exc:
+        logger.error("Test suite exception: %s", exc)
+        report(f"[red]  ✗ Test runner raised exception:[/red] {exc}")
+        return {"test_err": str(exc)}
+    finally:
+        logger.debug("check_testing_tool finished for %s", project_path)
+
+
+def _run_validation_loop(
+    fixes: List[FixSuggestion], issues: List[IssueUnion],
+    validator: FixValidator, file_content: str,
+    syntax_err: str, test_err: str,
+) -> tuple:
+    """Validate each fix and return (accepted, last_explanation)."""
+    accepted: List[FixSuggestion] = []
+    last_explanation = ""
+    for fix in fixes:
+        result = validator.validate_fix(
+            fix=fix, issue=issues[0],
+            file_content=file_content, new_error_msg=syntax_err,
+            test_err=test_err,
+        )
+        if result.should_apply:
+            accepted.append(result.final_fix)
+        else:
+            last_explanation = result.explanation
+            logger.warning("Validator rejected fix for %s: %s", issues[0].rule, result.explanation)
+    return accepted, last_explanation
+
+
+def _build_rejection_result(
+    last_explanation: str, state: dict, report: StatusReporter,
+) -> dict:
+    """Build result dict when all fixes are rejected."""
+    logger.warning("All fixes rejected: %s", last_explanation)
+    retry_count = state.get("retry_count", 0)
+    if retry_count < MAX_RETRIES:
+        report(
+            f"[yellow]  ⚠ All fixes rejected — will retry ({retry_count + 1}/{MAX_RETRIES})[/yellow]\n"
+            f"[dim]    Reason: {last_explanation}[/dim]"
+        )
+    else:
+        report(
+            f"[red]  ✗ All fixes rejected — retries exhausted[/red]\n"
+            f"[dim]    Reason: {last_explanation}[/dim]"
+        )
+    return {"accepted_fixes": [], "error_feedback": f"Fix rejected — {last_explanation}"}
+
+
+def _read_file_for_validation(validation: Any) -> str:
+    """Read source file content for validator context."""
+    if validation and validation.file_path:
+        try:
+            return validation.file_path.read_text(encoding="utf-8")
+        except OSError:
+            pass
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Tool factory — thin @tool wrappers delegating to helper functions
 # ---------------------------------------------------------------------------
 
 
@@ -140,364 +349,83 @@ def build_tools(
     validator: Optional[FixValidator],
     registry: RuleHandlerRegistry,
 ) -> Dict[str, Any]:
-    """
-    Build all graph tools. Tools read/write SonarState via their closure.
-    Each tool receives the current state dict and returns a state patch.
-    """
-
-    # ------------------------------------------------------------------ #
-    # Tool 1: validate_issue_tool
-    # ------------------------------------------------------------------ #
+    """Build all graph tools as thin closures over fixer/validator/registry."""
 
     @tool
     async def validate_issue_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Validate that all issues belong to the same Python file and extract
-        the line range to fix. Sets state['validation'] on success,
-        state['error'] on failure.
-        """
-        report: StatusReporter = state.get("_report") or _noop_reporter
-        issues: List[IssueUnion] = state["issues"]
-        project_path: Path = state["project_path"]
-        tmp_path: Path = state["tmp_path"]
-
-        rule = issues[0].rule if issues else "?"
-        file_hint = getattr(issues[0], "file_path", getattr(issues[0], "file", "?")) if issues else "?"
-        report(f"[bold cyan]  ▶ Phase 1/6 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]")
-
-        extractor = IssueExtractor(fixer.file_reader)
-        validation = await extractor.validate_issue_group(issues, tmp_path, project_path)
-
-        if not validation.is_valid:
-            logger.error("Issue validation failed: %s", validation.error)
-            report(f"[red]  ✗ Validation failed:[/red] {validation.error}")
-            return {"error": validation.error}
-
-        if validation.file_path is None or validation.line_range is None:
-            err = "Validation succeeded but file_path or line_range is None"
-            logger.error(err)
-            report(f"[red]  ✗ {err}[/red]")
-            return {"error": err}
-
-        report(
-            f"[green]  ✓ Issue validated[/green]  "
-            f"lines {validation.line_range.get('first_line')}–{validation.line_range.get('last_line')}"
-        )
-        logger.info(
-            "Validated: file=%s lines=%s-%s",
-            validation.file_path,
-            validation.line_range.get("first_line"),
-            validation.line_range.get("last_line"),
-        )
-        return {"validation": validation}
+        """Validate that all issues belong to the same file and extract line range."""
+        return await _validate_issue_impl(state, fixer)
 
     @tool
     async def run_automated_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Run the deterministic (AST-based) rule handler for rules that don't
-        need an LLM. Sets state['fixes'] on success, state['error'] on failure.
-        """
-        report: StatusReporter = state.get("_report") or _noop_reporter
-        issues: List[IssueUnion] = state["issues"]
-        project_path: Path = state["project_path"]
-        validation = state["validation"]
-        modified_content: str = state.get("modified_content", "")
-        file_md: str = state.get("file_md", "")
-
-        handler = registry.get_handler(issues[0].rule)
-        report(f"[bold cyan]  ▶ Phase 2/6 — Applying AST fix[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]")
-
-        logger.info("Automated handler: %s for rule %s", handler.__class__.__name__, issues[0].rule)
-
-        context = await fixer._prepare_fix_context(
-            validation.file_path, validation.line_range, modified_content
-        )
-        if not context:
-            report("[red]  ✗ Could not prepare fix context[/red]")
-            return {"error": f"Could not prepare fix context for {issues[0].rule}"}
-
-        fix_response_lst = await handler.generate_fixes(
-            issues, context, project_path, validation.file_path, llm_caller=fixer
-        )
-        if not fix_response_lst:
-            report("[red]  ✗ AST handler returned no fixes[/red]")
-            return {"error": f"{handler.__class__.__name__} returned no fixes"}
-
-        if file_md:
-            fixer.write_explaination(
-                project_path / file_md, fix_response_lst, issues,
-                context.context_dict, project_path=project_path,
-            )
-
-        modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
-        fixes = fixer._build_fix_suggestion(
-            fix_response_lst, context, validation.file_path,
-            project_path, validation.line_range, modify_line_range,
-        )
-        report(f"[green]  ✓ AST fix generated[/green]  ({len(fixes)} suggestion(s))")
-        logger.info("Automated handler produced %d fix(es)", len(fixes))
-        return {"fixes": fixes}
-
-    # ------------------------------------------------------------------ #
-    # Tool 2b: run_llm_tool
-    # ------------------------------------------------------------------ #
+        """Run deterministic AST-based rule handler."""
+        return await _run_handler_impl(state, fixer, registry, "AST fix")
 
     @tool
     async def run_llm_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Run the LLM-backed rule handler. On retry, injects error_feedback into
-        the fix context so the LLM can self-correct.
-        Sets state['fixes'] on success, state['error'] on failure.
-        """
+        """Run LLM-backed rule handler with optional retry feedback."""
         report: StatusReporter = state.get("_report") or _noop_reporter
-        issues: List[IssueUnion] = state["issues"]
-        project_path: Path = state["project_path"]
-        validation = state["validation"]
-        modified_content: str = state.get("modified_content", "")
-        file_md: str = state.get("file_md", "")
-        error_feedback: str = state.get("error_feedback", "")
         retry_count: int = state.get("retry_count", 0)
-
-        handler = registry.get_handler(issues[0].rule)
-
-        phase_label = (
-            f"[bold yellow]  ↻ Retry {retry_count}/{MAX_RETRIES} — Generating LLM fix[/bold yellow]"
-            if retry_count > 0
-            else "[bold cyan]  ▶ Phase 2/6 — Generating LLM fix[/bold cyan]"
-        )
-        report(f"{phase_label}  handler=[yellow]{handler.__class__.__name__}[/yellow]")
-
-        logger.info(
-            "LLM handler: %s for rule %s (retry=%d feedback=%s)",
-            handler.__class__.__name__, issues[0].rule, retry_count, bool(error_feedback),
-        )
-
-        context = await fixer._prepare_fix_context(
-            validation.file_path, validation.line_range, modified_content
-        )
-        if not context:
-            report("[red]  ✗ Could not prepare fix context[/red]")
-            return {"error": f"Could not prepare fix context for {issues[0].rule}"}
-
-        if error_feedback:
-            context.context_dict["error_feedback"] = error_feedback
-            report("[dim]    ↳ Injecting previous rejection feedback into prompt[/dim]")
-
-        fix_response_lst = await handler.generate_fixes(
-            issues, context, project_path, validation.file_path, llm_caller=fixer
-        )
-        if not fix_response_lst:
-            report("[red]  ✗ LLM handler returned no fixes[/red]")
-            return {"error": f"{handler.__class__.__name__} returned no fixes"}
-
-        if file_md:
-            fixer.write_explaination(
-                project_path / file_md, fix_response_lst, issues,
-                context.context_dict, project_path=project_path,
-            )
-
-        modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
-        fixes = fixer._build_fix_suggestion(
-            fix_response_lst, context, validation.file_path,
-            project_path, validation.line_range, modify_line_range,
-        )
-        report(f"[green]  ✓ LLM fix generated[/green]  ({len(fixes)} suggestion(s))")
-        logger.info("LLM handler produced %d fix(es)", len(fixes))
-        return {"fixes": fixes}
-
-    # ------------------------------------------------------------------ #
-    # Tool 3: check_syntax_tool
-    # ------------------------------------------------------------------ #
+        if retry_count > 0:
+            report(f"[bold yellow]  ↻ Retry {retry_count}/{MAX_RETRIES}[/bold yellow]")
+        return await _run_handler_impl(state, fixer, registry, "LLM fix")
 
     @tool
     def check_syntax_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Write the first fix to a temp file and run the Python interpreter.
-        Sets state['syntax_err'] = None on success, or an error string on failure.
-        """
+        """Check syntax of each fix via py_compile."""
         report: StatusReporter = state.get("_report") or _noop_reporter
         fixes: List[FixSuggestion] = state.get("fixes", [])
-        project_path: Path = state["project_path"]
         if not fixes:
             logger.warning("check_syntax_tool: no fixes to check")
             report("[dim]    ↳ No fixes to check — skipping[/dim]")
             return {"syntax_err": None}
-
-
         for fix in fixes:
-
-            content = ""
-            file_path = project_path / fix.file_path
-            with open(str(file_path), "r", encoding="utf-8") as f:
-                content = f.read()
-
-            content = content.replace("\r\n", "\n").replace("\r", "\n")
-            lines = content.splitlines(keepends=True)
-            _, lines = apply_single_fix(lines, fix)
-
-
-            report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
-
-
-
-            tmp_file = project_path / ".supervisor_tmp.py"
-
-            try:
-
-                tmp_file.write_text("".join(lines), encoding="utf-8")
-                ok, err = fixer.check_python_interpreter(str(tmp_file))
-
-                if ok:
-                    logger.info("Syntax check passed")
-                    report("[green]  ✓ Syntax OK[/green]")
-                else:
-                    logger.warning("Syntax check failed: %s", err)
-                    report(f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]")
-                    return {"syntax_err": err}
-            except Exception as exc:
-                logger.error("Syntax check exception: %s", exc)
-                report(f"[red]  ✗ Syntax check raised exception:[/red] {exc}")
-                return {"syntax_err": str(exc)}
-            finally:
-                tmp_file.unlink(missing_ok=True)
+            err_result = _check_syntax_for_fix(fix, state["project_path"], fixer, report)
+            if err_result is not None:
+                return err_result
         return {"syntax_err": None}
-    # ------------------------------------------------------------------ #
-    # Tool 4: check_testing_tool
-    # ------------------------------------------------------------------ #
 
     @tool
     def check_testing_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Run the project test suite (pytest) to verify the fix does not break
-        any existing tests.
-        Sets state['test_err'] = None when all tests pass, or a pytest
-        error string when tests fail.
-        """
+        """Run pytest to verify fix does not break existing tests."""
+        if state.get("skip_tests", False):
+            return {"test_err": None}
         report: StatusReporter = state.get("_report") or _noop_reporter
         fixes: List[FixSuggestion] = state.get("fixes", [])
         project_path: Path = state["project_path"]
-        skip_tests = state.get("skip_tests", False)
-        if skip_tests:
-            return {"test_err": None}
         report("[bold cyan]  ▶ Phase 4/5 — Running test suite[/bold cyan]  (pytest)")
-
         if not fixes:
             logger.warning("check_testing_tool: no fixes to check — skipping tests")
             report("[dim]    ↳ No fixes to check — skipping tests[/dim]")
             return {"test_err": None}
-
         testing_path = project_path / "tests"
         if not testing_path.exists():
             testing_path = project_path / "test"
-
         report(f"[dim]    ↳ Test directory: {testing_path}[/dim]")
-
-        try:
-            ok, err = fixer.run_testing_cases(str(testing_path))
-
-            if ok:
-                logger.info("Test suite passed")
-                report("[green]  ✓ All tests passed[/green]")
-                return {"test_err": None}
-            logger.warning("Test suite failed: %s", err)
-            report("[yellow]  ⚠ Tests failed[/yellow] — forwarding to validator")
-            return {"test_err": err}
-        except Exception as exc:
-            logger.error("Test suite exception: %s", exc)
-            report(f"[red]  ✗ Test runner raised exception:[/red] {exc}")
-            return {"test_err": str(exc)}
-        finally:
-            logger.debug("check_testing_tool finished for %s", project_path)
-
-    # ------------------------------------------------------------------ #
-    # Tool 5: validate_fix_tool
-    # ------------------------------------------------------------------ #
+        return _run_test_suite(testing_path, fixer, report, project_path)
 
     @tool
     def validate_fix_tool(state: dict) -> dict:  # type: ignore[misc]
-        """
-        Run FixValidator on each fix. Uses syntax_err and test_err as
-        additional context.
-        Sets state['accepted_fixes'] with fixes that passed, and
-        state['error_feedback'] with rejection reason for retry.
-        """
+        """Run FixValidator on each fix and collect accepted/rejected results."""
         report: StatusReporter = state.get("_report") or _noop_reporter
-
         report("[bold cyan]  ▶ Phase 5/5 — Validating fix quality[/bold cyan]  (FixValidator)")
         if validator is None:
             report("[dim]    ↳ No validator configured — accepting all fixes[/dim]")
-            return {
-                "accepted_fixes": state.get("fixes", []),
-                "error_feedback": "",
-            }
-
+            return {"accepted_fixes": state.get("fixes", []), "error_feedback": ""}
         fixes: List[FixSuggestion] = state.get("fixes", [])
-        issues: List[IssueUnion] = state["issues"]
-        validation = state["validation"]
-        syntax_err: str = state.get("syntax_err") or ""
-        test_err: str = state.get("test_err") or ""
-
         if not fixes:
             report("[yellow]  ⚠ No fixes to validate[/yellow]")
             return {"accepted_fixes": [], "error_feedback": "No fixes to validate"}
-
-        file_content = ""
-        if validation and validation.file_path:
-            try:
-                file_content = validation.file_path.read_text(encoding="utf-8")
-            except OSError:
-                pass
-
-        accepted: List[FixSuggestion] = []
-        last_explanation = ""
-
-        for fix in fixes:
-            result = validator.validate_fix(
-                fix=fix,
-                issue=issues[0],
-                file_content=file_content,
-                new_error_msg=syntax_err,
-                test_err=test_err,
-            )
-
-            if result.should_apply:
-                accepted.append(result.final_fix)
-            else:
-                last_explanation = result.explanation
-                logger.warning(
-                    "Validator rejected fix for %s: %s  "
-                    "(confidence=%.2f, issues=%s)",
-                    issues[0].rule,
-                    result.explanation,  # ← ADD THIS
-                    result.confidence,
-                    issues
-                )
-
-                logger.warning(
-                    "Validator rejected fix for %s: %s", issues[0].rule, result.explanation
-                )
-
+        file_content = _read_file_for_validation(state.get("validation"))
+        accepted, last_explanation = _run_validation_loop(
+            fixes, state["issues"], validator, file_content,
+            state.get("syntax_err") or "", state.get("test_err") or "",
+        )
         if accepted:
             logger.info("Validator accepted %d/%d fix(es)", len(accepted), len(fixes))
             report(f"[green]  ✓ Validator accepted {len(accepted)}/{len(fixes)} fix(es)[/green]")
             return {"accepted_fixes": accepted, "error_feedback": ""}
-
-        logger.warning("All fixes rejected: %s", last_explanation)
-        retry_count = state.get("retry_count", 0)
-        if retry_count < MAX_RETRIES:
-            report(
-                f"[yellow]  ⚠ All fixes rejected — will retry ({retry_count + 1}/{MAX_RETRIES})[/yellow]\n"
-                f"[dim]    Reason: {last_explanation}[/dim]"
-            )
-        else:
-            report(
-                f"[red]  ✗ All fixes rejected — retries exhausted[/red]\n"
-                f"[dim]    Reason: {last_explanation}[/dim]"
-            )
-        return {
-            "accepted_fixes": [],
-            "error_feedback": f"Fix rejected — {last_explanation}",
-        }
+        return _build_rejection_result(last_explanation, state, report)
 
     return {
         "validate_issue_tool": validate_issue_tool,
