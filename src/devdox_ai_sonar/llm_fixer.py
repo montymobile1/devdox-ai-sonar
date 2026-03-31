@@ -355,7 +355,7 @@ class LLMFixer:
         modified_content: str = "",
         file_md: str = "",
         check_tmp_path: bool = True,
-        rule_info: Optional[Dict[str, Any]] = None
+        rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[FixSuggestion]]:
         """
         Generate fix suggestions for issues in a single file.
@@ -414,7 +414,7 @@ class LLMFixer:
                 project_path,
                 validation.file_path,
                 llm_caller=self,  # Pass self for LLM access
-                rule_info= rule_info
+                rule_info=rule_info,
             )
 
             if not fix_response_lst or len(fix_response_lst) == 0:

@@ -15,7 +15,6 @@ from devdox_ai_sonar.models.sonar import (
 )
 
 logger = logging.getLogger(__name__)
-import importlib.resources
 
 _DEFAULT_RULES_CACHE_PATH: str = str(
     importlib.resources.files("devdox_ai_sonar").joinpath("all_sonarcloud_rules.json")
@@ -623,7 +622,8 @@ class RuleAnalyzer:
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(rules_data, f, indent=2, ensure_ascii=False)
 
-def _load_rules_cache(cache_path: str=_DEFAULT_RULES_CACHE_PATH) -> Dict[str, Any]:
+
+def _load_rules_cache(cache_path: str = _DEFAULT_RULES_CACHE_PATH) -> Dict[str, Any]:
     """
     Load the pre-fetched SonarCloud rules JSON cache from disk.
 

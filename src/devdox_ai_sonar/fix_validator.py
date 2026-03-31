@@ -275,13 +275,12 @@ class FixValidator:
                 file_content, first_line, last_line, context_lines
             )
 
-            formatted_fix, start_line, end_line = self._format_code_blocks_for_validation(
-                fix.fixed_code_blocks
+            formatted_fix, start_line, end_line = (
+                self._format_code_blocks_for_validation(fix.fixed_code_blocks)
             )
-            if formatted_fix!="":
+            if formatted_fix != "":
                 context["start_line"] = start_line
                 context["end_line"] = end_line
-
 
             # Generate validation prompt
             prompt = self._create_validation_prompt(
@@ -365,7 +364,9 @@ class FixValidator:
                     f"{each_block.start_line}-{each_block.end_line}"
                 )
 
-    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> Tuple[str, int, int]:
+    def _format_code_blocks_for_validation(
+        self, code_blocks: List[CodeBlock]
+    ) -> Tuple[str, int, int]:
         """
         Format code blocks into a readable string for validation.
 
@@ -382,7 +383,6 @@ class FixValidator:
         start_line = code_blocks[0].start_line
         end_line = code_blocks[0].end_line
         for idx, block in enumerate(code_blocks, 1):
-
             if block.start_line < start_line:
                 start_line = block.start_line
 
