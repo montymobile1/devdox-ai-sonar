@@ -534,7 +534,6 @@ class FixValidator:
                 },
                 {"role": "user", "content": prompt},
             ],
-            #max_tokens=8000,
             temperature=0.1,
             response_format={
                 "type": "json_schema",
