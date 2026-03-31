@@ -3825,3 +3825,154 @@ class TestApplyMultilineReplacements:
         _apply_multiline_replacements(lines, patterns, 0, 2)
 
         assert lines == ["x = 0\n", "y = 0\n"]
+
+
+# ============================================================================
+# _apply_single_pattern — escape sequence decoding
+# ============================================================================
+
+
+class TestApplySinglePatternEscapeDecoding:
+    """Tests for unicode escape decoding in _apply_single_pattern."""
+
+    def test_escaped_tab_decoded_before_match(self):
+        text = "hello\tworld"
+        pattern = SearchReplace(search="hello\\tworld", replace="REPLACED")
+        result = _apply_single_pattern(text, pattern)
+        assert result == "REPLACED"
+
+    def test_plain_string_replacement_still_works(self):
+        text = "hello world"
+        pattern = SearchReplace(search="hello", replace="hi")
+        result = _apply_single_pattern(text, pattern)
+        assert result == "hi world"
+
+    def test_with_count(self):
+        text = "aaa"
+        pattern = SearchReplace(search="a", replace="b", count=2)
+        result = _apply_single_pattern(text, pattern)
+        assert result == "bba"
+
+
+# ============================================================================
+# _apply_replace_action — escape sequence decoding
+# ============================================================================
+
+
+class TestApplyReplaceActionEscapeDecoding:
+    """Tests for unicode escape decoding in _apply_replace_action."""
+
+    def test_escaped_sequences_decoded_before_match(self):
+        lines = ['    x = "hello"\n']
+        change = LineChange(
+            line=1, action=ChangeAction.REPLACE,
+            old='x = \\"hello\\"', new='x = \\"world\\"'
+        )
+        _apply_replace_action(lines, change, 1, 1)
+        assert '"world"' in lines[0]
+
+
+# ============================================================================
+# apply_single_code_block — change_type override
+# ============================================================================
+
+
+class TestApplySingleCodeBlockChangeTypeOverride:
+    """Tests for the change_type override logic in apply_single_code_block."""
+
+    def test_block_with_context_forced_to_full_code(self):
+        lines = ["line1\n", "line2\n", "line3\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.DIFF,
+            block_type=BlockType.FUNCTION,
+            context="replaced\n",
+        )
+        apply_single_code_block(lines, block)
+        assert block.change_type == ChangeType.FULL_CODE
+
+    def test_block_with_changes_forced_to_diff(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.SEARCH_REPLACE,
+            block_type=BlockType.FUNCTION,
+            context=None,
+            changes=[LineChange(line=1, action=ChangeAction.REPLACE, old="x = 1", new="x = 2")],
+        )
+        apply_single_code_block(lines, block)
+        assert block.change_type == ChangeType.DIFF
+
+    def test_block_with_no_context_no_changes_forced_to_search_replace(self):
+        lines = ["x = 1\n", "y = 2\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context=None,
+            changes=None,
+            replacements=[SearchReplace(search="x = 1", replace="x = 2")],
+        )
+        apply_single_code_block(lines, block)
+        assert block.change_type == ChangeType.SEARCH_REPLACE
+
+
+# ============================================================================
+# apply_full_code_change — decorator/def/class guard
+# ============================================================================
+
+
+class TestApplyFullCodeChangeDecoratorGuard:
+    """Tests for the decorator/def/class guard in apply_full_code_change."""
+
+    def test_next_line_starts_with_decorator(self):
+        lines = ["old_line1\n", "old_line2\n", "@decorator\n", "def bar():\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="new_line1\nnew_line2\n",
+        )
+        apply_full_code_change(lines, block)
+        # The decorator line should still exist
+        assert any("@decorator" in line for line in lines)
+
+    def test_next_line_starts_with_def(self):
+        lines = ["old_line1\n", "old_line2\n", "def next_func():\n", "    pass\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="new_line1\nnew_line2\n",
+        )
+        apply_full_code_change(lines, block)
+        assert any("def next_func" in line for line in lines)
+
+    def test_next_line_starts_with_class(self):
+        lines = ["old_line1\n", "old_line2\n", "class Foo:\n", "    pass\n"]
+        block = CodeBlock(
+            block_name="test",
+            start_line=1,
+            end_line=2,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context="new_line1\nnew_line2\n",
+        )
+        apply_full_code_change(lines, block)
+        assert any("class Foo" in line for line in lines)

@@ -1758,5 +1758,54 @@ class TestBackfillMissingContext:
         FixValidator._backfill_missing_context([], [])
 
 
+class TestFormatCodeBlocksForValidation:
+    """Tests for FixValidator._format_code_blocks_for_validation."""
+
+    @staticmethod
+    def _make_block(**kwargs):
+        defaults = {
+            "block_name": "test_block",
+            "block_type": BlockType.FUNCTION,
+            "start_line": 1,
+            "end_line": 10,
+            "has_changes": True,
+            "change_type": ChangeType.FULL_CODE,
+            "context": "def foo():\n    pass",
+        }
+        defaults.update(kwargs)
+        return CodeBlock(**defaults)
+
+    def _make_validator(self):
+        with patch("devdox_ai_sonar.fix_validator.openai"):
+            return FixValidator(provider="openrouter", api_key="test-key")
+
+    def test_empty_list_returns_empty_string_and_zeros(self):
+        validator = self._make_validator()
+        text, start, end = validator._format_code_blocks_for_validation([])
+        assert text == ""
+        assert start == 0
+        assert end == 0
+
+    def test_single_block_returns_its_line_range(self):
+        validator = self._make_validator()
+        block = self._make_block(start_line=5, end_line=15)
+        text, start, end = validator._format_code_blocks_for_validation([block])
+        assert start == 5
+        assert end == 15
+        assert isinstance(text, str)
+        assert len(text) > 0
+
+    def test_multiple_blocks_returns_min_start_max_end(self):
+        validator = self._make_validator()
+        blocks = [
+            self._make_block(start_line=20, end_line=30),
+            self._make_block(start_line=5, end_line=50),
+            self._make_block(start_line=10, end_line=25),
+        ]
+        text, start, end = validator._format_code_blocks_for_validation(blocks)
+        assert start == 5
+        assert end == 50
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
