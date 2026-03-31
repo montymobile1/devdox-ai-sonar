@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union, cast
+from typing import List, Optional, Dict, Any, Tuple, Union, cast
 from enum import Enum
 import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -365,7 +365,7 @@ class FixValidator:
                     f"{each_block.start_line}-{each_block.end_line}"
                 )
 
-    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> str:
+    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> Tuple[str, int, int]:
         """
         Format code blocks into a readable string for validation.
 
