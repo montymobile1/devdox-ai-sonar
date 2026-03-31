@@ -799,12 +799,12 @@ class TestTryReplaceAtCorrectedLine:
         _try_replace_at_corrected_line(lines, change, 1, 2)
         assert lines == original
 
-    def test_content_found_but_strip_mismatch_no_replace(self):
+    def test_content_found_but_strip_mismatch_partial_replace(self):
         lines = ["x = 1\n", "# y = 2 something\n", "z = 3\n"]
         change = LineChange(line=1, action=ChangeAction.REPLACE, old="y = 2", new="y = 200")
         _try_replace_at_corrected_line(lines, change, 1, 3)
-        # find_line_by_content uses 'in' check so it matches, but strip equality fails
-        assert "y = 200" not in lines[1]
+        # old.strip() is found within the line, so partial replacement occurs
+        assert lines[1] == "# y = 200 something\n"
 
 
 class TestApplyReplaceAction:

@@ -4596,18 +4596,16 @@ class TestInitializeFixServices:
 class TestCollectRuleInformation:
     """Test cases for _collect_rule_information."""
 
-    def test_collects_rules_for_all_issues(self):
-        """Test collects rule information for all issues."""
+    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
+    def test_collects_rules_for_all_issues(self, mock_cache):
+        """Test collects rule information for all issues (cache miss, falls back to API)."""
         mock_ruler = Mock()
         mock_ruler.get_rule_by_key.side_effect = [
             {'key': 'rule1', 'name': 'Rule 1'},
             {'key': 'rule2', 'name': 'Rule 2'}
         ]
 
-        issues = [
-            Mock(rule='rule1'),
-            Mock(rule='rule2')
-        ]
+        issues = ['rule1', 'rule2']
 
         result = _collect_rule_information(issues, mock_ruler)
 
