@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devdox_sonar"
-version = "0.0.6"
+version = "0.0.7"
 description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
 readme = "README.md"
 requires-python = ">=3.12"
