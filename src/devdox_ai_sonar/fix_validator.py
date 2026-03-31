@@ -2,7 +2,7 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union, cast
+from typing import List, Optional, Dict, Any, Tuple, Union, cast
 from enum import Enum
 import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -301,30 +301,7 @@ class FixValidator:
                 )
             modified_fix = fix
             blocks = validation_response.FIXED_CODE_BLOCKS
-            for each_block in blocks:
-                if (
-                    each_block.has_changes
-                    and each_block.context is None
-                    and each_block.change_type == ChangeType.FULL_CODE
-                ):
-                    matching_block = next(
-                        (
-                            block
-                            for block in fix.fixed_code_blocks
-                            if block.start_line == each_block.start_line
-                        ),
-                        None,
-                    )
-
-                    if matching_block:
-                        each_block.context = matching_block.context
-
-                    else:
-                        # Fallback or error handling
-                        print(
-                            f"⚠️ Warning: No matching block found for lines {each_block.start_line}-{each_block.end_line}"
-                        )
-
+            self._backfill_missing_context(blocks, fix.fixed_code_blocks)
             modified_fix.fixed_code_blocks = blocks
             helper_code = validation_response.NEW_HELPER_CODE
 
@@ -353,7 +330,42 @@ class FixValidator:
                 confidence=0.0,
             )
 
-    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> str:
+    @staticmethod
+    def _backfill_missing_context(
+        blocks: List[CodeBlock], original_blocks: List[CodeBlock]
+    ) -> None:
+        """Copy context from original blocks into validated blocks that lost it.
+
+        When the validator returns FULL_CODE blocks with has_changes=True but
+        no context, we look up the original block by start_line and copy its
+        context across.  Mutates *blocks* in place.
+        """
+        for each_block in blocks:
+            if not (
+                each_block.has_changes
+                and each_block.context is None
+                and each_block.change_type == ChangeType.FULL_CODE
+            ):
+                continue
+
+            matching_block = next(
+                (
+                    block
+                    for block in original_blocks
+                    if block.start_line == each_block.start_line
+                ),
+                None,
+            )
+
+            if matching_block:
+                each_block.context = matching_block.context
+            else:
+                print(
+                    f"Warning: No matching block found for lines "
+                    f"{each_block.start_line}-{each_block.end_line}"
+                )
+
+    def _format_code_blocks_for_validation(self, code_blocks: List[CodeBlock]) -> Tuple[str, int, int]:
         """
         Format code blocks into a readable string for validation.
 
@@ -522,7 +534,6 @@ class FixValidator:
                 },
                 {"role": "user", "content": prompt},
             ],
-            #max_tokens=8000,
             temperature=0.1,
             response_format={
                 "type": "json_schema",

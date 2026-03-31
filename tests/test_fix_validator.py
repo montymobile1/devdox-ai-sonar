@@ -1569,7 +1569,7 @@ class TestOpenAICompatibleValidatorDispatch:
         mock_client.chat.completions.create.assert_called_once()
         call_kwargs = mock_client.chat.completions.create.call_args[1]
         assert call_kwargs["model"] == "anthropic/claude-sonnet-4"
-        assert call_kwargs["max_tokens"] == 8000
+        assert "max_tokens" not in call_kwargs
         assert call_kwargs["temperature"] == 0.1
         assert call_kwargs["response_format"]["type"] == "json_schema"
 
@@ -1653,6 +1653,158 @@ class TestOpenRouterProviderIntegration:
         """Test that unsupported provider error message lists openrouter."""
         with pytest.raises(ValueError, match="openrouter"):
             FixValidator(provider="invalid_provider", api_key="test-key")
+
+
+class TestBackfillMissingContext:
+    """Tests for FixValidator._backfill_missing_context."""
+
+    @staticmethod
+    def _make_block(**kwargs):
+        """Helper to create a CodeBlock with sensible defaults."""
+        defaults = {
+            "block_name": "test_block",
+            "block_type": BlockType.FUNCTION,
+        }
+        defaults.update(kwargs)
+        return CodeBlock(**defaults)
+
+    def test_copies_context_from_matching_original_block(self):
+        """FULL_CODE block with no context gets context from the matching original."""
+        original = self._make_block(
+            start_line=10, end_line=20, has_changes=True,
+            change_type=ChangeType.FULL_CODE, context="def foo():\n    pass",
+        )
+        validated = self._make_block(
+            start_line=10, end_line=20, has_changes=True,
+            change_type=ChangeType.FULL_CODE, context=None,
+        )
+
+        FixValidator._backfill_missing_context([validated], [original])
+
+        assert validated.context == "def foo():\n    pass"
+
+    def test_skips_block_with_existing_context(self):
+        """Block that already has context is left untouched."""
+        original = self._make_block(
+            start_line=10, end_line=20, has_changes=True,
+            change_type=ChangeType.FULL_CODE, context="original context",
+        )
+        validated = self._make_block(
+            start_line=10, end_line=20, has_changes=True,
+            change_type=ChangeType.FULL_CODE, context="already set",
+        )
+
+        FixValidator._backfill_missing_context([validated], [original])
+
+        assert validated.context == "already set"
+
+    def test_skips_block_without_changes(self):
+        """Block with has_changes=False is left untouched."""
+        validated = self._make_block(
+            start_line=10, end_line=20, has_changes=False,
+            change_type=ChangeType.FULL_CODE, context=None,
+        )
+
+        FixValidator._backfill_missing_context([validated], [])
+
+        assert validated.context is None
+
+    def test_skips_non_full_code_block(self):
+        """DIFF block is left untouched even if context is None."""
+        validated = self._make_block(
+            start_line=10, end_line=20, has_changes=True,
+            change_type=ChangeType.DIFF, context=None,
+        )
+
+        FixValidator._backfill_missing_context([validated], [])
+
+        assert validated.context is None
+
+    def test_no_matching_original_prints_warning(self, capsys):
+        """When no original block matches, a warning is printed."""
+        validated = self._make_block(
+            start_line=99, end_line=105, has_changes=True,
+            change_type=ChangeType.FULL_CODE, context=None,
+        )
+
+        FixValidator._backfill_missing_context([validated], [])
+
+        captured = capsys.readouterr()
+        assert "Warning" in captured.out
+        assert "99" in captured.out
+
+    def test_multiple_blocks_handled(self):
+        """Multiple validated blocks are each processed independently."""
+        originals = [
+            self._make_block(start_line=1, end_line=5, has_changes=True,
+                             change_type=ChangeType.FULL_CODE, context="ctx1"),
+            self._make_block(start_line=10, end_line=15, has_changes=True,
+                             change_type=ChangeType.FULL_CODE, context="ctx2"),
+        ]
+        validated = [
+            self._make_block(start_line=1, end_line=5, has_changes=True,
+                             change_type=ChangeType.FULL_CODE, context=None),
+            self._make_block(start_line=10, end_line=15, has_changes=True,
+                             change_type=ChangeType.FULL_CODE, context=None),
+        ]
+
+        FixValidator._backfill_missing_context(validated, originals)
+
+        assert validated[0].context == "ctx1"
+        assert validated[1].context == "ctx2"
+
+    def test_empty_blocks_list(self):
+        """Empty blocks list is a no-op."""
+        FixValidator._backfill_missing_context([], [])
+
+
+class TestFormatCodeBlocksForValidation:
+    """Tests for FixValidator._format_code_blocks_for_validation."""
+
+    @staticmethod
+    def _make_block(**kwargs):
+        defaults = {
+            "block_name": "test_block",
+            "block_type": BlockType.FUNCTION,
+            "start_line": 1,
+            "end_line": 10,
+            "has_changes": True,
+            "change_type": ChangeType.FULL_CODE,
+            "context": "def foo():\n    pass",
+        }
+        defaults.update(kwargs)
+        return CodeBlock(**defaults)
+
+    def _make_validator(self):
+        with patch("devdox_ai_sonar.fix_validator.openai"):
+            return FixValidator(provider="openrouter", api_key="test-key")
+
+    def test_empty_list_returns_empty_string_and_zeros(self):
+        validator = self._make_validator()
+        text, start, end = validator._format_code_blocks_for_validation([])
+        assert text == ""
+        assert start == 0
+        assert end == 0
+
+    def test_single_block_returns_its_line_range(self):
+        validator = self._make_validator()
+        block = self._make_block(start_line=5, end_line=15)
+        text, start, end = validator._format_code_blocks_for_validation([block])
+        assert start == 5
+        assert end == 15
+        assert isinstance(text, str)
+        assert len(text) > 0
+
+    def test_multiple_blocks_returns_min_start_max_end(self):
+        validator = self._make_validator()
+        blocks = [
+            self._make_block(start_line=20, end_line=30),
+            self._make_block(start_line=5, end_line=50),
+            self._make_block(start_line=10, end_line=25),
+        ]
+        text, start, end = validator._format_code_blocks_for_validation(blocks)
+        assert start == 5
+        assert end == 50
 
 
 if __name__ == "__main__":
