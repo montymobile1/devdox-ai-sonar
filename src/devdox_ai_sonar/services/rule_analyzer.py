@@ -643,7 +643,7 @@ def _load_rules_cache(cache_path: str=_DEFAULT_RULES_CACHE_PATH) -> Dict[str, An
     try:
         with open(cache_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        rules = data.get("rules", {})
+        rules: Dict[str, Any] = data.get("rules", {})
         logger.info("Loaded %d rules from cache '%s'.", len(rules), cache_path)
         return rules
     except (json.JSONDecodeError, OSError) as e:

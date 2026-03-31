@@ -916,7 +916,7 @@ def _try_replace_at_corrected_line(
     if change.old.strip() == lines[line_idx].strip():
 
         _replace_line_preserving_indent(lines, line_idx, change)
-    elif change.old.strip() in lines[line_idx]:
+    elif change.old is not None and change.new is not None and change.old.strip() in lines[line_idx]:
 
         # Replace only the matching part, preserving everything else
         lines[line_idx] = lines[line_idx].replace(change.old.strip(), change.new.strip())
