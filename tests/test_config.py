@@ -17,7 +17,7 @@ class TestSettingsDefaults:
     def test_version_default(self):
         """VERSION should be '0.0.1'"""
         s = Settings()
-        assert s.VERSION == "0.0.6"
+        assert s.VERSION == "0.0.7"
         assert isinstance(s.VERSION, str)
 
     def test_config_dir_default(self):
@@ -234,7 +234,7 @@ class TestGlobalSettingsInstance:
     def test_settings_instance_has_defaults(self):
         """Global settings should have default values"""
         from devdox_ai_sonar.config import settings
-        assert settings.VERSION == "0.0.6"
+        assert settings.VERSION == "0.0.7"
         assert settings.MAX_FIXES_LIMIT == 20
 
     def test_settings_is_importable(self):

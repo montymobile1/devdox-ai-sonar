@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from devdox_ai_sonar import __version__
 from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
-from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
+from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer, _load_rules_cache
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.models.llm import ProviderType
@@ -57,6 +57,7 @@ from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
+
 
 console = Console()
 
@@ -1481,6 +1482,9 @@ async def _process_and_fix_issues(
 
         total_issues = sum(len(issue_list) for issue_list in issues.values())
         console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
+
+        rule_info = _collect_rule_information(list(issues.keys()), services["ruler"])
+
         await _process_files_with_issues(
             issues,
             services,
@@ -1490,6 +1494,7 @@ async def _process_and_fix_issues(
             tmp_path,
             system_ask=system_ask,
             check_tmp_path=check_tmp_path,
+            rule_info=rule_info,
         )
 
 
@@ -1519,6 +1524,7 @@ async def _process_files_with_issues(
     tmp_path: Path,
     system_ask: bool = True,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Process files with issues.
@@ -1540,11 +1546,13 @@ async def _process_files_with_issues(
             tmp_path,
             system_ask,
             check_tmp_path,
+            rule_info,
         )
     else:
         issues_by_rule_nested = {
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
+
         await _process_regular_issues(
             issues_by_rule_nested,
             services,
@@ -1554,6 +1562,7 @@ async def _process_files_with_issues(
             tmp_path,
             system_ask,
             check_tmp_path,
+            rule_info=rule_info,
         )
 
 
@@ -1566,12 +1575,15 @@ async def _process_regular_issues(
     tmp_path: Path,
     system_ask: bool = True,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Process regular issues grouped by rule.
 
     Regular issues are processed individually within each rule.
     """
+
+    console.print(f"\n[bold]Processing {len(issues_by_rule)} rules...[/bold]\n")
     total_rules = len(issues_by_rule)
     for rule_num, (rule_key, rule_data) in enumerate(issues_by_rule.items(), 1):
         issues_list = rule_data["issue"]
@@ -1590,6 +1602,7 @@ async def _process_regular_issues(
             tmp_path,
             system_ask,
             check_tmp_path,
+            rule_info=rule_info,
         )
 
         if not success:
@@ -1606,6 +1619,7 @@ async def _process_issues_for_rule(
     tmp_path: Path,
     system_ask: bool = True,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Process all issues for a specific rule.
@@ -1635,6 +1649,7 @@ async def _process_issues_for_rule(
             md_file_path=md_file_path,
             tmp_path=tmp_path,
             check_tmp_path=check_tmp_path,
+            rule_info=rule_info,
         )
 
         if not await _should_continue_to_next_issue(
@@ -1655,6 +1670,7 @@ async def _process_single_fix(
     tmp_path: Path,
     md_file_path: Optional[Path] = None,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Generate and handle a single fix.
@@ -1668,6 +1684,7 @@ async def _process_single_fix(
         rule_key,
         md_file_path,
         check_tmp_path=check_tmp_path,
+        rule_info=rule_info,
     )
 
     if fixes:
@@ -1686,6 +1703,7 @@ async def _process_security_issues(
     tmp_path: Path,
     system_ask: bool = True,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> None:
     """
     Process security issues grouped by file.
@@ -1714,6 +1732,7 @@ async def _process_security_issues(
                 md_file_path=md_file_path,
                 tmp_path=tmp_path,
                 check_tmp_path=check_tmp_path,
+                rule_info=rule_info,
             )
 
             if not await _should_continue_to_next_issue(
@@ -1761,6 +1780,7 @@ async def _generate_fix_for_file(
     rule_name: Optional[str] = None,
     md_file_path: Optional[Path] = None,
     check_tmp_path: bool = True,
+    rule_info: Optional[Dict[str, Any]] = None,
 ) -> Optional[List[FixSuggestion]]:
     """Generate fix for a file."""
     with show_progress("Generating fixes...", total=len(issues)) as (progress, task):
@@ -1776,6 +1796,7 @@ async def _generate_fix_for_file(
             tmp_path=Path(tmp_path),
             file_md=file_md_str,
             check_tmp_path=check_tmp_path,
+            rule_info=rule_info,
         )
         return result
 
@@ -1784,11 +1805,32 @@ def _collect_rule_information(
     issues: List[Any],
     ruler: RuleAnalyzer,
 ) -> Dict[str, Any]:
-    """Collect rule information for all issues."""
-    rule_info_list = {}
-    for issue in issues:
-        rule_info = ruler.get_rule_by_key(issue.rule)
-        rule_info_list[issue.rule] = rule_info
+    """
+    Collect rule information for all unique issue rule keys.
+
+    Checks the local JSON cache first; falls back to the SonarCloud API
+    only for rules that are absent from the cache.
+
+    Args:
+        issues:     List of rule keys (strings) to look up.
+        ruler:      RuleAnalyzer instance for live API fallback.
+        cache_path: Path to all_sonarcloud_rules.json.
+                    Defaults to the file in the current working directory.
+
+    Returns:
+        Dict mapping each rule key to its rule-info dict (or None on failure).
+    """
+    rules_cache = _load_rules_cache()
+    rule_info_list: Dict[str, Any] = {}
+
+    for rule_key in issues:
+        if rule_key in rules_cache:
+            rule_info_list[rule_key] = rules_cache[rule_key]
+
+        else:
+            console.print("Cache miss for rule '%s'. Fetching from API.", rule_key)
+            rule_info_list[rule_key] = ruler.get_rule_by_key(rule_key)
+
     return rule_info_list
 
 

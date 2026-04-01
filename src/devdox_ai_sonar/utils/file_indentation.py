@@ -705,10 +705,15 @@ def _apply_single_pattern(text: str, pattern: SearchReplace) -> str:
         count = pattern.count if pattern.count else 0
         return re.sub(pattern.search, pattern.replace, text, count=count)
 
-    if pattern.count is not None:
-        return text.replace(pattern.search, pattern.replace, pattern.count)
+    # For plain string replacement, decode escape sequences so that
+    # patterns like Header\\("ar"\\) match the literal Header("ar")
+    search = pattern.search.encode().decode("unicode_escape")
+    replace = pattern.replace.encode().decode("unicode_escape")
 
-    return text.replace(pattern.search, pattern.replace)
+    if pattern.count is not None:
+        return text.replace(search, replace, pattern.count)
+
+    return text.replace(search, replace)
 
 
 def _apply_all_patterns(text: str, patterns: List[SearchReplace]) -> str:
@@ -840,6 +845,13 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
         lines[start_idx:end_idx] = new_lines
     else:
         lines[start_idx : end_idx + 1] = new_lines
+        if end_idx + 1 < len(lines) and (
+            lines[end_idx + 1].startswith("@")
+            or lines[end_idx + 1].startswith("def ")
+            or lines[end_idx + 1].startswith("class ")
+        ):
+            lines[start_idx : end_idx + 1] = new_lines
+            end_idx = start_idx + len(new_lines) - 1
 
     logger.debug(
         "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
@@ -903,6 +915,15 @@ def _try_replace_at_corrected_line(
 
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
+    elif (
+        change.old is not None
+        and change.new is not None
+        and change.old.strip() in lines[line_idx]
+    ):
+        # Replace only the matching part, preserving everything else
+        lines[line_idx] = lines[line_idx].replace(
+            change.old.strip(), change.new.strip()
+        )
 
 
 def _apply_replace_action(
@@ -916,6 +937,9 @@ def _apply_replace_action(
         return
 
     line_idx = change.line - 1
+
+    change.old = change.old.encode().decode("unicode_escape")
+    change.new = change.new.encode().decode("unicode_escape")
 
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
@@ -1003,6 +1027,14 @@ def apply_single_code_block(
         block.start_line,
         block.end_line,
     )
+
+    if block.context is not None and block.context != "":
+        block.change_type = ChangeType.FULL_CODE
+    elif block.changes is not None and len(block.changes) > 0:
+        block.change_type = ChangeType.DIFF
+    else:
+        block.change_type = ChangeType.SEARCH_REPLACE
+
     if block.change_type == ChangeType.FULL_CODE:
         return apply_full_code_change(lines, block)
 

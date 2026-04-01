@@ -712,6 +712,39 @@ class TestCognitiveComplexityHandlerGenerateFixes:
         )
         assert result is None
 
+    async def test_passes_rule_info_to_llm(self):
+        mock_llm = Mock()
+        fix_response = _make_fix_response()
+        mock_llm._call_llm_list.return_value = fix_response
+        rule_info = {"python:S3776": {"name": "Cognitive Complexity"}}
+
+        await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+            rule_info=rule_info,
+        )
+        call_args = mock_llm._call_llm_list.call_args
+        assert call_args[0][3] == rule_info
+
+    async def test_rule_info_none_defaults_to_empty_dict(self):
+        mock_llm = Mock()
+        fix_response = _make_fix_response()
+        mock_llm._call_llm_list.return_value = fix_response
+
+        await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+            rule_info=None,
+        )
+        call_args = mock_llm._call_llm_list.call_args
+        assert call_args[0][3] == {}
+
 
 # ============================================================================
 # DEFAULT RULE HANDLER — GENERATE FIXES
@@ -762,6 +795,39 @@ class TestDefaultRuleHandlerGenerateFixes:
             llm_caller=mock_llm,
         )
         assert result is None
+
+    async def test_passes_rule_info_to_llm(self):
+        mock_llm = Mock()
+        fix_response = _make_fix_response()
+        mock_llm._call_llm_list.return_value = fix_response
+        rule_info = {"python:S1234": {"name": "Some rule"}}
+
+        await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+            rule_info=rule_info,
+        )
+        call_args = mock_llm._call_llm_list.call_args
+        assert call_args[0][3] == rule_info
+
+    async def test_rule_info_none_defaults_to_empty_dict(self):
+        mock_llm = Mock()
+        fix_response = _make_fix_response()
+        mock_llm._call_llm_list.return_value = fix_response
+
+        await self.handler.generate_fixes(
+            self.issues,
+            self.context,
+            Path("/project"),
+            Path("/project/src/module.py"),
+            llm_caller=mock_llm,
+            rule_info=None,
+        )
+        call_args = mock_llm._call_llm_list.call_args
+        assert call_args[0][3] == {}
 
 
 # ============================================================================

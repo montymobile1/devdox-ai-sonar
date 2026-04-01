@@ -1,17 +1,24 @@
 from typing import List, Optional, Dict, Any, Union
 from urllib.parse import urljoin
 import time
+import os
+
 import logging
 import requests
 import json
 import re
 from requests.adapters import HTTPAdapter
+import importlib.resources
 from urllib3.util.retry import Retry
 from devdox_ai_sonar.models.sonar import (
     ProcessedRules,
 )
 
 logger = logging.getLogger(__name__)
+
+_DEFAULT_RULES_CACHE_PATH: str = str(
+    importlib.resources.files("devdox_ai_sonar").joinpath("all_sonarcloud_rules.json")
+)
 
 
 class RuleAnalyzer:
@@ -614,3 +621,31 @@ class RuleAnalyzer:
 
         with open(filename, "w", encoding="utf-8") as f:
             json.dump(rules_data, f, indent=2, ensure_ascii=False)
+
+
+def _load_rules_cache(cache_path: str = _DEFAULT_RULES_CACHE_PATH) -> Dict[str, Any]:
+    """
+    Load the pre-fetched SonarCloud rules JSON cache from disk.
+
+    Args:
+        cache_path: Absolute or relative path to all_sonarcloud_rules.json
+
+    Returns:
+        Dict of rule_key -> rule_info, or empty dict if file is missing/corrupt.
+    """
+    if not os.path.exists(cache_path):
+        logger.warning(
+            "Rules cache file not found at '%s'. All lookups will hit the API.",
+            cache_path,
+        )
+        return {}
+
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        rules: Dict[str, Any] = data.get("rules", {})
+        logger.info("Loaded %d rules from cache '%s'.", len(rules), cache_path)
+        return rules
+    except (json.JSONDecodeError, OSError) as e:
+        logger.error("Failed to load rules cache from '%s': %s", cache_path, e)
+        return {}

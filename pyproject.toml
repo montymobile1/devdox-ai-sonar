@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "devdox_sonar"
-version = "0.0.6"
+version = "0.0.7"
 description = "A CLI tool to analyze SonarCloud issues and attempt LLM-powered fixes"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -94,7 +94,7 @@ package-dir = {"" = "src"}
 where = ["src"]
 
 [tool.setuptools.package-data]
-devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py"]
+devdox_ai_sonar = ["prompts/*.j2","prompts/**/*.j2", "templates/*.j2","*.j2","models/*.py","utils/*.py","all_sonarcloud_rules.json"]
 
 [tool.black]
 line-length = 88
