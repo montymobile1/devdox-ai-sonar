@@ -3871,6 +3871,93 @@ class TestApplyReplaceActionEscapeDecoding:
         _apply_replace_action(lines, change, 1, 1)
         assert '"world"' in lines[0]
 
+    def test_malformed_escape_in_old_does_not_crash(self):
+        """Malformed escape in change.old must not raise UnicodeDecodeError."""
+        lines = ["x = 1\n"]
+        change = LineChange(
+            line=1, action=ChangeAction.REPLACE,
+            old="x \\xZZ 1", new="x = 2"
+        )
+        # Must not raise — errors="replace" should handle it
+        _apply_replace_action(lines, change, 1, 1)
+
+    def test_malformed_escape_in_new_does_not_crash(self):
+        """Malformed escape in change.new must not raise UnicodeDecodeError."""
+        lines = ["x = 1\n"]
+        change = LineChange(
+            line=1, action=ChangeAction.REPLACE,
+            old="x = 1", new="x \\xZZ 2"
+        )
+        _apply_replace_action(lines, change, 1, 1)
+
+    def test_truncated_unicode_escape_does_not_crash(self):
+        """Truncated \\u sequence must not crash."""
+        lines = ["val = 1\n"]
+        change = LineChange(
+            line=1, action=ChangeAction.REPLACE,
+            old="val \\u00 1", new="val = 2"
+        )
+        _apply_replace_action(lines, change, 1, 1)
+
+    def test_valid_escape_still_decoded(self):
+        """Valid escapes must still be decoded after adding errors='replace'."""
+        lines = ['    x = "hello"\n']
+        change = LineChange(
+            line=1, action=ChangeAction.REPLACE,
+            old='x = \\"hello\\"', new='x = \\"bye\\"'
+        )
+        _apply_replace_action(lines, change, 1, 1)
+        assert '"bye"' in lines[0]
+
+
+class TestApplySinglePatternMalformedEscape:
+    """Tests that _apply_single_pattern survives malformed escape sequences."""
+
+    def test_malformed_hex_escape_in_search(self):
+        """Malformed \\x in search must not crash."""
+        text = "hello world"
+        pattern = SearchReplace(search="hello \\xZZ world", replace="REPLACED")
+        # Must not raise UnicodeDecodeError
+        result = _apply_single_pattern(text, pattern)
+        # Won't match (decoded search won't equal "hello world"), but must not crash
+        assert isinstance(result, str)
+
+    def test_malformed_hex_escape_in_replace(self):
+        """Malformed \\x in replace must not crash."""
+        text = "hello world"
+        pattern = SearchReplace(search="hello world", replace="\\xZZ replaced")
+        result = _apply_single_pattern(text, pattern)
+        assert isinstance(result, str)
+        assert "hello world" not in result  # replacement happened
+
+    def test_truncated_unicode_in_search(self):
+        """Truncated \\u00 in search must not crash."""
+        text = "test"
+        pattern = SearchReplace(search="\\u00", replace="x")
+        result = _apply_single_pattern(text, pattern)
+        assert isinstance(result, str)
+
+    def test_truncated_unicode_in_replace(self):
+        """Truncated \\u00 in replace must not crash."""
+        text = "test"
+        pattern = SearchReplace(search="test", replace="\\u00")
+        result = _apply_single_pattern(text, pattern)
+        assert isinstance(result, str)
+
+    def test_valid_escapes_still_work(self):
+        """Valid escapes must still decode correctly after the fix."""
+        text = "hello\tworld"
+        pattern = SearchReplace(search="hello\\tworld", replace="DONE")
+        result = _apply_single_pattern(text, pattern)
+        assert result == "DONE"
+
+    def test_backslash_at_end_of_string(self):
+        """Trailing backslash must not crash."""
+        text = "test"
+        pattern = SearchReplace(search="test", replace="end\\")
+        result = _apply_single_pattern(text, pattern)
+        assert isinstance(result, str)
+
 
 # ============================================================================
 # apply_single_code_block — change_type override
