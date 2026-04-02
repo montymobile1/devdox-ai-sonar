@@ -4609,18 +4609,54 @@ class TestCollectRuleInformation:
         """Test collects rule information for all issues (cache miss, falls back to API)."""
         mock_ruler = Mock()
         mock_ruler.get_rule_by_key.side_effect = [
-            {'key': 'rule1', 'name': 'Rule 1'},
-            {'key': 'rule2', 'name': 'Rule 2'}
+            {'key': 'python:S1481', 'name': 'Rule 1'},
+            {'key': 'python:S1192', 'name': 'Rule 2'}
         ]
 
-        issues = ['rule1', 'rule2']
+        issue1 = Mock(rule='python:S1481')
+        issue2 = Mock(rule='python:S1192')
+        issues = {
+            'src/foo.py': [issue1],
+            'src/bar.py': [issue2],
+        }
 
         result = _collect_rule_information(issues, mock_ruler)
 
         assert len(result) == 2
-        assert 'rule1' in result
-        assert 'rule2' in result
+        assert 'python:S1481' in result
+        assert 'python:S1192' in result
         assert mock_ruler.get_rule_by_key.call_count == 2
+
+    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={'python:S1481': {'key': 'python:S1481'}})
+    def test_uses_cache_when_available(self, mock_cache):
+        """Test uses cache and skips API call for cached rules."""
+        mock_ruler = Mock()
+
+        issue1 = Mock(rule='python:S1481')
+        issues = {'src/foo.py': [issue1]}
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert 'python:S1481' in result
+        mock_ruler.get_rule_by_key.assert_not_called()
+
+    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
+    def test_deduplicates_rules_across_files(self, mock_cache):
+        """Test same rule in multiple files only triggers one API call."""
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.return_value = {'key': 'python:S1481'}
+
+        issue1 = Mock(rule='python:S1481')
+        issue2 = Mock(rule='python:S1481')
+        issues = {
+            'src/foo.py': [issue1],
+            'src/bar.py': [issue2],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert len(result) == 1
+        mock_ruler.get_rule_by_key.assert_called_once_with('python:S1481')
 
 
 
