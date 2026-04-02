@@ -843,17 +843,14 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
     if start_idx > end_idx:
         lines[start_idx:end_idx] = new_lines
     else:
-        lines[start_idx: end_idx + 1] = new_lines
-
+        lines[start_idx : end_idx + 1] = new_lines
         if end_idx + 1 < len(lines) and (
-                lines[end_idx + 1].startswith("@") or
-                lines[end_idx + 1].startswith("def ") or
-                lines[end_idx + 1].startswith("class ")
+            lines[end_idx + 1].startswith("@")
+            or lines[end_idx + 1].startswith("def ")
+            or lines[end_idx + 1].startswith("class ")
         ):
-            lines[start_idx: end_idx + 1] = new_lines
+            lines[start_idx : end_idx + 1] = new_lines
             end_idx = start_idx + len(new_lines) - 1
-
-
 
     logger.debug(
         "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
@@ -917,6 +914,15 @@ def _try_replace_at_corrected_line(
 
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
+    elif (
+        change.old is not None
+        and change.new is not None
+        and change.old.strip() in lines[line_idx]
+    ):
+        # Replace only the matching part, preserving everything else
+        lines[line_idx] = lines[line_idx].replace(
+            change.old.strip(), change.new.strip()
+        )
 
 
 def _apply_replace_action(
@@ -930,6 +936,10 @@ def _apply_replace_action(
         return
 
     line_idx = change.line - 1
+
+    change.old = change.old.encode().decode("unicode_escape")
+    change.new = change.new.encode().decode("unicode_escape")
+
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
     else:
@@ -1015,13 +1025,10 @@ def apply_single_code_block(
         block.start_line,
         block.end_line,
     )
-    print(
-        f"Applying {block.change_type} block {block.block_name} on lines {block.start_line}-{block.end_line}"
-        )
 
-    if block.context is not None:
+    if block.context is not None and block.context != "":
         block.change_type = ChangeType.FULL_CODE
-    elif block.changes is not None:
+    elif block.changes is not None and len(block.changes) > 0:
         block.change_type = ChangeType.DIFF
     else:
         block.change_type = ChangeType.SEARCH_REPLACE

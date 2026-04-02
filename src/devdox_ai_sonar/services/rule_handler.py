@@ -135,6 +135,7 @@ class RuleHandler(ABC):
         project_path: Path,
         file_path: Path,
         llm_caller: Any,  # Forward reference to avoid circular import
+        rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fix suggestions for the given issues.
@@ -256,6 +257,7 @@ class ConvenationNameHandler(RuleHandler):
         project_path: Path,
         file_path: Path,
         llm_caller: Any = None,
+        rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for parameter naming/usage violations.
@@ -844,6 +846,7 @@ class StringLiteralDuplicateHandler(RuleHandler):
         project_path: Path,
         file_path: Path,
         llm_caller: Any = None,
+        rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes for duplicated string literal issues (python:S1192)."""
         parsed = self._read_and_parse_file(file_path)
@@ -1300,6 +1303,7 @@ class AsyncToSyncHandler(RuleHandler):
         project_path: Path,
         file_path: Path,
         llm_caller: Any = None,
+        rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for async-to-sync conversion.
@@ -1480,6 +1484,7 @@ class CognitiveComplexityHandler(RuleHandler):
         project_path: Path,
         file_path: Path,
         llm_caller: Any,
+        rule_info: Optional[Dict[str, Any]] = {},
     ) -> Optional[List[SonarFixResponse]]:
         """
         Generate fixes for cognitive complexity issues.
@@ -1490,12 +1495,14 @@ class CognitiveComplexityHandler(RuleHandler):
             logger.error("LLM caller required for cognitive complexity fixes")
             return None
 
+        if rule_info is None:
+            rule_info = {}
         try:
             fix_response = await llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,
-                {},
+                rule_info,
                 error_message="",
             )
             return [fix_response]
@@ -1526,18 +1533,22 @@ class DefaultRuleHandler(RuleHandler):
         project_path: Path,
         file_path: Path,
         llm_caller: Any,
+        rule_info: Optional[Dict[str, Any]] = {},
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes using standard LLM approach."""
         if not llm_caller:
             logger.error("LLM caller required for default rule handling")
             return None
 
+        if rule_info is None:
+            rule_info = {}
+
         try:
             fix_response = await llm_caller._call_llm_list(
                 issues,
                 context,
                 context.file_path.suffix,
-                {},
+                rule_info,
                 error_message="",
             )
             return [fix_response]

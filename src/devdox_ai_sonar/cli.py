@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from devdox_ai_sonar import __version__
 from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 
-from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer
+from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer, _load_rules_cache
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.agent_supervisor import build_supervisor
 from devdox_ai_sonar.models.llm_config import ConfigManager
@@ -1589,10 +1589,20 @@ def _collect_rule_information(
     issues: List[Any],
     ruler: RuleAnalyzer,
 ) -> Dict[str, Any]:
-    rule_info_list = {}
-    for issue in issues:
-        rule_info = ruler.get_rule_by_key(issue.rule)
-        rule_info_list[issue.rule] = rule_info
+    """Collect rule information, checking local JSON cache first.
+
+    Falls back to the SonarCloud API only for rules absent from the cache.
+    """
+    rules_cache = _load_rules_cache()
+    rule_info_list: Dict[str, Any] = {}
+
+    for rule_key in issues:
+        if rule_key in rules_cache:
+            rule_info_list[rule_key] = rules_cache[rule_key]
+        else:
+            console.print("Cache miss for rule '%s'. Fetching from API.", rule_key)
+            rule_info_list[rule_key] = ruler.get_rule_by_key(rule_key)
+
     return rule_info_list
 
 

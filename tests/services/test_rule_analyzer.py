@@ -1434,3 +1434,58 @@ class TestEdgeCases:
         # Verify sleep was called between pages
         assert mock_sleep.call_count == 2
         mock_sleep.assert_called_with(0.1)
+
+
+# ============================================================================
+# _load_rules_cache
+# ============================================================================
+
+from devdox_ai_sonar.services.rule_analyzer import _load_rules_cache
+
+
+class TestLoadRulesCache:
+    """Tests for the _load_rules_cache helper function."""
+
+    def test_returns_rules_from_valid_json(self, tmp_path):
+        cache_file = tmp_path / "rules.json"
+        cache_file.write_text('{"rules": {"python:S1234": {"name": "Rule 1"}}}')
+
+        result = _load_rules_cache(str(cache_file))
+
+        assert result == {"python:S1234": {"name": "Rule 1"}}
+
+    def test_returns_empty_dict_when_file_missing(self, tmp_path):
+        result = _load_rules_cache(str(tmp_path / "nonexistent.json"))
+
+        assert result == {}
+
+    def test_returns_empty_dict_on_corrupt_json(self, tmp_path):
+        cache_file = tmp_path / "rules.json"
+        cache_file.write_text("not valid json {{{")
+
+        result = _load_rules_cache(str(cache_file))
+
+        assert result == {}
+
+    def test_returns_empty_dict_when_no_rules_key(self, tmp_path):
+        cache_file = tmp_path / "rules.json"
+        cache_file.write_text('{"other_key": "value"}')
+
+        result = _load_rules_cache(str(cache_file))
+
+        assert result == {}
+
+    def test_loads_multiple_rules(self, tmp_path):
+        cache_file = tmp_path / "rules.json"
+        rules = {
+            "python:S1234": {"name": "Rule 1"},
+            "python:S5678": {"name": "Rule 2"},
+            "java:S9999": {"name": "Rule 3"},
+        }
+        import json
+        cache_file.write_text(json.dumps({"rules": rules}))
+
+        result = _load_rules_cache(str(cache_file))
+
+        assert len(result) == 3
+        assert result["java:S9999"]["name"] == "Rule 3"

@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+## [0.0.7] - 2026-03-31
+
+### Feat
+
+- Cache-first SonarCloud rule lookup — CLI now reads rule metadata from `all_sonarcloud_rules.json` before falling back to the live API, reducing unnecessary network calls ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- Propagate `rule_info` through the full fix pipeline — rule metadata is now collected once and threaded through `_process_and_fix_issues`, `_process_files_with_issues`, `_process_regular_issues`, `_process_issues_for_rule`, `_process_single_fix`, `_process_security_issues`, and `_generate_fix_for_file` ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- `all_sonarcloud_rules.json` refreshed with updated rule definitions ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+
+### Fix
+
+- Extract `_backfill_missing_context` from `validate_fix` to reduce cognitive complexity and improve readability ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- `_format_code_blocks_for_validation` now returns a `Tuple[str, int, int]` (formatted string, start line, end line) so the validator prompt has accurate line range context ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- Removed hardcoded `max_tokens=8000` from the OpenAI-compatible validator call ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- Removed unused variable flagged by SonarCloud ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+
+### Refactor
+
+- Improved LLM fix prompt for more accurate and reliable output ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+- Updated validator Jinja2 template to leverage start/end line context ([#59](https://github.com/montymobile1/devdox-ai-sonar/pull/59))
+
+
+---
 ## [0.0.6] - 2026-03-09
 
 ### Feat
