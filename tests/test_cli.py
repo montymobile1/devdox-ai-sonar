@@ -74,12 +74,15 @@ from devdox_ai_sonar.cli import (
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
+    SonarSecurityIssue,
+    Severity,
+    IssueType as SonarIssueType,
     AnalysisResult,
     FixSuggestion,
     FixResult,
     ChangeType,
     BlockType,
-    CodeBlock
+    CodeBlock,
 )
 # ============================================================================
 # FIXTURES
@@ -4602,201 +4605,307 @@ class TestInitializeFixServices:
 
 
 class TestCollectRuleInformation:
-    """Test cases for _collect_rule_information.
+    """Test cases for _collect_rule_information (DEV-109).
 
-    The bug (DEV-109): security issues are keyed by file path
-    (e.g. 'app/services/auth_service.py'), not rule key. The old code
-    used dict keys as rule keys, sending file paths to the SonarCloud
-    Rules API which returned 400 errors. The fix extracts .rule from
-    the issue objects instead.
+    The bug: security issues are keyed by file path (e.g.
+    'app/services/auth_service.py'), not rule key. The old code used
+    dict keys as rule keys, sending file paths to the SonarCloud Rules
+    API which returned 400 errors. The fix extracts .rule from the
+    issue objects instead.
+
+    Tests use real SonarIssue / SonarSecurityIssue model objects (not
+    Mock) to catch regressions if the .rule attribute is ever renamed
+    or removed.
     """
 
-    # ------------------------------------------------------------------
-    # Core behavior: extracts .rule from issue objects, not dict keys
-    # ------------------------------------------------------------------
+    # -- helpers ----------------------------------------------------------
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_collects_rules_for_all_issues(self, mock_cache):
-        """Test collects rule information for all issues (cache miss, falls back to API)."""
+    @staticmethod
+    def _make_issue(rule: str, file: str = "src/foo.py") -> SonarIssue:
+        return SonarIssue(
+            key=f"proj:{file}:{rule}",
+            rule=rule,
+            severity=Severity.MAJOR,
+            component=f"proj:{file}",
+            project="proj",
+            message=f"Fix {rule}",
+            type=SonarIssueType.CODE_SMELL,
+            file=file,
+        )
+
+    @staticmethod
+    def _make_security_issue(rule: str, file: str) -> SonarSecurityIssue:
+        return SonarSecurityIssue(
+            key=f"proj:{file}:{rule}",
+            component=f"proj:{file}",
+            rule=rule,
+            project="proj",
+            security_category="xss",
+            vulnerability_probability="HIGH",
+            message=f"Fix {rule}",
+            file=file,
+        )
+
+    @staticmethod
+    def _assert_no_file_paths_in_api_calls(mock_ruler: Mock) -> None:
+        """Assert that every argument passed to get_rule_by_key looks like a
+        SonarCloud rule key (contains ':') and never looks like a file path
+        (contains '/' or '.py')."""
+        for call in mock_ruler.get_rule_by_key.call_args_list:
+            key = call.args[0]
+            assert ":" in key, (
+                f"API was called with '{key}' which is not a valid rule key"
+            )
+            assert "/" not in key, (
+                f"API was called with file path '{key}' instead of a rule key"
+            )
+            assert not key.endswith(".py"), (
+                f"API was called with file path '{key}' instead of a rule key"
+            )
+
+    # -- DEV-109 regression: security issues keyed by file path -----------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_security_issues_uses_rule_not_file_path(self, _cache):
+        """Exact reproduction of DEV-109: dict keyed by file path must
+        extract .rule from issue objects, not use the dict keys."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.side_effect = [
-            {'key': 'python:S1481', 'name': 'Rule 1'},
-            {'key': 'python:S1192', 'name': 'Rule 2'}
-        ]
+        rule_data = {
+            "python:S5131": {"key": "python:S5131", "name": "XSS"},
+            "python:S2077": {"key": "python:S2077", "name": "SQL Injection"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-        issue1 = Mock(rule='python:S1481')
-        issue2 = Mock(rule='python:S1192')
         issues = {
-            'src/foo.py': [issue1],
-            'src/bar.py': [issue2],
+            "app/services/auth_service.py": [
+                self._make_security_issue("python:S5131", "app/services/auth_service.py"),
+            ],
+            "app/config/config.py": [
+                self._make_security_issue("python:S2077", "app/config/config.py"),
+            ],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
-        assert len(result) == 2
-        assert 'python:S1481' in result
-        assert 'python:S1192' in result
-        assert mock_ruler.get_rule_by_key.call_count == 2
+        # Result keys must be rule keys
+        assert set(result.keys()) == {"python:S5131", "python:S2077"}
+        # Result must never contain file paths
+        for key in result:
+            assert "/" not in key
+            assert not key.endswith(".py")
+        # API calls must only receive rule keys
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_uses_rule_attribute_not_dict_keys(self, mock_cache):
-        """Verify dict keys (file paths) are never sent to the API — only .rule values."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_multiple_security_issues_same_file(self, _cache):
+        """Two different security rules in one file — both looked up, file
+        path never sent."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.return_value = {'key': 'python:S3776'}
+        rule_data = {
+            "python:S5131": {"key": "python:S5131"},
+            "python:S2077": {"key": "python:S2077"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-        issue = Mock(rule='python:S3776')
-        issues = {'app/services/auth_service.py': [issue]}
-
-        result = _collect_rule_information(issues, mock_ruler)
-
-        # Must use the rule key, NOT the file path
-        mock_ruler.get_rule_by_key.assert_called_once_with('python:S3776')
-        assert 'python:S3776' in result
-        assert 'app/services/auth_service.py' not in result
-
-    # ------------------------------------------------------------------
-    # DEV-109 regression: security issues keyed by file path
-    # ------------------------------------------------------------------
-
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_security_issues_keyed_by_file_path(self, mock_cache):
-        """Reproduce DEV-109: security issues dict keyed by file path must not
-        send file paths to the rules API."""
-        mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.side_effect = [
-            {'key': 'python:S5131', 'name': 'XSS'},
-            {'key': 'python:S2077', 'name': 'SQL Injection'},
-        ]
-
-        sec_issue_1 = Mock(rule='python:S5131')
-        sec_issue_2 = Mock(rule='python:S2077')
-        # Security dict: keyed by file path, not rule key
         issues = {
-            'app/services/auth_service.py': [sec_issue_1],
-            'app/config/config.py': [sec_issue_2],
+            "app/views.py": [
+                self._make_security_issue("python:S5131", "app/views.py"),
+                self._make_security_issue("python:S2077", "app/views.py"),
+            ],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
-        assert len(result) == 2
-        assert 'python:S5131' in result
-        assert 'python:S2077' in result
-        # File paths must never appear in the result
-        assert 'app/services/auth_service.py' not in result
-        assert 'app/config/config.py' not in result
-        # API must have been called with rule keys
-        called_keys = {call.args[0] for call in mock_ruler.get_rule_by_key.call_args_list}
-        assert called_keys == {'python:S5131', 'python:S2077'}
+        assert set(result.keys()) == {"python:S5131", "python:S2077"}
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_multiple_security_issues_same_file(self, mock_cache):
-        """Multiple security issues in the same file should each have their rule looked up."""
+    # -- Regular issues (group_by="rules") --------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_regular_issues_grouped_by_rule(self, _cache):
+        """Regular issues where dict keys are already rule keys — should
+        still work correctly (extracts .rule, which matches the key)."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.side_effect = [
-            {'key': 'python:S5131'},
-            {'key': 'python:S2077'},
-        ]
+        rule_data = {
+            "python:S1481": {"key": "python:S1481"},
+            "python:S1192": {"key": "python:S1192"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-        issue1 = Mock(rule='python:S5131')
-        issue2 = Mock(rule='python:S2077')
         issues = {
-            'app/views.py': [issue1, issue2],
+            "python:S1481": [
+                self._make_issue("python:S1481", "src/foo.py"),
+                self._make_issue("python:S1481", "src/bar.py"),
+            ],
+            "python:S1192": [
+                self._make_issue("python:S1192", "src/baz.py"),
+            ],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
-        assert len(result) == 2
-        assert 'python:S5131' in result
-        assert 'python:S2077' in result
-        assert 'app/views.py' not in result
+        assert set(result.keys()) == {"python:S1481", "python:S1192"}
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
 
-    # ------------------------------------------------------------------
-    # Cache behavior
-    # ------------------------------------------------------------------
+    # -- Mixed issue types ------------------------------------------------
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={'python:S1481': {'key': 'python:S1481'}})
-    def test_uses_cache_when_available(self, mock_cache):
-        """Test uses cache and skips API call for cached rules."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_mixed_regular_and_security_issues(self, _cache):
+        """Dict containing both SonarIssue and SonarSecurityIssue objects."""
         mock_ruler = Mock()
+        rule_data = {
+            "python:S1481": {"key": "python:S1481"},
+            "python:S5131": {"key": "python:S5131"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-        issue1 = Mock(rule='python:S1481')
-        issues = {'src/foo.py': [issue1]}
+        issues = {
+            "src/foo.py": [
+                self._make_issue("python:S1481", "src/foo.py"),
+            ],
+            "app/views.py": [
+                self._make_security_issue("python:S5131", "app/views.py"),
+            ],
+        }
 
         result = _collect_rule_information(issues, mock_ruler)
 
-        assert 'python:S1481' in result
-        assert result['python:S1481'] == {'key': 'python:S1481'}
+        assert set(result.keys()) == {"python:S1481", "python:S5131"}
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    # -- Cache behavior ---------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={
+        "python:S1481": {"key": "python:S1481", "name": "Unused var"},
+    })
+    def test_cache_hit_skips_api(self, _cache):
+        """Cached rule must be returned without hitting the API."""
+        mock_ruler = Mock()
+
+        issues = {
+            "src/foo.py": [self._make_issue("python:S1481")],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert result["python:S1481"] == {"key": "python:S1481", "name": "Unused var"}
         mock_ruler.get_rule_by_key.assert_not_called()
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={
-        'python:S1481': {'key': 'python:S1481', 'name': 'Unused var'},
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={
+        "python:S1481": {"key": "python:S1481", "name": "Unused var"},
     })
-    def test_mixed_cache_hit_and_miss(self, mock_cache):
-        """One rule in cache, another not — only the miss should hit the API."""
+    def test_mixed_cache_hit_and_miss(self, _cache):
+        """One rule cached, one not — only the miss calls the API."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.return_value = {'key': 'python:S1192', 'name': 'String dup'}
+        mock_ruler.get_rule_by_key.return_value = {"key": "python:S1192"}
 
-        issue1 = Mock(rule='python:S1481')  # cached
-        issue2 = Mock(rule='python:S1192')  # not cached
         issues = {
-            'src/foo.py': [issue1],
-            'src/bar.py': [issue2],
+            "src/foo.py": [self._make_issue("python:S1481")],
+            "src/bar.py": [self._make_issue("python:S1192", "src/bar.py")],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
         assert len(result) == 2
-        assert result['python:S1481'] == {'key': 'python:S1481', 'name': 'Unused var'}
-        assert result['python:S1192'] == {'key': 'python:S1192', 'name': 'String dup'}
-        mock_ruler.get_rule_by_key.assert_called_once_with('python:S1192')
+        assert result["python:S1481"] == {"key": "python:S1481", "name": "Unused var"}
+        mock_ruler.get_rule_by_key.assert_called_once_with("python:S1192")
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
 
-    # ------------------------------------------------------------------
-    # Deduplication
-    # ------------------------------------------------------------------
-
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_deduplicates_rules_across_files(self, mock_cache):
-        """Test same rule in multiple files only triggers one API call."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={
+        "python:S5131": {"key": "python:S5131"},
+    })
+    def test_security_issue_cache_hit(self, _cache):
+        """Security issue rule found in cache — no API call, no file path leak."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.return_value = {'key': 'python:S1481'}
 
-        issue1 = Mock(rule='python:S1481')
-        issue2 = Mock(rule='python:S1481')
         issues = {
-            'src/foo.py': [issue1],
-            'src/bar.py': [issue2],
+            "app/services/auth_service.py": [
+                self._make_security_issue("python:S5131", "app/services/auth_service.py"),
+            ],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert "python:S5131" in result
+        assert "app/services/auth_service.py" not in result
+        mock_ruler.get_rule_by_key.assert_not_called()
+
+    # -- Deduplication ----------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_deduplicates_same_rule_across_files(self, _cache):
+        """Same rule in 3 files — only one API call."""
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.return_value = {"key": "python:S1481"}
+
+        issues = {
+            "src/a.py": [self._make_issue("python:S1481", "src/a.py")],
+            "src/b.py": [self._make_issue("python:S1481", "src/b.py")],
+            "src/c.py": [self._make_issue("python:S1481", "src/c.py")],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
         assert len(result) == 1
-        mock_ruler.get_rule_by_key.assert_called_once_with('python:S1481')
+        mock_ruler.get_rule_by_key.assert_called_once_with("python:S1481")
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_deduplicates_rules_within_same_file(self, mock_cache):
-        """Same rule appearing multiple times in the same file — one lookup."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_deduplicates_same_rule_within_file(self, _cache):
+        """3 violations of the same rule in one file — one lookup."""
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.return_value = {'key': 'python:S1481'}
+        mock_ruler.get_rule_by_key.return_value = {"key": "python:S1481"}
 
-        issue1 = Mock(rule='python:S1481')
-        issue2 = Mock(rule='python:S1481')
-        issue3 = Mock(rule='python:S1481')
         issues = {
-            'src/foo.py': [issue1, issue2, issue3],
+            "src/foo.py": [
+                self._make_issue("python:S1481"),
+                self._make_issue("python:S1481"),
+                self._make_issue("python:S1481"),
+            ],
         }
 
         result = _collect_rule_information(issues, mock_ruler)
 
         assert len(result) == 1
-        mock_ruler.get_rule_by_key.assert_called_once_with('python:S1481')
+        mock_ruler.get_rule_by_key.assert_called_once_with("python:S1481")
 
-    # ------------------------------------------------------------------
-    # Edge cases
-    # ------------------------------------------------------------------
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_many_files_many_rules_correct_dedup(self, _cache):
+        """7 issues across 4 files with 3 unique rules — 3 API calls."""
+        mock_ruler = Mock()
+        rule_data = {
+            "python:S1481": {"key": "python:S1481"},
+            "python:S1192": {"key": "python:S1192"},
+            "python:S3776": {"key": "python:S3776"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_empty_issues_dict(self, mock_cache):
-        """Empty input returns empty result, no API calls."""
+        issues = {
+            "src/a.py": [
+                self._make_issue("python:S1481", "src/a.py"),
+                self._make_issue("python:S1192", "src/a.py"),
+            ],
+            "src/b.py": [
+                self._make_issue("python:S1481", "src/b.py"),
+                self._make_issue("python:S3776", "src/b.py"),
+            ],
+            "src/c.py": [self._make_issue("python:S1192", "src/c.py")],
+            "src/d.py": [
+                self._make_issue("python:S3776", "src/d.py"),
+                self._make_issue("python:S1481", "src/d.py"),
+            ],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert set(result.keys()) == {"python:S1481", "python:S1192", "python:S3776"}
+        assert mock_ruler.get_rule_by_key.call_count == 3
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    # -- Edge cases -------------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_empty_issues_dict(self, _cache):
+        """No issues at all — empty result, no API calls."""
         mock_ruler = Mock()
 
         result = _collect_rule_information({}, mock_ruler)
@@ -4804,57 +4913,29 @@ class TestCollectRuleInformation:
         assert result == {}
         mock_ruler.get_rule_by_key.assert_not_called()
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_file_with_empty_issue_list(self, mock_cache):
-        """File path present but no issues — should produce no lookups."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_file_with_empty_issue_list(self, _cache):
+        """File path present but zero issues — no lookups."""
         mock_ruler = Mock()
 
-        issues = {'src/empty.py': []}
-
-        result = _collect_rule_information(issues, mock_ruler)
+        result = _collect_rule_information({"src/empty.py": []}, mock_ruler)
 
         assert result == {}
         mock_ruler.get_rule_by_key.assert_not_called()
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_api_returns_none_for_unknown_rule(self, mock_cache):
-        """API returning None for an unknown rule should still be stored."""
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_api_returns_none_for_unknown_rule(self, _cache):
+        """API returning None for an unknown rule — stored as None, not dropped."""
         mock_ruler = Mock()
         mock_ruler.get_rule_by_key.return_value = None
 
-        issue = Mock(rule='python:S9999')
-        issues = {'src/foo.py': [issue]}
+        issues = {"src/foo.py": [self._make_issue("python:S9999")]}
 
         result = _collect_rule_information(issues, mock_ruler)
 
-        assert len(result) == 1
-        assert 'python:S9999' in result
-        assert result['python:S9999'] is None
-
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_many_files_many_rules(self, mock_cache):
-        """Stress test: many files with mixed rules — correct dedup and lookup."""
-        mock_ruler = Mock()
-        rule_data = {
-            'python:S1481': {'key': 'python:S1481'},
-            'python:S1192': {'key': 'python:S1192'},
-            'python:S3776': {'key': 'python:S3776'},
-        }
-        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
-
-        issues = {
-            'src/a.py': [Mock(rule='python:S1481'), Mock(rule='python:S1192')],
-            'src/b.py': [Mock(rule='python:S1481'), Mock(rule='python:S3776')],
-            'src/c.py': [Mock(rule='python:S1192')],
-            'src/d.py': [Mock(rule='python:S3776'), Mock(rule='python:S1481')],
-        }
-
-        result = _collect_rule_information(issues, mock_ruler)
-
-        assert len(result) == 3
-        assert set(result.keys()) == {'python:S1481', 'python:S1192', 'python:S3776'}
-        # 3 unique rules = 3 API calls, not 7 (total issue count)
-        assert mock_ruler.get_rule_by_key.call_count == 3
+        assert "python:S9999" in result
+        assert result["python:S9999"] is None
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
 
 
 
