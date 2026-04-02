@@ -54,7 +54,7 @@ State keys:
 import logging
 import operator
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict, Union, Annotated
+from typing import Any, Callable, Dict, List, Optional, TypedDict, Union, Annotated, cast
 
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
@@ -279,7 +279,7 @@ def _run_py_compile(lines: list, project_path: Path, fixer: LLMFixer,
     tmp_file = project_path / ".supervisor_tmp.py"
     try:
         tmp_file.write_text("".join(lines), encoding="utf-8")
-        ok, err = fixer.check_python_interpreter(str(tmp_file))
+        ok, err = fixer.check_python_interpreter(tmp_file)
         if ok:
             logger.info("Syntax check passed")
             report("[green]  ✓ Syntax OK[/green]")
@@ -360,7 +360,7 @@ def _read_file_for_validation(validation: Any) -> str:
     """Read source file content for validator context."""
     if validation and validation.file_path:
         try:
-            return validation.file_path.read_text(encoding="utf-8")
+            return str(validation.file_path.read_text(encoding="utf-8"))
         except OSError:
             pass
     return ""
@@ -436,17 +436,17 @@ def build_tools(
     """Build all graph tools as thin closures over fixer/validator/registry."""
 
     @tool
-    async def validate_issue_tool(state: dict) -> dict:  # type: ignore[misc]
+    async def validate_issue_tool(state: dict) -> dict:
         """Validate that all issues belong to the same file and extract line range."""
         return await _validate_issue_impl(state, fixer)
 
     @tool
-    async def run_automated_tool(state: dict) -> dict:  # type: ignore[misc]
+    async def run_automated_tool(state: dict) -> dict:
         """Run deterministic AST-based rule handler."""
         return await _run_handler_impl(state, fixer, registry, "AST fix")
 
     @tool
-    async def run_llm_tool(state: dict) -> dict:  # type: ignore[misc]
+    async def run_llm_tool(state: dict) -> dict:
         """Run LLM-backed rule handler with optional retry feedback."""
         report: StatusReporter = state.get("_report") or _noop_reporter
         retry_count: int = state.get("retry_count", 0)
@@ -455,17 +455,17 @@ def build_tools(
         return await _run_handler_impl(state, fixer, registry, "LLM fix")
 
     @tool
-    def check_syntax_tool(state: dict) -> dict:  # type: ignore[misc]
+    def check_syntax_tool(state: dict) -> dict:
         """Check syntax of each fix via py_compile."""
         return _check_syntax_impl(state, fixer)
 
     @tool
-    def check_testing_tool(state: dict) -> dict:  # type: ignore[misc]
+    def check_testing_tool(state: dict) -> dict:
         """Run pytest to verify fix does not break existing tests."""
         return _check_testing_impl(state, fixer)
 
     @tool
-    def validate_fix_tool(state: dict) -> dict:  # type: ignore[misc]
+    def validate_fix_tool(state: dict) -> dict:
         """Run FixValidator on each fix and collect accepted/rejected results."""
         return _validate_fix_impl(state, validator)
 
@@ -577,46 +577,46 @@ def route_after_validation_fix(state: SonarState) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _make_node(tool_fn: Any):
+def _make_node(tool_fn: Any) -> Callable[..., Any]:
     """Wrap a @tool function so it can be used as a graph node."""
-    async def node(state: SonarState) -> SonarState:
+    async def node(state: SonarState) -> dict:
         result = await tool_fn.ainvoke({"state": dict(state)})
         # tool_fn returns a dict patch — merge into state
-        return {**state, **result}  # type: ignore[return-value]
+        return {**state, **result}
     return node
 
 
-def _make_sync_node(tool_fn: Any):
+def _make_sync_node(tool_fn: Any) -> Callable[..., Any]:
     """Wrap a synchronous @tool function as a graph node."""
-    def node(state: SonarState) -> SonarState:
+    def node(state: SonarState) -> dict:
         result = tool_fn.invoke({"state": dict(state)})
-        return {**state, **result}  # type: ignore[return-value]
+        return {**state, **result}
     return node
 
 
-def _accept_node(state: SonarState) -> SonarState:
+def _accept_node(state: SonarState) -> dict:
     """Terminal node: copy fixes → accepted_fixes if not already set."""
     report: StatusReporter = state.get("_report") or _noop_reporter
     report("[bold green]  ✔ Fix accepted — applying to file[/bold green]")
     if not state.get("accepted_fixes"):
-        return {**state, "accepted_fixes": state.get("fixes", [])}  # type: ignore[return-value]
-    return state
+        return {**state, "accepted_fixes": state.get("fixes", [])}
+    return dict(state)
 
 
-def _error_node(state: SonarState) -> SonarState:
+def _error_node(state: SonarState) -> dict:
     """Terminal node: ensure accepted_fixes is empty on error."""
     report: StatusReporter = state.get("_report") or _noop_reporter
     err = state.get("error", "unknown error")
     report(f"[bold red]  ✗ Pipeline ended with error:[/bold red] {err}")
-    return {**state, "accepted_fixes": []}  # type: ignore[return-value]
+    return {**state, "accepted_fixes": []}
 
 
-def _retry_node(state: SonarState) -> SonarState:
+def _retry_node(state: SonarState) -> dict:
     """Increment retry_count before looping back to run_llm."""
     new_count = state.get("retry_count", 0) + 1
     report: StatusReporter = state.get("_report") or _noop_reporter
     report(f"[bold yellow]  ↻ Scheduling retry {new_count}/{MAX_RETRIES}[/bold yellow]")
-    return {**state, "retry_count": new_count}  # type: ignore[return-value]
+    return {**state, "retry_count": new_count}
 
 
 # ---------------------------------------------------------------------------
@@ -774,7 +774,7 @@ class AgentSupervisor:
             final_state = await self._graph.ainvoke(
                 initial_state, config={"recursion_limit": 30},
             )
-            return final_state.get("accepted_fixes", [])
+            return cast(List[FixSuggestion], final_state.get("accepted_fixes", []))
         except Exception as exc:
             logger.error(
                 "Graph execution failed for rule=%s: %s",

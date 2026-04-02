@@ -235,7 +235,7 @@ class LLMFixerAdapter:
             response = llm.invoke(messages)
 
             # AIMessage.content is always a string for chat models
-            content: str = response.content  # type: ignore[union-attr]
+            content: str = response.content
             if not content:
                 logger.warning("LLMFixerAdapter: empty response from LLM")
                 return None

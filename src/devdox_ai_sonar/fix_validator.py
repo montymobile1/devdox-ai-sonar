@@ -228,7 +228,7 @@ class FixValidator:
             "openrouter": "anthropic/claude-sonnet-4",
             "gemini":     "gemini-1.5-flash",
         }
-        return model or defaults.get(provider.lower(), "gpt-4o")
+        return model if model else (defaults.get(provider.lower()) or "gpt-4o")
 
     @staticmethod
     def _resolve_api_key(provider: str, api_key: Optional[str]) -> str:

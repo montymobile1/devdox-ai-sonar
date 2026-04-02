@@ -1369,7 +1369,7 @@ async def _process_files_with_agent(
                 tmp_path=tmp_path,
                 create_backup=bool(fix_params.get("create_backup", False)),
                 dry_run=bool(fix_params.get("dry_run", False)),
-                file_md=file_md,
+                file_md=str(file_md),
                 skip_tests=bool(fix_params.get("skip_tests", True)),
                 status_reporter=phase_messages.append,
             )

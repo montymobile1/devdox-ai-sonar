@@ -13,10 +13,11 @@ from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from pathlib import Path
 import json
 from pydantic import ValidationError
-from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
+from typing import List, Optional, Dict, Any, Tuple, Union, Sequence, cast
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
+from langgraph.graph.state import CompiledStateGraph
 from datetime import datetime
 import logging
 
@@ -200,7 +201,7 @@ async def call_llm_with_graph(
     return final_state["fix_result"]
 
 
-def fix_node(state: FixGraphState) -> FixGraphState:
+def fix_node(state: FixGraphState) -> dict:
     """Call the LLM with structured output via the appropriate provider."""
     from devdox_ai_sonar.models.sonar import SonarFixResponse  # local import to avoid circular
 
@@ -220,10 +221,10 @@ def fix_node(state: FixGraphState) -> FixGraphState:
             ("human", "{prompt}"),
         ]) | structured_llm
 
-        result: SonarFixResponse = chain.invoke({
+        result = cast(SonarFixResponse, chain.invoke({
             "prompt_system": state["prompt_system"],
             "prompt": state["prompt"],
-        })
+        }))
 
         return {**state, "fix_result": result, "validation_error": None}
 
@@ -232,7 +233,7 @@ def fix_node(state: FixGraphState) -> FixGraphState:
         return {**state, "fix_result": None, "validation_error": str(e)}
 
 
-def validate_node(state: FixGraphState) -> FixGraphState:
+def validate_node(state: FixGraphState) -> dict:
     """Validate that the structured output is usable."""
     result = state.get("fix_result")
 
@@ -260,7 +261,7 @@ def validate_node(state: FixGraphState) -> FixGraphState:
     return {**state, "validation_error": None}
 
 
-def retry_node(state: FixGraphState) -> FixGraphState:
+def retry_node(state: FixGraphState) -> dict:
     """Increment attempt counter and enrich the prompt with the previous error."""
     attempt = state["attempt"] + 1
     enriched_prompt = (
@@ -291,7 +292,7 @@ def should_retry(state: FixGraphState) -> str:
     return "retry"
 
 
-def build_fix_graph():
+def build_fix_graph() -> CompiledStateGraph:
     graph = StateGraph(FixGraphState)
     graph.add_node("fix", fix_node)
     graph.add_node("validate", validate_node)
@@ -306,8 +307,8 @@ def build_fix_graph():
     graph.add_edge("retry", "fix")
     return graph.compile()
 
-_FIX_GRAPH = None
-def _get_fix_graph():
+_FIX_GRAPH: Optional[CompiledStateGraph] = None
+def _get_fix_graph() -> CompiledStateGraph:
     global _FIX_GRAPH
     if _FIX_GRAPH is None:
         _FIX_GRAPH = build_fix_graph()
@@ -1160,7 +1161,7 @@ class LLMFixer:
 
     def _parse_openai_response(self, response: Any) -> Optional[SonarFixResponse]:
         try:
-            return response.output_parsed
+            return cast(Optional[SonarFixResponse], response.output_parsed)
         except Exception:
             logger.exception("Error parsing OpenAI response")
             return None
