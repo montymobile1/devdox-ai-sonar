@@ -76,17 +76,17 @@ CODE_BLOCK_END = "```"
 # ---------------------------------------------------------------------------
 
 _PROVIDER_DEFAULTS: Dict[str, str] = {
-    "openai":     "gpt-4o",
+    "openai": "gpt-4o",
     "togetherai": "meta-llama/Llama-3-70b-chat-hf",
     "openrouter": "anthropic/claude-sonnet-4",
-    "gemini":     "gemini-1.5-flash",
+    "gemini": "gemini-1.5-flash",
 }
 
 _PROVIDER_ENV_KEYS: Dict[str, str] = {
-    "openai":     "OPENAI_API_KEY",
+    "openai": "OPENAI_API_KEY",
     "togetherai": "TOGETHER_API_KEY",
     "openrouter": "OPENROUTER_API_KEY",
-    "gemini":     "GEMINI_KEY",
+    "gemini": "GEMINI_KEY",
 }
 
 
@@ -112,6 +112,7 @@ def build_llm(
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -121,6 +122,7 @@ def build_llm(
 
     elif provider == "togetherai":
         from langchain_together import ChatTogether
+
         return ChatTogether(
             model=model,
             together_api_key=api_key,
@@ -130,6 +132,7 @@ def build_llm(
 
     if provider == "openrouter":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -144,6 +147,7 @@ def build_llm(
 
     elif provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
+
         return ChatGoogleGenerativeAI(
             model=model,
             google_api_key=api_key,
@@ -194,7 +198,9 @@ async def call_llm_with_graph(
     if final_state["fix_result"] is None:
         logger.error(
             "LLM pipeline failed after %d attempts [provider=%s]. Last error: %s",
-            max_attempts, provider, final_state.get("validation_error"),
+            max_attempts,
+            provider,
+            final_state.get("validation_error"),
         )
         return None
 
@@ -203,7 +209,9 @@ async def call_llm_with_graph(
 
 def fix_node(state: FixGraphState) -> dict:
     """Call the LLM with structured output via the appropriate provider."""
-    from devdox_ai_sonar.models.sonar import SonarFixResponse  # local import to avoid circular
+    from devdox_ai_sonar.models.sonar import (
+        SonarFixResponse,
+    )  # local import to avoid circular
 
     try:
         llm = build_llm(
@@ -216,20 +224,32 @@ def fix_node(state: FixGraphState) -> dict:
 
         structured_llm = llm.with_structured_output(SonarFixResponse)
 
-        chain = ChatPromptTemplate.from_messages([
-            ("system", "{prompt_system}"),
-            ("human", "{prompt}"),
-        ]) | structured_llm
+        chain = (
+            ChatPromptTemplate.from_messages(
+                [
+                    ("system", "{prompt_system}"),
+                    ("human", "{prompt}"),
+                ]
+            )
+            | structured_llm
+        )
 
-        result = cast(SonarFixResponse, chain.invoke({
-            "prompt_system": state["prompt_system"],
-            "prompt": state["prompt"],
-        }))
+        result = cast(
+            SonarFixResponse,
+            chain.invoke(
+                {
+                    "prompt_system": state["prompt_system"],
+                    "prompt": state["prompt"],
+                }
+            ),
+        )
 
         return {**state, "fix_result": result, "validation_error": None}
 
     except Exception as e:
-        logger.error("[fix_node] %s call failed: %s", state["provider"], e, exc_info=True)
+        logger.error(
+            "[fix_node] %s call failed: %s", state["provider"], e, exc_info=True
+        )
         return {**state, "fix_result": None, "validation_error": str(e)}
 
 
@@ -247,7 +267,7 @@ def validate_node(state: FixGraphState) -> dict:
 
     if not getattr(result, "EXPLANATION", "").strip():
         result.EXPLANATION = "No explanation provided"
-        #errors.append("EXPLANATION is empty")
+        # errors.append("EXPLANATION is empty")
 
     confidence = getattr(result, "CONFIDENCE", 0.0)
     if confidence < 0.3:
@@ -307,14 +327,15 @@ def build_fix_graph() -> CompiledStateGraph:
     graph.add_edge("retry", "fix")
     return graph.compile()
 
+
 _FIX_GRAPH: Optional[CompiledStateGraph] = None
+
+
 def _get_fix_graph() -> CompiledStateGraph:
     global _FIX_GRAPH
     if _FIX_GRAPH is None:
         _FIX_GRAPH = build_fix_graph()
     return _FIX_GRAPH
-
-
 
 
 class LLMFixer:
@@ -404,13 +425,17 @@ class LLMFixer:
     def _configure_openai(self, model: Optional[str], api_key: Optional[str]) -> None:
         self._validate_and_configure_provider("openai", model, api_key)
 
-    def _configure_togetherai(self, model: Optional[str], api_key: Optional[str]) -> None:
+    def _configure_togetherai(
+        self, model: Optional[str], api_key: Optional[str]
+    ) -> None:
         self._validate_and_configure_provider("togetherai", model, api_key)
 
     def _configure_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
         self._validate_and_configure_provider("gemini", model, api_key)
 
-    def _configure_openrouter(self, model: Optional[str], api_key: Optional[str]) -> None:
+    def _configure_openrouter(
+        self, model: Optional[str], api_key: Optional[str]
+    ) -> None:
         self._validate_and_configure_provider("openrouter", model, api_key)
 
     @staticmethod
@@ -729,7 +754,10 @@ class LLMFixer:
                     self.context_lines,
                 )
                 context_dict["language"] = language
-                if "class_name" not in context_dict or context_dict["class_name"] is None:
+                if (
+                    "class_name" not in context_dict
+                    or context_dict["class_name"] is None
+                ):
                     context_dict["class_name"] = class_name
                 context_dict["import_section"] = import_section
             context_dict["problem_line_content"] = problem_line_content
@@ -800,7 +828,9 @@ class LLMFixer:
                 result.failed_fixes.extend(
                     [{"fix": fix, "error": str(e)} for fix in file_fixes]
                 )
-                logger.error("Error processing file %s: %s", file_path_str, e, exc_info=True)
+                logger.error(
+                    "Error processing file %s: %s", file_path_str, e, exc_info=True
+                )
 
         return result
 
@@ -1014,7 +1044,9 @@ class LLMFixer:
             )
         elif "unused" in getattr(issue, "rule", "").lower() or "unused" in msg_lower:
             strategies_list.append("• Remove ONLY the specific unused variable/import.")
-            strategies_list.append("• Do not break code that references adjacent lines.")
+            strategies_list.append(
+                "• Do not break code that references adjacent lines."
+            )
         elif "duplicating this literal" in msg_lower:
             match = re.search(
                 r'duplicating this literal "([^"]+)"', getattr(issue, "message", "")
@@ -1033,7 +1065,9 @@ class LLMFixer:
         elif "be sure that every parameter is used" in msg_lower:
             strategies_list.append(FUNCTION_ALREADY_CALLED)
             strategies_list.append("• Print or Log the unused parameters values.")
-            strategies_list.append("• Check the syntax and be sure that is working code")
+            strategies_list.append(
+                "• Check the syntax and be sure that is working code"
+            )
         elif "null" in getattr(issue, "rule", "").lower() or "nullable" in msg_lower:
             strategies_list.extend(
                 [
@@ -1094,13 +1128,16 @@ class LLMFixer:
                 filtered_steps = [
                     step
                     for step in steps
-                    if step != "Remove unused elements or implement their intended purpose"
+                    if step
+                    != "Remove unused elements or implement their intended purpose"
                 ]
                 issue.message = "Be sure that every parameter is used"
                 filtered_steps.append(FUNCTION_ALREADY_CALLED)
                 filtered_steps.append("• Print or Log the unused parameters.")
                 rule_info_list[rule_key]["how_to_fix"]["steps"] = filtered_steps
-                rule_info_list[rule_key]["name"] = "Be sure that every parameter is used"
+                rule_info_list[rule_key]["name"] = (
+                    "Be sure that every parameter is used"
+                )
                 rule_info_list[rule_key]["root_cause"] = None
 
             strategies = self._extend_strategies_for_issue(issue=issue)
@@ -1174,7 +1211,9 @@ class LLMFixer:
             logger.exception("Error parsing Gemini response")
             return None
 
-    def _parse_chat_completion_response(self, response: Any) -> Optional[SonarFixResponse]:
+    def _parse_chat_completion_response(
+        self, response: Any
+    ) -> Optional[SonarFixResponse]:
         try:
             content = response.choices[0].message.content
             return self.parse_llm_response(content)
@@ -1240,12 +1279,18 @@ class LLMFixer:
             "confidence": max(0.0, min(1.0, results["CONFIDENCE"])),
         }
 
-    def _extract_fields_from_parsed_json(self, fix_data: dict) -> Optional[Dict[str, Any]]:
+    def _extract_fields_from_parsed_json(
+        self, fix_data: dict
+    ) -> Optional[Dict[str, Any]]:
         fixed_code = str(fix_data.get("FIXED_SELECTION", "")).strip()
-        fixed_code = fixed_code.replace('\\"', '"').replace("\\", "").replace("\\'", "'")
+        fixed_code = (
+            fixed_code.replace('\\"', '"').replace("\\", "").replace("\\'", "'")
+        )
         import_block = str(fix_data.get("IMPORT_BLOCK", "")).strip()
         helper_code = str(fix_data.get("NEW_HELPER_CODE", "")).strip()
-        helper_code = helper_code.replace("\\", "").replace('\\"', '"').replace("\\'", "'")
+        helper_code = (
+            helper_code.replace("\\", "").replace('\\"', '"').replace("\\'", "'")
+        )
         placement = str(fix_data.get("PLACEMENT", "SIBLING")).strip().upper()
         explanation = str(fix_data.get("EXPLANATION", "")).strip()
         confidence = fix_data.get("CONFIDENCE", 0.5)
@@ -1283,7 +1328,9 @@ class LLMFixer:
             cleaned_content = cleaned_content.split("{", 1)[1]
             cleaned_content = "{" + cleaned_content
             end = cleaned_content.rfind("}")
-            cleaned_content = cleaned_content[: end + 1] if end != -1 else cleaned_content
+            cleaned_content = (
+                cleaned_content[: end + 1] if end != -1 else cleaned_content
+            )
             if cleaned_content.startswith("{") and cleaned_content.endswith("}"):
                 try:
                     fix_data = json.loads(cleaned_content)
@@ -1326,13 +1373,17 @@ class LLMFixer:
 
         return backup_path
 
-    def _try_stored_file_path(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
+    def _try_stored_file_path(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
         if not fix.file_path:
             return None
         file_path = project_path / fix.file_path
         return str(file_path) if file_path.exists() else None
 
-    def _try_extract_from_issue_key(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
+    def _try_extract_from_issue_key(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
         if ":" not in fix.issue_key:
             return None
         parts = fix.issue_key.split(":")
@@ -1344,7 +1395,9 @@ class LLMFixer:
                 return str(file_path)
         return None
 
-    def _get_file_from_fix(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
+    def _get_file_from_fix(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
         file_path = self._try_stored_file_path(fix, project_path)
         if file_path:
             return file_path
@@ -1437,14 +1490,18 @@ class LLMFixer:
                     continue
                 # Strip optional leading "export "
                 if line.startswith("export "):
-                    line = line[len("export "):].strip()
+                    line = line[len("export ") :].strip()
                 if "=" not in line:
                     continue
                 key, _, raw_value = line.partition("=")
                 key = key.strip()
                 raw_value = raw_value.strip()
                 # Strip surrounding quotes
-                if len(raw_value) >= 2 and raw_value[0] == raw_value[-1] and raw_value[0] in ('"', "'"):
+                if (
+                    len(raw_value) >= 2
+                    and raw_value[0] == raw_value[-1]
+                    and raw_value[0] in ('"', "'")
+                ):
                     raw_value = raw_value[1:-1]
                 if key:
                     result[key] = raw_value
@@ -1452,7 +1509,9 @@ class LLMFixer:
             pass
         return result
 
-    def _build_subprocess_env(self, project_root: Path,test_path:Path, python_executable: str) -> Dict[str, str]:
+    def _build_subprocess_env(
+        self, project_root: Path, test_path: Path, python_executable: str
+    ) -> Dict[str, str]:
         """
         Build the environment dict for subprocess.run so that pytest inherits:
           1. The current process environment (os.environ)
@@ -1477,10 +1536,16 @@ class LLMFixer:
             logger.debug("Loaded %d vars from %s", len(dotenv_vars), test_env_file)
         # Layer 3: venv activation (overrides PATH / interpreter resolution)
         venv_dir = Path(python_executable).parent.parent  # e.g. project/venv
-        if (venv_dir / "bin" / "python").exists() or (venv_dir / "Scripts" / "python.exe").exists():
+        if (venv_dir / "bin" / "python").exists() or (
+            venv_dir / "Scripts" / "python.exe"
+        ).exists():
             env["VIRTUAL_ENV"] = str(venv_dir)
             # Prepend venv bin so subprocesses find the right pip/pytest
-            bin_dir = str(venv_dir / "bin") if (venv_dir / "bin").exists() else str(venv_dir / "Scripts")
+            bin_dir = (
+                str(venv_dir / "bin")
+                if (venv_dir / "bin").exists()
+                else str(venv_dir / "Scripts")
+            )
             env["PATH"] = bin_dir + os.pathsep + env.get("PATH", "")
             # Avoid PYTHONHOME from a different env bleeding in
             env.pop("PYTHONHOME", None)
@@ -1500,8 +1565,10 @@ class LLMFixer:
         test_path = Path(testing_path)
         project_root = self._find_project_root(test_path)
         python_executable = self._resolve_python_executable(project_root)
-        env = self._build_subprocess_env(project_root, test_path,python_executable)
-        logger.debug("run_testing_cases: python=%s cwd=%s", python_executable, project_root)
+        env = self._build_subprocess_env(project_root, test_path, python_executable)
+        logger.debug(
+            "run_testing_cases: python=%s cwd=%s", python_executable, project_root
+        )
 
         try:
             subprocess.run(
@@ -1509,7 +1576,9 @@ class LLMFixer:
                 check=True,
                 capture_output=True,
                 text=True,
-                cwd=str(project_root),  # run from project root so conftest imports resolve
+                cwd=str(
+                    project_root
+                ),  # run from project root so conftest imports resolve
                 env=env,
             )
             return True, None
@@ -1519,7 +1588,9 @@ class LLMFixer:
 
             # If it's a missing module, try auto-installing from requirements
             if "ModuleNotFoundError" in error_output or "ImportError" in error_output:
-                installed = self._try_install_requirements(project_root, python_executable)
+                installed = self._try_install_requirements(
+                    project_root, python_executable
+                )
                 if installed:
                     # Retry once after installing
                     return self.run_testing_cases(testing_path)
@@ -1533,9 +1604,15 @@ class LLMFixer:
         """
         current = test_path if test_path.is_dir() else test_path.parent
         for parent in [current, *current.parents]:
-            if any((parent / marker).exists() for marker in [
-                "pyproject.toml", "setup.py", "setup.cfg", "requirements.txt"
-            ]):
+            if any(
+                (parent / marker).exists()
+                for marker in [
+                    "pyproject.toml",
+                    "setup.py",
+                    "setup.cfg",
+                    "requirements.txt",
+                ]
+            ):
                 return parent
         return current  # fallback to test directory
 
@@ -1547,8 +1624,10 @@ class LLMFixer:
         """
         venv_candidates = ["venv", ".venv", "env", ".env"]
         for venv_name in venv_candidates:
-            venv_python = project_root / venv_name / "bin" / "python"       # Linux/Mac
-            venv_python_win = project_root / venv_name / "Scripts" / "python.exe"  # Windows
+            venv_python = project_root / venv_name / "bin" / "python"  # Linux/Mac
+            venv_python_win = (
+                project_root / venv_name / "Scripts" / "python.exe"
+            )  # Windows
             if venv_python.exists():
                 logger.debug("Using venv python: %s", venv_python)
                 return str(venv_python)
@@ -1557,10 +1636,14 @@ class LLMFixer:
                 return str(venv_python_win)
 
         # Fallback: use the same Python that's running devdox-ai-sonar
-        logger.debug("No venv found in %s, falling back to sys.executable", project_root)
+        logger.debug(
+            "No venv found in %s, falling back to sys.executable", project_root
+        )
         return sys.executable
 
-    def _try_install_requirements(self, project_root: Path, python_executable: str) -> bool:
+    def _try_install_requirements(
+        self, project_root: Path, python_executable: str
+    ) -> bool:
         """
         Attempt to pip install from requirements.txt or pyproject.toml in the project root.
         Returns True if installation succeeded.
@@ -1573,15 +1656,26 @@ class LLMFixer:
                 logger.info("Installing dependencies from %s", req_file)
                 subprocess.run(
                     [python_executable, "-m", "pip", "install", "-r", str(req_file)],
-                    check=True, capture_output=True, text=True,
+                    check=True,
+                    capture_output=True,
+                    text=True,
                 )
                 return True
 
             if pyproject.exists():
                 logger.info("Installing project dependencies from %s", pyproject)
                 subprocess.run(
-                    [python_executable, "-m", "pip", "install", "-e", str(project_root)],
-                    check=True, capture_output=True, text=True,
+                    [
+                        python_executable,
+                        "-m",
+                        "pip",
+                        "install",
+                        "-e",
+                        str(project_root),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
                 )
                 return True
 
@@ -1617,7 +1711,9 @@ class LLMFixer:
                 stack.pop()
         return len(stack) == 0
 
-    def _check_no_duplicate_definitions(self, content: str, file_extension: str) -> bool:
+    def _check_no_duplicate_definitions(
+        self, content: str, file_extension: str
+    ) -> bool:
         if file_extension != ".py":
             return True
         func_pattern = r"^\s*(async\s+)?def\s+(\w+)\s*\("
@@ -1634,7 +1730,11 @@ class LLMFixer:
                 definitions.setdefault(def_name, []).append(line_num)
         for def_name, line_numbers in definitions.items():
             if len(line_numbers) > 1:
-                logger.error("Found duplicate definition '%s' at lines: %s", def_name, line_numbers)
+                logger.error(
+                    "Found duplicate definition '%s' at lines: %s",
+                    def_name,
+                    line_numbers,
+                )
                 return False
         return True
 
@@ -1664,7 +1764,9 @@ class LLMFixer:
     async def _process_single_file(
         self,
         file_path: Path,
-        file_fix_pairs: List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]],
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
         result: FixResult,
         validator: Optional[FixValidator],
         dry_run: bool,
@@ -1674,7 +1776,9 @@ class LLMFixer:
         if file_path.exists():
             original_content = await self.read_file_async(str(file_path))
 
-        success, new_fixes = await self._apply_fixes_to_file(file_path, file_fixes, dry_run)
+        success, new_fixes = await self._apply_fixes_to_file(
+            file_path, file_fixes, dry_run
+        )
 
         if success:
             result.successful_fixes.extend(file_fixes)
@@ -1682,19 +1786,34 @@ class LLMFixer:
 
         if validator:
             await self._handle_failed_fixes_with_validator(
-                file_path, file_fix_pairs, new_fixes, original_content, result, validator, dry_run
+                file_path,
+                file_fix_pairs,
+                new_fixes,
+                original_content,
+                result,
+                validator,
+                dry_run,
             )
         else:
             result.failed_fixes.extend(
-                [{"fix": fix, "error": "Direct application failed and no validator available"}
-                 for fix in file_fixes]
+                [
+                    {
+                        "fix": fix,
+                        "error": "Direct application failed and no validator available",
+                    }
+                    for fix in file_fixes
+                ]
             )
-            logger.error("✗ Failed to apply fixes to %s (no validator fallback)", file_path)
+            logger.error(
+                "✗ Failed to apply fixes to %s (no validator fallback)", file_path
+            )
 
     async def _handle_failed_fixes_with_validator(
         self,
         file_path: Path,
-        file_fix_pairs: List[Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]],
+        file_fix_pairs: List[
+            Tuple[FixSuggestion, Union[SonarIssue, SonarSecurityIssue]]
+        ],
         new_fixes: List[Any],
         original_content: str,
         result: FixResult,
@@ -1706,7 +1825,8 @@ class LLMFixer:
         )
         logger.warning(
             "Direct fix application failed for %s. Trying AI validator fallback to fix %s...",
-            file_path, reason_msg,
+            file_path,
+            reason_msg,
         )
 
         if not dry_run and file_path.exists():
@@ -1721,14 +1841,28 @@ class LLMFixer:
                     cleanup_tmp_py_file(file_path_tmp)
 
                 validation_result = validator.validate_fix(
-                    fix, issue, current_content, new_error_msg=reason_msg,
+                    fix,
+                    issue,
+                    current_content,
+                    new_error_msg=reason_msg,
                 )
                 await self._process_validation_result(
-                    validation_result, fix, file_path, result, dry_run,
+                    validation_result,
+                    fix,
+                    file_path,
+                    result,
+                    dry_run,
                 )
             except Exception as e:
-                logger.error("Error in validator fallback for fix %s: %s", fix.issue_key, e, exc_info=True)
-                result.failed_fixes.append({"fix": fix, "error": f"Validator error: {str(e)}"})
+                logger.error(
+                    "Error in validator fallback for fix %s: %s",
+                    fix.issue_key,
+                    e,
+                    exc_info=True,
+                )
+                result.failed_fixes.append(
+                    {"fix": fix, "error": f"Validator error: {str(e)}"}
+                )
 
     async def _process_validation_result(
         self,
@@ -1745,33 +1879,53 @@ class LLMFixer:
             return
 
         if status == ValidationStatus.REJECTED:
-            logger.warning("✗ Fix %s REJECTED: %s", fix.issue_key, validation_result.explanation)
+            logger.warning(
+                "✗ Fix %s REJECTED: %s", fix.issue_key, validation_result.explanation
+            )
             result.failed_fixes.append(
-                {"fix": fix, "error": f"Rejected by validator: {validation_result.explanation}"}
+                {
+                    "fix": fix,
+                    "error": f"Rejected by validator: {validation_result.explanation}",
+                }
             )
             return
 
         if status == ValidationStatus.NEEDS_REVIEW:
-            logger.warning("? Fix %s NEEDS_REVIEW: %s", fix.issue_key, validation_result.explanation)
+            logger.warning(
+                "? Fix %s NEEDS_REVIEW: %s",
+                fix.issue_key,
+                validation_result.explanation,
+            )
             result.failed_fixes.append(
-                {"fix": fix, "error": f"Needs manual review: {validation_result.explanation}"}
+                {
+                    "fix": fix,
+                    "error": f"Needs manual review: {validation_result.explanation}",
+                }
             )
             return
 
         if not validation_result.final_fix:
             result.failed_fixes.append(
-                {"fix": fix, "error": "Validator marked as MODIFIED but provided no improved fix"}
+                {
+                    "fix": fix,
+                    "error": "Validator marked as MODIFIED but provided no improved fix",
+                }
             )
             return
 
         improved_success, _ = await self._apply_fixes_to_file(
-            file_path, [validation_result.final_fix], dry_run,
+            file_path,
+            [validation_result.final_fix],
+            dry_run,
         )
         if improved_success:
             result.successful_fixes.append(validation_result.final_fix)
         else:
             result.failed_fixes.append(
-                {"fix": fix, "error": "Validator improved fix but application still failed"}
+                {
+                    "fix": fix,
+                    "error": "Validator improved fix but application still failed",
+                }
             )
 
     async def apply_fixes_with_validation(
@@ -1806,28 +1960,51 @@ class LLMFixer:
             try:
                 file_path = Path(file_path_str)
                 await self._process_single_file(
-                    file_path, file_fix_pairs, result, validator, dry_run,
+                    file_path,
+                    file_fix_pairs,
+                    result,
+                    validator,
+                    dry_run,
                 )
             except Exception as e:
                 result.failed_fixes.extend(
                     [{"fix": fix, "error": str(e)} for fix, _ in file_fix_pairs]
                 )
-                logger.error("✗ Error processing file %s: %s", file_path_str, e, exc_info=True)
+                logger.error(
+                    "✗ Error processing file %s: %s", file_path_str, e, exc_info=True
+                )
 
         return result
 
-    def _try_find_by_content(self, fix: FixSuggestion, project_path: Path) -> Optional[str]:
+    def _try_find_by_content(
+        self, fix: FixSuggestion, project_path: Path
+    ) -> Optional[str]:
         if not fix.original_code or len(fix.original_code.strip()) <= 10:
             return None
-        matching_files = self._find_files_with_content(project_path, fix.original_code.strip())
+        matching_files = self._find_files_with_content(
+            project_path, fix.original_code.strip()
+        )
         return str(matching_files[0]) if matching_files else None
 
     def _find_files_with_content(self, project_path: Path, content: str) -> List[Path]:
         matching_files = []
         extensions = {
-            ".py", ".js", ".jsx", ".ts", ".tsx",
-            java_extension, ".kt", scala_extension,
-            ".go", ".rs", ".cpp", ".c", ".cs", ".php", ".rb", ".swift",
+            ".py",
+            ".js",
+            ".jsx",
+            ".ts",
+            ".tsx",
+            java_extension,
+            ".kt",
+            scala_extension,
+            ".go",
+            ".rs",
+            ".cpp",
+            ".c",
+            ".cs",
+            ".php",
+            ".rb",
+            ".swift",
         }
         try:
             for file_path in project_path.rglob("*"):
@@ -1840,7 +2017,9 @@ class LLMFixer:
                     and "__pycache__" not in file_path.parts
                 ):
                     try:
-                        with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                        with open(
+                            file_path, "r", encoding="utf-8", errors="ignore"
+                        ) as f:
                             if content in f.read():
                                 matching_files.append(file_path)
                                 if len(matching_files) >= 3:
@@ -1855,7 +2034,14 @@ class LLMFixer:
         if "/" not in path_candidate:
             return False
         supported_extensions = {
-            ".py", ".js", java_extension, ".ts", ".jsx", ".tsx", ".kt", scala_extension,
+            ".py",
+            ".js",
+            java_extension,
+            ".ts",
+            ".jsx",
+            ".tsx",
+            ".kt",
+            scala_extension,
         }
         return any(path_candidate.endswith(ext) for ext in supported_extensions)
 
@@ -1869,13 +2055,23 @@ class LLMFixer:
     ) -> Optional[Dict[str, Any]]:
         try:
             file_lines = await self.file_reader.read_lines(file_path)
-            problem_line_content = _extract_problem_lines(file_lines, line_range["problem_lines"])
+            problem_line_content = _extract_problem_lines(
+                file_lines, line_range["problem_lines"]
+            )
             first_problem_line_idx = line_range["first_line"] - 1
-            class_name = self._extract_class_name_from_file(file_lines, first_problem_line_idx)
+            class_name = self._extract_class_name_from_file(
+                file_lines, first_problem_line_idx
+            )
             if class_name:
-                logger.debug("Detected class name: %s at line %d", class_name, line_range["first_line"])
+                logger.debug(
+                    "Detected class name: %s at line %d",
+                    class_name,
+                    line_range["first_line"],
+                )
             else:
-                logger.debug("No class name detected for line %d", line_range["first_line"])
+                logger.debug(
+                    "No class name detected for line %d", line_range["first_line"]
+                )
 
             import_section = self._extract_import_section(file_lines, language)
             import_section["has_imports"] = False
@@ -1899,7 +2095,10 @@ class LLMFixer:
                     context_lines,
                 )
                 context_dict["language"] = language
-                if "class_name" not in context_dict or context_dict["class_name"] is None:
+                if (
+                    "class_name" not in context_dict
+                    or context_dict["class_name"] is None
+                ):
                     context_dict["class_name"] = class_name
                 context_dict["import_section"] = import_section
             context_dict["problem_line_content"] = problem_line_content
@@ -1915,7 +2114,9 @@ class LLMFixer:
             logger.error("Error reading file %s: %s", file_path, e)
             return None
 
-    def _extract_import_section(self, file_lines: List[str], language: str) -> Dict[str, Any]:
+    def _extract_import_section(
+        self, file_lines: List[str], language: str
+    ) -> Dict[str, Any]:
         if language == "python":
             return self._extract_python_import_section(file_lines)
         logger.debug("Import extraction not implemented for language: %s", language)
@@ -1925,8 +2126,12 @@ class LLMFixer:
         return stripped.startswith(('"""', "'''"))
 
     def _handle_backslash_continuation_line(
-        self, original_line: str, stripped: str, line_num: int,
-        import_lines: List[str], state: Dict[str, bool],
+        self,
+        original_line: str,
+        stripped: str,
+        line_num: int,
+        import_lines: List[str],
+        state: Dict[str, bool],
     ) -> int:
         import_lines.append(original_line)
         if not stripped.rstrip().endswith("\\"):
@@ -1935,8 +2140,12 @@ class LLMFixer:
         return line_num
 
     def _handle_parentheses_import_line(
-        self, original_line: str, stripped: str, line_num: int,
-        import_lines: List[str], state: Dict[str, bool],
+        self,
+        original_line: str,
+        stripped: str,
+        line_num: int,
+        import_lines: List[str],
+        state: Dict[str, bool],
     ) -> int:
         import_lines.append(original_line)
         if ")" in stripped:
@@ -1987,7 +2196,9 @@ class LLMFixer:
                 break
         return self._build_import_section_result(start_line, end_line, import_lines)
 
-    def _should_stop_at_code(self, stripped: str, start_line: Optional[int], state: Dict[str, bool]) -> bool:
+    def _should_stop_at_code(
+        self, stripped: str, start_line: Optional[int], state: Dict[str, bool]
+    ) -> bool:
         if state["in_multiline_import"]:
             return False
         if start_line is None:
@@ -2001,12 +2212,16 @@ class LLMFixer:
     def _is_module_level_dunder(self, stripped: str) -> bool:
         return stripped.startswith(("__all__", "__version__", "__author__", "__"))
 
-    def _should_stop_at_decorator(self, stripped: str, start_line: Optional[int]) -> bool:
+    def _should_stop_at_decorator(
+        self, stripped: str, start_line: Optional[int]
+    ) -> bool:
         if stripped.startswith("@"):
             return start_line is not None
         return False
 
-    def _detect_multiline_import_pattern(self, stripped: str, state: Dict[str, bool]) -> Dict[str, bool]:
+    def _detect_multiline_import_pattern(
+        self, stripped: str, state: Dict[str, bool]
+    ) -> Dict[str, bool]:
         if "(" in stripped and ")" not in stripped:
             state["in_parentheses_import"] = True
             state["in_multiline_import"] = True
@@ -2023,7 +2238,10 @@ class LLMFixer:
         return stripped.startswith("from ") or stripped.startswith("import ")
 
     def _build_import_section_result(
-        self, start_line: Optional[int], end_line: Optional[int], import_lines: List[str],
+        self,
+        start_line: Optional[int],
+        end_line: Optional[int],
+        import_lines: List[str],
     ) -> Dict[str, Any]:
         if start_line is None:
             return {"start_line": 0, "end_line": 0, "content": "", "has_imports": False}
@@ -2034,7 +2252,9 @@ class LLMFixer:
             "has_imports": True,
         }
 
-    def _extract_class_name_from_file(self, file_lines: List[str], target_line_idx: int) -> Optional[str]:
+    def _extract_class_name_from_file(
+        self, file_lines: List[str], target_line_idx: int
+    ) -> Optional[str]:
         for i in range(target_line_idx, -1, -1):
             line = file_lines[i].strip()
             if not line or line.startswith("#") or line.startswith("//"):
@@ -2046,7 +2266,9 @@ class LLMFixer:
                     return class_name
         return None
 
-    def _is_line_inside_class(self, file_lines: List[str], target_idx: int, class_start_idx: int) -> bool:
+    def _is_line_inside_class(
+        self, file_lines: List[str], target_idx: int, class_start_idx: int
+    ) -> bool:
         if target_idx <= class_start_idx:
             return False
         class_line = file_lines[class_start_idx]
@@ -2080,17 +2302,23 @@ class ContextExtractor:
 
         for problem_idx in problem_indices:
             if problem_idx < range_start or problem_idx > range_end:
-                logger.debug("Skipping problem line %d - outside range", problem_idx + 1)
+                logger.debug(
+                    "Skipping problem line %d - outside range", problem_idx + 1
+                )
                 continue
             containing_func_idx = self._find_containing_function(problem_idx)
             if containing_func_idx is None:
-                logger.warning("Problem line %d is not inside any function", problem_idx + 1)
+                logger.warning(
+                    "Problem line %d is not inside any function", problem_idx + 1
+                )
                 continue
             if containing_func_idx in processed_function_starts:
                 continue
             function_info = self._get_function_info(containing_func_idx)
             if not function_info:
-                logger.error("Failed to get function info for line %d", containing_func_idx + 1)
+                logger.error(
+                    "Failed to get function info for line %d", containing_func_idx + 1
+                )
                 continue
             function_problem_lines = [
                 idx + 1
@@ -2104,7 +2332,8 @@ class ContextExtractor:
         functions_with_issues.sort(key=lambda f: int(f["start_idx"]))
         logger.info(
             "Found %d functions containing %d problem lines",
-            len(functions_with_issues), len(problem_indices),
+            len(functions_with_issues),
+            len(problem_indices),
         )
         return functions_with_issues
 
@@ -2157,7 +2386,11 @@ class ContextExtractor:
             "functions_with_issues": len(functions),
             "coverage_percentage": (
                 round(
-                    (len(functions) / self._count_functions_in_range(overall_start, overall_end)) * 100,
+                    (
+                        len(functions)
+                        / self._count_functions_in_range(overall_start, overall_end)
+                    )
+                    * 100,
                     2,
                 )
                 if self._count_functions_in_range(overall_start, overall_end) > 0
@@ -2175,7 +2408,10 @@ class ContextExtractor:
         return count
 
     def _extract_all_functions_in_range(
-        self, first_idx: int, last_idx: int, problem_lines: List[int],
+        self,
+        first_idx: int,
+        last_idx: int,
+        problem_lines: List[int],
     ) -> Optional[Dict[str, Any]]:
         problem_indices = [line - 1 for line in problem_lines]
         functions_with_issues = self._find_functions_containing_problems(
@@ -2185,7 +2421,9 @@ class ContextExtractor:
         if not functions_with_issues:
             logger.warning(
                 "No functions found containing problem lines %s in range %d-%d",
-                problem_lines, first_idx + 1, last_idx + 1,
+                problem_lines,
+                first_idx + 1,
+                last_idx + 1,
             )
             return None
         return self._build_optimized_context(functions_with_issues, problem_lines)
@@ -2246,7 +2484,7 @@ class ContextExtractor:
             # Simpler: scan from current_idx downward until we hit a "@" line
             # at the right indent, counting parens to confirm continuity.
             if self._is_inside_multiline_decorator(
-                   current_idx, func_def_idx, func_indent
+                current_idx, func_def_idx, func_indent
             ):
                 current_idx -= 1
                 continue
@@ -2256,10 +2494,10 @@ class ContextExtractor:
         return decorator_start
 
     def _is_inside_multiline_decorator(
-            self,
-            line_idx: int,
-            func_def_idx: int,
-            func_indent: int,
+        self,
+        line_idx: int,
+        func_def_idx: int,
+        func_indent: int,
     ) -> bool:
         """
         Check if line_idx is a continuation line of a multi-line decorator.
@@ -2324,15 +2562,21 @@ class ContextExtractor:
                 break
         return decorator_start
 
-    def _is_line_inside_function(self, lines: List[str], line_idx: int, function_start_idx: int) -> bool:
+    def _is_line_inside_function(
+        self, lines: List[str], line_idx: int, function_start_idx: int
+    ) -> bool:
         if line_idx < function_start_idx:
             return False
         function_end_idx = self._find_function_end(function_start_idx)
         if function_end_idx is None:
-            return self._check_indentation_containment(lines, line_idx, function_start_idx)
+            return self._check_indentation_containment(
+                lines, line_idx, function_start_idx
+            )
         return line_idx <= function_end_idx
 
-    def _find_brace_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+    def _find_brace_function_end(
+        self, lines: List[str], start_idx: int
+    ) -> Optional[int]:
         if start_idx >= len(lines):
             return None
         brace_count = 0
@@ -2357,7 +2601,9 @@ class ContextExtractor:
         line = re.sub(r"`[^`]*`", "``", line)
         return line
 
-    def _check_indentation_containment(self, lines: List[str], line_idx: int, function_start_idx: int) -> bool:
+    def _check_indentation_containment(
+        self, lines: List[str], line_idx: int, function_start_idx: int
+    ) -> bool:
         if function_start_idx >= len(lines) or line_idx >= len(lines):
             return False
         func_line = lines[function_start_idx]
@@ -2368,7 +2614,9 @@ class ContextExtractor:
         target_indent = len(target_line) - len(target_line.lstrip())
         return target_indent > func_indent
 
-    def _find_python_function_end(self, lines: List[str], start_idx: int) -> Optional[int]:
+    def _find_python_function_end(
+        self, lines: List[str], start_idx: int
+    ) -> Optional[int]:
         if start_idx >= len(lines):
             return None
         function_line = lines[start_idx]
@@ -2378,11 +2626,15 @@ class ContextExtractor:
             if not line.strip() or line.strip().startswith("#"):
                 continue
             current_indent = len(line) - len(line.lstrip())
-            if self._has_reached_function_end(current_indent, function_indent, line, lines[i - 1]):
+            if self._has_reached_function_end(
+                current_indent, function_indent, line, lines[i - 1]
+            ):
                 return i - 1
         return len(lines) - 1
 
-    def _has_reached_function_end(self, current_indent: int, function_indent: int, line: str, prev_line: str) -> bool:
+    def _has_reached_function_end(
+        self, current_indent: int, function_indent: int, line: str, prev_line: str
+    ) -> bool:
         if (current_indent <= function_indent) and not (
             prev_line.rstrip().endswith(("\\", ",", "("))
             or line.strip().startswith((")", "def ", "async def"))
@@ -2472,7 +2724,18 @@ class ContextExtractor:
         method_match = re.search(r"\b(\w+)\s*\([^)]*\)\s*\{?", function_line)
         if method_match:
             name = method_match.group(1)
-            keywords = {"public", "private", "protected", "static", "async", "void", "int", "string", "bool", "return"}
+            keywords = {
+                "public",
+                "private",
+                "protected",
+                "static",
+                "async",
+                "void",
+                "int",
+                "string",
+                "bool",
+                "return",
+            }
             if name.lower() not in keywords:
                 return name
         return ""
@@ -2496,7 +2759,9 @@ class ContextExtractor:
                 if self._is_actual_function_def(lines[i]):
                     function_def_line_idx = i
                     break
-        function_start = self._find_function_start_with_decorators(lines, function_def_line_idx)
+        function_start = self._find_function_start_with_decorators(
+            lines, function_def_line_idx
+        )
         function_end = self._find_function_end(function_def_line_idx)
         if function_end is None:
             function_end = min(len(lines) - 1, function_def_line_idx + 50)
@@ -2505,7 +2770,11 @@ class ContextExtractor:
             function_lines = lines[function_start : function_end + 1]
         context_text = "".join(function_lines)
         function_def_line = lines[function_def_line_idx].rstrip()
-        decorators = [lines[i].strip() for i in range(function_start, function_def_line_idx) if lines[i].strip()]
+        decorators = [
+            lines[i].strip()
+            for i in range(function_start, function_def_line_idx)
+            if lines[i].strip()
+        ]
         problem_line = lines[problem_line_idx].rstrip()
         return {
             "context": context_text,
@@ -2522,7 +2791,9 @@ class ContextExtractor:
             "problem_lines": [problem_line],
         }
 
-    def _find_function_start_with_decorators(self, lines: List[str], target_line_idx: int) -> int:
+    def _find_function_start_with_decorators(
+        self, lines: List[str], target_line_idx: int
+    ) -> int:
         start_idx = target_line_idx
         for i in range(target_line_idx - 1, -1, -1):
             line = lines[i].strip()
@@ -2541,7 +2812,9 @@ class ContextExtractor:
                 return True
         return False
 
-    def _try_function_extraction_strategies(self, first_idx: int, last_idx: int) -> Optional[Dict[str, Any]]:
+    def _try_function_extraction_strategies(
+        self, first_idx: int, last_idx: int
+    ) -> Optional[Dict[str, Any]]:
         context = self._try_extract_containing_function(first_idx, last_idx)
         if context:
             return context
@@ -2551,7 +2824,9 @@ class ContextExtractor:
                 return context
         return None
 
-    def _try_expand_multiline_to_function(self, first_idx: int, last_idx: int) -> Optional[Dict[str, Any]]:
+    def _try_expand_multiline_to_function(
+        self, first_idx: int, last_idx: int
+    ) -> Optional[Dict[str, Any]]:
         function_start_idx = self._find_containing_function(last_idx)
         if function_start_idx is None:
             return None
@@ -2562,13 +2837,17 @@ class ContextExtractor:
             return None
         return self._extract_complete_function(function_start_idx, first_idx, last_idx)
 
-    def _try_extract_containing_function(self, first_idx: int, last_idx: int) -> Optional[Dict[str, Any]]:
+    def _try_extract_containing_function(
+        self, first_idx: int, last_idx: int
+    ) -> Optional[Dict[str, Any]]:
         function_start_idx = self._find_containing_function(first_idx)
         if function_start_idx is None:
             return None
         return self._extract_complete_function(function_start_idx, first_idx, last_idx)
 
-    def _extract_normal_context(self, first_idx: int, last_idx: int, context_lines: int) -> Dict[str, Any]:
+    def _extract_normal_context(
+        self, first_idx: int, last_idx: int, context_lines: int
+    ) -> Dict[str, Any]:
         start_idx = max(0, first_idx - context_lines)
         end_idx = min(len(self.lines), last_idx + context_lines + 1)
         return {
@@ -2661,6 +2940,7 @@ def _extract_problem_lines(
         else:
             logger.warning(
                 "Line number %d out of bounds (file has %d lines)",
-                line_number, len(file_lines),
+                line_number,
+                len(file_lines),
             )
     return problem_lines

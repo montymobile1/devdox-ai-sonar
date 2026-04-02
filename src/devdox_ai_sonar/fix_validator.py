@@ -2,12 +2,10 @@
 
 import os
 from pathlib import Path
-from typing import List, Optional, Dict, Any, Union, cast
+from typing import List, Optional, Dict, Any, Union
 from enum import Enum
-import json
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
-from pydantic import ValidationError
 from langchain_core.prompts import ChatPromptTemplate
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -69,6 +67,7 @@ class ValidationResult:
 # Formatting helpers (unchanged)
 # ---------------------------------------------------------------------------
 
+
 def _format_block_header(idx: int, block: CodeBlock) -> str:
     return (
         f"\n{'=' * 60}\n"
@@ -115,6 +114,7 @@ def _format_search_replace_content(block: CodeBlock) -> str:
 # LangChain builder (mirrors build_llm in llm_fixer.py)
 # ---------------------------------------------------------------------------
 
+
 def _build_validator_llm(
     provider: str,
     model: str,
@@ -125,12 +125,12 @@ def _build_validator_llm(
     Uses with_structured_output(SonarFixResponse) for all providers.
     Each provider uses its own LangChain library — no raw SDK clients.
     """
-    from langchain_core.language_models import BaseChatModel
 
     provider = provider.lower()
 
     if provider == "openai":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -140,6 +140,7 @@ def _build_validator_llm(
 
     if provider == "togetherai":
         from langchain_together import ChatTogether
+
         return ChatTogether(
             model=model,
             together_api_key=api_key,
@@ -149,6 +150,7 @@ def _build_validator_llm(
 
     if provider == "openrouter":
         from langchain_openai import ChatOpenAI
+
         return ChatOpenAI(
             model=model,
             api_key=api_key,
@@ -163,6 +165,7 @@ def _build_validator_llm(
 
     if provider == "gemini":
         from langchain_google_genai import ChatGoogleGenerativeAI
+
         return ChatGoogleGenerativeAI(
             model=model,
             google_api_key=api_key,
@@ -179,6 +182,7 @@ def _build_validator_llm(
 # ---------------------------------------------------------------------------
 # FixValidator
 # ---------------------------------------------------------------------------
+
 
 class FixValidator:
     """
@@ -223,20 +227,20 @@ class FixValidator:
     @staticmethod
     def _resolve_model(provider: str, model: Optional[str]) -> str:
         defaults = {
-            "openai":     "gpt-4o",
+            "openai": "gpt-4o",
             "togetherai": "meta-llama/Llama-3-70b-chat-hf",
             "openrouter": "anthropic/claude-sonnet-4",
-            "gemini":     "gemini-1.5-flash",
+            "gemini": "gemini-1.5-flash",
         }
         return model if model else (defaults.get(provider.lower()) or "gpt-4o")
 
     @staticmethod
     def _resolve_api_key(provider: str, api_key: Optional[str]) -> str:
         env_vars = {
-            "openai":     "OPENAI_API_KEY",
+            "openai": "OPENAI_API_KEY",
             "togetherai": "TOGETHER_API_KEY",
             "openrouter": "OPENROUTER_API_KEY",
-            "gemini":     "GEMINI_KEY",
+            "gemini": "GEMINI_KEY",
         }
         resolved = api_key or os.getenv(env_vars.get(provider.lower(), ""), "")
         if not resolved:
@@ -276,7 +280,11 @@ class FixValidator:
                 fix.fixed_code_blocks
             )
             prompt = self._create_validation_prompt(
-                fix, issue, context, new_error_msg, formatted_fix,
+                fix,
+                issue,
+                context,
+                new_error_msg,
+                formatted_fix,
                 test_err=test_err,
             )
 
@@ -300,8 +308,11 @@ class FixValidator:
                     and each_block.change_type == ChangeType.FULL_CODE
                 ):
                     matching_block = next(
-                        (b for b in fix.fixed_code_blocks
-                         if b.start_line == each_block.start_line),
+                        (
+                            b
+                            for b in fix.fixed_code_blocks
+                            if b.start_line == each_block.start_line
+                        ),
                         None,
                     )
                     if matching_block:
@@ -309,7 +320,8 @@ class FixValidator:
                     else:
                         logger.warning(
                             "No matching block for lines %s-%s",
-                            each_block.start_line, each_block.end_line,
+                            each_block.start_line,
+                            each_block.end_line,
                         )
 
             modified_fix.fixed_code_blocks = blocks
@@ -327,7 +339,9 @@ class FixValidator:
             )
 
         except Exception as exc:
-            logger.error("Error validating fix for issue %s: %s", issue.key, exc, exc_info=True)
+            logger.error(
+                "Error validating fix for issue %s: %s", issue.key, exc, exc_info=True
+            )
             return ValidationResult(
                 status=ValidationStatus.NEEDS_REVIEW,
                 original_fix=fix,
@@ -352,20 +366,30 @@ class FixValidator:
             "critical, and focused on preventing bugs and security issues."
         )
         try:
-            chain = ChatPromptTemplate.from_messages([
-                ("system", "{system}"),
-                ("human",  "{prompt}"),
-            ]) | self._structured_llm
+            chain = (
+                ChatPromptTemplate.from_messages(
+                    [
+                        ("system", "{system}"),
+                        ("human", "{prompt}"),
+                    ]
+                )
+                | self._structured_llm
+            )
 
-            result: SonarFixResponse = chain.invoke({
-                "system": system_prompt,
-                "prompt": prompt,
-            })
+            result: SonarFixResponse = chain.invoke(
+                {
+                    "system": system_prompt,
+                    "prompt": prompt,
+                }
+            )
             return result
         except Exception as exc:
             logger.error(
                 "Validator LLM call failed [provider=%s model=%s]: %s",
-                self.provider, self.model, exc, exc_info=True,
+                self.provider,
+                self.model,
+                exc,
+                exc_info=True,
             )
             return None
 
@@ -396,12 +420,12 @@ class FixValidator:
         start_idx = max(0, first_idx - context_lines)
         end_idx = min(len(lines), last_idx + context_lines + 1)
         return {
-            "full_context":  "\n".join(lines[start_idx:end_idx]),
+            "full_context": "\n".join(lines[start_idx:end_idx]),
             "problem_lines": "\n".join(lines[first_idx : last_idx + 1]),
-            "start_line":    start_idx + 1,
-            "end_line":      end_idx,
-            "issue_start":   first_line,
-            "issue_end":     last_line,
+            "start_line": start_idx + 1,
+            "end_line": end_idx,
+            "issue_start": first_line,
+            "issue_end": last_line,
         }
 
     def _create_validation_prompt(

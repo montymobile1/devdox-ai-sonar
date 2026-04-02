@@ -592,7 +592,6 @@ def apply_complex_fix(
 
     # Step 2: Apply helper code if present
     if fix.helper_code:
-
         lines = apply_helper_code(lines, line_range, fix)
 
     if fix.import_block_code:

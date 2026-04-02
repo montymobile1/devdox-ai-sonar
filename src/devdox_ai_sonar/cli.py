@@ -893,6 +893,7 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
         if verbose:
             click.echo(f"Error executing command '{command}': {e}", err=True)
             import traceback
+
             traceback.print_exc()
         else:
             click.echo(f"Error: {e}", err=True)
@@ -1111,16 +1112,26 @@ async def fix_multiple(**kwargs: Any) -> None:
         }
 
         await _process_and_fix_issues(
-            auth_config, llm_config, branch,
-            pull_request=str(pull_request), fix_params=fix_params,
-            issue_type=IssueType.REGULAR, download_latest=False,
-            system_ask=False, check_tmp_path=False,
+            auth_config,
+            llm_config,
+            branch,
+            pull_request=str(pull_request),
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            download_latest=False,
+            system_ask=False,
+            check_tmp_path=False,
         )
         await _process_and_fix_issues(
-            auth_config, llm_config, branch,
-            pull_request=str(pull_request), fix_params=fix_params,
-            issue_type=IssueType.SECURITY, download_latest=False,
-            system_ask=False, check_tmp_path=False,
+            auth_config,
+            llm_config,
+            branch,
+            pull_request=str(pull_request),
+            fix_params=fix_params,
+            issue_type=IssueType.SECURITY,
+            download_latest=False,
+            system_ask=False,
+            check_tmp_path=False,
         )
 
     except SwitchCommandException:
@@ -1266,7 +1277,12 @@ async def _process_and_fix_issues(
                 raise click.Abort()
 
         issues = _fetch_issues_by_type(
-            services["analyzer"], auth_config, branch, pull_request, fix_params, issue_type,
+            services["analyzer"],
+            auth_config,
+            branch,
+            pull_request,
+            fix_params,
+            issue_type,
         )
         if not issues:
             msg = (
@@ -1281,8 +1297,13 @@ async def _process_and_fix_issues(
         console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
 
         await _process_files_with_agent(
-            issues, services, auth_config, fix_params, tmp_path,
-            agent_max_retries=2, system_ask=system_ask,
+            issues,
+            services,
+            auth_config,
+            fix_params,
+            tmp_path,
+            agent_max_retries=2,
+            system_ask=system_ask,
         )
 
 
@@ -1387,7 +1408,9 @@ async def _process_files_with_agent(
         if idx < len(all_issues) and system_ask:
             next_issue = all_issues[idx]
             next_rule = getattr(next_issue, "rule", "?")
-            next_file = getattr(next_issue, "file_path", getattr(next_issue, "file", "?"))
+            next_file = getattr(
+                next_issue, "file_path", getattr(next_issue, "file", "?")
+            )
             if not await smart_confirm(
                 f"Continue to next issue? {next_rule} in {next_file})",
                 default=True,
@@ -1412,16 +1435,28 @@ async def _process_files_with_issues(
     )
     if issue_type == IssueType.SECURITY:
         await _process_security_issues(
-            issues_by_file, services, auth_config, fix_params,
-            md_file_path, tmp_path, system_ask, check_tmp_path,
+            issues_by_file,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+            system_ask,
+            check_tmp_path,
         )
     else:
         issues_by_rule_nested = {
             rule_key: {"issue": issues} for rule_key, issues in issues_by_file.items()
         }
         await _process_regular_issues(
-            issues_by_rule_nested, services, auth_config, fix_params,
-            md_file_path, tmp_path, system_ask, check_tmp_path,
+            issues_by_rule_nested,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+            system_ask,
+            check_tmp_path,
         )
 
 
@@ -1442,8 +1477,15 @@ async def _process_regular_issues(
             f"\n[blue]Processing Rule ({rule_num}/{total_rules}): {rule_key}[/blue]"
         )
         success = await _process_issues_for_rule(
-            rule_key, issues_list, services, auth_config, fix_params,
-            md_file_path, tmp_path, system_ask, check_tmp_path,
+            rule_key,
+            issues_list,
+            services,
+            auth_config,
+            fix_params,
+            md_file_path,
+            tmp_path,
+            system_ask,
+            check_tmp_path,
         )
         if not success:
             console.print(f"[red]Failed processing {rule_key}, skipping[/red]")
@@ -1470,12 +1512,20 @@ async def _process_issues_for_rule(
             continue
 
         await _process_single_fix(
-            issues=[issue], services=services, auth_config=auth_config,
-            fix_params=fix_params, issue_type=IssueType.REGULAR, rule_key=rule_key,
-            md_file_path=md_file_path, tmp_path=tmp_path, check_tmp_path=check_tmp_path,
+            issues=[issue],
+            services=services,
+            auth_config=auth_config,
+            fix_params=fix_params,
+            issue_type=IssueType.REGULAR,
+            rule_key=rule_key,
+            md_file_path=md_file_path,
+            tmp_path=tmp_path,
+            check_tmp_path=check_tmp_path,
         )
 
-        if not await _should_continue_to_next_issue(idx, total_issues, system_ask=system_ask):
+        if not await _should_continue_to_next_issue(
+            idx, total_issues, system_ask=system_ask
+        ):
             return False
 
     return True
@@ -1493,8 +1543,14 @@ async def _process_single_fix(
     check_tmp_path: bool = True,
 ) -> None:
     fixes = await _generate_fix_for_file(
-        issues, services, auth_config, issue_type, str(tmp_path),
-        rule_key, md_file_path, check_tmp_path=check_tmp_path,
+        issues,
+        services,
+        auth_config,
+        issue_type,
+        str(tmp_path),
+        rule_key,
+        md_file_path,
+        check_tmp_path=check_tmp_path,
     )
     if fixes:
         for fix in fixes:
@@ -1525,12 +1581,20 @@ async def _process_security_issues(
                 continue
 
             await _process_single_fix(
-                issues=[issue], services=services, auth_config=auth_config,
-                fix_params=fix_params, issue_type=IssueType.SECURITY, rule_key=file_key,
-                md_file_path=md_file_path, tmp_path=tmp_path, check_tmp_path=check_tmp_path,
+                issues=[issue],
+                services=services,
+                auth_config=auth_config,
+                fix_params=fix_params,
+                issue_type=IssueType.SECURITY,
+                rule_key=file_key,
+                md_file_path=md_file_path,
+                tmp_path=tmp_path,
+                check_tmp_path=check_tmp_path,
             )
 
-            if not await _should_continue_to_next_issue(idx, total_files, system_ask=system_ask):
+            if not await _should_continue_to_next_issue(
+                idx, total_files, system_ask=system_ask
+            ):
                 break
 
 
@@ -1544,7 +1608,8 @@ async def handle_fix(
     _display_fix_preview(fix, issues)
     if fix_params["apply"]:
         result = await fixer.apply_fixes_with_validation(
-            fixes=[fix], issues=issues,
+            fixes=[fix],
+            issues=issues,
             project_path=Path(str(auth_config.project_path)),
             create_backup=fix_params.get("create_backup", False),
             dry_run=fix_params["dry_run"],

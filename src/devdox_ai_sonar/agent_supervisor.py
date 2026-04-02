@@ -51,10 +51,20 @@ State keys:
     error_feedback  — str (REJECTED explanation passed back to llm tool on retry)
     _report         — Callable[[str], None] | None  (phase status reporter)
 """
+
 import logging
-import operator
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, TypedDict, Union, Annotated, cast
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    List,
+    Optional,
+    TypedDict,
+    Union,
+    Annotated,
+    cast,
+)
 
 from langchain_core.tools import tool
 from langgraph.graph import END, StateGraph
@@ -62,7 +72,12 @@ from langgraph.graph import END, StateGraph
 from devdox_ai_sonar.fix_validator import FixValidator
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.utils.file_indentation import apply_single_fix
-from devdox_ai_sonar.models.sonar import FixResult, FixSuggestion, SonarIssue, SonarSecurityIssue
+from devdox_ai_sonar.models.sonar import (
+    FixResult,
+    FixSuggestion,
+    SonarIssue,
+    SonarSecurityIssue,
+)
 from devdox_ai_sonar.services.extractor import IssueExtractor
 from devdox_ai_sonar.services.rule_handler import RuleHandlerRegistry
 
@@ -99,6 +114,7 @@ def keep_last(left: Any, right: Any) -> Any:
     if a node accidentally emits the field before the real value is set.
     """
     return right
+
 
 def _noop_reporter(msg: str) -> None:  # noqa: D401
     """Default reporter — does nothing (keeps graph hermetic when no UI is attached)."""
@@ -141,12 +157,20 @@ async def _validate_issue_impl(state: dict, fixer: LLMFixer) -> dict:
     issues: List[IssueUnion] = state["issues"]
 
     rule = issues[0].rule if issues else "?"
-    file_hint = getattr(issues[0], "file_path", getattr(issues[0], "file", "?")) if issues else "?"
-    report(f"[bold cyan]  ▶ Phase 1/6 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]")
+    file_hint = (
+        getattr(issues[0], "file_path", getattr(issues[0], "file", "?"))
+        if issues
+        else "?"
+    )
+    report(
+        f"[bold cyan]  ▶ Phase 1/6 — Validating issue[/bold cyan]  rule=[yellow]{rule}[/yellow]  file=[dim]{file_hint}[/dim]"
+    )
 
     extractor = IssueExtractor(fixer.file_reader)
     validation = await extractor.validate_issue_group(
-        issues, state["tmp_path"], state["project_path"],
+        issues,
+        state["tmp_path"],
+        state["project_path"],
     )
     return _check_validation_result(validation, report)
 
@@ -176,7 +200,9 @@ def _check_validation_result(validation: Any, report: StatusReporter) -> dict:
 
 
 async def _run_handler_impl(
-    state: dict, fixer: LLMFixer, registry: RuleHandlerRegistry,
+    state: dict,
+    fixer: LLMFixer,
+    registry: RuleHandlerRegistry,
     handler_label: str,
 ) -> dict:
     """Shared logic for both automated and LLM handler tools."""
@@ -185,21 +211,30 @@ async def _run_handler_impl(
     validation = state["validation"]
     handler = registry.get_handler(issues[0].rule)
 
-    report(f"[bold cyan]  ▶ Phase 2/6 — {handler_label}[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]")
-    logger.info("%s: %s for rule %s", handler_label, handler.__class__.__name__, issues[0].rule)
+    report(
+        f"[bold cyan]  ▶ Phase 2/6 — {handler_label}[/bold cyan]  handler=[yellow]{handler.__class__.__name__}[/yellow]"
+    )
+    logger.info(
+        "%s: %s for rule %s", handler_label, handler.__class__.__name__, issues[0].rule
+    )
 
     context = await _prepare_context(fixer, validation, state, report)
     if not context:
         return {"error": f"Could not prepare fix context for {issues[0].rule}"}
 
-    return await _generate_and_build_fixes(handler, fixer, state, context, report, handler_label)
+    return await _generate_and_build_fixes(
+        handler, fixer, state, context, report, handler_label
+    )
 
 
-async def _prepare_context(fixer: LLMFixer, validation: Any, state: dict,
-                           report: StatusReporter) -> Any:
+async def _prepare_context(
+    fixer: LLMFixer, validation: Any, state: dict, report: StatusReporter
+) -> Any:
     """Prepare fix context and inject error feedback if present."""
     context = await fixer._prepare_fix_context(
-        validation.file_path, validation.line_range, state.get("modified_content", ""),
+        validation.file_path,
+        validation.line_range,
+        state.get("modified_content", ""),
     )
     if not context:
         report("[red]  ✗ Could not prepare fix context[/red]")
@@ -212,44 +247,70 @@ async def _prepare_context(fixer: LLMFixer, validation: Any, state: dict,
 
 
 async def _generate_and_build_fixes(
-    handler: Any, fixer: LLMFixer, state: dict,
-    context: Any, report: StatusReporter, handler_label: str,
+    handler: Any,
+    fixer: LLMFixer,
+    state: dict,
+    context: Any,
+    report: StatusReporter,
+    handler_label: str,
 ) -> dict:
     """Generate fixes from handler and build suggestions."""
     issues = state["issues"]
     project_path = state["project_path"]
     fix_response_lst = await handler.generate_fixes(
-        issues, context, project_path, state["validation"].file_path, llm_caller=fixer,
+        issues,
+        context,
+        project_path,
+        state["validation"].file_path,
+        llm_caller=fixer,
     )
     if not fix_response_lst:
         report(f"[red]  ✗ {handler_label} returned no fixes[/red]")
         return {"error": f"{handler.__class__.__name__} returned no fixes"}
 
     _write_explanation_if_needed(fixer, state, fix_response_lst, issues, context)
-    return _build_fix_suggestions(fixer, state, fix_response_lst, context, handler, report, handler_label)
+    return _build_fix_suggestions(
+        fixer, state, fix_response_lst, context, handler, report, handler_label
+    )
 
 
-def _write_explanation_if_needed(fixer: LLMFixer, state: dict, fix_response_lst: list,
-                                 issues: list, context: Any) -> None:
+def _write_explanation_if_needed(
+    fixer: LLMFixer, state: dict, fix_response_lst: list, issues: list, context: Any
+) -> None:
     """Write explanation docs if file_md is set."""
     file_md: str = state.get("file_md", "")
     if file_md:
         fixer.write_explaination(
-            state["project_path"] / file_md, fix_response_lst, issues,
-            context.context_dict, project_path=state["project_path"],
+            state["project_path"] / file_md,
+            fix_response_lst,
+            issues,
+            context.context_dict,
+            project_path=state["project_path"],
         )
 
 
-def _build_fix_suggestions(fixer: LLMFixer, state: dict, fix_response_lst: list,
-                           context: Any, handler: Any, report: StatusReporter,
-                           handler_label: str) -> dict:
+def _build_fix_suggestions(
+    fixer: LLMFixer,
+    state: dict,
+    fix_response_lst: list,
+    context: Any,
+    handler: Any,
+    report: StatusReporter,
+    handler_label: str,
+) -> dict:
     """Build FixSuggestion list from handler response."""
     modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
     fixes = fixer._build_fix_suggestion(
-        fix_response_lst, context, state["validation"].file_path,
-        state["project_path"], state["validation"].line_range, modify_line_range,
+        fix_response_lst,
+        context,
+        state["validation"].file_path,
+        state["project_path"],
+        state["validation"].line_range,
+        modify_line_range,
     )
-    report(f"[green]  ✓ {handler_label} generated[/green]  ({len(fixes)} suggestion(s))")
+    report(
+        f"[green]  ✓ {handler_label} generated[/green]  ({len(fixes)} suggestion(s))"
+    )
     logger.info("%s produced %d fix(es)", handler_label, len(fixes))
     return {"fixes": fixes}
 
@@ -265,16 +326,20 @@ def _read_and_apply_fix(fix: Any, project_path: Path) -> list:
     return lines
 
 
-def _check_syntax_for_fix(fix: Any, project_path: Path, fixer: LLMFixer,
-                          report: StatusReporter) -> Optional[dict]:
+def _check_syntax_for_fix(
+    fix: Any, project_path: Path, fixer: LLMFixer, report: StatusReporter
+) -> Optional[dict]:
     """Check syntax for a single fix. Returns error dict or None on success."""
     lines = _read_and_apply_fix(fix, project_path)
-    report("[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)")
+    report(
+        "[bold cyan]  ▶ Phase 3/6 — Checking syntax[/bold cyan]  (python -m py_compile)"
+    )
     return _run_py_compile(lines, project_path, fixer, report)
 
 
-def _run_py_compile(lines: list, project_path: Path, fixer: LLMFixer,
-                    report: StatusReporter) -> Optional[dict]:
+def _run_py_compile(
+    lines: list, project_path: Path, fixer: LLMFixer, report: StatusReporter
+) -> Optional[dict]:
     """Write lines to temp file and run py_compile."""
     tmp_file = project_path / ".supervisor_tmp.py"
     try:
@@ -285,7 +350,9 @@ def _run_py_compile(lines: list, project_path: Path, fixer: LLMFixer,
             report("[green]  ✓ Syntax OK[/green]")
             return None
         logger.warning("Syntax check failed: %s", err)
-        report(f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]")
+        report(
+            f"[yellow]  ⚠ Syntax error detected[/yellow] — forwarding to validator\n[dim]    {err}[/dim]"
+        )
         return {"syntax_err": err}
     except Exception as exc:
         logger.error("Syntax check exception: %s", exc)
@@ -295,8 +362,9 @@ def _run_py_compile(lines: list, project_path: Path, fixer: LLMFixer,
         tmp_file.unlink(missing_ok=True)
 
 
-def _run_test_suite(testing_path: Path, fixer: LLMFixer,
-                    report: StatusReporter, project_path: Path) -> dict:
+def _run_test_suite(
+    testing_path: Path, fixer: LLMFixer, report: StatusReporter, project_path: Path
+) -> dict:
     """Execute pytest and return test_err result."""
     try:
         ok, err = fixer.run_testing_cases(str(testing_path))
@@ -316,29 +384,38 @@ def _run_test_suite(testing_path: Path, fixer: LLMFixer,
 
 
 def _run_validation_loop(
-    fixes: List[FixSuggestion], issues: List[IssueUnion],
-    validator: FixValidator, file_content: str,
-    syntax_err: str, test_err: str,
+    fixes: List[FixSuggestion],
+    issues: List[IssueUnion],
+    validator: FixValidator,
+    file_content: str,
+    syntax_err: str,
+    test_err: str,
 ) -> tuple:
     """Validate each fix and return (accepted, last_explanation)."""
     accepted: List[FixSuggestion] = []
     last_explanation = ""
     for fix in fixes:
         result = validator.validate_fix(
-            fix=fix, issue=issues[0],
-            file_content=file_content, new_error_msg=syntax_err,
+            fix=fix,
+            issue=issues[0],
+            file_content=file_content,
+            new_error_msg=syntax_err,
             test_err=test_err,
         )
         if result.should_apply:
             accepted.append(result.final_fix)
         else:
             last_explanation = result.explanation
-            logger.warning("Validator rejected fix for %s: %s", issues[0].rule, result.explanation)
+            logger.warning(
+                "Validator rejected fix for %s: %s", issues[0].rule, result.explanation
+            )
     return accepted, last_explanation
 
 
 def _build_rejection_result(
-    last_explanation: str, state: dict, report: StatusReporter,
+    last_explanation: str,
+    state: dict,
+    report: StatusReporter,
 ) -> dict:
     """Build result dict when all fixes are rejected."""
     logger.warning("All fixes rejected: %s", last_explanation)
@@ -353,7 +430,10 @@ def _build_rejection_result(
             f"[red]  ✗ All fixes rejected — retries exhausted[/red]\n"
             f"[dim]    Reason: {last_explanation}[/dim]"
         )
-    return {"accepted_fixes": [], "error_feedback": f"Fix rejected — {last_explanation}"}
+    return {
+        "accepted_fixes": [],
+        "error_feedback": f"Fix rejected — {last_explanation}",
+    }
 
 
 def _read_file_for_validation(validation: Any) -> str:
@@ -408,7 +488,9 @@ def _check_testing_impl(state: dict, fixer: LLMFixer) -> dict:
 def _validate_fix_impl(state: dict, validator: Optional[FixValidator]) -> dict:
     """Run FixValidator on each fix and collect accepted/rejected results."""
     report: StatusReporter = state.get("_report") or _noop_reporter
-    report("[bold cyan]  ▶ Phase 5/5 — Validating fix quality[/bold cyan]  (FixValidator)")
+    report(
+        "[bold cyan]  ▶ Phase 5/5 — Validating fix quality[/bold cyan]  (FixValidator)"
+    )
     if validator is None:
         report("[dim]    ↳ No validator configured — accepting all fixes[/dim]")
         return {"accepted_fixes": state.get("fixes", []), "error_feedback": ""}
@@ -418,12 +500,18 @@ def _validate_fix_impl(state: dict, validator: Optional[FixValidator]) -> dict:
         return {"accepted_fixes": [], "error_feedback": "No fixes to validate"}
     file_content = _read_file_for_validation(state.get("validation"))
     accepted, last_explanation = _run_validation_loop(
-        fixes, state["issues"], validator, file_content,
-        state.get("syntax_err") or "", state.get("test_err") or "",
+        fixes,
+        state["issues"],
+        validator,
+        file_content,
+        state.get("syntax_err") or "",
+        state.get("test_err") or "",
     )
     if accepted:
         logger.info("Validator accepted %d/%d fix(es)", len(accepted), len(fixes))
-        report(f"[green]  ✓ Validator accepted {len(accepted)}/{len(fixes)} fix(es)[/green]")
+        report(
+            f"[green]  ✓ Validator accepted {len(accepted)}/{len(fixes)} fix(es)[/green]"
+        )
         return {"accepted_fixes": accepted, "error_feedback": ""}
     return _build_rejection_result(last_explanation, state, report)
 
@@ -514,11 +602,11 @@ def route_by_rule(state: SonarState) -> str:
 
 def route_after_syntax(state: SonarState) -> str:
     """
-       Edge after check_syntax_tool.
-       - automated rule + syntax OK  → "accept"   (no LLM, no validator needed)
-       - llm rule + syntax OK        → "testing"  (run tests before accepting)
-       - syntax error (any source)   → "validate" (forward to FixValidator)
-       """
+    Edge after check_syntax_tool.
+    - automated rule + syntax OK  → "accept"   (no LLM, no validator needed)
+    - llm rule + syntax OK        → "testing"  (run tests before accepting)
+    - syntax error (any source)   → "validate" (forward to FixValidator)
+    """
     if state.get("syntax_err") is not None:
         logger.info("Routing → validate (syntax_err=%s)", state["syntax_err"])
         return "validate"
@@ -530,8 +618,6 @@ def route_after_syntax(state: SonarState) -> str:
 
     logger.info("Routing → testing (llm rule, syntax OK)")
     return "testing"
-
-
 
 
 def route_after_test(state: SonarState) -> str:
@@ -564,7 +650,9 @@ def route_after_validation_fix(state: SonarState) -> str:
     if rule not in _AUTOMATED_RULES and retry_count < MAX_RETRIES:
         logger.info(
             "Routing → retry (retry %d/%d for rule %s)",
-            retry_count + 1, MAX_RETRIES, rule,
+            retry_count + 1,
+            MAX_RETRIES,
+            rule,
         )
         return "retry"
 
@@ -579,18 +667,22 @@ def route_after_validation_fix(state: SonarState) -> str:
 
 def _make_node(tool_fn: Any) -> Callable[..., Any]:
     """Wrap a @tool function so it can be used as a graph node."""
+
     async def node(state: SonarState) -> dict:
         result = await tool_fn.ainvoke({"state": dict(state)})
         # tool_fn returns a dict patch — merge into state
         return {**state, **result}
+
     return node
 
 
 def _make_sync_node(tool_fn: Any) -> Callable[..., Any]:
     """Wrap a synchronous @tool function as a graph node."""
+
     def node(state: SonarState) -> dict:
         result = tool_fn.invoke({"state": dict(state)})
         return {**state, **result}
+
     return node
 
 
@@ -642,25 +734,30 @@ def _add_graph_edges(graph: StateGraph) -> None:
     """Wire all edges and conditional edges on the graph."""
     graph.set_entry_point("validate_issue")
     graph.add_conditional_edges(
-        "validate_issue", route_after_validation,
+        "validate_issue",
+        route_after_validation,
         {"error": "error", "route_rule": "route_rule"},
     )
     graph.add_conditional_edges(
-        "route_rule", route_by_rule,
+        "route_rule",
+        route_by_rule,
         {"automated": "run_automated", "llm": "run_llm"},
     )
     graph.add_edge("run_automated", "check_syntax")
     graph.add_edge("run_llm", "check_syntax")
     graph.add_conditional_edges(
-        "check_syntax", route_after_syntax,
+        "check_syntax",
+        route_after_syntax,
         {"accept": "accept", "testing": "check_testing", "validate": "validate_fix"},
     )
     graph.add_conditional_edges(
-        "check_testing", route_after_test,
+        "check_testing",
+        route_after_test,
         {"accept": "accept", "validate": "validate_fix"},
     )
     graph.add_conditional_edges(
-        "validate_fix", route_after_validation_fix,
+        "validate_fix",
+        route_after_validation_fix,
         {"accept": "accept", "retry": "retry", "error": "error"},
     )
     graph.add_edge("retry", "run_llm")
@@ -725,35 +822,54 @@ class AgentSupervisor:
 
         for file_issues in self._group_by_file(issues, project_path).values():
             accepted = await self._run_for_file_group(
-                file_issues, project_path, tmp_path,
-                modified_content, file_md,
+                file_issues,
+                project_path,
+                tmp_path,
+                modified_content,
+                file_md,
                 skip_tests=skip_tests,
                 status_reporter=status_reporter or _noop_reporter,
             )
             all_accepted.extend(accepted)
 
         if not all_accepted:
-            return FixResult(project_path=project_path, total_fixes_attempted=len(issues))
+            return FixResult(
+                project_path=project_path, total_fixes_attempted=len(issues)
+            )
 
         return await self.fixer.apply_fixes(
-            all_accepted, project_path,
-            create_backup=create_backup, dry_run=dry_run,
+            all_accepted,
+            project_path,
+            create_backup=create_backup,
+            dry_run=dry_run,
         )
 
     @staticmethod
     def _build_initial_state(
-        issues: List[IssueUnion], project_path: Path, tmp_path: Path,
-        modified_content: str, file_md: str, skip_tests: bool,
+        issues: List[IssueUnion],
+        project_path: Path,
+        tmp_path: Path,
+        modified_content: str,
+        file_md: str,
+        skip_tests: bool,
         status_reporter: StatusReporter,
     ) -> "SonarState":
         """Build the initial state dict for a file group run."""
         return {
-            "issues": issues, "project_path": project_path,
-            "tmp_path": tmp_path, "modified_content": modified_content,
-            "file_md": file_md, "fixes": [], "accepted_fixes": [],
-            "error": "", "retry_count": 0, "error_feedback": "",
-            "syntax_err": None, "test_err": None,
-            "skip_tests": skip_tests, "_report": status_reporter,
+            "issues": issues,
+            "project_path": project_path,
+            "tmp_path": tmp_path,
+            "modified_content": modified_content,
+            "file_md": file_md,
+            "fixes": [],
+            "accepted_fixes": [],
+            "error": "",
+            "retry_count": 0,
+            "error_feedback": "",
+            "syntax_err": None,
+            "test_err": None,
+            "skip_tests": skip_tests,
+            "_report": status_reporter,
         }
 
     async def _run_for_file_group(
@@ -767,18 +883,26 @@ class AgentSupervisor:
         status_reporter: StatusReporter = _noop_reporter,
     ) -> List[FixSuggestion]:
         initial_state = self._build_initial_state(
-            issues, project_path, tmp_path,
-            modified_content, file_md, skip_tests, status_reporter,
+            issues,
+            project_path,
+            tmp_path,
+            modified_content,
+            file_md,
+            skip_tests,
+            status_reporter,
         )
         try:
             final_state = await self._graph.ainvoke(
-                initial_state, config={"recursion_limit": 30},
+                initial_state,
+                config={"recursion_limit": 30},
             )
             return cast(List[FixSuggestion], final_state.get("accepted_fixes", []))
         except Exception as exc:
             logger.error(
                 "Graph execution failed for rule=%s: %s",
-                issues[0].rule if issues else "?", exc, exc_info=True,
+                issues[0].rule if issues else "?",
+                exc,
+                exc_info=True,
             )
             return []
 
@@ -803,9 +927,15 @@ class AgentSupervisor:
 # ---------------------------------------------------------------------------
 
 
-def _build_validator(provider: str, model: Optional[str], api_key: Optional[str],
-                     validator_provider: Optional[str], validator_model: Optional[str],
-                     validator_api_key: Optional[str], min_confidence: float) -> FixValidator:
+def _build_validator(
+    provider: str,
+    model: Optional[str],
+    api_key: Optional[str],
+    validator_provider: Optional[str],
+    validator_model: Optional[str],
+    validator_api_key: Optional[str],
+    min_confidence: float,
+) -> FixValidator:
     """Build a FixValidator with fallback to fixer params."""
     return FixValidator(
         provider=validator_provider or provider,
@@ -827,10 +957,18 @@ def build_supervisor(
     min_confidence: float = 0.7,
 ) -> AgentSupervisor:
     """Factory — builds AgentSupervisor with fixer and optional validator."""
-    fixer = LLMFixer(provider=provider, model=model, api_key=api_key, context_lines=context_lines)
+    fixer = LLMFixer(
+        provider=provider, model=model, api_key=api_key, context_lines=context_lines
+    )
     validator: Optional[FixValidator] = None
     if use_validator:
         validator = _build_validator(
-            provider, model, api_key, validator_provider, validator_model, validator_api_key, min_confidence,
+            provider,
+            model,
+            api_key,
+            validator_provider,
+            validator_model,
+            validator_api_key,
+            min_confidence,
         )
     return AgentSupervisor(fixer=fixer, validator=validator)

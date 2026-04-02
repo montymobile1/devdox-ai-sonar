@@ -66,11 +66,17 @@ class ProviderValidator:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "authentication" in error_msg or "api key" in error_msg or "401" in error_msg:
+            if (
+                "authentication" in error_msg
+                or "api key" in error_msg
+                or "401" in error_msg
+            ):
                 return ProviderValidationResult.failure_result(
                     "Invalid API key - authentication failed"
                 )
-            return ProviderValidationResult.failure_result(f"Unexpected error: {str(e)}")
+            return ProviderValidationResult.failure_result(
+                f"Unexpected error: {str(e)}"
+            )
 
     @staticmethod
     def validate_gemini(api_key: str) -> ProviderValidationResult:
@@ -154,11 +160,17 @@ class ProviderValidator:
 
         except Exception as e:
             error_msg = str(e).lower()
-            if "authentication" in error_msg or "api key" in error_msg or "401" in error_msg:
+            if (
+                "authentication" in error_msg
+                or "api key" in error_msg
+                or "401" in error_msg
+            ):
                 return ProviderValidationResult.failure_result(
                     "Invalid API key - authentication failed"
                 )
-            return ProviderValidationResult.failure_result(f"Unexpected error: {str(e)}")
+            return ProviderValidationResult.failure_result(
+                f"Unexpected error: {str(e)}"
+            )
 
     @classmethod
     def validate(cls, provider: ProviderType, api_key: str) -> ProviderValidationResult:
