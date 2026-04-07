@@ -1483,7 +1483,7 @@ async def _process_and_fix_issues(
         total_issues = sum(len(issue_list) for issue_list in issues.values())
         console.print(f"\n[green]✓ Found {total_issues} fixable issues[/green]\n")
 
-        rule_info = _collect_rule_information(list(issues.keys()), services["ruler"])
+        rule_info = _collect_rule_information(issues, services["ruler"])
 
         await _process_files_with_issues(
             issues,
@@ -1802,33 +1802,30 @@ async def _generate_fix_for_file(
 
 
 def _collect_rule_information(
-    issues: List[Any],
+    issues: Dict[str, List[Any]],
     ruler: RuleAnalyzer,
 ) -> Dict[str, Any]:
-    """
-    Collect rule information for all unique issue rule keys.
-
-    Checks the local JSON cache first; falls back to the SonarCloud API
-    only for rules that are absent from the cache.
+    """Collect rule information, checking local JSON cache first.
 
     Args:
-        issues:     List of rule keys (strings) to look up.
-        ruler:      RuleAnalyzer instance for live API fallback.
-        cache_path: Path to all_sonarcloud_rules.json.
-                    Defaults to the file in the current working directory.
+        issues: Dict keyed by file path or rule key, values are lists of issue
+                objects. Each issue object must have a `.rule` attribute
+                (e.g. 'python:S1481').
+        ruler:  RuleAnalyzer for live API fallback on cache miss.
 
     Returns:
-        Dict mapping each rule key to its rule-info dict (or None on failure).
+        Dict mapping each unique rule key to its rule-info dict (or None).
     """
     rules_cache = _load_rules_cache()
     rule_info_list: Dict[str, Any] = {}
 
-    for rule_key in issues:
+    unique_rules = {issue.rule for file_issues in issues.values() for issue in file_issues}
+
+    for rule_key in unique_rules:
         if rule_key in rules_cache:
             rule_info_list[rule_key] = rules_cache[rule_key]
-
         else:
-            console.print("Cache miss for rule '%s'. Fetching from API.", rule_key)
+            console.print(f"Cache miss for rule '{rule_key}'. Fetching from API.")
             rule_info_list[rule_key] = ruler.get_rule_by_key(rule_key)
 
     return rule_info_list
