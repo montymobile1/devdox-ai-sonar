@@ -484,8 +484,8 @@ class FixValidator:
 
             return None
 
-        except Exception as e:
-            logger.error(f"Error calling validator LLM: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Validator LLM call failed for %s", self.provider)
             return None
 
     def _call_gemini_validator(self, prompt: str) -> Optional[SonarFixResponse]:
@@ -551,10 +551,60 @@ class FixValidator:
             return SonarFixResponse(**data)
 
         except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON: {e}")
+            cleaned = self._try_extract_json(response_json)
+            if cleaned and cleaned != response_json:
+                try:
+                    data = json.loads(cleaned)
+                    return SonarFixResponse(**data)
+                except (json.JSONDecodeError, ValidationError):
+                    pass
+
+            response_len = len(response_json) if response_json else 0
+            starts_with_fence = (
+                response_json.startswith("```") if response_json else False
+            )
+            is_truncated = (
+                not response_json.rstrip().endswith("}") if response_json else False
+            )
+
+            logger.warning(
+                "Malformed JSON response from %s at position %d of %d chars "
+                "(truncated=%s, markdown_wrapped=%s): %s",
+                self.provider,
+                e.pos,
+                response_len,
+                is_truncated,
+                starts_with_fence,
+                e.msg,
+            )
+            logger.debug("Raw validator response: %s", response_json)
+            raise ValueError("LLM returned malformed JSON response") from e
 
         except ValidationError as e:
-            raise ValueError(f"Schema validation failed: {e}")
+            logger.warning(
+                "Schema validation failed for %s response: %d error(s)",
+                self.provider,
+                e.error_count(),
+            )
+            logger.debug("Validation errors: %s", e.errors())
+            raise ValueError(
+                "LLM response did not match expected schema"
+            ) from e
+
+    @staticmethod
+    def _try_extract_json(text: str) -> Optional[str]:
+        """Strip markdown fences and whitespace from LLM response."""
+        if not text:
+            return None
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            first_newline = cleaned.find("\n")
+            if first_newline != -1:
+                cleaned = cleaned[first_newline + 1 :]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            return cleaned.strip()
+        return cleaned
 
     # Aliases for backward compatibility and test clarity
     _call_togetherai_validator = _call_openai_compatible_validator
