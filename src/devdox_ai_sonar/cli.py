@@ -1819,7 +1819,9 @@ def _collect_rule_information(
     rules_cache = _load_rules_cache()
     rule_info_list: Dict[str, Any] = {}
 
-    unique_rules = {issue.rule for file_issues in issues.values() for issue in file_issues}
+    unique_rules = {
+        issue.rule for file_issues in issues.values() for issue in file_issues
+    }
 
     for rule_key in unique_rules:
         if rule_key in rules_cache:
