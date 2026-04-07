@@ -1628,6 +1628,131 @@ class TestOpenAICompatibleValidatorDispatch:
             validator._call_openai_compatible_validator("test prompt")
 
 
+class TestTryExtractJson:
+    """Tests for _try_extract_json markdown fence stripping."""
+
+    def test_returns_none_for_empty_string(self):
+        assert FixValidator._try_extract_json("") is None
+
+    def test_returns_none_for_none(self):
+        assert FixValidator._try_extract_json(None) is None
+
+    def test_strips_json_fence(self):
+        text = '```json\n{"key": "value"}\n```'
+        assert FixValidator._try_extract_json(text) == '{"key": "value"}'
+
+    def test_strips_plain_fence(self):
+        text = '```\n{"key": "value"}\n```'
+        assert FixValidator._try_extract_json(text) == '{"key": "value"}'
+
+    def test_strips_surrounding_whitespace(self):
+        text = '  \n```json\n{"key": "value"}\n```\n  '
+        assert FixValidator._try_extract_json(text) == '{"key": "value"}'
+
+    def test_returns_text_unchanged_without_fences(self):
+        text = '{"key": "value"}'
+        assert FixValidator._try_extract_json(text) == '{"key": "value"}'
+
+    def test_fence_without_newline(self):
+        text = '```{"key": "value"}```'
+        result = FixValidator._try_extract_json(text)
+        assert "key" in result
+
+
+class TestMarkdownFenceRecovery:
+    """Tests for automatic markdown fence recovery in _call_openai_compatible_validator."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_recovers_valid_json_wrapped_in_fences(self, mock_openai):
+        mock_client = MagicMock()
+        valid_json = (
+            '{"IMPORT_BLOCK": "", "FIXED_CODE_BLOCKS": [{"block_name": "test", '
+            '"start_line": 1, "end_line": 10, "has_changes": true, '
+            '"change_type": "FULL_CODE", "block_type": "module", '
+            '"context": "print(1)"}], "NEW_HELPER_CODE": "", '
+            '"PLACEMENT": "GLOBAL_TOP", "EXPLANATION": "fix", "CONFIDENCE": 0.9}'
+        )
+        fenced = f"```json\n{valid_json}\n```"
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = fenced
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+        result = validator._call_openai_compatible_validator("test prompt")
+
+        assert result is not None
+        assert result.CONFIDENCE == 0.9
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_raises_when_fence_content_also_invalid(self, mock_openai):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "```json\nnot valid json\n```"
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        with pytest.raises(ValueError, match="LLM returned malformed JSON response"):
+            validator._call_openai_compatible_validator("test prompt")
+
+
+class TestDiagnosticLogging:
+    """Tests for diagnostic warning messages on JSON parse failure."""
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_logs_warning_with_provider_and_diagnostics(self, mock_openai, caplog):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "not valid json"
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        import logging
+        with caplog.at_level(logging.WARNING), pytest.raises(ValueError):
+            validator._call_openai_compatible_validator("test prompt")
+
+        assert "openrouter" in caplog.text
+        assert "truncated=" in caplog.text
+        assert "markdown_wrapped=" in caplog.text
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_logs_raw_response_at_debug_only(self, mock_openai, caplog):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "bad json payload"
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        import logging
+        with caplog.at_level(logging.DEBUG), pytest.raises(ValueError):
+            validator._call_openai_compatible_validator("test prompt")
+
+        assert "bad json payload" in caplog.text
+
+    @patch("devdox_ai_sonar.fix_validator.openai")
+    def test_call_llm_validator_logs_exception_with_provider(self, mock_openai, caplog):
+        mock_client = MagicMock()
+        mock_response = MagicMock()
+        mock_response.choices[0].message.content = "not json"
+        mock_client.chat.completions.create.return_value = mock_response
+        mock_openai.OpenAI.return_value = mock_client
+
+        validator = FixValidator(provider="openrouter", api_key="test-key")
+
+        import logging
+        with caplog.at_level(logging.ERROR):
+            result = validator._call_llm_validator("test prompt")
+
+        assert result is None
+        assert "openrouter" in caplog.text
+
+
 class TestOpenRouterProviderIntegration:
     """Test OpenRouter end-to-end fix validation flow."""
 
