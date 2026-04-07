@@ -707,8 +707,8 @@ def _apply_single_pattern(text: str, pattern: SearchReplace) -> str:
 
     # For plain string replacement, decode escape sequences so that
     # patterns like Header\\("ar"\\) match the literal Header("ar")
-    search = pattern.search.encode().decode("unicode_escape")
-    replace = pattern.replace.encode().decode("unicode_escape")
+    search = pattern.search.encode().decode("unicode_escape", errors="replace")
+    replace = pattern.replace.encode().decode("unicode_escape", errors="replace")
 
     if pattern.count is not None:
         return text.replace(search, replace, pattern.count)
@@ -938,8 +938,8 @@ def _apply_replace_action(
 
     line_idx = change.line - 1
 
-    change.old = change.old.encode().decode("unicode_escape")
-    change.new = change.new.encode().decode("unicode_escape")
+    change.old = change.old.encode().decode("unicode_escape", errors="replace")
+    change.new = change.new.encode().decode("unicode_escape", errors="replace")
 
     if change.old.strip() == lines[line_idx].strip():
         _replace_line_preserving_indent(lines, line_idx, change)
