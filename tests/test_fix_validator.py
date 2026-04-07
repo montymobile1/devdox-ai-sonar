@@ -1608,7 +1608,7 @@ class TestOpenAICompatibleValidatorDispatch:
 
         validator = FixValidator(provider="openrouter", api_key="test-key")
 
-        with pytest.raises(ValueError, match="Invalid JSON"):
+        with pytest.raises(ValueError, match="LLM returned malformed JSON response"):
             validator._call_openai_compatible_validator("test prompt")
 
     @patch("devdox_ai_sonar.fix_validator.openai")
@@ -1624,7 +1624,7 @@ class TestOpenAICompatibleValidatorDispatch:
 
         validator = FixValidator(provider="openrouter", api_key="test-key")
 
-        with pytest.raises(ValueError, match="Schema validation failed"):
+        with pytest.raises(ValueError, match="LLM response did not match expected schema"):
             validator._call_openai_compatible_validator("test prompt")
 
 
