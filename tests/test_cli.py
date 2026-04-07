@@ -74,12 +74,15 @@ from devdox_ai_sonar.cli import (
 )
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
+    SonarSecurityIssue,
+    Severity,
+    IssueType as SonarIssueType,
     AnalysisResult,
     FixSuggestion,
     FixResult,
     ChangeType,
     BlockType,
-    CodeBlock
+    CodeBlock,
 )
 # ============================================================================
 # FIXTURES
@@ -4602,25 +4605,196 @@ class TestInitializeFixServices:
 
 
 class TestCollectRuleInformation:
-    """Test cases for _collect_rule_information."""
+    """Test cases for _collect_rule_information (DEV-109).
 
-    @patch('devdox_ai_sonar.cli._load_rules_cache', return_value={})
-    def test_collects_rules_for_all_issues(self, mock_cache):
-        """Test collects rule information for all issues (cache miss, falls back to API)."""
+    The bug: security issues are keyed by file path, not rule key. The old
+    code used dict keys as rule keys, sending file paths to the SonarCloud
+    Rules API which returned 400 errors. The fix extracts .rule from the
+    issue objects instead.
+    """
+
+    @staticmethod
+    def _make_issue(rule: str, file: str = "src/foo.py") -> SonarIssue:
+        return SonarIssue(
+            key=f"proj:{file}:{rule}",
+            rule=rule,
+            severity=Severity.MAJOR,
+            component=f"proj:{file}",
+            project="proj",
+            message=f"Fix {rule}",
+            type=SonarIssueType.CODE_SMELL,
+            file=file,
+        )
+
+    @staticmethod
+    def _make_security_issue(rule: str, file: str) -> SonarSecurityIssue:
+        return SonarSecurityIssue(
+            key=f"proj:{file}:{rule}",
+            component=f"proj:{file}",
+            rule=rule,
+            project="proj",
+            security_category="xss",
+            vulnerability_probability="HIGH",
+            message=f"Fix {rule}",
+            file=file,
+        )
+
+    @staticmethod
+    def _assert_no_file_paths_in_api_calls(mock_ruler: Mock) -> None:
+        for call in mock_ruler.get_rule_by_key.call_args_list:
+            key = call.args[0]
+            assert ":" in key, f"API was called with '{key}' which is not a valid rule key"
+            assert "/" not in key, f"API was called with file path '{key}' instead of a rule key"
+
+    # -- DEV-109 regression: security issues keyed by file path -----------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_security_issues_uses_rule_not_file_path(self, _cache):
         mock_ruler = Mock()
-        mock_ruler.get_rule_by_key.side_effect = [
-            {'key': 'rule1', 'name': 'Rule 1'},
-            {'key': 'rule2', 'name': 'Rule 2'}
-        ]
+        rule_data = {
+            "python:S5131": {"key": "python:S5131", "name": "XSS"},
+            "python:S2077": {"key": "python:S2077", "name": "SQL Injection"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
 
-        issues = ['rule1', 'rule2']
+        issues = {
+            "app/services/auth_service.py": [
+                self._make_security_issue("python:S5131", "app/services/auth_service.py"),
+            ],
+            "app/config/config.py": [
+                self._make_security_issue("python:S2077", "app/config/config.py"),
+            ],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert set(result.keys()) == {"python:S5131", "python:S2077"}
+        for key in result:
+            assert "/" not in key
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_multiple_security_issues_same_file(self, _cache):
+        mock_ruler = Mock()
+        rule_data = {
+            "python:S5131": {"key": "python:S5131"},
+            "python:S2077": {"key": "python:S2077"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
+
+        issues = {
+            "app/views.py": [
+                self._make_security_issue("python:S5131", "app/views.py"),
+                self._make_security_issue("python:S2077", "app/views.py"),
+            ],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert set(result.keys()) == {"python:S5131", "python:S2077"}
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    # -- Regular issues ---------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_regular_issues_grouped_by_rule(self, _cache):
+        mock_ruler = Mock()
+        rule_data = {
+            "python:S1481": {"key": "python:S1481"},
+            "python:S1192": {"key": "python:S1192"},
+        }
+        mock_ruler.get_rule_by_key.side_effect = lambda k: rule_data[k]
+
+        issues = {
+            "python:S1481": [
+                self._make_issue("python:S1481", "src/foo.py"),
+                self._make_issue("python:S1481", "src/bar.py"),
+            ],
+            "python:S1192": [
+                self._make_issue("python:S1192", "src/baz.py"),
+            ],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert set(result.keys()) == {"python:S1481", "python:S1192"}
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    # -- Cache behavior ---------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={
+        "python:S1481": {"key": "python:S1481", "name": "Unused var"},
+    })
+    def test_cache_hit_skips_api(self, _cache):
+        mock_ruler = Mock()
+
+        issues = {
+            "src/foo.py": [self._make_issue("python:S1481")],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert result["python:S1481"] == {"key": "python:S1481", "name": "Unused var"}
+        mock_ruler.get_rule_by_key.assert_not_called()
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={
+        "python:S1481": {"key": "python:S1481", "name": "Unused var"},
+    })
+    def test_mixed_cache_hit_and_miss(self, _cache):
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.return_value = {"key": "python:S1192"}
+
+        issues = {
+            "src/foo.py": [self._make_issue("python:S1481")],
+            "src/bar.py": [self._make_issue("python:S1192", "src/bar.py")],
+        }
 
         result = _collect_rule_information(issues, mock_ruler)
 
         assert len(result) == 2
-        assert 'rule1' in result
-        assert 'rule2' in result
-        assert mock_ruler.get_rule_by_key.call_count == 2
+        mock_ruler.get_rule_by_key.assert_called_once_with("python:S1192")
+        self._assert_no_file_paths_in_api_calls(mock_ruler)
+
+    # -- Deduplication ----------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_deduplicates_same_rule_across_files(self, _cache):
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.return_value = {"key": "python:S1481"}
+
+        issues = {
+            "src/a.py": [self._make_issue("python:S1481", "src/a.py")],
+            "src/b.py": [self._make_issue("python:S1481", "src/b.py")],
+            "src/c.py": [self._make_issue("python:S1481", "src/c.py")],
+        }
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert len(result) == 1
+        mock_ruler.get_rule_by_key.assert_called_once_with("python:S1481")
+
+    # -- Edge cases -------------------------------------------------------
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_empty_issues_dict(self, _cache):
+        mock_ruler = Mock()
+
+        result = _collect_rule_information({}, mock_ruler)
+
+        assert result == {}
+        mock_ruler.get_rule_by_key.assert_not_called()
+
+    @patch("devdox_ai_sonar.cli._load_rules_cache", return_value={})
+    def test_api_returns_none_for_unknown_rule(self, _cache):
+        mock_ruler = Mock()
+        mock_ruler.get_rule_by_key.return_value = None
+
+        issues = {"src/foo.py": [self._make_issue("python:S9999")]}
+
+        result = _collect_rule_information(issues, mock_ruler)
+
+        assert "python:S9999" in result
+        assert result["python:S9999"] is None
 
 
 
