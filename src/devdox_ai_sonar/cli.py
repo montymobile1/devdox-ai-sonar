@@ -1189,7 +1189,8 @@ async def _load_and_validate_config(
 
     params["branch"] = branch
     params["pull_request"] = pull_request
-    params["skip_tests"] = await provider_manager.skip_tests_prompt()
+    saved_skip = await manager.get_value("sonar.skip_tests")
+    params["skip_tests"] = saved_skip if saved_skip is not None else True
 
     console.print("[green]✓[/green] Configuration loaded\n")
     return auth_config, llm_config, params
