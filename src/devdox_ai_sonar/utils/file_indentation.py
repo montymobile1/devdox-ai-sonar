@@ -380,10 +380,7 @@ def apply_sibling_helper(
     # Apply method definition indent to helper (not body indent!)
     indented_helper = helper_code.replace("\\n", "\n")
 
-    try:
-        lines[line_range.end] = indented_helper + "\n"
-    except IndexError:
-        lines[len(lines) - 1] = indented_helper
+    lines.insert(line_range.end + 1, indented_helper + "\n")
     return lines
 
 
