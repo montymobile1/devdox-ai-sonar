@@ -3,6 +3,7 @@ import asyncio
 import os
 import stat
 import shutil
+import sys
 import tempfile
 import time
 import re
@@ -169,6 +170,10 @@ class TmpCloneManager:
             except Exception:
                 logger.exception(
                     "Failed to clean up temporary directory: %s", self._tmp_path
+                )
+                print(
+                    f"Warning: could not remove temporary directory {self._tmp_path}",
+                    file=sys.stderr,
                 )
         return False
 
