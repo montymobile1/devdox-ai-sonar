@@ -25,6 +25,7 @@ from devdox_ai_sonar.agent_supervisor import (
     build_graph,
     build_supervisor,
     build_tools,
+    route_after_handler,
     route_after_syntax,
     route_after_test,
     route_after_validation,
@@ -154,6 +155,29 @@ class TestRouteByRule:
         issue = _make_issue(rule="python:S3776")
         state = _make_state(issues=[issue])
         assert route_by_rule(state) == "llm"
+
+
+# ===========================================================================
+# TestRouteAfterHandler
+# ===========================================================================
+
+
+class TestRouteAfterHandler:
+    def test_returns_syntax_when_no_error(self):
+        state = _make_state(error="")
+        assert route_after_handler(state) == "syntax"
+
+    def test_returns_syntax_when_error_key_missing(self):
+        state = {"issues": [_make_issue()]}
+        assert route_after_handler(state) == "syntax"
+
+    def test_returns_error_when_error_set(self):
+        state = _make_state(error="Could not prepare fix context for python:S3776")
+        assert route_after_handler(state) == "error"
+
+    def test_returns_error_when_handler_returned_no_fixes(self):
+        state = _make_state(error="LLMRuleHandler returned no fixes")
+        assert route_after_handler(state) == "error"
 
 
 # ===========================================================================

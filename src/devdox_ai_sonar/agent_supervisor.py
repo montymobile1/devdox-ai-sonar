@@ -600,6 +600,18 @@ def route_by_rule(state: SonarState) -> str:
     return "llm"
 
 
+def route_after_handler(state: SonarState) -> str:
+    """
+    Edge after run_automated / run_llm.
+    - "error"  → handler failed (no context, no fixes generated)
+    - "syntax" → handler produced fixes, proceed to syntax check
+    """
+    if state.get("error"):
+        logger.info("Routing → error (handler failed: %s)", state["error"])
+        return "error"
+    return "syntax"
+
+
 def route_after_syntax(state: SonarState) -> str:
     """
     Edge after check_syntax_tool.
@@ -743,8 +755,16 @@ def _add_graph_edges(graph: StateGraph) -> None:
         route_by_rule,
         {"automated": "run_automated", "llm": "run_llm"},
     )
-    graph.add_edge("run_automated", "check_syntax")
-    graph.add_edge("run_llm", "check_syntax")
+    graph.add_conditional_edges(
+        "run_automated",
+        route_after_handler,
+        {"error": "error", "syntax": "check_syntax"},
+    )
+    graph.add_conditional_edges(
+        "run_llm",
+        route_after_handler,
+        {"error": "error", "syntax": "check_syntax"},
+    )
     graph.add_conditional_edges(
         "check_syntax",
         route_after_syntax,
