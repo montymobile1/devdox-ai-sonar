@@ -13,7 +13,7 @@ from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from pathlib import Path
 import json
 from pydantic import ValidationError
-from typing import List, Optional, Dict, Any, Tuple, Union, Sequence, cast
+from typing import Callable, List, Optional, Dict, Any, Tuple, Union, Sequence, cast
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from langgraph.graph import StateGraph, END
@@ -336,6 +336,62 @@ def _get_fix_graph() -> CompiledStateGraph:
     if _FIX_GRAPH is None:
         _FIX_GRAPH = build_fix_graph()
     return _FIX_GRAPH
+
+
+def apply_fixes_safe(
+    file_path: Path,
+    fixes: List[FixSuggestion],
+    original_lines: List[str],
+    validate_fn: Callable[[Path], Tuple[bool, Optional[str]]],
+) -> Tuple[bool, List[FixApplication]]:
+    """Apply fixes to a file with single-write semantics and in-memory rollback.
+
+    Each fix is tried against the last validated state. Rejected fixes are
+    discarded so they cannot contaminate later fixes. The target file is
+    written at most once, after the loop completes.
+
+    Args:
+        file_path: Target file to write the final result to.
+        fixes: Ordered list of fixes to attempt.
+        original_lines: Current file content as a list of lines.
+        validate_fn: Called with a temp file path after each fix is applied.
+            Returns ``(is_valid, error_message)``.
+
+    Returns:
+        ``(all_succeeded, results)`` where *all_succeeded* is True only when
+        every fix that was attempted passed validation.
+    """
+    last_good = list(original_lines)
+    results: List[FixApplication] = []
+    for fix in fixes:
+        result, candidate = apply_single_fix(list(last_good), fix)
+        if not result.success:
+            logger.warning("Fix %s skipped: %s", fix.issue_key, result.reason)
+            continue
+        file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
+        write_file_lines(file_path_tmp, candidate)
+        validate, msg = validate_fn(file_path_tmp)
+        cleanup_tmp_py_file(file_path_tmp)
+        result.success = validate
+        result.reason = msg or ""
+        results.append(result)
+        if result.success:
+            logger.debug("Fix %s applied and validated", fix.issue_key)
+            last_good = candidate
+        else:
+            logger.debug("Fix %s failed validation: %s", fix.issue_key, msg)
+
+    if last_good != original_lines:
+        write_file_lines(file_path, last_good)
+
+    succeeded = sum(1 for r in results if r.success)
+    logger.debug(
+        "Finished %s — %d/%d fixes succeeded",
+        file_path,
+        succeeded,
+        len(results),
+    )
+    return all(r.success for r in results), results
 
 
 class LLMFixer:
@@ -1433,35 +1489,10 @@ class LLMFixer:
 
         logger.debug("Applying %d fix(es) to %s", len(fixes), file_path)
         try:
-            lines = await self.file_reader.read_lines(file_path)
-            results = []
-            for fix in fixes:
-                result, lines = apply_single_fix(lines, fix)
-                if not result.success:
-                    logger.warning("Fix %s skipped: %s", fix.issue_key, result.reason)
-                    continue
-                file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
-                write_file_lines(file_path_tmp, lines)
-                validate, msg = self.check_python_interpreter(file_path_tmp)
-                cleanup_tmp_py_file(file_path_tmp)
-                result.success = validate
-                result.reason = msg or ""
-                results.append(result)
-                if result.success:
-                    logger.debug("Fix %s applied and validated", fix.issue_key)
-                    write_file_lines(file_path, lines)
-                else:
-                    logger.debug("Fix %s failed validation: %s", fix.issue_key, msg)
-
-            succeeded = sum(1 for r in results if r.success)
-            logger.debug(
-                "Finished %s — %d/%d fixes succeeded",
-                file_path,
-                succeeded,
-                len(results),
+            original_lines = await self.file_reader.read_lines(file_path)
+            return apply_fixes_safe(
+                file_path, fixes, original_lines, self.check_python_interpreter,
             )
-            return all(r.success for r in results), results
-
         except Exception:
             logger.exception("Error applying fixes to %s", file_path)
             return False, []
