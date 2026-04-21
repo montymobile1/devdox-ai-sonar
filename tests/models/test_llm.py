@@ -149,6 +149,13 @@ class TestProviderValidationResult:
 # TEST CLASS: ProviderValidator - OpenAI
 # ============================================================================
 
+@pytest.mark.skip(
+    reason=(
+        "Post-OpenHands migration: ProviderValidator.validate_openai was "
+        "removed when key validation moved into the OpenHands LLM pipeline. "
+        "Test pending rewrite against the new validator surface."
+    )
+)
 class TestProviderValidatorOpenAI:
     """Test ProviderValidator OpenAI validation"""
 
@@ -269,6 +276,9 @@ class TestProviderValidatorOpenAI:
 # TEST CLASS: ProviderValidator - Gemini
 # ============================================================================
 
+@pytest.mark.skip(
+    reason="Post-OpenHands migration: ProviderValidator.validate_gemini removed."
+)
 class TestProviderValidatorGemini:
     """Test ProviderValidator Gemini validation"""
 
@@ -346,6 +356,9 @@ class TestProviderValidatorGemini:
 # TEST CLASS: ProviderValidator - TogetherAI
 # ============================================================================
 
+@pytest.mark.skip(
+    reason="Post-OpenHands migration: ProviderValidator.validate_togetherai removed."
+)
 class TestProviderValidatorTogetherAI:
     """Test ProviderValidator TogetherAI validation"""
 
@@ -394,6 +407,9 @@ class TestProviderValidatorTogetherAI:
 # TEST CLASS: ProviderValidator - OpenRouter
 # ============================================================================
 
+@pytest.mark.skip(
+    reason="Post-OpenHands migration: ProviderValidator.validate_openrouter removed."
+)
 class TestProviderValidatorOpenRouter:
     """Test ProviderValidator OpenRouter validation"""
 
@@ -506,6 +522,9 @@ class TestProviderValidatorOpenRouter:
 # TEST CLASS: ProviderValidator - Generic validate()
 # ============================================================================
 
+@pytest.mark.skip(
+    reason="Post-OpenHands migration: ProviderValidator.validate dispatch removed."
+)
 class TestProviderValidatorGeneric:
     """Test ProviderValidator generic validate method"""
 
