@@ -129,77 +129,166 @@ def _handle_agent_event(
 ) -> None:
     """Render an OpenHands agent event to ``console``.
 
-    Extracted from ``LLMFixer._call_llm_list`` so it can be unit-tested in
-    isolation by feeding it synthetic events and capturing the console.
+    Thin dispatcher over per-event-type handlers below.  Extracted from
+    ``LLMFixer._call_llm_list`` so it can be unit-tested in isolation by
+    feeding it synthetic events and capturing the console.
     """
     if isinstance(event, MessageEvent) and event.source == "agent":
-        msg = event.to_llm_message()
-        text = ""
-        if isinstance(msg.content, str):
-            text = msg.content
-        elif isinstance(msg.content, list):
-            for block in msg.content:
-                if hasattr(block, "text") and block.text:
-                    text += block.text
-                elif isinstance(block, dict) and block.get("type") == "text":
-                    text += block.get("text", "")
-        if text.strip():
-            messages_accum.append(text)
-            console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+        _handle_agent_message_event(event, console, messages_accum)
+    elif isinstance(event, ActionEvent):
+        _handle_agent_action_event(event, console)
+    elif isinstance(event, ObservationEvent):
+        _handle_agent_observation_event(event, console, file_path)
+
+
+# ---- MessageEvent -----------------------------------------------------------
+
+
+def _handle_agent_message_event(
+    event: Event,
+    console: Console,
+    messages_accum: List[str],
+) -> None:
+    """Accumulate and preview a non-empty agent chat message."""
+    text = _extract_agent_message_text(event)
+    if not text.strip():
+        return
+    messages_accum.append(text)
+    console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+
+
+def _extract_agent_message_text(event: Event) -> str:
+    """Return the agent message text regardless of whether ``content`` is a
+    plain string or a list of text/content blocks."""
+    msg = event.to_llm_message()
+    content = msg.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(_block_to_text(block) for block in content)
+    return ""
+
+
+def _block_to_text(block: Any) -> str:
+    """Extract text from a single content block (object-with-.text or dict-with-type)."""
+    text_attr = getattr(block, "text", None)
+    if text_attr:
+        return text_attr
+    if isinstance(block, dict) and block.get("type") == "text":
+        return block.get("text", "")
+    return ""
+
+
+# ---- ActionEvent ------------------------------------------------------------
+
+
+def _handle_agent_action_event(event: Event, console: Console) -> None:
+    """Print the tool call and, if present, the agent's first thought."""
+    tool = getattr(event, "tool_name", "tool")
+    thought = _extract_first_thought(getattr(event, "thought", None) or [])
+    if thought:
+        console.print(f"  🤔 [dim]{thought}[/dim]")
+    console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
+
+
+def _extract_first_thought(blocks: Any) -> str:
+    """Return up to 120 chars of the first text-bearing block."""
+    for block in blocks:
+        text_attr = getattr(block, "text", None)
+        if text_attr is not None:
+            return text_attr[:120].strip()
+    return ""
+
+
+# ---- ObservationEvent -------------------------------------------------------
+
+
+def _handle_agent_observation_event(
+    event: Event,
+    console: Console,
+    file_path: Path,
+) -> None:
+    """Route an observation to the right renderer: terminal, fix_at_line,
+    or generic file_editor."""
+    tool = getattr(event, "tool_name", "")
+    obs = event.observation
+    obs_text = _extract_observation_text(obs)
+    exit_code = _extract_terminal_exit_code(obs)
+
+    if exit_code is not None:
+        _render_terminal_observation(console, exit_code, obs_text)
         return
 
-    if isinstance(event, ActionEvent):
-        tool = getattr(event, "tool_name", "tool")
-        thought = ""
-        for block in (event.thought or []):
-            if hasattr(block, "text"):
-                thought = block.text[:120].strip()
-                break
-        if thought:
-            console.print(f"  🤔 [dim]{thought}[/dim]")
-        console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
+    path_used = getattr(obs, "path", "") or str(file_path)
+    if tool == FixAtLineTool.name:
+        _render_fix_at_line_observation(console, obs, path_used, obs_text)
         return
 
-    if isinstance(event, ObservationEvent):
-        tool = getattr(event, "tool_name", "")
-        obs = event.observation
-        obs_text = getattr(obs, "text", "") or getattr(obs, "content", "") or ""
-        exit_code = getattr(getattr(obs, "metadata", None), "exit_code", None)
-        if exit_code is not None:
-            status = "✅" if exit_code == 0 else "❌"
-            console.print(
-                f"  {status} [dim]Terminal[/dim] (exit {exit_code}): "
-                f"{obs_text[:200].strip()}"
-            )
-            return
+    command = getattr(obs, "command", "")
+    _render_file_editor_observation(console, tool, command, path_used, obs_text)
 
-        command = getattr(obs, "command", "")
-        path_used = getattr(obs, "path", "") or str(file_path)
-        if tool == FixAtLineTool.name:
-            start_ln = getattr(obs, "start_line", None)
-            end_ln = getattr(obs, "end_line", None)
-            if start_ln is not None and end_ln is not None and start_ln == end_ln:
-                range_label = f"line {start_ln}"
-            elif start_ln is not None and end_ln is not None:
-                range_label = f"lines {start_ln}-{end_ln}"
-            else:
-                range_label = "range"
-            if getattr(obs, "is_error", False):
-                console.print(
-                    f"  ❌ [bold red]fix_at_line failed:[/bold red] "
-                    f"{obs_text[:200].strip()}"
-                )
-            else:
-                console.print(
-                    f"  ✏️  [bold green]Edited {range_label}:[/bold green] "
-                    f"{path_used}"
-                )
-        elif command == "str_replace":
-            console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
-        elif command:
-            console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
-        else:
-            console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
+
+def _extract_observation_text(obs: Any) -> str:
+    """Best-effort text extraction from an observation payload."""
+    return getattr(obs, "text", "") or getattr(obs, "content", "") or ""
+
+
+def _extract_terminal_exit_code(obs: Any) -> Optional[int]:
+    """Return a terminal observation's exit code, or ``None`` if absent."""
+    metadata = getattr(obs, "metadata", None)
+    return getattr(metadata, "exit_code", None)
+
+
+def _render_terminal_observation(
+    console: Console, exit_code: int, obs_text: str
+) -> None:
+    status = "✅" if exit_code == 0 else "❌"
+    console.print(
+        f"  {status} [dim]Terminal[/dim] (exit {exit_code}): "
+        f"{obs_text[:200].strip()}"
+    )
+
+
+def _render_fix_at_line_observation(
+    console: Console, obs: Any, path_used: str, obs_text: str
+) -> None:
+    if getattr(obs, "is_error", False):
+        console.print(
+            f"  ❌ [bold red]fix_at_line failed:[/bold red] "
+            f"{obs_text[:200].strip()}"
+        )
+        return
+    range_label = _format_fix_at_line_range(obs)
+    console.print(
+        f"  ✏️  [bold green]Edited {range_label}:[/bold green] {path_used}"
+    )
+
+
+def _format_fix_at_line_range(obs: Any) -> str:
+    """Render a fix_at_line edit range as ``"line N"`` / ``"lines N-M"`` /
+    ``"range"`` when line numbers are missing."""
+    start_ln = getattr(obs, "start_line", None)
+    end_ln = getattr(obs, "end_line", None)
+    if start_ln is None or end_ln is None:
+        return "range"
+    if start_ln == end_ln:
+        return f"line {start_ln}"
+    return f"lines {start_ln}-{end_ln}"
+
+
+def _render_file_editor_observation(
+    console: Console,
+    tool: str,
+    command: str,
+    path_used: str,
+    obs_text: str,
+) -> None:
+    if command == "str_replace":
+        console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
+    elif command:
+        console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
+    else:
+        console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
 
 
 class LLMFixer:
