@@ -1,5 +1,11 @@
 Fix this SonarQube {{ language }} issue in `{{ file_path }}` by editing the file directly using your tools.
-Do NOT output JSON. Do NOT paste code in your reply. Use `file_editor str_replace` to make the change.
+Do NOT output JSON. Do NOT paste code in your reply.
+
+To apply the change, use `fix_at_line`:
+- Call `file_editor view` first with a `view_range` around the problem lines listed below — you need the current content.
+- Then call `fix_at_line` with `start_line` / `end_line` set to the inclusive range you are replacing (equal values for a single-line fix), `old_block` set to the current content of that range (exactly as `view` showed it), and `new_block` set to the replacement (with correct indentation).
+- `fix_at_line` anchors by line number, so duplicated lines elsewhere in the file will not cause failures.
+- Do NOT use `file_editor str_replace` — it is unsafe when the file has duplicated lines.
 
 ## Issue
 {% for issue in issues %}
@@ -46,4 +52,4 @@ Do NOT output JSON. Do NOT paste code in your reply. Use `file_editor str_replac
 {{ error_message }}
 {% endif %}
 
-Read `{{ file_path }}` first, then apply the fix with `str_replace`, then run `python -m py_compile {{ file_path }}` to confirm syntax is valid.
+Read `{{ file_path }}` with `file_editor view` first, then apply the fix with `fix_at_line`, then run `python -m py_compile {{ file_path }}` to confirm syntax is valid.
