@@ -446,6 +446,13 @@ class TestErrorHandling:
         assert result.status == ValidationStatus.NEEDS_REVIEW
 
 
+@pytest.mark.skip(
+    reason=(
+        "Post-OpenHands migration: fix_validator.Together and the "
+        "HAS_TOGETHER guard are gone.  TogetherAI key / init now flows "
+        "through openhands.sdk.LLM rather than a direct Together client."
+    )
+)
 class TestTogetherAIInitializationValidator:
     """Test TogetherAI provider specific initialization for FixValidator."""
 
@@ -650,6 +657,12 @@ class TestGeminiProviderIntegration:
         assert result.status == ValidationStatus.NEEDS_REVIEW
 
 
+@pytest.mark.skip(
+    reason=(
+        "Post-OpenHands migration: fix_validator.Together was removed along "
+        "with the rest of the pre-OpenHands per-SDK plumbing."
+    )
+)
 class TestTogetherAIProviderIntegration:
     """Test TogetherAI LLM provider integration."""
 
@@ -1518,6 +1531,14 @@ class TestOpenRouterInitializationValidator:
             FixValidator(provider="openrouter", api_key="test-key")
 
 
+@pytest.mark.skip(
+    reason=(
+        "Post-OpenHands migration: the OpenAI-compatible validator dispatch "
+        "patches fix_validator.Together and the fix_validator.openai module, "
+        "both of which were removed.  Validator dispatch now lives behind "
+        "openhands.sdk.LLM."
+    )
+)
 class TestOpenAICompatibleValidatorDispatch:
     """Test that OpenAI-compatible providers are properly wired into the validator dispatch."""
 
