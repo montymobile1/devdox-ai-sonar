@@ -1463,6 +1463,8 @@ class CognitiveComplexityHandler(RuleHandler):
                 context,
                 context.file_path.suffix,
                 rule_info,
+                project_path,
+                file_path,
                 error_message="",
             )
             return [fix_response]
@@ -1509,6 +1511,8 @@ class DefaultRuleHandler(RuleHandler):
                 context,
                 context.file_path.suffix,
                 rule_info,
+                project_path,
+                file_path,
                 error_message="",
             )
             return [fix_response]

@@ -32,22 +32,22 @@ classifiers = [
 
 # Core dependencies
 dependencies = [
-    "click==8.1.7",
+    "click==8.3.1",
     "rich-click==1.9.4",
     "requests>=2.32",
-    "pydantic==2.10.6",
-    "pydantic_core==2.27.2",
+    "pydantic==2.12.5",
+    "pydantic_core==2.41.5",
     "pydantic-settings==2.12.0",
-    "python-dotenv==1.0.1",
-    "openai==2.15.0",
-    "google-genai==1.60.0",
+    "python-dotenv==1.2.2",
+    #"openai==2.15.0",
+    #"google-genai==1.60.0",
     "sonar-tools==3.16.2",
     "pycodestyle==2.14.0",
     "autopep8==2.3.2",
     "pathlib2==2.3.0",
     "regex==2026.1.15",
     "GitPython==3.1.46",
-    "together==2.1.1",
+    #"together==2.1.1",
     "Jinja2==3.1.6",
     "types-requests==2.32.4.20250913",
     "tomli==2.3.0",
@@ -58,6 +58,10 @@ dependencies = [
     "langchain-core>=0.3.78,<1.0.0",  # Satisfy langchain-openai requirements
     "yake>=0.4.8",
     "langdetect>=1.0.9",
+    "openhands-sdk ==1.17.0",
+    "openhands-tools==1.17.0",
+    "openhands-workspace==1.17.0",
+
 ]
 
 [project.optional-dependencies]

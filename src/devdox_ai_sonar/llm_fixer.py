@@ -11,8 +11,19 @@ import subprocess
 
 from jinja2 import Environment, FileSystemLoader, Template, select_autoescape
 from pathlib import Path
+from openhands.sdk import LLM, Conversation, Agent, AgentContext, Tool, Event
+from openhands.sdk.context import Skill
+from openhands.tools.file_editor import FileEditorTool
+from openhands.tools.task_tracker import TaskTrackerTool
+from openhands.tools.terminal import TerminalTool
+from openhands.sdk.event import MessageEvent, ActionEvent, ObservationEvent
+from openhands.sdk import (
+    Message,
+    TextContent,
+)
 import json
 from pydantic import ValidationError
+from rich.console import Console
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 import logging
@@ -28,7 +39,9 @@ from devdox_ai_sonar.models.sonar import (
     CodeBlock,
     ChangeType,
     ChangeAction,
-    LineChange,
+        LineChange,
+    BlockType,
+    PlacementType
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
@@ -47,28 +60,32 @@ from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 logger = logging.getLogger(__name__)
 
 
-try:
-    from together import Together
 
-    HAS_TOGETHER = True
-except ImportError:
-    HAS_TOGETHER = False
+_console = Console()
 
-try:
-    import openai
 
-    HAS_OPENAI = True
-except ImportError:
-    HAS_OPENAI = False
-
-try:
-    from google import genai
-    from google.genai import types
-
-    HAS_GEMINI = True
-except ImportError as e:
-    logger.warning(f"Failed to import Gemini library: {e}")
-    HAS_GEMINI = False
+# try:
+#     from together import Together
+#
+#     HAS_TOGETHER = True
+# except ImportError:
+#     HAS_TOGETHER = False
+#
+# try:
+#     import openai
+#
+#     HAS_OPENAI = True
+# except ImportError:
+#     HAS_OPENAI = False
+#
+# try:
+#     from google import genai
+#     from google.genai import types
+#
+#     HAS_GEMINI = True
+# except ImportError as e:
+#     logger.warning(f"Failed to import Gemini library: {e}")
+#     HAS_GEMINI = False
 
 java_extension = ".java"
 scala_extension = ".scala"
@@ -80,6 +97,13 @@ FUNCTION_ALREADY_CALLED = (
 STATICMETHOD_DECORATOR = "@staticmethod"
 PYTHON_CODE_BLOCK = "```python"
 CODE_BLOCK_END = "```"
+
+_LITELLM_PREFIX_MAP = {
+    "togetherai": "together_ai",
+    "openrouter": "openrouter",
+    "openai": "openai",
+    "gemini": "gemini",
+}
 
 
 class LLMFixer:
@@ -140,89 +164,112 @@ class LLMFixer:
         self, provider: Optional[str], model: Optional[str], api_key: Optional[str]
     ) -> None:
         provider = str(provider).lower()
-        if provider == "togetherai":
-            self._configure_togetherai(model, api_key)
-        elif provider == "openai":
-            self._configure_openai(model, api_key)
-        elif provider == "gemini":
-            self._configure_gemini(model, api_key)
-        elif provider == "openrouter":
-            self._configure_openrouter(model, api_key)
-        else:
-            raise ValueError(
-                f"Unsupported provider: {provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'"
-            )
 
-    def _configure_togetherai(
-        self, model: Optional[str], api_key: Optional[str]
-    ) -> None:
-        if not HAS_TOGETHER:
-            raise ImportError(
-                "Together AI library not installed. Install with: pip install together"
-            )
-        self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+        self.final_configure(model, api_key, provider)
+        # if provider == "togetherai":
+        #     self._configure_togetherai(model, api_key)
+        # elif provider == "openai":
+        #     self._configure_openai(model, api_key)
+        # elif provider == "gemini":
+        #     self._configure_gemini(model, api_key)
+        # elif provider == "openrouter":
+        #     self._configure_openrouter(model, api_key)
+        # else:
+        #     raise ValueError(
+        #         f"Unsupported provider: {provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'"
+        #     )
 
+    def final_configure(self, model: Optional[str], api_key: Optional[str], provider: str):
+        self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY")
         if not self.api_key:
             raise ValueError(
                 "Together API key not provided. Set TOGETHER_API_KEY environment variable."
             )
-
-        self.client = Together(api_key=self.api_key)
-
-    def _configure_openai(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-
         self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenAI API key not provided. Set OPENAI_API_KEY environment variable."
-            )
+        prefix = _LITELLM_PREFIX_MAP.get(self.provider, "")
+        litellm_model = f"{prefix}/{self.model}" if prefix and not self.model.startswith(f"{prefix}/") else self.model
 
-        self.client = openai.OpenAI(api_key=self.api_key)
+        base_url_map = {
+            "openrouter": "https://openrouter.ai/api/v1",
+        }
 
-    def _configure_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_GEMINI:
-            raise ImportError(
-                "Gemini library not installed. Install with: pip install google-genai"
-            )
-
-        self.model = model or "claude-3-5-sonnet-20241022"
-        self.api_key = api_key or os.getenv("GEMINI_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "Gemini API key not provided. Set GEMINI_KEY environment variable."
-            )
-
-        self.client = genai.Client(api_key=self.api_key)
-
-    def _configure_openrouter(
-        self, model: Optional[str], api_key: Optional[str]
-    ) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-
-        self.model = model or "anthropic/claude-sonnet-4"
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
-            )
-
-        self.client = openai.OpenAI(
+        self.client = LLM(
+            model=litellm_model,
             api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://devdox.ai",
-                "X-Title": "DevDox AI Sonar",
-            },
+            base_url=base_url_map.get(self.provider),
         )
+        logger.debug("LLM client initialized: provider=%s model=%s", self.provider, litellm_model)
+
+    # def _configure_togetherai(
+    #     self, model: Optional[str], api_key: Optional[str]
+    # ) -> None:
+    #     if not HAS_TOGETHER:
+    #         raise ImportError(
+    #             "Together AI library not installed. Install with: pip install together"
+    #         )
+    #     self.model = model or "gpt-4o"
+    #     self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
+    #
+    #     if not self.api_key:
+    #         raise ValueError(
+    #             "Together API key not provided. Set TOGETHER_API_KEY environment variable."
+    #         )
+    #
+    #     self.client = Together(api_key=self.api_key)
+
+    # def _configure_openai(self, model: Optional[str], api_key: Optional[str]) -> None:
+    #     if not HAS_OPENAI:
+    #         raise ImportError(
+    #             "OpenAI library not installed. Install with: pip install openai"
+    #         )
+    #
+    #     self.model = model or "gpt-4o"
+    #     self.api_key = api_key or os.getenv("OPENAI_API_KEY")
+    #     if not self.api_key:
+    #         raise ValueError(
+    #             "OpenAI API key not provided. Set OPENAI_API_KEY environment variable."
+    #         )
+    #
+    #     self.client = openai.OpenAI(api_key=self.api_key)
+
+    # def _configure_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
+    #     if not HAS_GEMINI:
+    #         raise ImportError(
+    #             "Gemini library not installed. Install with: pip install google-genai"
+    #         )
+    #
+    #     self.model = model or "claude-3-5-sonnet-20241022"
+    #     self.api_key = api_key or os.getenv("GEMINI_KEY")
+    #     if not self.api_key:
+    #         raise ValueError(
+    #             "Gemini API key not provided. Set GEMINI_KEY environment variable."
+    #         )
+    #
+    #     self.client = genai.Client(api_key=self.api_key)
+
+    # def _configure_openrouter(
+    #     self, model: Optional[str], api_key: Optional[str]
+    # ) -> None:
+    #     if not HAS_OPENAI:
+    #         raise ImportError(
+    #             "OpenAI library not installed. Install with: pip install openai"
+    #         )
+    #
+    #     self.model = model or "anthropic/claude-sonnet-4"
+    #     self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
+    #     if not self.api_key:
+    #         raise ValueError(
+    #             "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
+    #         )
+    #
+    #     self.client = openai.OpenAI(
+    #         api_key=self.api_key,
+    #         base_url="https://openrouter.ai/api/v1",
+    #         default_headers={
+    #             "HTTP-Referer": "https://devdox.ai",
+    #             "X-Title": "DevDox AI Sonar",
+    #         },
+    #     )
 
     @staticmethod
     def _convert_regex_to_diff(
@@ -421,16 +468,29 @@ class LLMFixer:
                 logger.warning(f"Handler returned no fix for rule {issues[0].rule}")
                 return None
 
-            # Step 4: Build FixSuggestion from the response
-            modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
-            fix_suggestion_lst = self._build_fix_suggestion(
-                fix_response_lst,
-                context,
-                validation.file_path,
-                project_path,
-                validation.line_range,
-                modify_line_range,
+            agent_applied = any(
+                getattr(r, "applied_by_agent", False) for r in fix_response_lst
             )
+            for r in fix_response_lst:
+                print("response ")
+                print(r)
+            print("agent_applied ", agent_applied)
+            if agent_applied:
+                fix_suggestion_lst = []
+            else:
+                modify_line_range = getattr(handler, "MOIDY_LINE_RANGE", False)
+
+                # Step 4: Build FixSuggestion from the response
+
+
+                fix_suggestion_lst = self._build_fix_suggestion(
+                    fix_response_lst,
+                    context,
+                    validation.file_path,
+                    project_path,
+                    validation.line_range,
+                    modify_line_range,
+                )
 
             # Step 5: Write documentation if requested
             if file_md:
@@ -791,6 +851,8 @@ class LLMFixer:
         context: FixContext,
         file_extension: str,
         rule_info_dict: Dict[str, Dict[str, str]],
+        project_path: Path,
+        file_path: Path,
         error_message: str = "",
     ) -> Optional[SonarFixResponse]:
         """
@@ -821,71 +883,133 @@ class LLMFixer:
         )
         # Prepare prompt
         prompt, system_template = self._create_fix_prompt_list(
-            issues, context, rule_info_dict, language, error_message
+            issues, context, rule_info_dict, language,str(project_path), str(file_path), error_message
         )
 
-        prompt_system = system_template.render()
+        prompt_dic = { "project_path": project_path,
+            "file_path": file_path}
+
+        prompt_system = system_template.render(**prompt_dic)
 
         try:
-            if self.provider == "openai":
-                response = self.client.responses.parse(
-                    model=self.model,
-                    input=[
-                        {"role": "system", "content": prompt_system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    text_format=SonarFixResponse,
-                )
-                return self._parse_openai_response(response)
+            original_content = file_path.read_text(encoding="utf-8")
 
-            elif self.provider == "gemini":
-                response = self.client.models.generate_content(
-                    model=self.model,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        response_schema=SonarFixResponse,
-                    ),
-                )
-
-                return response.parsed  # type: ignore[no-any-return]
-
-            elif self.provider in ("togetherai", "openrouter"):
-                response = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": prompt_system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    max_tokens=8000,
-                    temperature=0.08,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "sonar_fix_response",
-                            "schema": SonarFixResponse.model_json_schema(),
-                            "strict": True,
-                        },
-                    },
-                )
-                input_tokens = response.usage.prompt_tokens
-                output_tokens = response.usage.completion_tokens
-                total_tokens = response.usage.total_tokens
-
-                logger.debug(
-                    "Token usage — input: %d, output: %d, total: %d",
-                    input_tokens,
-                    output_tokens,
-                    total_tokens,
-                )
-
-                return self._parse_chat_completion_response(response)
-            else:
-                logger.error("Unknown provider: %s", self.provider)
-                return None
-        except Exception:
-            logger.exception("Error calling %s LLM", self.provider)
+        except OSError as e:
+            logger.error("Cannot read file after agent run: %s", e)
             return None
+
+        agent_context = AgentContext(
+            skills=[
+                Skill(
+                    name="sonar-fixer-instructions",
+                    content=prompt_system,
+                    trigger=None,
+                )
+            ],
+        )
+
+        agent = Agent(
+            llm=self.client,
+            tools=[
+                Tool(name=TerminalTool.name),
+                Tool(name=FileEditorTool.name),
+                Tool(name=TaskTrackerTool.name),
+            ],
+            agent_context=agent_context,
+        )
+
+        all_agent_messages: list[str] = []
+
+        def on_event(event: Event) -> None:
+            if isinstance(event, MessageEvent) and event.source == "agent":
+                msg = event.to_llm_message()
+                text = ""
+                if isinstance(msg.content, str):
+                    text = msg.content
+                elif isinstance(msg.content, list):
+                    for block in msg.content:
+                        if hasattr(block, "text") and block.text:
+                            text += block.text
+                        elif isinstance(block, dict) and block.get("type") == "text":
+                            text += block.get("text", "")
+                if text.strip():
+                    all_agent_messages.append(text)
+                    _console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+            elif isinstance(event, ActionEvent):
+                tool = getattr(event, "tool_name", "tool")
+                thought = ""
+                for block in (event.thought or []):
+                    if hasattr(block, "text"):
+                        thought = block.text[:120].strip()
+                        break
+                if thought:
+                    _console.print(f"  🤔 [dim]{thought}[/dim]")
+                _console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
+            elif isinstance(event, ObservationEvent):
+                tool = getattr(event, "tool_name", "")
+                obs = event.observation
+                obs_text = getattr(obs, "text", "") or getattr(obs, "content", "") or ""
+                exit_code = getattr(getattr(obs, "metadata", None), "exit_code", None)
+                if exit_code is not None:
+                    status = "✅" if exit_code == 0 else "❌"
+                    _console.print(f"  {status} [dim]Terminal[/dim] (exit {exit_code}): {obs_text[:200].strip()}")
+                else:
+                    command = getattr(obs, "command", "")
+                    path_used = getattr(obs, "path", "") or str(file_path)
+                    if command == "str_replace":
+                        _console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
+                    elif command:
+                        _console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
+                    else:
+                        _console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
+
+        conversation = Conversation(agent=agent, workspace=str(project_path), callbacks=[on_event])
+        conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
+        conversation.run()
+
+        try:
+
+
+            new_content = file_path.read_text(encoding="utf-8")
+        except OSError as e:
+            logger.error("Cannot read file after agent run: %s", e)
+            return None
+
+        # if new_content == original_content:
+        #     logger.warning("Agent did not modify %s — no fix produced", file_path.name)
+        #     return None
+
+
+        explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
+
+        return SonarFixResponse(
+            IMPORT_BLOCK="",
+            FIXED_CODE_BLOCKS=[
+                CodeBlock(
+                    block_name=file_path.name,
+                    start_line=1,
+                    end_line=len(new_content.splitlines()),
+                    has_changes=True,
+                    change_type=ChangeType.DIFF,
+                    block_type=BlockType.FUNCTION,
+                    changes=[
+                        LineChange(
+                            line=1,
+                            action=ChangeAction.REPLACE,
+                            old=original_content,
+                            new=new_content,
+                        )
+                    ],
+                    file_path=str(file_path),
+                )
+            ],
+            NEW_HELPER_CODE="",
+            PLACEMENT=PlacementType.SIBLING,
+            EXPLANATION=explanation,
+            CONFIDENCE=0.85,
+            applied_by_agent=True,
+        )
+
 
     def _is_init_method(self, context: str) -> bool:
         """
@@ -1143,6 +1267,8 @@ class LLMFixer:
         context: FixContext,
         rule_info_list: Dict[str, Dict[str, Any]],
         language: str = "python",
+        project_path: str = "",
+        file_path: str = "",
         error_message: str = "",
     ) -> Tuple[str, Template]:
         """Create a concise, focused prompt for the LLM to generate a fix."""
@@ -1151,8 +1277,8 @@ class LLMFixer:
         code_chunk = context.code_content
         class_name = context.class_name
         strategies = []
-        template = self.jinja_env.get_template("python/user_prompt.j2")
-        system_template = self.jinja_env.get_template("python/system_fix_issues.j2")
+        template = self.jinja_env.get_template("python/user_agent_prompt.j2")
+        system_template = self.jinja_env.get_template("python/system_agent_fix_issues.j2")
         for issue in issues:
             rule_key = getattr(issue, "rule", "")
 
@@ -1254,6 +1380,8 @@ class LLMFixer:
             "method_instruction": method_instruction,
             "error_message": error_message,
             "strategy_text": strategy_text,
+            "project_path":project_path,
+            "file_path":file_path,
         }
         # Render enhanced content
         prompt = template.render(**context_dic)
