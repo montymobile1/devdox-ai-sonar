@@ -42,6 +42,41 @@ def test_authentication_error_categorised_as_auth(monkeypatch):
     assert "bad key" in result.detail
 
 
+def test_failure_carries_provenance_fields(monkeypatch):
+    """Every non-success outcome must include provider / status_code /
+    exception_class so callers can report where the failure came from."""
+    def raise_auth(**_):
+        exc = AuthenticationError("bad key", llm_provider="gemini", model="gem")
+        # litellm's real exceptions set status_code; the test stand-ins
+        # don't always, so set it explicitly here to pin the contract.
+        exc.status_code = 401
+        raise exc
+    _install_completion(monkeypatch, raise_auth)
+    result = key_probe.probe(
+        model="gemini/gemini-2.5-flash", api_key="sk-bad", api_base=None
+    )
+    assert result.provider == "gemini"
+    assert result.status_code == 401
+    assert result.exception_class == (
+        "litellm.exceptions.AuthenticationError"
+    )
+
+
+def test_generic_exception_still_populates_exception_class(monkeypatch):
+    """Plain ``Exception`` caught by the catch-all branch doesn't carry
+    litellm's ``llm_provider`` / ``status_code`` attrs, but we must
+    still record the exception class so the developer knows this came
+    from somewhere unexpected."""
+    def raise_generic(**_):
+        raise RuntimeError("something else")
+    _install_completion(monkeypatch, raise_generic)
+    result = key_probe.probe(model="openai/gpt-4o", api_key="sk", api_base=None)
+    assert result.failure_kind == "unknown"
+    assert result.provider is None
+    assert result.status_code is None
+    assert result.exception_class == "builtins.RuntimeError"
+
+
 def test_connection_error_categorised_as_connection(monkeypatch):
     def raise_conn(**_):
         raise APIConnectionError(
