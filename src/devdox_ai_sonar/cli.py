@@ -34,6 +34,7 @@ from devdox_ai_sonar.utils.branch_prompts import branch_or_pr, branch_or_pr_prom
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
 from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig
+from devdox_ai_sonar.llm import interactive as _llm_interactive
 from devdox_ai_sonar.llm.env_profile import profile_from_env
 from devdox_ai_sonar.llm.interactive import add_profile_flow, update_profile_flow
 from devdox_ai_sonar.llm.profile import LLMProfile
@@ -648,6 +649,11 @@ async def main(  # ← Async main
 
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    # Propagate the verbose flag to the interactive LLM wizard so
+    # probe-failure provenance is visible to developers debugging a
+    # misbehaving endpoint. Regular users leave --verbose off and see
+    # only short, actionable headlines.
+    _llm_interactive.set_verbose(verbose)
     ctx.obj["options"] = {
         "types": types,
         "severity": severity,

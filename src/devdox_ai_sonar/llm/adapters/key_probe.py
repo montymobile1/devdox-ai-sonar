@@ -18,13 +18,21 @@ from litellm.exceptions import (
     APIConnectionError,
     AuthenticationError,
     BadRequestError,
+    NotFoundError,
     RateLimitError,
     ServiceUnavailableError,
     Timeout,
 )
 
 
-FailureKind = Literal["auth", "connection", "bad_request", "rate_limit", "unknown"]
+FailureKind = Literal[
+    "auth",
+    "connection",
+    "bad_request",
+    "not_found",
+    "rate_limit",
+    "unknown",
+]
 
 
 @dataclass(frozen=True)
@@ -121,6 +129,12 @@ def probe(
         return _failure_from_exception("connection", exc)
     except (Timeout, ServiceUnavailableError) as exc:
         return _failure_from_exception("connection", exc)
+    except NotFoundError as exc:
+        # Thrown when the model ID isn't known at the upstream endpoint
+        # (e.g. a deprecated Gemini model still in litellm's catalogue).
+        # Distinct from BadRequestError so the UI can steer the user
+        # back to the model picker rather than re-prompting for a key.
+        return _failure_from_exception("not_found", exc)
     except BadRequestError as exc:
         return _failure_from_exception("bad_request", exc)
     except RateLimitError as exc:

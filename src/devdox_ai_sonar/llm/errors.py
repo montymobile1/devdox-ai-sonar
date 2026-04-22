@@ -120,6 +120,7 @@ KeyProbeFailureKind = Literal[
     "auth",
     "connection",
     "bad_request",
+    "not_found",
     "rate_limit",
     "unknown",
 ]
