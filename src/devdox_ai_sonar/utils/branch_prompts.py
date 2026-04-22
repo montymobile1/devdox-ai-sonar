@@ -1,14 +1,7 @@
 """Prompts for picking a SonarCloud branch or pull request to analyse.
 
-Historically these lived on ``ProviderConfigManager`` in
-``utils/provider_config.py`` -- a class that also did LLM provider
-configuration. DEVDOX-63 separated those concerns: LLM configuration
-now lives in :mod:`devdox_ai_sonar.llm.interactive`, and the unrelated
-branch/PR prompts move here so ``utils/provider_config.py`` can be
-deleted cleanly.
-
-Nothing LLM-related lives here; these helpers only ever touch the
-``sonar.*`` section of ``config.toml``.
+These helpers only touch the ``sonar.*`` section of ``config.toml``;
+nothing LLM-related lives here.
 """
 
 from __future__ import annotations

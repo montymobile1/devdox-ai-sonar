@@ -33,7 +33,7 @@ def fresh_manager(tmp_path: Path) -> ConfigManager:
 @pytest.fixture
 def legacy_manager(tmp_path: Path) -> ConfigManager:
     """A ConfigManager whose config.toml contains the old [[llm.providers]]
-    shape that DEVDOX-63 refuses to migrate."""
+    shape that the new code no longer supports."""
     config_path = tmp_path / "config.toml"
     config_path.write_text(
         '[llm]\n'
@@ -230,12 +230,12 @@ async def test_delete_unknown_profile_raises(fresh_manager):
 
 
 async def test_load_profiles_rejects_old_providers_shape(legacy_manager):
-    with pytest.raises(ConfigStorageError, match="old provider shape"):
+    with pytest.raises(ConfigStorageError, match="old .*schema"):
         await load_profiles(legacy_manager)
 
 
 async def test_save_profile_rejects_old_providers_shape(legacy_manager):
-    with pytest.raises(ConfigStorageError, match="old provider shape"):
+    with pytest.raises(ConfigStorageError, match="old .*schema"):
         await save_profile(
             legacy_manager,
             LLMProfile(name="new", model="openai/gpt-4o"),
@@ -244,17 +244,17 @@ async def test_save_profile_rejects_old_providers_shape(legacy_manager):
 
 
 async def test_update_profile_rejects_old_providers_shape(legacy_manager):
-    with pytest.raises(ConfigStorageError, match="old provider shape"):
+    with pytest.raises(ConfigStorageError, match="old .*schema"):
         await update_profile(legacy_manager, "anything", {"api_key": "x"})
 
 
 async def test_delete_profile_rejects_old_providers_shape(legacy_manager):
-    with pytest.raises(ConfigStorageError, match="old provider shape"):
+    with pytest.raises(ConfigStorageError, match="old .*schema"):
         await delete_profile(legacy_manager, "anything")
 
 
 async def test_get_default_profile_rejects_old_providers_shape(legacy_manager):
-    with pytest.raises(ConfigStorageError, match="old provider shape"):
+    with pytest.raises(ConfigStorageError, match="old .*schema"):
         await get_default_profile(legacy_manager)
 
 

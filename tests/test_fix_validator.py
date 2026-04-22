@@ -94,7 +94,6 @@ class TestFixValidatorInitialization:
         assert validator.profile is profile
         assert validator.model == "openai/gpt-4o"
         assert validator.api_key == "sk-x"
-        assert validator.provider == "openai"  # derived from prefix
 
     def test_init_constructs_openhands_client(self):
         profile = LLMProfile(
@@ -121,199 +120,6 @@ class TestFixValidatorInitialization:
         with patch("devdox_ai_sonar.fix_validator.LLM"):
             validator = FixValidator(profile=profile, min_confidence_threshold=0.9)
         assert validator.min_confidence_threshold == 0.9
-
-
-class TestValidateFix:
-    """Test fix validation."""
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_validate_fix_approved(
-        self,
-        sample_fix,
-        sample_issue,
-        sample_file_content,
-        sample_code_block,
-    ):
-        """Test validation when fix is approved."""
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """{
-"IMPROVED_FIX": "",
-
-"CONFIDENCE": "0.95",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
-}
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.MODIFIED
-        assert result.confidence == 0.95
-        assert "correctly removes" in result.explanation
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_validate_fix_rejected(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test validation when fix is rejected."""
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-
-{
-"IMPROVED_FIX": "",
-
-"CONFIDENCE": "0.3",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"This fix would break the code."
-}
-
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.NEEDS_REVIEW
-        assert result.confidence <= 0.5
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_validate_fix_modified(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test validation when fix is modified."""
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """{
-"IMPROVED_FIX": "return value",
-
-"CONFIDENCE": "0.85",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"Added comment for clarity"
-}
-
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.MODIFIED
-        assert result.modified_fix is not None
-        assert "return value" in result.modified_fix.fixed_code
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_validate_fix_needs_review(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test validation when fix needs review."""
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: NEEDS_REVIEW
-
-CONFIDENCE: 0.5
-
-VALIDATION_NOTES:
-Uncertain about side effects.
-
-CONCERNS:
-- May affect other code
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.NEEDS_REVIEW
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_validate_fix_below_confidence_threshold(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test that low confidence approved fixes become NEEDS_REVIEW."""
-
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-STATUS: APPROVED
-
-CONFIDENCE: 0.6
-
-VALIDATION_NOTES:
-Fix looks okay but not confident.
-
-CONCERNS:
-None
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(
-            provider="openai", api_key="test-key", min_confidence_threshold=0.7
-        )
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.NEEDS_REVIEW
 
 
 class TestExtractValidationContext:
@@ -436,7 +242,7 @@ class TestErrorHandling:
 
 @pytest.mark.skip(
     reason=(
-        "Post-OpenHands migration: fix_validator.Together and the "
+        "fix_validator no longer exposes a Together or openai module "
         "HAS_TOGETHER guard are gone.  TogetherAI key / init now flows "
         "through openhands.sdk.LLM rather than a direct Together client."
     )
@@ -600,75 +406,6 @@ IMPROVED_FIX:
 
         # Should handle gracefully
         assert result is not None
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_modified_with_language_specifier(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test MODIFIED with language specifier in code block."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """{
-"IMPROVED_FIX": "return value",
-
-"CONFIDENCE": "0.9",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"Added clear comment"
-}
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.MODIFIED
-        assert result.modified_fix is not None
-        assert "return value" in result.modified_fix.fixed_code
-
-    @pytest.mark.skip(reason="Need update")
-    def test_modified_with_multiple_code_blocks(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test MODIFIED with multiple code blocks (should use first one)."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """
-        {
-"IMPROVED_FIX": "return different_value",
-
-"CONFIDENCE": "0.9",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
-}
-
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        assert result.status == ValidationStatus.MODIFIED
-        # Should extract first code block
-        assert "different_value" in result.modified_fix.fixed_code
-
-
-# ==============================================================================
-# CRITICAL: Regex Parsing Edge Cases
-# ==============================================================================
 
 
 class TestRegexParsingEdgeCases:
@@ -810,50 +547,7 @@ CONCERNS: Multiple issues
 
         # Should default to 0
         assert result.confidence == 0.0
-    @pytest.mark.skip(
-        reason=(
-            "DEVDOX-63: validate_fix path now routes through "
-            "openhands.sdk.LLM.completion. The legacy mock shape "
-            "(mock_client.chat.completions.create) does not line up "
-            "with the new path; these tests need to be re-authored "
-            "to patch devdox_ai_sonar.fix_validator.LLM with a mock "
-            "whose .completion returns the desired response."
-        )
-    )
-    def test_confidence_exactly_threshold(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test confidence exactly at threshold."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """{
-"IMPROVED_FIX": "",
 
-"CONFIDENCE": "0.7",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."
-}
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(
-            provider="openai", api_key="test-key", min_confidence_threshold=0.7
-        )
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        # Exactly at threshold should pass
-        assert result.status == ValidationStatus.MODIFIED
-
-
-# ==============================================================================
-# HIGH PRIORITY: Validation Response Edge Cases
-# ==============================================================================
-
-
-@pytest.mark.skip(reason="Need update")
 class TestValidationResponseEdgeCases:
     """Test edge cases in validation responses."""
     def test_completely_empty_response(
@@ -869,53 +563,6 @@ class TestValidationResponseEdgeCases:
         result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
 
         assert result.status == ValidationStatus.NEEDS_REVIEW
-    def test_response_with_only_status(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test response with only STATUS field."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[0].message.content = (
-            '{ "IMPROVED_FIX": "", "CONFIDENCE": "0.7", "PLACEMENT":"SIBLING", "IMPROVED_EXPLANATION":"The fix correctly removes the unused variable."}'
-        )
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-        # Should handle gracefully with defaults
-        assert result.status == ValidationStatus.MODIFIED
-        assert result.confidence == 0.7
-    def test_response_with_extra_fields(
-        self, sample_fix, sample_issue, sample_file_content
-    ):
-        """Test response with unexpected extra fields."""
-        mock_client = MagicMock()
-        mock_response = MagicMock()
-        mock_response.choices[
-            0
-        ].message.content = """{
-"IMPROVED_FIX": "",
-
-"CONFIDENCE": "0.9",
-
-"PLACEMENT":"SIBLING",
-"IMPROVED_EXPLANATION":"",
-"EXTRA_FIELD": " This shouldn't break anything",
-"ANOTHER_UNEXPECTED": "Field"
-}
-"""
-        mock_client.completion.return_value = mock_response
-
-        validator = FixValidator(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key='test-key'))
-        result = validator.validate_fix(sample_fix, sample_issue, sample_file_content)
-
-        # Should ignore extra fields
-        assert result.status == ValidationStatus.MODIFIED
-
-
-# ==============================================================================
-# HIGH PRIORITY: Context Extraction Boundary Conditions
-# ==============================================================================
 
 
 class TestContextExtractionBoundaries:

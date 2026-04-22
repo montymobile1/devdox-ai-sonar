@@ -1,10 +1,8 @@
 """Interactive add / update flows for LLM profiles.
 
-The two entry points here replace the pre-DEVDOX-63 provider-picker UI
-in :mod:`devdox_ai_sonar.utils.provider_config`. Both operate on a
-shared sequence of primitives (pick provider, pick model, collect key,
-validate) wired together through :mod:`selection`, :mod:`validation`,
-and :mod:`profile_store`.
+Both entry points walk a shared sequence of primitives (pick provider,
+pick model, collect key, validate) wired together through
+:mod:`selection`, :mod:`validation`, and :mod:`profile_store`.
 
 add_profile_flow (the 8-step wizard)
 ------------------------------------

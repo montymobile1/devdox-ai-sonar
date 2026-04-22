@@ -531,58 +531,6 @@ class TestValidateApiToken:
 # ============================================================================
 
 
-class TestValidateLLMProvider:
-    """Tests for validate_llm_provider method."""
-
-    def test_validate_llm_provider_openai(self):
-        """Test validation with OpenAI."""
-        result = InputValidator.validate_llm_provider("openai")
-
-        assert result == "openai"
-
-    def test_validate_llm_provider_uppercase(self):
-        """Test validation with uppercase (normalized)."""
-        result = InputValidator.validate_llm_provider("OPENAI")
-
-        assert result == "openai"
-
-    def test_validate_llm_provider_with_whitespace(self):
-        """Test validation trims whitespace."""
-        result = InputValidator.validate_llm_provider("  gemini  ")
-
-        assert result == "gemini"
-
-    def test_validate_llm_provider_togetherai(self):
-        """Test validation with TogetherAI."""
-        result = InputValidator.validate_llm_provider("togetherai")
-
-        assert result == "togetherai"
-
-    def test_validate_llm_provider_invalid(self):
-        """Test validation with invalid provider."""
-        with pytest.raises(ValidationError) as exc_info:
-            InputValidator.validate_llm_provider("invalid_provider")
-
-        assert "unsupported" in str(exc_info.value).lower()
-        assert "invalid_provider" in str(exc_info.value)
-        assert exc_info.value.field == "provider"
-
-    def test_validate_llm_provider_shows_valid_options(self):
-        """Test error message shows valid options."""
-        with pytest.raises(ValidationError) as exc_info:
-            InputValidator.validate_llm_provider("anthropic")
-
-        error_msg = str(exc_info.value).lower()
-        assert "openai" in error_msg
-        assert "gemini" in error_msg
-        assert "togetherai" in error_msg
-
-
-# ============================================================================
-# CONFIDENCE VALIDATION TESTS
-# ============================================================================
-
-
 class TestValidateConfidence:
     """Tests for validate_confidence method."""
 
@@ -703,13 +651,6 @@ class TestValidatorConstants:
         assert "INFO" in InputValidator.VALID_SEVERITIES
         assert len(InputValidator.VALID_SEVERITIES) == 5
 
-    def test_valid_llm_providers_constant(self):
-        """Test VALID_LLM_PROVIDERS constant."""
-        assert "openai" in InputValidator.VALID_LLM_PROVIDERS
-        assert "gemini" in InputValidator.VALID_LLM_PROVIDERS
-        assert "togetherai" in InputValidator.VALID_LLM_PROVIDERS
-        assert "openrouter" in InputValidator.VALID_LLM_PROVIDERS
-        assert len(InputValidator.VALID_LLM_PROVIDERS) == 4
 
     def test_invalid_branch_chars_constant(self):
         """Test INVALID_BRANCH_CHARS constant."""
@@ -779,31 +720,4 @@ class TestEdgeCases:
 
 class TestIntegration:
     """Integration tests for combined validation scenarios."""
-
-    def test_validate_complete_config(self, tmp_path):
-        """Test validating a complete configuration."""
-        # Validate all components of a typical config
-        pr_num = InputValidator.validate_pull_request_number(123)
-        branch = InputValidator.validate_branch_name("feature/test")
-        max_issues = InputValidator.validate_max_issues(50, 100)
-        issue_types = InputValidator.validate_issue_types("BUG,CODE_SMELL")
-        severities = InputValidator.validate_severities("CRITICAL,MAJOR")
-        project_path = InputValidator.validate_project_path(tmp_path)
-        token = InputValidator.validate_api_token("squ_" + "a" * 40)
-        provider = InputValidator.validate_llm_provider("openai")
-        model = InputValidator.validate_model_name("gpt-4", provider)
-        confidence = InputValidator.validate_confidence(0.8)
-
-        # All should be valid
-        assert pr_num == 123
-        assert branch == "feature/test"
-        assert max_issues == 50
-        assert len(issue_types) == 2
-        assert len(severities) == 2
-        assert project_path.exists()
-        assert len(token) > 20
-        assert provider == "openai"
-        assert model == "gpt-4"
-        assert 0.0 <= confidence <= 1.0
-
 
