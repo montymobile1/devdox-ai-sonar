@@ -751,3 +751,130 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
     assert len(profiles) == 1
     assert profiles[0].api_key == "actually-valid-key"
     assert call_count["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# Exclusion lists loaded from config.toml
+# ---------------------------------------------------------------------------
+
+
+async def test_load_exclusions_reads_both_lists(manager):
+    """``_load_exclusions`` materialises both config keys as frozen sets."""
+    llm_section = await manager.get_value("llm")
+    llm_section["excluded_providers"] = ["groq", "azure"]
+    llm_section["excluded_models"] = ["gemini/gemini-1.5-flash"]
+    manager.save_config(create_backup=False)
+
+    reloaded = ConfigManager(config_path=manager.config_path)
+    await reloaded.load_config()
+    result = await interactive._load_exclusions(reloaded)
+
+    assert result.providers == frozenset({"groq", "azure"})
+    assert result.models == frozenset({"gemini/gemini-1.5-flash"})
+
+
+async def test_load_exclusions_tolerates_missing_keys(manager):
+    """A config with neither key present returns empty frozen sets,
+    not a crash -- fresh configs don't necessarily have the fields."""
+    llm_section = await manager.get_value("llm")
+    llm_section.pop("excluded_providers", None)
+    llm_section.pop("excluded_models", None)
+    manager.save_config(create_backup=False)
+
+    reloaded = ConfigManager(config_path=manager.config_path)
+    await reloaded.load_config()
+    result = await interactive._load_exclusions(reloaded)
+
+    assert result.providers == frozenset()
+    assert result.models == frozenset()
+
+
+async def test_load_exclusions_ignores_non_list_values(manager):
+    """Hand-edited config accidentally making ``excluded_providers`` a
+    string (e.g. ``"groq,azure"``) shouldn't explode the picker."""
+    llm_section = await manager.get_value("llm")
+    llm_section["excluded_providers"] = "not-a-list"
+    llm_section["excluded_models"] = 42
+    manager.save_config(create_backup=False)
+
+    reloaded = ConfigManager(config_path=manager.config_path)
+    await reloaded.load_config()
+    result = await interactive._load_exclusions(reloaded)
+
+    assert result.providers == frozenset()
+    assert result.models == frozenset()
+
+
+async def test_add_flow_hides_excluded_provider_from_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """End-to-end: an excluded provider disappears from the Step 1
+    menu. If the test's fake response queue expects it to be absent,
+    the wizard proceeds with whichever alternative is presented."""
+    llm_section = await manager.get_value("llm")
+    llm_section["excluded_providers"] = ["openhands"]
+    manager.save_config(create_backup=False)
+
+    # Track what was actually shown to select_from_list so we can
+    # assert ``openhands`` never made it into the menu.
+    shown_to_user: list[list[str]] = []
+
+    async def recording_select(choices, message, use_search=True):
+        shown_to_user.append(list(choices))
+        # Pick openai and its gpt-4o as a viable, non-excluded path.
+        if "⭐ openai" in choices:
+            return "⭐ openai"
+        if "⭐ gpt-4o" in choices:
+            return "⭐ gpt-4o"
+        return None
+
+    monkeypatch.setattr(interactive, "select_from_list", recording_select)
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-test", "prof-name"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    provider_menu = shown_to_user[0]
+    assert "⭐ openhands" not in provider_menu
+    assert "openhands" not in provider_menu
+
+
+async def test_add_flow_hides_excluded_model_from_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """An entry in ``excluded_models`` disappears from the Step 2
+    menu for its provider; other models under the same provider are
+    still visible."""
+    llm_section = await manager.get_value("llm")
+    llm_section["excluded_models"] = ["openai/gpt-4o"]
+    manager.save_config(create_backup=False)
+
+    shown_model_menu: list[list[str]] = []
+
+    async def recording_select(choices, message, use_search=True):
+        if message.startswith("Select a openai model") or "model" in message:
+            shown_model_menu.append(list(choices))
+        if "⭐ openai" in choices:
+            return "⭐ openai"
+        # No gpt-4o available; pick whatever else is on offer so we
+        # don't hang. Use the raw Mock's ``None`` to cancel if empty.
+        return choices[0] if choices else None
+
+    monkeypatch.setattr(interactive, "select_from_list", recording_select)
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-test", "prof-name"],
+        confirm_answers=[False, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    # Concatenate every menu `recording_select` was asked about -- the
+    # specific message match is brittle, but "gpt-4o never shown" is
+    # robust across any prompt wording.
+    all_entries = [label for menu in shown_model_menu for label in menu]
+    assert "⭐ gpt-4o" not in all_entries
+    assert "gpt-4o" not in all_entries

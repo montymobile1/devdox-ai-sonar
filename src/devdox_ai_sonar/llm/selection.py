@@ -24,6 +24,7 @@ Custom vs real provider:
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 from devdox_ai_sonar.llm.adapters import unverified_models, verified_models
@@ -77,41 +78,73 @@ class ModelInfo:
     verified: bool
 
 
-def build_provider_menu() -> list[ProviderInfo]:
+def build_provider_menu(
+    *,
+    excluded_providers: Iterable[str] = (),
+) -> list[ProviderInfo]:
     """Return the provider picker entries.
 
     Union of verified and unverified provider names, alphabetised, with
     the ``verified`` flag set on entries present in the curated list.
-    Does **not** include the "Custom" option -- the UI layer appends that
-    itself after this list is rendered.
+    Does **not** include the "Custom" option -- the UI layer appends
+    that itself after this list is rendered.
+
+    Args:
+        excluded_providers: Provider names the user has hidden via
+            ``[llm].excluded_providers`` in config.toml. Matching is
+            exact string equality against the union of both
+            catalogues' keys; unknown exclusion entries are silently
+            ignored (so a typo in the config doesn't crash the UI).
     """
     verified = verified_models.list_providers()
     unverified = unverified_models.list_providers()
+    blocked = frozenset(excluded_providers)
 
-    all_names = sorted(set(verified.keys()) | set(unverified.keys()))
+    all_names = sorted(
+        (set(verified.keys()) | set(unverified.keys())) - blocked
+    )
     return [ProviderInfo(name=name, verified=name in verified) for name in all_names]
 
 
-def build_model_menu(provider: str) -> list[ModelInfo]:
+def build_model_menu(
+    provider: str,
+    *,
+    excluded_models: Iterable[str] = (),
+) -> list[ModelInfo]:
     """Return the model picker entries for a given provider.
 
-    Verified entries come first (for ⭐-prefixed display), followed by the
-    rest of the catalogue for that provider. ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK``
-    is already disjoint from ``VERIFIED_MODELS`` for any given provider,
-    so no de-duplication is performed here.
+    Verified entries come first (for ⭐-prefixed display), followed by
+    the rest of the catalogue for that provider.
+    ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK`` is already disjoint from
+    ``VERIFIED_MODELS`` for any given provider, so no de-duplication
+    is performed here.
 
     Args:
         provider: A real provider family name. Passing
-            :data:`CUSTOM_PROVIDER_SENTINEL` is a caller bug -- use the
-            custom-input prompt instead.
+            :data:`CUSTOM_PROVIDER_SENTINEL` is a caller bug -- use
+            the custom-input prompt instead.
+        excluded_models: Models the user has hidden via
+            ``[llm].excluded_models`` in config.toml, in full
+            ``provider/model-id`` form (so a ``"gemini/gpt-4o"``
+            typo doesn't accidentally hide OpenAI's gpt-4o).
+            Matching is exact.
 
     Returns:
-        A list of :class:`ModelInfo`, empty if the provider is unknown to
-        both catalogues.
+        A list of :class:`ModelInfo`, empty if the provider is
+        unknown to both catalogues or if every model has been
+        excluded.
     """
     verified = verified_models.list_providers().get(provider, [])
     unverified = unverified_models.list_providers().get(provider, [])
+    blocked = frozenset(excluded_models)
 
-    entries = [ModelInfo(model_id=m, verified=True) for m in verified]
-    entries += [ModelInfo(model_id=m, verified=False) for m in unverified]
+    def visible(model_id: str) -> bool:
+        return f"{provider}/{model_id}" not in blocked
+
+    entries = [
+        ModelInfo(model_id=m, verified=True) for m in verified if visible(m)
+    ]
+    entries += [
+        ModelInfo(model_id=m, verified=False) for m in unverified if visible(m)
+    ]
     return entries

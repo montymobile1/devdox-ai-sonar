@@ -300,6 +300,38 @@ unauthenticated endpoints), and an optional `base_url` for custom or
 self-hosted endpoints. The top-level `[llm].default_profile` names
 whichever profile runs by default.
 
+**Hiding providers or models from the wizard**
+
+The wizard menus draw from ~70 providers and several thousand models;
+most installations only care about a handful. Two optional keys on the
+`[llm]` section let you hide entries you never want to pick:
+
+```toml
+[llm]
+# Hide these providers entirely -- they won't appear in the Step 1
+# menu. Exact string match against the provider family name.
+excluded_providers = [
+    "aws_polly",
+    "elevenlabs",
+    "stability",
+]
+
+# Hide specific models (full "provider/model-id" form). The model
+# prefix must match a provider that is still in the picker; an
+# excluded provider implicitly hides all its models, so there's no
+# need to list both.
+excluded_models = [
+    "gemini/gemini-1.5-flash",   # deprecated by Google
+    "openai/sora-2",
+]
+```
+
+Both lists default to empty, so nothing is filtered unless you ask.
+Unknown entries (a typo in a provider name, a model the catalogue
+doesn't ship any more) are silently ignored -- they can't crash the
+picker. The **🔧 Custom** path ignores these lists; if you type an
+excluded model string directly it will still be accepted.
+
 **Updating configuration**
 
 Use the interactive menu (run `devdox_sonar` with no arguments) and select:

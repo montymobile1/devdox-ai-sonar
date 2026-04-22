@@ -23,7 +23,18 @@ class ConfigManager:
 
     DEFAULT_CONFIG = {
         "sonar": {"default_branch": "main", "sonar_options": {"clone_type": "branch"}},
-        "llm": {"default_profile": "", "profiles": []},
+        "llm": {
+            "default_profile": "",
+            "profiles": [],
+            # Exact-match filters applied to the interactive picker.
+            # ``excluded_providers`` removes a provider family (and all
+            # its models) from the top-level menu; ``excluded_models``
+            # hides individual models in full ``provider/model-id``
+            # form. Custom-path input is NOT filtered -- if the user
+            # types an excluded model explicitly, we accept it.
+            "excluded_providers": [],
+            "excluded_models": [],
+        },
     }
 
     def __init__(self, config_path: Path = Path("config.toml")):

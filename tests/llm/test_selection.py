@@ -130,3 +130,92 @@ def test_selection_does_not_touch_sdk_directly():
     assert "import openhands" not in source
     assert "import litellm" not in source
     assert "from litellm" not in source
+
+
+# ---------------------------------------------------------------------------
+# Exclusions: excluded_providers / excluded_models
+# ---------------------------------------------------------------------------
+
+
+def test_provider_menu_hides_excluded_providers(monkeypatch):
+    """A provider listed in ``excluded_providers`` must not appear in
+    the picker. The rest of the catalogue is unaffected."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "anthropic": ["claude-4"]},
+        unverified={"groq": ["llama-3"], "together_ai": ["mixtral"]},
+    )
+    result = build_provider_menu(
+        excluded_providers={"groq", "anthropic"}
+    )
+    names = [p.name for p in result]
+    assert "groq" not in names
+    assert "anthropic" not in names
+    assert set(names) == {"openai", "together_ai"}
+
+
+def test_provider_menu_ignores_unknown_exclusions(monkeypatch):
+    """Misspelled / stale entries in the exclusion list must be
+    silently ignored rather than crash the menu."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"groq": ["llama-3"]},
+    )
+    result = build_provider_menu(
+        excluded_providers={"not-a-real-provider", "typo"}
+    )
+    assert [p.name for p in result] == ["groq", "openai"]
+
+
+def test_model_menu_hides_excluded_models(monkeypatch):
+    """Exclusions use the full ``provider/model-id`` form, so filtering
+    one model from one provider cannot accidentally hide a
+    same-named model under a different provider."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"], "gemini": ["gpt-4o"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    result = build_model_menu(
+        "openai",
+        excluded_models={"openai/gpt-5", "openai/gpt-3.5"},
+    )
+    assert [m.model_id for m in result] == ["gpt-4o"]
+
+    # The same-named model under a different provider is untouched.
+    other = build_model_menu(
+        "gemini", excluded_models={"openai/gpt-5", "openai/gpt-3.5"}
+    )
+    assert [m.model_id for m in other] == ["gpt-4o"]
+
+
+def test_model_menu_all_models_excluded_returns_empty(monkeypatch):
+    """If every model for a provider is on the excluded list, the
+    picker legitimately has nothing to show. The UI layer is
+    responsible for surfacing that to the user."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"gemini": ["gemini-3.1-pro-preview"]},
+        unverified={"gemini": ["gemini-1.5-flash"]},
+    )
+    result = build_model_menu(
+        "gemini",
+        excluded_models={
+            "gemini/gemini-3.1-pro-preview",
+            "gemini/gemini-1.5-flash",
+        },
+    )
+    assert result == []
+
+
+def test_model_menu_default_no_exclusions_unchanged(monkeypatch):
+    """Existing callers that pass no excluded_models must see the same
+    output as before -- the default is 'filter nothing'."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    result = build_model_menu("openai")
+    assert [m.model_id for m in result] == ["gpt-4o", "gpt-3.5"]
