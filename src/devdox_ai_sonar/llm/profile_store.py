@@ -151,7 +151,17 @@ async def update_profile(
             f"Cannot rename {name!r} -> {new_name!r}: name already in use"
         )
 
-    profiles[index].update(updates)
+    # Apply updates. Optional fields (base_url) with value None are
+    # removed from the TOML entry rather than written as null, because
+    # tomlkit has no representation for None and an empty base_url means
+    # "use the provider default" -- i.e. the field's absence is its
+    # semantically correct state.
+    entry = profiles[index]
+    for key, value in updates.items():
+        if key == "base_url" and value is None:
+            entry.pop("base_url", None)
+        else:
+            entry[key] = value
 
     # Keep default_profile consistent on rename.
     current_default = llm_section.get(_DEFAULT_PROFILE_KEY)
