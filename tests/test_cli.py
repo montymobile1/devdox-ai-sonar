@@ -4599,11 +4599,16 @@ class TestInitializeFixServices:
 
         mock_analyzer.assert_called_once_with("test_token", "test_org")
         mock_ruler.assert_called_once_with("test_token", "test_org")
-        mock_fixer.assert_called_once_with(
-            provider="openai",
-            model="gpt-4",
-            api_key="test_key"
-        )
+        # Post-DEVDOX-63 bridge: _initialize_fix_services constructs an
+        # LLMProfile from the legacy LLMConfig shape and passes it to
+        # LLMFixer(profile=...). The bridge joins the legacy bare model
+        # name to the canonical litellm provider prefix.
+        mock_fixer.assert_called_once()
+        call_kwargs = mock_fixer.call_args.kwargs
+        profile = call_kwargs["profile"]
+        assert profile.model == "openai/gpt-4"
+        assert profile.api_key == "test_key"
+        assert profile.name == "openai"
 
 
 class TestCollectRuleInformation:

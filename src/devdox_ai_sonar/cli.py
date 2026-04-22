@@ -34,6 +34,7 @@ from devdox_ai_sonar.utils.file_indentation import (
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
 from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig, LLMConfig
+from devdox_ai_sonar.llm.profile import LLMProfile
 
 from devdox_ai_sonar.models.sonar import (
     AnalysisResult,
@@ -1498,20 +1499,50 @@ async def _process_and_fix_issues(
         )
 
 
+_LEGACY_PROVIDER_TO_LITELLM_PREFIX = {
+    "openai": "openai",
+    "gemini": "gemini",
+    "togetherai": "together_ai",
+    "openrouter": "openrouter",
+}
+
+
+def _profile_from_legacy_llm_config(llm_config: LLMConfig) -> LLMProfile:
+    """Bridge: turn an ``LLMConfig`` (old shape) into an ``LLMProfile``.
+
+    The existing config.toml still carries the pre-DEVDOX-63 shape of
+    ``{provider, model, api_key}`` with bare model IDs. Commit 11 will
+    rewrite cli.py to consume the new ``[[llm.profiles]]`` schema
+    directly, at which point this bridge goes away. Until then it maps
+    the legacy provider name to the canonical litellm prefix and glues
+    it onto the model.
+    """
+    prefix = _LEGACY_PROVIDER_TO_LITELLM_PREFIX.get(
+        llm_config.provider, llm_config.provider
+    )
+    qualified_model = (
+        llm_config.model
+        if llm_config.model.startswith(f"{prefix}/")
+        else f"{prefix}/{llm_config.model}"
+    )
+    return LLMProfile(
+        name=llm_config.provider,
+        model=qualified_model,
+        api_key=llm_config.api_key,
+    )
+
+
 def _initialize_fix_services(
     auth_config: AuthConfig, llm_config: LLMConfig
 ) -> Dict[str, Any]:
     """Initialize services for fixing issues."""
     console.print("[dim]Initializing services...[/dim]")
 
+    profile = _profile_from_legacy_llm_config(llm_config)
     return {
         "analyzer": SonarCloudAnalyzer(auth_config.token, auth_config.organization),
         "ruler": RuleAnalyzer(auth_config.token, auth_config.organization),
-        "fixer": LLMFixer(
-            provider=llm_config.provider,
-            model=llm_config.model,
-            api_key=llm_config.api_key,
-        ),
+        "fixer": LLMFixer(profile=profile),
     }
 
 
