@@ -334,10 +334,9 @@ def mock_env_vars(monkeypatch):
         "SONAR_TOKEN": "test-sonar-token",
         "SONAR_ORGANIZATION": "test-org",
         "SONAR_PROJECT_KEY": "test-project",
-        "OPENAI_API_KEY": "test-openai-key",
-        "GEMINI_API_KEY": "test-gemini-key",
-        "LLM_PROVIDER": "openai",
-        "LLM_MODEL": "gpt-4",
+        "LLM_MODEL": "openai/gpt-4o",
+        "LLM_API_KEY": "test-llm-key",
+        "LLM_BASE_URL": "",
     }
 
     for key, value in env_vars.items():
