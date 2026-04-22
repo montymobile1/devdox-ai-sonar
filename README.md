@@ -300,37 +300,24 @@ unauthenticated endpoints), and an optional `base_url` for custom or
 self-hosted endpoints. The top-level `[llm].default_profile` names
 whichever profile runs by default.
 
-**Hiding providers or models from the wizard**
+**Hidden providers and models**
 
-The wizard menus draw from ~70 providers and several thousand models;
-most installations only care about a handful. Two optional keys on the
-`[llm]` section let you hide entries you never want to pick:
+The wizard menus draw from ~70 providers and several thousand models,
+but the OpenHands catalogue ships entries we've found to be broken at
+runtime (e.g. TTS/image/audio providers that don't do chat completion,
+deprecated Gemini aliases that 404). These are filtered out of the
+pickers so you don't have to wade past them.
 
-```toml
-[llm]
-# Hide these providers entirely -- they won't appear in the Step 1
-# menu. Exact string match against the provider family name.
-excluded_providers = [
-    "aws_polly",
-    "elevenlabs",
-    "stability",
-]
+The exclusion lists live in `src/devdox_ai_sonar/llm/exclusions.py` as
+developer-owned `frozenset` constants and are not user-configurable. If
+an upstream provider comes back online or a new one breaks, the fix is
+a code change and a release -- not a config edit. Profiles already
+saved against a now-excluded entry still load: the app prints a
+runtime warning on startup but doesn't force a migration.
 
-# Hide specific models (full "provider/model-id" form). The model
-# prefix must match a provider that is still in the picker; an
-# excluded provider implicitly hides all its models, so there's no
-# need to list both.
-excluded_models = [
-    "gemini/gemini-1.5-flash",   # deprecated by Google
-    "openai/sora-2",
-]
-```
-
-Both lists default to empty, so nothing is filtered unless you ask.
-Unknown entries (a typo in a provider name, a model the catalogue
-doesn't ship any more) are silently ignored -- they can't crash the
-picker. The **🔧 Custom** path ignores these lists; if you type an
-excluded model string directly it will still be accepted.
+The **🔧 Custom** path ignores these lists; if you type an excluded
+model string directly, it is still accepted (you know what you're
+doing).
 
 **Updating configuration**
 

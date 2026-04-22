@@ -12,7 +12,7 @@ from typing import Iterator
 
 import pytest
 
-from devdox_ai_sonar.llm import interactive, selection, validation
+from devdox_ai_sonar.llm import exclusions, interactive, selection, validation
 from devdox_ai_sonar.llm.adapters import (
     key_probe,
     provider_inference,
@@ -754,66 +754,20 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
 
 
 # ---------------------------------------------------------------------------
-# Exclusion lists loaded from config.toml
+# Developer-owned exclusions (EXCLUDED_PROVIDERS / EXCLUDED_MODELS)
 # ---------------------------------------------------------------------------
-
-
-async def test_load_exclusions_reads_both_lists(manager):
-    """``_load_exclusions`` materialises both config keys as frozen sets."""
-    llm_section = await manager.get_value("llm")
-    llm_section["excluded_providers"] = ["groq", "azure"]
-    llm_section["excluded_models"] = ["gemini/gemini-1.5-flash"]
-    manager.save_config(create_backup=False)
-
-    reloaded = ConfigManager(config_path=manager.config_path)
-    await reloaded.load_config()
-    result = await interactive._load_exclusions(reloaded)
-
-    assert result.providers == frozenset({"groq", "azure"})
-    assert result.models == frozenset({"gemini/gemini-1.5-flash"})
-
-
-async def test_load_exclusions_tolerates_missing_keys(manager):
-    """A config with neither key present returns empty frozen sets,
-    not a crash -- fresh configs don't necessarily have the fields."""
-    llm_section = await manager.get_value("llm")
-    llm_section.pop("excluded_providers", None)
-    llm_section.pop("excluded_models", None)
-    manager.save_config(create_backup=False)
-
-    reloaded = ConfigManager(config_path=manager.config_path)
-    await reloaded.load_config()
-    result = await interactive._load_exclusions(reloaded)
-
-    assert result.providers == frozenset()
-    assert result.models == frozenset()
-
-
-async def test_load_exclusions_ignores_non_list_values(manager):
-    """Hand-edited config accidentally making ``excluded_providers`` a
-    string (e.g. ``"groq,azure"``) shouldn't explode the picker."""
-    llm_section = await manager.get_value("llm")
-    llm_section["excluded_providers"] = "not-a-list"
-    llm_section["excluded_models"] = 42
-    manager.save_config(create_backup=False)
-
-    reloaded = ConfigManager(config_path=manager.config_path)
-    await reloaded.load_config()
-    result = await interactive._load_exclusions(reloaded)
-
-    assert result.providers == frozenset()
-    assert result.models == frozenset()
 
 
 async def test_add_flow_hides_excluded_provider_from_picker(
     monkeypatch, manager, fake_catalogs
 ):
-    """End-to-end: an excluded provider disappears from the Step 1
-    menu. If the test's fake response queue expects it to be absent,
-    the wizard proceeds with whichever alternative is presented."""
-    llm_section = await manager.get_value("llm")
-    llm_section["excluded_providers"] = ["openhands"]
-    manager.save_config(create_backup=False)
+    """End-to-end: a provider in ``exclusions.EXCLUDED_PROVIDERS``
+    disappears from the Step 1 menu. The wizard proceeds with whichever
+    alternative is presented."""
+    monkeypatch.setattr(
+        exclusions, "EXCLUDED_PROVIDERS", frozenset({"openhands"})
+    )
+    monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
 
     # Track what was actually shown to select_from_list so we can
     # assert ``openhands`` never made it into the menu.
@@ -845,12 +799,13 @@ async def test_add_flow_hides_excluded_provider_from_picker(
 async def test_add_flow_hides_excluded_model_from_picker(
     monkeypatch, manager, fake_catalogs
 ):
-    """An entry in ``excluded_models`` disappears from the Step 2
-    menu for its provider; other models under the same provider are
-    still visible."""
-    llm_section = await manager.get_value("llm")
-    llm_section["excluded_models"] = ["openai/gpt-4o"]
-    manager.save_config(create_backup=False)
+    """An entry in ``exclusions.EXCLUDED_MODELS`` disappears from the
+    Step 2 menu for its provider; other models under the same provider
+    are still visible."""
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(
+        exclusions, "EXCLUDED_MODELS", frozenset({"openai/gpt-4o"})
+    )
 
     shown_model_menu: list[list[str]] = []
 

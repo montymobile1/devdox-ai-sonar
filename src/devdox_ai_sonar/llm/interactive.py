@@ -35,7 +35,7 @@ from typing import Any, Literal, Optional
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from devdox_ai_sonar.llm import selection, validation
+from devdox_ai_sonar.llm import exclusions, selection, validation
 from devdox_ai_sonar.llm.errors import (
     InvalidModelFormatError,
     KeyProbeError,
@@ -125,49 +125,10 @@ class ProfileUpdateContext:
 # ---------------------------------------------------------------------------
 
 
-@dataclass(frozen=True)
-class _Exclusions:
-    """User-chosen exclusions loaded from ``[llm]`` in config.toml.
-
-    Attributes:
-        providers: Frozen set of provider names to hide from the
-            top-level picker. Matching is exact string equality.
-        models: Frozen set of full ``provider/model-id`` strings to
-            hide from the model sub-picker.
-    """
-
-    providers: frozenset[str]
-    models: frozenset[str]
-
-
-async def _load_exclusions(manager: ConfigManager) -> _Exclusions:
-    """Read ``[llm].excluded_providers`` and ``[llm].excluded_models``.
-
-    Missing / malformed entries are treated as empty so a hand-edited
-    config doesn't break the picker. Non-list values are silently
-    ignored (rather than crashed on) for the same reason.
-    """
-    raw_providers = await manager.get_value("llm.excluded_providers")
-    raw_models = await manager.get_value("llm.excluded_models")
-
-    providers = (
-        frozenset(str(p) for p in raw_providers)
-        if isinstance(raw_providers, list)
-        else frozenset()
-    )
-    models = (
-        frozenset(str(m) for m in raw_models)
-        if isinstance(raw_models, list)
-        else frozenset()
-    )
-    return _Exclusions(providers=providers, models=models)
-
-
 async def add_profile_flow(manager: ConfigManager) -> None:
     """Run the 8-step add-profile wizard, looping on "Add another?"."""
     while True:
-        exclusions = await _load_exclusions(manager)
-        profile = await _collect_and_validate_profile(exclusions)
+        profile = await _collect_and_validate_profile()
         if profile is None:
             _console.print("[yellow]⚠ Profile configuration cancelled[/yellow]")
             break
@@ -185,9 +146,7 @@ async def add_profile_flow(manager: ConfigManager) -> None:
             break
 
 
-async def _collect_and_validate_profile(
-    exclusions: _Exclusions,
-) -> Optional[LLMProfile]:
+async def _collect_and_validate_profile() -> Optional[LLMProfile]:
     """Walk the add-profile wizard, handling restart-on-bad-model.
 
     The outer ``while True`` exists solely so a model-shaped probe
@@ -195,14 +154,9 @@ async def _collect_and_validate_profile(
     user back to the provider picker instead of trapping them on the
     API-key prompt. Normal success or an explicit cancel break out
     immediately.
-
-    Args:
-        exclusions: Provider / model names to hide from the pickers.
-            Loaded once per wizard invocation so config edits take
-            effect without a restart.
     """
     while True:
-        picked_provider = await _prompt_for_provider(exclusions)
+        picked_provider = await _prompt_for_provider()
         if picked_provider is None:
             return None
 
@@ -213,7 +167,7 @@ async def _collect_and_validate_profile(
             model, base_url = model_and_base
             family_label = "custom endpoint"
         else:
-            model_id = await _prompt_for_model(picked_provider, exclusions)
+            model_id = await _prompt_for_model(picked_provider)
             if model_id is None:
                 return None
             model = f"{picked_provider}/{model_id}"
@@ -261,11 +215,10 @@ async def update_profile_flow(manager: ConfigManager) -> None:
     is_currently_default = current_default is not None and current_default.name == target.name
 
     ctx = ProfileUpdateContext(profile=target)
-    exclusions = await _load_exclusions(manager)
 
     _sequential_name_prompt(ctx, existing_names={p.name for p in profiles})
     _sequential_api_key_prompt(ctx)
-    await _sequential_model_prompt(ctx, exclusions)
+    await _sequential_model_prompt(ctx)
     _sequential_base_url_prompt(ctx)
     _sequential_default_prompt(ctx, currently_default=is_currently_default)
 
@@ -320,15 +273,15 @@ async def _set_default(manager: ConfigManager, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _prompt_for_provider(exclusions: _Exclusions) -> Optional[str]:
+async def _prompt_for_provider() -> Optional[str]:
     """Step 1: provider picker. Returns the picked name or the sentinel.
 
-    Providers in ``exclusions.providers`` are hidden from the menu.
-    The 🔧 Custom option is always available regardless of exclusions
-    (it's a typed-input path, not a catalogue entry).
+    Providers in :data:`exclusions.EXCLUDED_PROVIDERS` are hidden from
+    the menu. The 🔧 Custom option is always available regardless of
+    exclusions (it's a typed-input path, not a catalogue entry).
     """
     menu = selection.build_provider_menu(
-        excluded_providers=exclusions.providers
+        excluded_providers=exclusions.EXCLUDED_PROVIDERS
     )
     labels_to_value: dict[str, str] = {}
     display: list[str] = []
@@ -345,18 +298,16 @@ async def _prompt_for_provider(exclusions: _Exclusions) -> Optional[str]:
     return labels_to_value.get(picked_label)
 
 
-async def _prompt_for_model(
-    provider: str, exclusions: _Exclusions
-) -> Optional[str]:
+async def _prompt_for_model(provider: str) -> Optional[str]:
     """Step 2a: pick a model id from a known provider's catalog.
 
-    Models listed in ``exclusions.models`` (full ``provider/model-id``
-    form) are filtered out before the menu is shown. If that leaves
-    no entries for the picked provider, the caller sees a clear
-    "no models available" message.
+    Models listed in :data:`exclusions.EXCLUDED_MODELS` (full
+    ``provider/model-id`` form) are filtered out before the menu is
+    shown. If that leaves no entries for the picked provider, the
+    caller sees a clear "no models available" message.
     """
     menu = selection.build_model_menu(
-        provider, excluded_models=exclusions.models
+        provider, excluded_models=exclusions.EXCLUDED_MODELS
     )
     if not menu:
         _console.print(
@@ -547,17 +498,12 @@ def _sequential_api_key_prompt(ctx: ProfileUpdateContext) -> None:
     ).strip()
 
 
-async def _sequential_model_prompt(
-    ctx: ProfileUpdateContext, exclusions: _Exclusions
-) -> None:
+async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
     if Confirm.ask(
         f"Keep current model '{ctx.profile.model}'?", default=True
     ):
         return
-    # Re-run steps 1-3 of the add-flow to pick a new model, honouring
-    # the same exclusion lists so the update picker stays consistent
-    # with the add picker.
-    picked_provider = await _prompt_for_provider(exclusions)
+    picked_provider = await _prompt_for_provider()
     if picked_provider is None:
         return
     if picked_provider == CUSTOM_PROVIDER_SENTINEL:
@@ -568,11 +514,10 @@ async def _sequential_model_prompt(
         ctx.updates["model"] = new_model
         ctx.updates["base_url"] = new_base_url
     else:
-        model_id = await _prompt_for_model(picked_provider, exclusions)
+        model_id = await _prompt_for_model(picked_provider)
         if model_id is None:
             return
         ctx.updates["model"] = f"{picked_provider}/{model_id}"
-        # Non-custom picks use the provider default endpoint.
         ctx.updates["base_url"] = None
 
 
