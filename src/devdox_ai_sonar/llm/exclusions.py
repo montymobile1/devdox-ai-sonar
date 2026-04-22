@@ -90,6 +90,62 @@ EXCLUDED_MODELS: frozenset[str] = frozenset({
     "gemini/gemini-1.5-pro",
     "gemini/gemini-1.0-pro",
     "gemini/gemini-pro",
+
+    # Gemini image-generation variants. Produce pixels, not text --
+    # useless for a code fixer.
+    "gemini/imagen-3.0-generate-001",
+    "gemini/imagen-3.0-fast-generate-001",
+    "gemini/imagen-3.0-generate-002",
+    "gemini/imagen-4.0-generate-001",
+    "gemini/imagen-4.0-fast-generate-001",
+    "gemini/imagen-4.0-ultra-generate-001",
+    "gemini/gemini-2.0-flash-exp-image-generation",
+    "gemini/gemini-2.5-flash-image",
+    "gemini/gemini-3-pro-image-preview",
+    "gemini/gemini-3.1-flash-image-preview",
+
+    # Gemini video-generation variants (Veo).
+    "gemini/veo-2.0-generate-001",
+    "gemini/veo-3.1-generate-001",
+    "gemini/veo-3.1-generate-preview",
+    "gemini/veo-3.1-lite-generate-preview",
+    "gemini/veo-3.1-fast-generate-001",
+    "gemini/veo-3.1-fast-generate-preview",
+
+    # Gemini music-generation variants (Lyria).
+    "gemini/lyria-3-pro-preview",
+    "gemini/lyria-3-clip-preview",
+
+    # Gemini embedding models. Return vectors, not chat completions.
+    "gemini/gemini-embedding-001",
+    "gemini/gemini-embedding-2-preview",
+
+    # Gemini TTS previews. Audio output only.
+    "gemini/gemini-2.5-flash-preview-tts",
+    "gemini/gemini-2.5-pro-preview-tts",
+
+    # Gemini native-audio / live variants. Duplex audio streams, not
+    # request/response code fixing.
+    "gemini/gemini-2.5-flash-native-audio-preview-09-2025",
+    "gemini/gemini-2.5-flash-native-audio-preview-12-2025",
+    "gemini/gemini-2.5-flash-native-audio-latest",
+    "gemini/gemini-live-2.5-flash-preview-native-audio-09-2025",
+    "gemini/gemini-3.1-flash-live-preview",
+
+    # Gemini non-chat specialists. Trained for different tasks
+    # (browser automation, robotics embeddings) than code patching.
+    "gemini/gemini-2.5-computer-use-preview-10-2025",
+    "gemini/gemini-robotics-er-1.5-preview",
+
+    # OpenAI Sora (video generation).
+    "openai/sora-2",
+    "openai/sora-2-pro",
+    "openai/sora-2-pro-high-res",
+
+    # OpenAI safeguard variants. Moderation classifiers -- return
+    # safe/unsafe labels, not code.
+    "openai/gpt-oss-safeguard-120b",
+    "openai/gpt-oss-safeguard-20b",
 })
 
 
