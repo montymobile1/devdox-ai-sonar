@@ -80,10 +80,13 @@ def build_provider_menu() -> list[ProviderInfo]:
 def build_model_menu(provider: str) -> list[ModelInfo]:
     """Return the model picker entries for a given provider.
 
-    Verified entries come first (for ⭐-prefixed display), followed by
-    the rest of the catalogue for that provider. The upstream unverified
-    catalogue is already disjoint from the verified one for any given
-    provider, so no de-duplication is performed here.
+    Verified entries come first (for ⭐-prefixed display), alphabetised
+    among themselves, followed by the unverified catalogue, also
+    alphabetised. Duplicates are collapsed: the upstream
+    ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK`` catalogue contains repeated
+    ids within its own lists for many providers, and the
+    verified-vs-unverified disjointness is a convention rather than a
+    guarantee -- we rely on neither.
 
     Args:
         provider: A provider family name.
@@ -95,6 +98,16 @@ def build_model_menu(provider: str) -> list[ModelInfo]:
     verified = adapters.list_verified_models().get(provider, [])
     unverified = adapters.list_unverified_models().get(provider, [])
 
-    entries = [ModelInfo(model_id=m, verified=True) for m in verified]
-    entries += [ModelInfo(model_id=m, verified=False) for m in unverified]
+    entries: list[ModelInfo] = []
+    seen: set[str] = set()
+    for model_id in sorted(verified):
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        entries.append(ModelInfo(model_id=model_id, verified=True))
+    for model_id in sorted(unverified):
+        if model_id in seen:
+            continue
+        seen.add(model_id)
+        entries.append(ModelInfo(model_id=model_id, verified=False))
     return entries
