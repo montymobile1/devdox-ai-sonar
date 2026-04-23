@@ -85,7 +85,13 @@ def _queue_responses(monkeypatch, responses: Iterator):
 
 
 def _patch_prompt(monkeypatch, *, text_answers=None, confirm_answers=None):
-    """Replace Rich's Prompt.ask / Confirm.ask inside interactive module."""
+    """Replace Rich's Prompt.ask / Confirm.ask inside interactive module.
+
+    When the queued-response iterator is exhausted, the fake raises
+    ``KeyboardInterrupt`` -- matching what a real user-initiated abort
+    produces. This keeps retry loops in the code under test from
+    spinning forever on an empty queue.
+    """
     texts = iter(text_answers or [])
     confirms = iter(confirm_answers or [])
 
@@ -95,7 +101,7 @@ def _patch_prompt(monkeypatch, *, text_answers=None, confirm_answers=None):
             try:
                 return next(texts)
             except StopIteration:
-                return kwargs.get("default", "")
+                raise KeyboardInterrupt
 
     class _FakeConfirm:
         @staticmethod

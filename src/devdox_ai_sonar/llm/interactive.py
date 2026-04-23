@@ -190,8 +190,8 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
     if validated is None:
         return None
 
-    api_key = _prompt_for_api_key(family_label)
-    if not _probe_or_report(model, api_key, base_url):
+    api_key = _prompt_for_api_key_until_valid(family_label, model, base_url)
+    if api_key is None:
         return None
 
     name = _prompt_profile_name(default=_suggest_profile_name(model))
@@ -334,16 +334,46 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
     return picked
 
 
-def _prompt_for_api_key(family_label: str) -> str:
-    """Collect an API key. Blank is allowed (endpoints that accept no auth)."""
+def _prompt_for_api_key_until_valid(
+    family_label: str,
+    model: str,
+    base_url: Optional[str],
+) -> Optional[str]:
+    """Prompt for an API key and re-prompt until the live probe passes.
+
+    Only an explicit Ctrl+C (or EOF on stdin) aborts the loop; any
+    probe failure keeps asking for a new key. Returns the validated
+    key on success, or ``None`` if the user cancelled.
+    """
+    while True:
+        api_key = _prompt_for_api_key(family_label)
+        if api_key is None:
+            return None
+        if _probe_or_report(model, api_key, base_url):
+            return api_key
+        _console.print(
+            "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
+        )
+
+
+def _prompt_for_api_key(family_label: str) -> Optional[str]:
+    """Step 4: collect an API key.
+
+    Returns the entered key (possibly empty, to cover endpoints that
+    accept unauthenticated requests), or ``None`` when the user
+    interrupts with Ctrl+C / EOF. The empty-string-vs-None distinction
+    is what lets the caller loop on a rejected key without treating an
+    explicit abort as a retry.
+    """
     try:
         return Prompt.ask(
-            f"API key for {family_label} (press Enter if not required)",
-            default="",
+            f"API key for {family_label} "
+            "[dim](input hidden; press Enter if not required)[/dim]",
             password=True,
+            show_default=False,
         ).strip()
-    except KeyboardInterrupt:
-        return ""
+    except (KeyboardInterrupt, EOFError):
+        return None
 
 
 def _confirm_default(
@@ -411,9 +441,9 @@ def _sequential_api_key_prompt(ctx: ProfileUpdateContext) -> None:
     if not Confirm.ask("Change the API key?", default=False):
         return
     ctx.new_api_key = Prompt.ask(
-        "New API key (press Enter if not required)",
-        default="",
+        "New API key [dim](input hidden; press Enter if not required)[/dim]",
         password=True,
+        show_default=False,
     ).strip()
 
 
