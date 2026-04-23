@@ -54,10 +54,10 @@ def test_model_menu_verified_first(monkeypatch):
     )
     result = build_model_menu("openai")
     assert result == [
-        ModelInfo(model_id="gpt-4o"),
-        ModelInfo(model_id="gpt-5"),
-        ModelInfo(model_id="gpt-3.5"),
-        ModelInfo(model_id="sora-2"),
+        ModelInfo(model_id="gpt-4o", verified=True),
+        ModelInfo(model_id="gpt-5", verified=True),
+        ModelInfo(model_id="gpt-3.5", verified=False),
+        ModelInfo(model_id="sora-2", verified=False),
     ]
 
 
@@ -68,7 +68,7 @@ def test_model_menu_verified_only_when_no_advanced_entries(monkeypatch):
         unverified={},
     )
     result = build_model_menu("gemini")
-    assert result == [ModelInfo(model_id="gemini-3.1-pro-preview")]
+    assert result == [ModelInfo(model_id="gemini-3.1-pro-preview", verified=True)]
 
 
 def test_model_menu_advanced_only_when_not_in_verified(monkeypatch):

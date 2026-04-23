@@ -125,8 +125,8 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
     _queue_responses(
         monkeypatch,
         iter([
-            "openai",          # provider picker
-            "gpt-4o",          # model picker
+            "⭐ openai",          # provider picker
+            "⭐ gpt-4o",          # model picker
         ]),
     )
     _patch_prompt(
@@ -252,8 +252,8 @@ async def test_add_profile_flow_openhands_family_accepted(
     _queue_responses(
         monkeypatch,
         iter([
-            "openhands",
-            "claude-sonnet-4-6",
+            "⭐ openhands",
+            "⭐ claude-sonnet-4-6",
         ]),
     )
     _patch_prompt(
@@ -280,7 +280,7 @@ async def test_add_profile_flow_rejects_unreachable_key(
             ok=False, failure_kind="auth", detail="bad key"
         ),
     )
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
     _patch_prompt(
         monkeypatch,
         text_answers=["bad-key"],
@@ -313,8 +313,8 @@ async def test_add_profile_flow_loops_on_add_another(
     _queue_responses(
         monkeypatch,
         iter([
-            "openai", "gpt-4o",
-            "openhands", "claude-sonnet-4-6",
+            "⭐ openai", "⭐ gpt-4o",
+            "⭐ openhands", "⭐ claude-sonnet-4-6",
         ]),
     )
     _patch_prompt(
@@ -394,8 +394,8 @@ async def test_update_profile_flow_model_change_triggers_reprobe(
         monkeypatch,
         iter([
             "p",                    # pick profile
-            "openhands",            # new provider
-            "claude-sonnet-4-6",    # new model
+            "⭐ openhands",            # new provider
+            "⭐ claude-sonnet-4-6",    # new model
         ]),
     )
     _patch_prompt(
@@ -946,7 +946,7 @@ async def test_rate_limited_probe_saves_when_user_picks_s(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -988,7 +988,7 @@ async def test_rate_limited_probe_retries_successfully(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(adapters, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -1022,7 +1022,7 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
     _patch_prompt(
         monkeypatch,
         text_answers=["sk-key", "c"],
@@ -1067,8 +1067,8 @@ async def test_not_found_probe_restarts_wizard_at_provider_picker(
     _queue_responses(
         monkeypatch,
         iter([
-            "openai", "gpt-4o",                 # first attempt
-            "openhands", "claude-sonnet-4-6",   # second attempt
+            "⭐ openai", "⭐ gpt-4o",                 # first attempt
+            "⭐ openhands", "⭐ claude-sonnet-4-6",   # second attempt
         ]),
     )
     _patch_prompt(
@@ -1103,7 +1103,7 @@ async def test_bad_request_probe_also_restarts_wizard(
                 ok=False,
                 failure_kind="bad_request",
                 detail="unrecognised model",
-                provider="openai",
+                provider="⭐ openai",
                 status_code=400,
                 exception_class="litellm.exceptions.BadRequestError",
             )
@@ -1113,8 +1113,8 @@ async def test_bad_request_probe_also_restarts_wizard(
     _queue_responses(
         monkeypatch,
         iter([
-            "openai", "gpt-4o",
-            "openai", "gpt-4o",
+            "⭐ openai", "⭐ gpt-4o",
+            "⭐ openai", "⭐ gpt-4o",
         ]),
     )
     _patch_prompt(
@@ -1202,7 +1202,7 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(adapters, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[
