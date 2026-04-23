@@ -14,8 +14,18 @@ import pytest
 
 from devdox_ai_sonar.llm import adapters, interactive
 from devdox_ai_sonar.llm.adapters import KeyProbeOutcome
+from devdox_ai_sonar.llm.errors import (
+    InvalidModelFormatError,
+    KeyProbeError,
+    ProfileNotFoundError,
+    UnknownProviderError,
+)
 from devdox_ai_sonar.llm.profile import LLMProfile
-from devdox_ai_sonar.llm.profile_store import load_profiles, save_profile
+from devdox_ai_sonar.llm.profile_store import (
+    load_profiles,
+    save_profile,
+    update_profile,
+)
 from devdox_ai_sonar.models.llm_config import ConfigManager
 
 
@@ -506,3 +516,398 @@ async def test_update_profile_flow_rename_tracks_in_config(
 
     [renamed] = await load_profiles(ConfigManager(config_path=manager.config_path))
     assert renamed.name == "renamed"
+
+
+# ---------------------------------------------------------------------------
+# add_profile_flow — additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_add_profile_flow_save_failure_breaks_loop(
+    monkeypatch, manager, fake_catalogs
+):
+    """If save_profile raises, the wizard prints a short error and stops
+    looping -- it does not swallow the exception or keep asking."""
+
+    async def failing_save(*_, **__):
+        raise RuntimeError("disk is on fire")
+
+    monkeypatch.setattr(interactive, "save_profile", failing_save)
+    _queue_responses(
+        monkeypatch, iter(["openai", "gpt-4o"])
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-x", "my-prof"],
+        confirm_answers=[False],   # Set as default?
+    )
+
+    # No exception should escape the flow.
+    await interactive.add_profile_flow(manager)
+
+
+async def test_add_profile_flow_cancelled_at_model_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """Ctrl+C at the model picker (picked_provider OK, model_id None)
+    cancels the wizard without saving."""
+    _queue_responses(monkeypatch, iter(["openai", None]))
+    _patch_prompt(monkeypatch, text_answers=[], confirm_answers=[])
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
+async def test_add_profile_flow_cancelled_at_name_prompt(
+    monkeypatch, manager, fake_catalogs
+):
+    """Ctrl+C at the profile-name prompt cancels the wizard (name is
+    None, so no profile is created)."""
+
+    class _PromptAbort:
+        @staticmethod
+        def ask(*args, **kwargs):
+            raise KeyboardInterrupt
+
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    monkeypatch.setattr(interactive, "Prompt", _PromptAbort)
+
+    class _FakeConfirm:
+        @staticmethod
+        def ask(*args, **kwargs):
+            return kwargs.get("default", False)
+
+    monkeypatch.setattr(interactive, "Confirm", _FakeConfirm)
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
+# ---------------------------------------------------------------------------
+# update_profile_flow — additional branch coverage
+# ---------------------------------------------------------------------------
+
+
+async def test_update_profile_flow_cancelled_at_profile_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """With at least one profile saved, cancelling the profile picker
+    (None) exits cleanly without errors."""
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    _queue_responses(monkeypatch, iter([None]))
+    _patch_prompt(monkeypatch, text_answers=[], confirm_answers=[])
+
+    await interactive.update_profile_flow(manager)
+
+    [unchanged] = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert unchanged.api_key == "k"
+
+
+async def test_update_profile_flow_profile_not_found_error(
+    monkeypatch, manager, fake_catalogs
+):
+    """If the backing update_profile raises ProfileNotFoundError (e.g.
+    the file was modified under us between load and save), the flow
+    surfaces the error and returns."""
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+
+    async def raising_update(*_, **__):
+        raise ProfileNotFoundError("simulated race")
+
+    monkeypatch.setattr(interactive, "update_profile", raising_update)
+
+    _queue_responses(monkeypatch, iter(["p"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["new-key"],
+        confirm_answers=[True, True, True, True, False],
+    )
+
+    # Should NOT raise.
+    await interactive.update_profile_flow(manager)
+
+
+async def test_update_profile_flow_set_as_default_after_rename(
+    monkeypatch, manager, fake_catalogs
+):
+    """A rename + set-as-default updates both the profile name and the
+    [llm].default_profile pointer in config.toml."""
+    await save_profile(
+        manager,
+        LLMProfile(name="old-name", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    _queue_responses(monkeypatch, iter(["old-name"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["new-name"],
+        confirm_answers=[
+            False,  # Keep name? -> no
+            False,  # Change key?
+            True,   # Keep model?
+            True,   # Keep base URL?
+            True,   # Set as default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    reloaded = ConfigManager(config_path=manager.config_path)
+    llm_section = await reloaded.get_value("llm")
+    assert llm_section.get("default_profile") == "new-name"
+
+
+# ---------------------------------------------------------------------------
+# Menu / prompt edge cases
+# ---------------------------------------------------------------------------
+
+
+async def test_prompt_for_model_empty_catalog_returns_none(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """When a provider has no models at all, the picker prints a short
+    error and the caller gets None back. Exercised via the add-flow."""
+    monkeypatch.setattr(
+        adapters,
+        "list_verified_models",
+        lambda: {"empty-provider": []},
+    )
+    monkeypatch.setattr(adapters, "list_unverified_models", lambda: {})
+
+    _queue_responses(monkeypatch, iter(["empty-provider"]))
+    _patch_prompt(monkeypatch, text_answers=[], confirm_answers=[])
+
+    await interactive.add_profile_flow(manager)
+
+    out = capsys.readouterr().out
+    assert "No models available" in out
+
+
+async def test_sequential_name_empty_input_keeps_current(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """Entering an empty new name leaves the profile's name unchanged
+    and surfaces a short warning."""
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    _queue_responses(monkeypatch, iter(["p"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[""],   # new name -> empty
+        confirm_answers=[
+            False,  # Keep name? -> no (trigger new-name prompt)
+            False,  # Change key?
+            True,   # Keep model?
+            True,   # Keep base URL?
+            False,  # Default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    [unchanged] = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert unchanged.name == "p"
+    assert "unchanged" in capsys.readouterr().out.lower()
+
+
+async def test_sequential_name_collision_keeps_current(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """Renaming to a name another profile already uses is rejected
+    inline; the original name is kept."""
+    await save_profile(
+        manager,
+        LLMProfile(name="alpha", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    await save_profile(
+        manager,
+        LLMProfile(name="beta", model="openhands/claude-sonnet-4-6", api_key="k"),
+        set_as_default=False,
+    )
+
+    _queue_responses(monkeypatch, iter(["alpha"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["beta"],   # collide with other profile
+        confirm_answers=[
+            False,  # Keep name? -> no
+            False,  # Change key?
+            True,   # Keep model?
+            True,   # Keep base URL?
+            False,  # Default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    reloaded = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    names = {p.name for p in reloaded}
+    assert names == {"alpha", "beta"}  # neither renamed
+    assert "already in use" in capsys.readouterr().out
+
+
+async def test_sequential_base_url_change_path(
+    monkeypatch, manager, fake_catalogs
+):
+    """When the user declines 'Keep current base URL?' and supplies a
+    new value, the update carries that base_url forward."""
+    await save_profile(
+        manager,
+        LLMProfile(
+            name="p",
+            model="openai/gpt-4o",
+            api_key="k",
+            base_url="https://old.example.com",
+        ),
+        set_as_default=False,
+    )
+    _queue_responses(monkeypatch, iter(["p"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["https://new.example.com"],
+        confirm_answers=[
+            True,   # Keep name?
+            False,  # Change key?
+            True,   # Keep model?
+            False,  # Keep base URL? -> no
+            False,  # Default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    [updated] = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert updated.base_url == "https://new.example.com"
+
+
+async def test_sequential_default_promotes_non_default_profile(
+    monkeypatch, manager, fake_catalogs
+):
+    """A non-default profile can be promoted to default via the final
+    'Set as default?' prompt."""
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    _queue_responses(monkeypatch, iter(["p"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["new-key"],
+        confirm_answers=[
+            True,   # Keep name?
+            True,   # Change key?
+            True,   # Keep model?
+            True,   # Keep base URL?
+            True,   # Set as default?  <-- the branch we're exercising
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    reloaded = ConfigManager(config_path=manager.config_path)
+    llm_section = await reloaded.get_value("llm")
+    assert llm_section.get("default_profile") == "p"
+
+
+# ---------------------------------------------------------------------------
+# Error-rendering branches (validation + probe failure messages)
+# ---------------------------------------------------------------------------
+
+
+def test_validate_or_report_invalid_model_format(monkeypatch, capsys):
+    """An InvalidModelFormatError is rendered as a specific message
+    and the helper returns None so the caller knows to abort."""
+    monkeypatch.setattr(
+        interactive.validation,
+        "validate_model_string",
+        lambda model, base_url: interactive.validation.Err(
+            InvalidModelFormatError(model=model, reason="empty")
+        ),
+    )
+    result = interactive._validate_or_report("", base_url=None)
+    assert result is None
+    out = capsys.readouterr().out
+    assert "Invalid model format" in out
+    assert "empty" in out
+
+
+def test_validate_or_report_unknown_provider(monkeypatch, capsys):
+    monkeypatch.setattr(
+        interactive.validation,
+        "validate_model_string",
+        lambda model, base_url: interactive.validation.Err(
+            UnknownProviderError(model=model)
+        ),
+    )
+    result = interactive._validate_or_report("bogus/xyz", base_url=None)
+    assert result is None
+    out = capsys.readouterr().out
+    assert "Unknown provider prefix" in out
+    assert "bogus/xyz" in out
+
+
+def test_probe_or_report_prints_validating_header(monkeypatch, capsys):
+    """The probe helper always prints 'Validating credentials...' at
+    the start, regardless of outcome."""
+    monkeypatch.setattr(
+        interactive.validation,
+        "probe_api_key",
+        lambda model, api_key, base_url: interactive.validation.Ok(None),
+    )
+    assert interactive._probe_or_report("openai/gpt-4o", "sk", None) is True
+    out = capsys.readouterr().out
+    assert "Validating credentials" in out
+    assert "accepted" in out.lower()
+
+
+@pytest.mark.parametrize(
+    "failure_kind, expected_phrase",
+    [
+        ("auth", "Key rejected"),
+        ("connection", "Could not reach endpoint"),
+        ("bad_request", "Endpoint rejected the request"),
+        ("rate_limit", "rate-limited"),
+        ("unknown", "Probe failed"),
+    ],
+)
+def test_probe_or_report_failure_messages(
+    monkeypatch, capsys, failure_kind, expected_phrase
+):
+    """Each distinct probe failure kind surfaces a distinct message so
+    the user can tell auth from connection from rate-limit."""
+    monkeypatch.setattr(
+        interactive.validation,
+        "probe_api_key",
+        lambda model, api_key, base_url: interactive.validation.Err(
+            KeyProbeError(kind=failure_kind, detail="upstream detail")
+        ),
+    )
+    result = interactive._probe_or_report("openai/gpt-4o", "sk", None)
+    assert result is False
+    out = capsys.readouterr().out
+    assert expected_phrase in out
