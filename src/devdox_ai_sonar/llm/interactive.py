@@ -34,7 +34,7 @@ from typing import Any, Literal, Optional
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from devdox_ai_sonar.llm import selection, validation
+from devdox_ai_sonar.llm import exclusions, selection, validation
 from devdox_ai_sonar.llm.errors import (
     InvalidModelFormatError,
     KeyProbeError,
@@ -454,7 +454,10 @@ async def _prompt_for_provider() -> Optional[str]:
 
     Returns the provider name, :data:`_BACK_SENTINEL`, or ``None``.
     """
-    menu = selection.build_provider_menu()
+    menu = selection.build_provider_menu(
+        excluded_providers=exclusions.EXCLUDED_PROVIDERS,
+        included_providers=exclusions.INCLUDED_PROVIDERS,
+    )
     labels_to_value: dict[str, str] = {}
     display: list[str] = []
     for entry in menu:
@@ -535,7 +538,11 @@ async def _prompt_for_model(
     passes every saved profile's model so the user can't land on a
     duplicate.
     """
-    menu = selection.build_model_menu(provider)
+    menu = selection.build_model_menu(
+        provider,
+        excluded_models=exclusions.EXCLUDED_MODELS,
+        included_models=exclusions.INCLUDED_MODELS,
+    )
     if not menu:
         _console.print(
             f"[red]❌ No models available for provider '{provider}'[/red]"
