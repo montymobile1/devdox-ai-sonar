@@ -125,11 +125,13 @@ def build_model_menu(
 ) -> list[ModelInfo]:
     """Return the model picker entries for a given provider.
 
-    Verified entries come first (for ⭐-prefixed display), followed by
-    the rest of the catalogue for that provider.
-    ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK`` is already disjoint from
-    ``VERIFIED_MODELS`` for any given provider, so no de-duplication
-    is performed here.
+    Verified entries come first (for ⭐-prefixed display), alphabetised
+    among themselves, followed by the unverified catalogue, also
+    alphabetised. Duplicates are collapsed: the upstream
+    ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK`` catalogue contains repeated
+    ids within its own lists for many providers, and the
+    verified-vs-unverified disjointness is a convention rather than a
+    guarantee -- we rely on neither.
 
     Filter semantics (same as :func:`build_provider_menu`): inclusion
     narrows, exclusion always wins. All filter strings are full
@@ -160,10 +162,16 @@ def build_model_menu(
             return False
         return full not in blocked
 
-    entries = [
-        ModelInfo(model_id=m, verified=True) for m in verified if visible(m)
-    ]
-    entries += [
-        ModelInfo(model_id=m, verified=False) for m in unverified if visible(m)
-    ]
+    entries: list[ModelInfo] = []
+    seen: set[str] = set()
+    for model_id in sorted(verified):
+        if model_id in seen or not visible(model_id):
+            continue
+        seen.add(model_id)
+        entries.append(ModelInfo(model_id=model_id, verified=True))
+    for model_id in sorted(unverified):
+        if model_id in seen or not visible(model_id):
+            continue
+        seen.add(model_id)
+        entries.append(ModelInfo(model_id=model_id, verified=False))
     return entries

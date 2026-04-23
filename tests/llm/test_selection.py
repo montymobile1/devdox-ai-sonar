@@ -108,7 +108,36 @@ def test_model_menu_advanced_only_when_not_in_verified(monkeypatch):
     )
     result = build_model_menu("together_ai")
     assert all(not m.verified for m in result)
-    assert [m.model_id for m in result] == ["mixtral", "llama"]
+    # Alpha-sorted within the unverified group.
+    assert [m.model_id for m in result] == ["llama", "mixtral"]
+
+
+def test_model_menu_dedupes_repeated_entries(monkeypatch):
+    """The upstream unverified catalogue ships duplicates inside its
+    per-provider lists (e.g. gemini has ~54 repeated ids). A model
+    listed in both verified and unverified collapses to the verified
+    entry. Repeated ids within a single list collapse to one entry."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"]},
+        unverified={
+            "openai": [
+                "gpt-4o-mini",
+                "gpt-3.5",
+                "gpt-4o-mini",   # intra-list duplicate
+                "gpt-4o",        # duplicate of a verified entry
+                "gpt-3.5",       # intra-list duplicate
+            ]
+        },
+    )
+    result = build_model_menu("openai")
+    # Verified first (alpha), then unverified (alpha), each unique.
+    assert result == [
+        ModelInfo(model_id="gpt-4o", verified=True),
+        ModelInfo(model_id="gpt-5", verified=True),
+        ModelInfo(model_id="gpt-3.5", verified=False),
+        ModelInfo(model_id="gpt-4o-mini", verified=False),
+    ]
 
 
 def test_model_menu_unknown_provider_returns_empty(monkeypatch):
