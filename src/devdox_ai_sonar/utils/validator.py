@@ -25,7 +25,6 @@ class InputValidator:
     # Constants for validation
     VALID_ISSUE_TYPES: Set[str] = {"BUG", "VULNERABILITY", "CODE_SMELL"}
     VALID_SEVERITIES: Set[str] = {"BLOCKER", "CRITICAL", "MAJOR", "MINOR", "INFO"}
-    VALID_LLM_PROVIDERS: Set[str] = {"openai", "gemini", "togetherai", "openrouter"}
 
     # Git branch name invalid characters
     INVALID_BRANCH_CHARS: Set[str] = {
@@ -276,32 +275,6 @@ class InputValidator:
             )
 
         return token
-
-    @staticmethod
-    def validate_llm_provider(provider: str) -> str:
-        """
-        Validate LLM provider name.
-
-        Args:
-            provider: Provider name to validate
-
-        Returns:
-            Validated provider name (lowercased)
-
-        Raises:
-            ValidationError: If provider is not supported
-        """
-        provider = provider.lower().strip()
-
-        if provider not in InputValidator.VALID_LLM_PROVIDERS:
-            raise ValidationError(
-                f"Unsupported LLM provider: {provider}. "
-                f"Valid providers: {', '.join(InputValidator.VALID_LLM_PROVIDERS)}",
-                field="provider",
-                value=provider,
-            )
-
-        return provider
 
     @staticmethod
     def validate_confidence(confidence: float) -> float:

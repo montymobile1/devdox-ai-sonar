@@ -1,4 +1,12 @@
-# Create src/devdox_ai_sonar/services/config_service.py
+"""SonarCloud authentication configuration.
+
+``ConfigService`` owns ``~/devdox/auth.json`` -- the file that stores the
+user's SonarCloud credentials. The ``AuthConfig`` dataclass is the
+runtime shape those credentials take after loading and validation.
+
+LLM configuration lives elsewhere (``devdox_ai_sonar.llm`` package); this
+module is strictly about sonar auth.
+"""
 
 from dataclasses import dataclass
 from typing import Optional, Dict, Any
@@ -6,7 +14,6 @@ from pathlib import Path
 import json
 from rich.console import Console
 
-from devdox_ai_sonar.models.llm_config import ConfigManager
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 
@@ -77,14 +84,6 @@ class AuthConfig:
         return True, None
 
 
-@dataclass
-class LLMConfig:
-    provider: str
-    model: str
-    api_key: str
-    models: list[str]
-
-
 console = Console()
 
 
@@ -129,30 +128,6 @@ class ConfigService:
             return empty_config
 
         return empty_config
-
-    @staticmethod
-    async def load_llm_config(manager: ConfigManager) -> Optional[LLMConfig]:
-        """Load and validate LLM configuration"""
-
-        providers = await manager.get_value("llm.providers")
-        if not providers:
-            return None
-
-        default_provider = await manager.get_value("llm.default_provider")
-        default_model = await manager.get_value("llm.default_model")
-        provider_config = next(
-            (p for p in providers if p.get("name") == default_provider), None
-        )
-
-        if not provider_config:
-            return None
-
-        return LLMConfig(
-            provider=default_provider,
-            model=default_model,
-            api_key=provider_config.get("api_key"),
-            models=provider_config.get("models", []),
-        )
 
     @staticmethod
     def validate_auth_config(auth_config: dict) -> bool:

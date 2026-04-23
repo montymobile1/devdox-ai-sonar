@@ -9,11 +9,10 @@ the raw TOML load/save), translating between dict entries and
 
 Old-shape detection
 -------------------
-There is no automatic migration from the old ``[[llm.providers]]``
-shape. :func:`load_profiles` detects that old shape and raises
-:class:`ConfigStorageError` with a message that tells the user what
-to do. This surfaces the breaking change at the first opportunity
-rather than at some deeper call site.
+If an older ``[[llm.providers]]`` array is encountered, every CRUD entry
+point raises :class:`ConfigStorageError` with a recovery hint. The shape
+isn't automatically migrated; the user is asked to delete the file and
+reconfigure.
 """
 
 from typing import Any
@@ -37,10 +36,9 @@ _PROFILES_KEY = "profiles"
 _DEFAULT_PROFILE_KEY = "default_profile"
 _LEGACY_PROVIDERS_KEY = "providers"  # Old [[llm.providers]] shape.
 _OLD_SHAPE_MESSAGE = (
-    "config.toml uses the old provider shape ('[[llm.providers]]'). "
-    "This version standardises on the OpenHands SDK and does not "
-    "auto-migrate; delete ~/devdox/config.toml and run 'devdox_sonar' "
-    "to reconfigure."
+    "config.toml uses the old '[[llm.providers]]' schema which is no "
+    "longer supported. Delete ~/devdox/config.toml and run "
+    "'devdox_sonar' to reconfigure."
 )
 
 
@@ -245,16 +243,14 @@ async def _get_llm_section(manager: ConfigManager) -> dict[str, Any]:
 
 
 def _reject_legacy_shape(llm_section: dict[str, Any]) -> None:
-    """Raise if the old [[llm.providers]] shape has real entries.
+    """Raise if the ``[[llm.providers]]`` array is present.
 
-    ``ConfigManager.DEFAULT_CONFIG`` pre-seeds ``providers: []`` for
-    backwards compatibility with fresh installs, so an empty list is
-    harmless and treated as "no providers configured". We only reject
-    when the array has actual content -- that's a config written under
-    the old shape we no longer support.
+    The new schema uses ``[[llm.profiles]]``; if the reader encounters
+    ``providers`` instead, the user is on an older config file that the
+    new code cannot interpret. We fail loudly with a recovery hint
+    rather than trying to guess their intent.
     """
-    legacy = llm_section.get(_LEGACY_PROVIDERS_KEY)
-    if isinstance(legacy, list) and len(legacy) > 0:
+    if _LEGACY_PROVIDERS_KEY in llm_section:
         raise ConfigStorageError(_OLD_SHAPE_MESSAGE)
 
 

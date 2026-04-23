@@ -1,7 +1,7 @@
 """Interactive add / update flows for LLM profiles.
 
-Two entry points, built on a shared sequence of primitives (pick
-provider, pick model, collect key, validate) wired through
+Both entry points walk a shared sequence of primitives (pick provider,
+pick model, collect key, validate) wired together through
 :mod:`selection`, :mod:`validation`, and :mod:`profile_store`.
 
 add_profile_flow (the wizard)

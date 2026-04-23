@@ -22,8 +22,8 @@ spans multiple config sources, resolved at CLI runtime (not here):
 Fields in this module cover only layer 2. Layer 1 lives in :mod:`cli`;
 layer 3 lives in :mod:`llm.profile_store`.
 
-Under DEVDOX-63 there are no provider-specific environment variables.
-``LLM_MODEL`` carries the provider via its prefix (``"gemini/..."`` /
+There are no provider-specific environment variables: ``LLM_MODEL``
+carries the provider via its prefix (``"gemini/..."`` /
 ``"openai/..."`` etc.), and the single ``LLM_API_KEY`` covers whichever
 provider that is.
 """

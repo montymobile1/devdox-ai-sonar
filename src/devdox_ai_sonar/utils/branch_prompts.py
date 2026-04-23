@@ -1,8 +1,7 @@
 """Prompts for picking a SonarCloud branch or pull request to analyse.
 
 These helpers only touch the ``sonar.*`` section of ``config.toml``;
-nothing LLM-related lives here. LLM configuration has its own home in
-:mod:`devdox_ai_sonar.llm.interactive`.
+nothing LLM-related lives here.
 """
 
 from typing import Any, Tuple

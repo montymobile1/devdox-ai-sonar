@@ -639,11 +639,7 @@ class TestMainCommand:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestConfigurationManagement:
     """Test configuration-related commands"""
@@ -2079,11 +2075,7 @@ class TestConfigureSonarCloud:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestFixIssuesCommand:
     """Test fix_issues command implementation"""
@@ -2241,23 +2233,17 @@ class TestFixIssuesCommand:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestFixSecurityIssuesCommand:
     """Test fix_security_issues command"""
 
     @pytest.mark.skip(
         reason=(
-            "Post-OpenHands migration: constructing an LLMFixer now spins up "
-            "openhands.sdk.LLM, which enforces a minimum 16384-token context "
-            "window.  The test's mock LLM config uses a smaller window and "
-            "OpenHands raises LLMContextWindowTooSmallError before the CLI "
-            "path under test is reached.  Test needs a config-fixture update "
-            "or an ALLOW_SHORT_CONTEXT_WINDOWS monkeypatch."
+            "OpenHands enforces a minimum 16384-token context window; the "
+            "test's mock config uses a smaller one and the check raises "
+            "before the CLI path under test is reached. Needs a fixture "
+            "update."
         )
     )
     async def test_run_fix_security_issues_success(
@@ -2292,11 +2278,7 @@ class TestFixSecurityIssuesCommand:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestSecurityIssuesProcessing:
     """Test security issues processing."""
@@ -2404,11 +2386,7 @@ class TestSecurityIssuesProcessing:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestRegularIssuesProcessing:
     """Test regular issues processing."""
@@ -2503,11 +2481,7 @@ class TestRegularIssuesProcessing:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestAnalyzeCommand:
     """Test analyze command"""
@@ -2655,11 +2629,7 @@ class TestAnalyzeCommand:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestInspectCommand:
     """Test inspect command"""
@@ -3344,11 +3314,7 @@ class TestFileProcessing:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestLoadAndValidateConfig:
     """Test configuration loading"""
@@ -4516,11 +4482,7 @@ class TestHandleInteractiveError:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestFetchIssues:
     """Tests for fetch issues functions"""
@@ -4856,11 +4818,7 @@ class TestCollectRuleInformation:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestAddProviderHelpers:
     """Test helper functions used by add_provider"""
@@ -4915,13 +4873,7 @@ class TestAddProviderHelpers:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise the old "
-        "update_provider behaviour when no providers exist. The new "
-        "update_profile_flow handles the empty case inside llm.interactive "
-        "and doesn't call click.Abort. Rewrite against the new flow in a "
-        "follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestClickAbortPatterns:
     """Examples of different patterns for testing click.Abort"""
@@ -4989,11 +4941,7 @@ class TestClickAbortPatterns:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestUpdateProviderComplete:
     """Complete test suite with proper click.Abort handling"""
@@ -5121,11 +5069,7 @@ class TestHandleCliError:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestLoadAndValidateConfigErrors:
     """Test error cases for _load_and_validate_config"""
@@ -5228,11 +5172,7 @@ class TestLoadAndValidateConfigErrors:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestCommandExecutionErrors:
     """Test error scenarios in command execution"""
@@ -5356,12 +5296,7 @@ class TestEdgeCasesAndBoundaries:
 # ============================================================================
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: this test sets up a mock_manager that "
-        "returns provider-shaped state; the new init_config calls "
-        "load_profiles() against an actual dict-shaped config. Rewrite in "
-        "a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestConcurrentScenarios:
     """Test concurrent access scenarios"""
@@ -5484,11 +5419,7 @@ class TestConfigureSonarcloudErrors:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestConfigureProvidersLoopErrors:
     """Test warning path in _configure_providers_loop."""
@@ -5512,11 +5443,7 @@ class TestConfigureProvidersLoopErrors:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestAddProviderErrors:
     """Test abort path in add_provider."""
@@ -5541,11 +5468,7 @@ class TestAddProviderErrors:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestUpdateProviderErrors:
     """Test warning path in update_provider."""
@@ -5610,11 +5533,7 @@ class TestSwitchCommandExceptions:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestLoadAndValidateConfigAuthNone:
     """Test AuthConfig.from_dict returning None."""
@@ -5636,11 +5555,7 @@ class TestLoadAndValidateConfigAuthNone:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestProcessAndFixIssuesErrors:
     """Test error path in _process_and_fix_issues."""
@@ -5677,11 +5592,7 @@ class TestProcessAndFixIssuesErrors:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestGenerateFixErrors:
     """Test error path in _generate_fix_for_file."""
@@ -5716,11 +5627,7 @@ class TestSafeConvertPrIntInput:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestConfigureProvidersLoopFlow:
     """Test control flow in _configure_providers_loop."""
@@ -5759,11 +5666,7 @@ class TestChangeMaxFixFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestInitConfigFlow:
     """Test early-return branch in init_config."""
@@ -5795,11 +5698,7 @@ class TestInitConfigFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestExecuteInteractiveCommandFlow:
     """Test None-command early return."""
@@ -5814,11 +5713,7 @@ class TestExecuteInteractiveCommandFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestRunAnalyzeFlow:
     """Test limit-handling branches in _run_analyze."""
@@ -5886,11 +5781,7 @@ class TestRunAnalyzeFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestProcessAndFixIssuesFlow:
     """Test PR branch-fetching in _process_and_fix_issues."""
@@ -5935,11 +5826,7 @@ class TestProcessAndFixIssuesFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestProcessFilesFlow:
     """Test issue-type branching in _process_files_with_issues."""
@@ -5968,11 +5855,7 @@ class TestProcessFilesFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestProcessIssuesForRuleFlow:
     """Test skip and cancel branches in _process_issues_for_rule."""
@@ -6016,11 +5899,7 @@ class TestProcessIssuesForRuleFlow:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestProcessSecurityIssuesFlow:
     """Test skip branch in _process_security_issues."""
@@ -6068,11 +5947,7 @@ class TestShouldContinueToNextIssue:
 
 
 @pytest.mark.skip(
-    reason=(
-        "CLI profile wiring rewrite: these tests exercise helpers that were "
-        "removed when provider-dispatch was replaced with LLMProfile. "
-        "Rewrite against the new flow in a follow-up."
-    )
+reason="TODO: rewrite against profile-based CLI flow"
 )
 class TestFetchIssuesByTypeRegular:
     """Test regular-issue branch in _fetch_issues_by_type."""

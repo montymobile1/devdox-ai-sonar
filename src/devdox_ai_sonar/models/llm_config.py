@@ -23,7 +23,7 @@ class ConfigManager:
 
     DEFAULT_CONFIG = {
         "sonar": {"default_branch": "main", "sonar_options": {"clone_type": "branch"}},
-        "llm": {"default_provider": "", "default_model": "", "providers": []},
+        "llm": {"default_profile": "", "profiles": []},
     }
 
     def __init__(self, config_path: Path = Path("config.toml")):
@@ -71,7 +71,7 @@ class ConfigManager:
     async def get_value(self, key_path: str) -> Any:
         """
         Get a value from config using dot notation
-        Example: 'llm.default_provider' or 'git.clone_options.clone_type'
+        Example: 'llm.default_profile' or 'sonar.sonar_options.clone_type'
         """
         if not self.config:
             await self.load_config()
@@ -94,7 +94,7 @@ class ConfigManager:
     ) -> None:
         """
         Set a value in config using dot notation
-        Example: set_value('llm.default_provider', 'anthropic')
+        Example: set_value('llm.default_profile', 'my-profile-name')
         """
         if not self.config:
             await self.load_config()
@@ -163,45 +163,11 @@ class ConfigManager:
         return False
 
     def validate_change(self, key_path: str, new_value: Any) -> tuple[bool, List[str]]:
-        """
-        Validate a configuration change
-        Returns: (is_valid, list_of_issues)
-        """
+        """Return ``(is_valid, issues)`` for a proposed change at ``key_path``."""
         issues = []
         if not self.config:
             raise RuntimeError("No configuration to save")
 
-        # Validate default_provider change
-        if key_path == "llm.default_provider":
-            llm_config = self.config.get("llm", {})
-
-            providers = llm_config.get("providers", [])
-
-            provider_names = [p["name"] for p in providers]
-            if new_value not in provider_names:
-                issues.append(
-                    f"Provider '{new_value}' not found in configured providers. "
-                    f"Available: {', '.join(provider_names)}"
-                )
-
-        # Validate default_model change
-        if key_path == "llm.default_model":
-            llm_config = self.config.get("llm", {})
-
-            default_provider = llm_config.get("default_provider")
-
-            providers = llm_config.get("providers", [])
-            provider = next(
-                (p for p in providers if p["name"] == default_provider),
-                None,
-            )
-            if provider and new_value not in provider["models"]:
-                issues.append(
-                    f"Model '{new_value}' not available for provider '{default_provider}'. "
-                    f"Available: {', '.join(provider['models'])}"
-                )
-
-        # Validate clone_type change
         if key_path == "sonar.sonar_options.clone_type":
             valid_types = [t.value for t in SonarType]
             if new_value not in valid_types:
@@ -211,151 +177,6 @@ class ConfigManager:
                 )
 
         return len(issues) == 0, issues
-
-    async def update_provider(
-        self, provider_name: str, updates: Dict[str, Any], set_as_default: bool = False
-    ) -> None:
-        """
-        Update a specific provider's configuration
-
-        Args:
-            provider_name: Name of the provider to update
-            updates: Dictionary of fields to update
-            set_as_default: Whether to set this as the default provider
-        """
-        if not self.config:
-            await self.load_config()
-
-        if not self.config:
-            raise RuntimeError(failed_load_config)
-
-        # Find the provider
-        llm_config = self.config.get("llm", {})
-
-        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
-
-        provider_idx = next(
-            (i for i, p in enumerate(providers) if p["name"] == provider_name), None
-        )
-
-        if provider_idx is None:
-            raise ValueError(f"Provider '{provider_name}' not found")
-
-        # Update provider fields
-        provider = providers[provider_idx]
-        old_values = {}
-
-        for key, value in updates.items():
-            old_values[key] = provider.get(key)
-            provider[key] = value
-
-        # Set as default if requested
-        if set_as_default:
-            self.config["llm"]["default_provider"] = provider_name
-            self.config["llm"]["default_model"] = provider["default_model"]
-
-    async def add_provider(
-        self, provider_config: Dict[str, Any], set_as_default: bool = False
-    ) -> None:
-        """Add a new provider to the configuration"""
-        if not self.config:
-            await self.load_config()
-
-        if not self.config:
-            raise RuntimeError(failed_load_config)
-
-        provider_name = provider_config.get("name")
-        if not provider_name:
-            raise ValueError("Provider must have a 'name' field")
-
-        # Check if provider already exists
-        if "llm" not in self.config:
-            self.config["llm"] = {
-                "providers": [],
-                "default_provider": "",
-                "default_model": "",
-            }
-
-        llm_config = self.config["llm"]
-
-        # Initialize providers list if needed
-        if "providers" not in llm_config:
-            llm_config["providers"] = []
-
-        providers: List[Dict[str, Any]] = llm_config["providers"]
-
-        # Check if provider already exists
-        existing_names = [p["name"] for p in providers]
-
-        if provider_name in existing_names:
-            raise ValueError(f"Provider '{provider_name}' already exists")
-        # Validate required fields
-        required = ["name", "api_key", "models"]
-        missing = [field for field in required if field not in provider_config]
-        if missing:
-            raise ValueError(f"Missing required fields: {', '.join(missing)}")
-
-        # Add provider
-        self.config["llm"]["providers"].append(provider_config)
-
-        # Set as default if requested
-        if set_as_default:
-            self.config["llm"]["default_provider"] = provider_name
-            self.config["llm"]["default_model"] = provider_config.get("default_model")
-
-    async def remove_provider(self, provider_name: str) -> None:
-        """Remove a provider from the configuration"""
-        if not self.config:
-            await self.load_config()
-
-        if not self.config:
-            raise RuntimeError(failed_load_config)
-
-        llm_config = self.config.get("llm", {})
-
-        # Check if it's the default provider
-        if llm_config["default_provider"] == provider_name:
-            raise ValueError(
-                f"Cannot remove default provider '{provider_name}'. "
-                f"Set a different default provider first."
-            )
-
-        # Find and remove provider
-        providers: List[Dict[str, Any]] = llm_config["providers"]
-        original_count = len(providers)
-
-        llm_config["providers"] = [p for p in providers if p["name"] != provider_name]
-
-        if len(llm_config["providers"]) == original_count:
-            raise ValueError(f"Provider '{provider_name}' not found")
-
-    async def list_providers(self) -> List[Dict[str, Any]]:
-        """List all configured providers"""
-        if not self.config:
-            await self.load_config()
-        if not self.config:
-            raise RuntimeError(failed_load_config)
-
-        llm_config = self.config.get("llm", {})
-        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
-        return providers
-
-    async def show_provider(self, provider_name: str) -> Dict[str, Any]:
-        """Show details of a specific provider"""
-        if not self.config:
-            await self.load_config()
-
-        if not self.config:
-            raise RuntimeError(failed_load_config)
-
-        llm_config = self.config.get("llm", {})
-        providers: List[Dict[str, Any]] = llm_config.get("providers", [])
-
-        for provider in providers:
-            if provider["name"] == provider_name:
-                return provider
-
-        raise ValueError(f"Provider '{provider_name}' not found")
 
     def save_config(self, create_backup: bool = False) -> None:
         """Save current config to file"""

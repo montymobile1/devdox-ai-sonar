@@ -206,14 +206,8 @@ class LLMFixer:
                 issue when composing the prompt.
         """
         self.profile = profile
-        # Convenience attributes retained for callers that still read
-        # ``self.model`` / ``self.api_key`` / ``self.provider``. The
-        # ``provider`` shim (derived from the model prefix) keeps
-        # downstream services compiling during the migration; it will be
-        # removed once every caller reads ``profile.family()`` directly.
         self.model = profile.model
         self.api_key = profile.api_key
-        self.provider = profile.family()
         self.context_lines = context_lines
         self.file_reader = AsyncFileReader()
         self.prompt_dir = Path(__file__).parent / "prompts"
@@ -855,8 +849,7 @@ class LLMFixer:
         language = self._get_language_from_extension(file_extension)
 
         logger.debug(
-            "LLM call — provider=%s, model=%s, language=%s, issues=%d",
-            self.provider,
+            "LLM call — model=%s, language=%s, issues=%d",
             self.model,
             language,
             len(issues),
