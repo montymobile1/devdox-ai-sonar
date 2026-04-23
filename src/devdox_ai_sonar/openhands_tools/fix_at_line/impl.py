@@ -70,34 +70,95 @@ class FixAtLineExecutor(ToolExecutor):
         end_idx_exclusive = action.end_line  # Python slice upper bound.
         current_block_text = "".join(lines[start_idx:end_idx_exclusive])
 
-        # Safety check — we compare after stripping a single trailing newline
-        # on each side so callers don't have to worry about whether they
-        # included the final \n in `old_block`.
-        if _strip_trailing_newline(action.old_block) != _strip_trailing_newline(
-            current_block_text
-        ):
+        old_stripped = _strip_trailing_newline(action.old_block)
+        new_stripped = _strip_trailing_newline(action.new_block)
+        current_stripped = _strip_trailing_newline(current_block_text)
+
+        # An empty ``old_block`` is technically a substring of
+        # everything -- reject it explicitly so the substring branch
+        # below can't be tricked into runaway replacement.
+        if old_stripped == "":
+            return FixAtLineObservation.from_text(
+                text=(
+                    "`old_block` cannot be empty; supply either the exact "
+                    f"current content of lines {action.start_line}-"
+                    f"{action.end_line} or a unique substring of it."
+                ),
+                is_error=True,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+            )
+
+        # Three acceptable shapes for the safety check:
+        #  (a) ``old_block`` equals the full line(s) -> replace the block.
+        #  (b) ``old_block`` is a unique substring of the line(s) -> in-place
+        #      find-and-replace inside the anchored range. The line range
+        #      still bounds the search, so duplicated content elsewhere in
+        #      the file is irrelevant.
+        #  (c) ``old_block`` appears multiple times inside the range or
+        #      isn't there at all -> error.
+        if old_stripped == current_stripped:
+            # (a) full-block replacement.
+            new_block_lines = _normalize_block_to_lines(action.new_block)
+            new_file_lines = (
+                lines[:start_idx]
+                + new_block_lines
+                + lines[end_idx_exclusive:]
+            )
+            new_text = "".join(new_file_lines)
+            new_block_line_count = len(new_block_lines)
+            returned_old_block = current_stripped
+            returned_new_block = new_stripped
+        elif old_stripped in current_stripped:
+            occurrences = current_stripped.count(old_stripped)
+            if occurrences > 1:
+                return FixAtLineObservation.from_text(
+                    text=(
+                        f"`old_block` appears {occurrences} times within "
+                        f"lines {action.start_line}-{action.end_line}; "
+                        f"cannot decide which occurrence to replace. Widen "
+                        f"`old_block` to include enough surrounding context "
+                        f"to be unique, or narrow the line range."
+                    ),
+                    is_error=True,
+                    path=action.path,
+                    start_line=action.start_line,
+                    end_line=action.end_line,
+                    old_block=current_stripped,
+                )
+            # (b) substring match, unique within the range.
+            new_block_text = current_stripped.replace(
+                old_stripped, new_stripped, 1
+            )
+            if current_block_text.endswith("\n"):
+                new_block_text += "\n"
+            prefix = "".join(lines[:start_idx])
+            suffix = "".join(lines[end_idx_exclusive:])
+            new_text = prefix + new_block_text + suffix
+            new_block_line_count = len(
+                _normalize_block_to_lines(new_block_text)
+            )
+            returned_old_block = current_stripped
+            returned_new_block = _strip_trailing_newline(new_block_text)
+        else:
+            # (c) no match at all.
             return FixAtLineObservation.from_text(
                 text=(
                     f"`old_block` does not match the current content of lines "
                     f"{action.start_line}-{action.end_line}.  Re-read the file "
                     f"with `file_editor view` and retry.\n"
                     f"--- old_block (provided) ---\n"
-                    f"{_strip_trailing_newline(action.old_block)}\n"
+                    f"{old_stripped}\n"
                     f"--- actual lines {action.start_line}-{action.end_line} ---\n"
-                    f"{_strip_trailing_newline(current_block_text)}"
+                    f"{current_stripped}"
                 ),
                 is_error=True,
                 path=action.path,
                 start_line=action.start_line,
                 end_line=action.end_line,
-                old_block=_strip_trailing_newline(current_block_text),
+                old_block=current_stripped,
             )
-
-        new_block_lines = _normalize_block_to_lines(action.new_block)
-        new_file_lines = (
-            lines[:start_idx] + new_block_lines + lines[end_idx_exclusive:]
-        )
-        new_text = "".join(new_file_lines)
 
         if new_text == original_text:
             return FixAtLineObservation.from_text(
@@ -128,14 +189,14 @@ class FixAtLineExecutor(ToolExecutor):
             text=(
                 f"Replaced lines {action.start_line}-{action.end_line} in "
                 f"{action.path} ({original_line_count} line(s) → "
-                f"{len(new_block_lines)} line(s))."
+                f"{new_block_line_count} line(s))."
             ),
             is_error=False,
             path=action.path,
             start_line=action.start_line,
             end_line=action.end_line,
-            old_block=_strip_trailing_newline(current_block_text),
-            new_block=_strip_trailing_newline(action.new_block),
+            old_block=returned_old_block,
+            new_block=returned_new_block,
         )
 
 
