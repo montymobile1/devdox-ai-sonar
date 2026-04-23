@@ -63,6 +63,10 @@ __all__ = [
 
 _console = Console()
 _VERIFIED_MARK = "⭐ "
+_VERIFIED_LEGEND = (
+    "[dim]⭐ = verified by OpenHands "
+    "(tested and known to work well for code fixes)[/dim]"
+)
 
 # Mode-picker (Step 0) and back-navigation wiring.
 #
@@ -453,6 +457,8 @@ async def _prompt_for_provider() -> Optional[str]:
     labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
     display.append(_BACK_LABEL)
 
+    if any(entry.verified for entry in menu):
+        _console.print(_VERIFIED_LEGEND)
     picked_label = await select_from_list(display, "Select an LLM provider")
     if picked_label is None:
         return None
@@ -510,7 +516,10 @@ async def _prompt_for_model(
     labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
     display.append(_BACK_LABEL)
 
+    has_verified = any(entry.verified for entry in menu)
     while True:
+        if has_verified:
+            _console.print(_VERIFIED_LEGEND)
         picked = await select_from_list(display, f"Select a {provider} model")
         if picked is None:
             return None

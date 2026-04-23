@@ -877,6 +877,78 @@ async def test_bad_request_probe_also_restarts_wizard(
 
 
 # ---------------------------------------------------------------------------
+# Verified-star legend ("⭐ = verified by OpenHands")
+# ---------------------------------------------------------------------------
+
+
+async def test_verified_legend_printed_before_pickers_with_stars(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """The ⭐ legend is a dim one-liner printed above each picker that
+    has at least one verified entry. Regression guard so the
+    description requested by the team doesn't silently go missing."""
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "📋 Pick from curated list",
+            "⭐ openai",
+            "⭐ gpt-4o",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "p"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    out = capsys.readouterr().out
+    # The legend appears at least once for the provider picker and
+    # once for the model picker.
+    legend_count = out.count("⭐ = verified by OpenHands")
+    assert legend_count >= 2, (
+        f"expected the legend to appear above provider + model pickers; "
+        f"saw {legend_count} occurrences"
+    )
+
+
+async def test_verified_legend_suppressed_when_no_verified_entries(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """No stars in the menu means no legend -- don't noisily explain a
+    symbol the user won't see."""
+    # together_ai only has an unverified entry in the fake catalog.
+    monkeypatch.setattr(
+        verified_models, "list_providers", lambda: {}
+    )
+    monkeypatch.setattr(
+        unverified_models,
+        "list_providers",
+        lambda: {"together_ai": ["mixtral-8x7b"]},
+    )
+
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "📋 Pick from curated list",
+            "together_ai",        # no star prefix -- unverified
+            "mixtral-8x7b",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "p"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    out = capsys.readouterr().out
+    assert "⭐ = verified by OpenHands" not in out
+
+
+# ---------------------------------------------------------------------------
 # Verbose toggle controls the provenance block
 # ---------------------------------------------------------------------------
 
