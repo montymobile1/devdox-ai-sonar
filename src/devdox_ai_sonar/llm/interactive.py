@@ -221,12 +221,22 @@ async def add_profile_flow(manager: ConfigManager) -> None:
         existing_names = frozenset(
             p.name for p in await load_profiles(manager)
         )
-        profile = await _collect_and_validate_profile(
+        attempt = await _collect_and_validate_profile(
             existing_names=existing_names
         )
-        if profile is None:
+        if attempt.kind == "cancelled":
             _console.print("[yellow]⚠ Profile configuration cancelled[/yellow]")
             break
+        if attempt.kind == "abandoned":
+            # User explicitly abandoned this attempt (rate-limit "c");
+            # offer "add another?" so they can pick a different
+            # provider without being dumped back to the CLI root.
+            if not _confirm_add_another():
+                break
+            continue
+
+        profile = attempt.profile
+        assert profile is not None  # kind == "created" implies profile
 
         set_default = _confirm_default()
         try:
@@ -241,30 +251,49 @@ async def add_profile_flow(manager: ConfigManager) -> None:
             break
 
 
+@dataclass(frozen=True)
+class _AttemptResult:
+    """Outcome of one walk through the add-profile wizard.
+
+    * ``kind == "created"`` -- a fully-validated :class:`LLMProfile`
+      is in ``profile``; caller persists it.
+    * ``kind == "cancelled"`` -- hard abort (Ctrl+C, empty picker,
+      etc.); caller exits the wizard.
+    * ``kind == "abandoned"`` -- soft abort (rate-limit "c"); caller
+      should skip the save but still offer "add another?".
+    """
+
+    kind: Literal["created", "cancelled", "abandoned"]
+    profile: Optional[LLMProfile] = None
+
+
 async def _collect_and_validate_profile(
     existing_names: frozenset[str] = frozenset(),
-) -> Optional[LLMProfile]:
+) -> _AttemptResult:
     """Walk the add-profile wizard, handling back-nav and restart-on-bad-model.
 
     The outer ``while True`` exists so a model-shaped probe failure
     (the endpoint doesn't serve the picked model) can send the user
     back to the mode/provider/model pickers instead of trapping them
-    on the API-key prompt. Normal success or an explicit cancel break
-    out immediately.
+    on the API-key prompt. Normal success, explicit cancel, and
+    explicit abandon all break out immediately; the caller
+    distinguishes them via :class:`_AttemptResult.kind`.
     """
     while True:
         gathered = await _gather_model_and_base_url()
         if gathered is None:
-            return None
+            return _AttemptResult(kind="cancelled")
         model, base_url, family_label = gathered
 
         validated = _validate_or_report(model, base_url)
         if validated is None:
-            return None
+            return _AttemptResult(kind="cancelled")
 
         result = _prompt_for_api_key_until_valid(family_label, model, base_url)
         if result.kind == "cancelled":
-            return None
+            return _AttemptResult(kind="cancelled")
+        if result.kind == "abandoned":
+            return _AttemptResult(kind="abandoned")
         if result.kind == "restart_model_selection":
             continue
         # result.kind == "validated"
@@ -275,10 +304,13 @@ async def _collect_and_validate_profile(
             existing_names=existing_names,
         )
         if name is None:
-            return None
+            return _AttemptResult(kind="cancelled")
 
-        return LLMProfile(
-            name=name, model=model, api_key=api_key, base_url=base_url
+        return _AttemptResult(
+            kind="created",
+            profile=LLMProfile(
+                name=name, model=model, api_key=api_key, base_url=base_url
+            ),
         )
 
 
@@ -590,19 +622,24 @@ async def _prompt_for_model(
 class _KeyLoopResult:
     """Outcome of the API-key-collection sub-step.
 
-    Three possibilities matter to the wizard's outer loop:
+    Four possibilities matter to the wizard's outer loop:
 
     * ``kind == "validated"`` -- the probe succeeded (or the user saved
       through a rate-limit); ``key`` holds the accepted credential.
-    * ``kind == "cancelled"`` -- the user pressed Ctrl+C / EOF at the
-      prompt; the whole wizard should exit.
+    * ``kind == "cancelled"`` -- hard abort (Ctrl+C / EOF at the key
+      prompt, or at the rate-limit sub-prompt). Wizard exits.
+    * ``kind == "abandoned"`` -- user explicitly picked "c" at the
+      rate-limit sub-prompt. Drop this profile but keep the wizard
+      alive so "add another?" runs.
     * ``kind == "restart_model_selection"`` -- the probe revealed a
       model-shaped failure (bad model ID, deprecated, not in the
       endpoint's catalogue). Looping on the same key-prompt is useless
       here; the outer wizard restarts from provider/model selection.
     """
 
-    kind: Literal["validated", "cancelled", "restart_model_selection"]
+    kind: Literal[
+        "validated", "cancelled", "abandoned", "restart_model_selection"
+    ]
     key: Optional[str] = None
 
 
@@ -634,6 +671,8 @@ def _prompt_for_api_key_until_valid(
             return _KeyLoopResult(kind="validated", key=api_key)
         if outcome == "cancel":
             return _KeyLoopResult(kind="cancelled")
+        if outcome == "abandon":
+            return _KeyLoopResult(kind="abandoned")
         if outcome == "pick_different_model":
             return _KeyLoopResult(kind="restart_model_selection")
         # outcome == "try_new_key"
@@ -829,7 +868,9 @@ def _validate_or_report(
 
 ProbeOutcome = Literal[
     "accepted",
-    "cancel",
+    "cancel",            # hard abort -- wizard exits immediately
+    "abandon",           # soft abort -- drop this profile but keep the
+                         # wizard alive so "add another?" can run
     "try_new_key",
     "pick_different_model",
 ]
@@ -984,7 +1025,10 @@ def _handle_rate_limited(
             )
             return "accepted"
         if choice == "c":
-            return "cancel"
+            # Explicit "abandon this profile". The wizard should still
+            # ask "Add another?" so the user doesn't get kicked out of
+            # the CLI after spending time on picker + key.
+            return "abandon"
 
         # choice == "r": re-run the probe with the same key.
         _console.print("[cyan]Retrying...[/cyan]")
