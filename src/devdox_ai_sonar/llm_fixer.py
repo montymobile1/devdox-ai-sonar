@@ -2004,10 +2004,12 @@ class LLMFixer:
 
         validator = None
         if use_validator:
+            # validator_provider/model/api_key are ignored as of DEVDOX-63:
+            # the validator now shares the fixer's own LLMProfile. They
+            # remain in the signature until commit 11 rewrites cli.py's
+            # call site.
             validator = FixValidator(
-                provider=validator_provider,
-                model=validator_model,
-                api_key=validator_api_key,
+                profile=self.profile,
                 min_confidence_threshold=min_confidence,
             )
 
