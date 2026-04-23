@@ -1035,6 +1035,148 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
     assert profiles == []
 
 
+# ---------------------------------------------------------------------------
+# Model-shaped probe failures restart the wizard at the provider picker
+# ---------------------------------------------------------------------------
+
+
+async def test_not_found_probe_restarts_wizard_at_provider_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """When the probe returns ``not_found`` (the endpoint doesn't
+    serve the picked model), the wizard must loop back to the
+    provider/model picker rather than keep asking for a different
+    key. The user picks a different model, the next probe succeeds,
+    and the profile is saved under the second model."""
+    call_count = {"n": 0}
+
+    def probe_by_attempt(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="not_found",
+                detail="deprecated model",
+                provider="gemini",
+                status_code=404,
+                exception_class="litellm.exceptions.NotFoundError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", probe_by_attempt)
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "openai", "gpt-4o",                 # first attempt
+            "openhands", "claude-sonnet-4-6",   # second attempt
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "key-for-first",
+            "key-for-second",
+            "final-profile-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].model == "openhands/claude-sonnet-4-6"
+    assert call_count["n"] == 2
+
+
+async def test_bad_request_probe_also_restarts_wizard(
+    monkeypatch, manager, fake_catalogs
+):
+    """Same restart behaviour for ``bad_request`` -- treated as a
+    model-configuration problem, not a key problem."""
+    call_count = {"n": 0}
+
+    def probe_by_attempt(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="bad_request",
+                detail="unrecognised model",
+                provider="openai",
+                status_code=400,
+                exception_class="litellm.exceptions.BadRequestError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", probe_by_attempt)
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "openai", "gpt-4o",
+            "openai", "gpt-4o",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-first", "sk-second", "profile"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert call_count["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Verbose toggle controls the provenance block
+# ---------------------------------------------------------------------------
+
+
+def test_format_provenance_returns_empty_when_not_verbose(monkeypatch):
+    """The dimmed provenance block only appears when the CLI is
+    invoked with ``--verbose``. Regular users get the one-line
+    headline and nothing more."""
+    monkeypatch.setattr(interactive, "_VERBOSE", False)
+    from devdox_ai_sonar.llm.errors import KeyProbeError
+
+    err = KeyProbeError(
+        kind="auth",
+        detail="bad key",
+        provider="gemini",
+        status_code=401,
+        exception_class="litellm.exceptions.AuthenticationError",
+    )
+    assert interactive._format_provenance(err) == ""
+
+
+def test_format_provenance_renders_all_fields_when_verbose(monkeypatch):
+    """Verbose mode surfaces the litellm exception class, provider
+    identifier, HTTP status, and first line of the upstream detail --
+    enough for a developer to pin the failure to the right layer."""
+    monkeypatch.setattr(interactive, "_VERBOSE", True)
+    from devdox_ai_sonar.llm.errors import KeyProbeError
+
+    err = KeyProbeError(
+        kind="auth",
+        detail="bad key\nmore detail",
+        provider="gemini",
+        status_code=401,
+        exception_class="litellm.exceptions.AuthenticationError",
+    )
+    rendered = interactive._format_provenance(err)
+    assert "litellm.exceptions.AuthenticationError" in rendered
+    assert "gemini" in rendered
+    assert "Google Gemini API" in rendered  # human label applied
+    assert "HTTP 401" in rendered
+    assert "bad key" in rendered
+    # Only the first line of multi-line detail leaks into provenance;
+    # full text is still available on err.detail for programmatic use.
+    assert "more detail" not in rendered
+
+
 async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
     monkeypatch, manager, fake_catalogs
 ):
