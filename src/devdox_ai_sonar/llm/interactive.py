@@ -254,7 +254,9 @@ async def update_profile_flow(manager: ConfigManager) -> None:
 
     _sequential_name_prompt(ctx, existing_names={p.name for p in profiles})
     _sequential_api_key_prompt(ctx)
-    await _sequential_model_prompt(ctx)
+    await _sequential_model_prompt(
+        ctx, used_models=frozenset(p.model for p in profiles)
+    )
     _sequential_base_url_prompt(ctx)
     _sequential_default_prompt(ctx, currently_default=is_currently_default)
 
@@ -302,15 +304,21 @@ async def _set_default(manager: ConfigManager, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _gather_model_and_base_url() -> (
-    Optional[tuple[str, Optional[str], str]]
-):
+async def _gather_model_and_base_url(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, Optional[str], str]]:
     """Run Step 0 (mode) + Step 1/2 (selection) with single-level back.
 
     Returns ``(full_model_string, base_url, family_label)`` or ``None``
     if the user cancelled at any point. ``family_label`` is what the
     subsequent API-key prompt shows the user ("openai", "custom
     endpoint", etc.).
+
+    ``used_models`` is the set of full ``provider/model-id`` strings
+    already pinned by saved profiles. Matching entries in the model
+    picker are labelled ``(current)`` and cannot be selected. The add
+    flow passes the default empty set (no blocking); the update flow
+    passes every profile's model so the user can't land on a duplicate.
 
     Back navigation is strictly one level at a time:
 
@@ -326,7 +334,7 @@ async def _gather_model_and_base_url() -> (
             return None
 
         if mode == _MODE_CUSTOM:
-            custom_result = await _prompt_for_custom_model()
+            custom_result = await _prompt_for_custom_model(used_models)
             if custom_result is None:
                 return None  # cancelled
             if custom_result == _BACK_SENTINEL:
@@ -335,7 +343,7 @@ async def _gather_model_and_base_url() -> (
             return model, base_url, "custom endpoint"
 
         # mode == _MODE_CURATED
-        curated_result = await _gather_curated_model()
+        curated_result = await _gather_curated_model(used_models)
         if curated_result is None:
             return None  # cancelled
         if curated_result == _BACK_SENTINEL:
@@ -344,9 +352,9 @@ async def _gather_model_and_base_url() -> (
         return f"{provider}/{model_id}", None, provider
 
 
-async def _gather_curated_model() -> (
-    Optional[tuple[str, str] | str]
-):
+async def _gather_curated_model(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, str] | str]:
     """Walk the provider -> model pickers with back-nav between them.
 
     Returns ``(provider, model_id)`` on a complete selection,
@@ -361,7 +369,7 @@ async def _gather_curated_model() -> (
         if picked_provider == _BACK_SENTINEL:
             return _BACK_SENTINEL
 
-        model_id = await _prompt_for_model(picked_provider)
+        model_id = await _prompt_for_model(picked_provider, used_models)
         if model_id is None:
             return None
         if model_id == _BACK_SENTINEL:
@@ -418,15 +426,19 @@ async def _prompt_for_provider() -> Optional[str]:
     return labels_to_value.get(picked)
 
 
-async def _prompt_for_custom_model() -> (
-    Optional[tuple[str, Optional[str]] | str]
-):
+async def _prompt_for_custom_model(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, Optional[str]] | str]:
     """Typed-input flow for self-hosted / non-curated endpoints.
 
     Prompts for a fully-qualified model string in ``provider/model-name``
     form and an optional base URL. Typing ``back`` (case-insensitive)
     at the model prompt returns :data:`_BACK_SENTINEL` so the wizard
     pops up to the mode picker. Ctrl+C cancels the wizard entirely.
+
+    If the typed model is already in ``used_models`` (another saved
+    profile pins it), we reject the entry and re-prompt. Mirrors the
+    block enforced in the curated picker.
     """
     _console.print(
         "[cyan]Custom endpoint: enter a model string in "
@@ -434,15 +446,23 @@ async def _prompt_for_custom_model() -> (
         "'openai/my-finetune'). Type 'back' to return to the mode "
         "picker.[/cyan]"
     )
-    try:
-        model = Prompt.ask("Model").strip()
-    except KeyboardInterrupt:
-        return None
-    if model.lower() == "back":
-        return _BACK_SENTINEL
-    if not model:
-        _console.print("[red]❌ Model cannot be empty[/red]")
-        return _BACK_SENTINEL
+    while True:
+        try:
+            model = Prompt.ask("Model").strip()
+        except KeyboardInterrupt:
+            return None
+        if model.lower() == "back":
+            return _BACK_SENTINEL
+        if not model:
+            _console.print("[red]❌ Model cannot be empty[/red]")
+            return _BACK_SENTINEL
+        if model in used_models:
+            _console.print(
+                "[yellow]⚠ That model is already configured by a saved "
+                "profile. Pick a different one.[/yellow]"
+            )
+            continue
+        break
 
     try:
         base_url_raw = Prompt.ask(
@@ -454,15 +474,21 @@ async def _prompt_for_custom_model() -> (
     return model, base_url
 
 
-async def _prompt_for_model(provider: str) -> Optional[str]:
+async def _prompt_for_model(
+    provider: str, used_models: frozenset[str] = frozenset()
+) -> Optional[str]:
     """Step 2: pick a model id from a known provider's catalog.
 
     Verified entries are prefixed with ⭐ for the display; the returned
     value is the bare model id (without the mark). A ``← Back`` entry
-    returns to the provider picker. If the provider has no visible
-    models, the caller sees a clear message and we return
-    :data:`_BACK_SENTINEL` so the wizard can re-enter provider
-    selection rather than cancel outright.
+    returns to the provider picker.
+
+    Entries whose full ``provider/model-id`` is in ``used_models`` are
+    rendered with a ``(current)`` suffix and cannot be selected --
+    picking one prints an explanation and re-enters the same picker.
+    The add flow passes an empty set (no blocking); the update flow
+    passes every saved profile's model so the user can't land on a
+    duplicate.
     """
     menu = selection.build_model_menu(provider)
     if not menu:
@@ -472,23 +498,35 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
         return _BACK_SENTINEL
 
     labels_to_value: dict[str, str] = {}
+    blocked_labels: set[str] = set()
     display: list[str] = []
     for entry in menu:
-        label = (
+        base = (
             f"{_VERIFIED_MARK}{entry.model_id}"
             if entry.verified
             else entry.model_id
         )
+        full = f"{provider}/{entry.model_id}"
+        label = f"{base} (current)" if full in used_models else base
         labels_to_value[label] = entry.model_id
+        if full in used_models:
+            blocked_labels.add(label)
         display.append(label)
     labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
     display.append(_BACK_LABEL)
 
     _show_verified_legend_once(any(entry.verified for entry in menu))
-    picked = await select_from_list(display, f"Select a {provider} model")
-    if picked is None:
-        return None
-    return labels_to_value.get(picked)
+    while True:
+        picked = await select_from_list(display, f"Select a {provider} model")
+        if picked is None:
+            return None
+        if picked in blocked_labels:
+            _console.print(
+                "[yellow]⚠ That model is already configured by a saved "
+                "profile. Pick a different one.[/yellow]"
+            )
+            continue
+        return labels_to_value.get(picked)
 
 
 @dataclass(frozen=True)
@@ -636,15 +674,22 @@ def _sequential_api_key_prompt(ctx: ProfileUpdateContext) -> None:
     ).strip()
 
 
-async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
+async def _sequential_model_prompt(
+    ctx: ProfileUpdateContext,
+    *,
+    used_models: frozenset[str] = frozenset(),
+) -> None:
     if Confirm.ask(
         f"Keep current model '{ctx.profile.model}'?", default=True
     ):
         return
     # Delegate to the same mode-picker + back-nav state machine the
-    # add flow uses, so "change my mind mid-picker" works the same
-    # way during update as during add.
-    gathered = await _gather_model_and_base_url()
+    # add flow uses. ``used_models`` includes *every* saved profile's
+    # model -- including this profile's own current model -- so the
+    # picker blocks duplicates. The user already declined
+    # "keep current" above, so blocking the current model here is
+    # intentional, not a regression.
+    gathered = await _gather_model_and_base_url(used_models=used_models)
     if gathered is None:
         return
     new_model, new_base_url, _family = gathered
