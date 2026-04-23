@@ -885,7 +885,9 @@ def test_probe_or_report_prints_validating_header(monkeypatch, capsys):
         "probe_api_key",
         lambda model, api_key, base_url: interactive.validation.Ok(None),
     )
-    assert interactive._probe_or_report("openai/gpt-4o", "sk", None) is True
+    assert (
+        interactive._probe_and_handle("openai/gpt-4o", "sk", None) == "accepted"
+    )
     out = capsys.readouterr().out
     assert "Validating credentials" in out
     assert "accepted" in out.lower()
@@ -913,7 +915,166 @@ def test_probe_or_report_failure_messages(
             KeyProbeError(kind=failure_kind, detail="upstream detail")
         ),
     )
-    result = interactive._probe_or_report("openai/gpt-4o", "sk", None)
-    assert result is False
+    monkeypatch.setattr(
+        interactive, "_handle_rate_limited", lambda *a, **kw: "cancel"
+    )
+    result = interactive._probe_and_handle("openai/gpt-4o", "sk", None)
+    assert result != "accepted"
     out = capsys.readouterr().out
     assert expected_phrase in out
+
+
+# ---------------------------------------------------------------------------
+# Rate-limited probe: the three-way save / retry / cancel prompt
+# ---------------------------------------------------------------------------
+
+
+async def test_rate_limited_probe_saves_when_user_picks_s(
+    monkeypatch, manager, fake_catalogs
+):
+    """Defaulting to 's' accepts the key despite the rate limit and
+    persists the profile."""
+    monkeypatch.setattr(
+        adapters,
+        "probe",
+        lambda **_: KeyProbeOutcome(
+            ok=False,
+            failure_kind="rate_limit",
+            detail="quota exceeded",
+            provider="gemini",
+            status_code=429,
+            exception_class="litellm.exceptions.RateLimitError",
+        ),
+    )
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-valid-but-throttled",
+            "s",                    # save anyway
+            "rate-limited-profile", # profile name
+        ],
+        confirm_answers=[
+            True,   # Set as default?
+            False,  # Add another?
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].api_key == "sk-valid-but-throttled"
+
+
+async def test_rate_limited_probe_retries_successfully(
+    monkeypatch, manager, fake_catalogs
+):
+    """The 'r' choice re-runs the probe. A clear-on-retry accepts
+    the key without re-asking the user."""
+    call_count = {"n": 0}
+
+    def flaky_probe(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="rate_limit",
+                detail="quota",
+                provider="gemini",
+                status_code=429,
+                exception_class="litellm.exceptions.RateLimitError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", flaky_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-key",
+            "r",          # retry
+            "prof-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert call_count["n"] == 2
+
+
+async def test_rate_limited_probe_cancel_aborts_wizard(
+    monkeypatch, manager, fake_catalogs
+):
+    """The 'c' choice stops the wizard without saving."""
+    monkeypatch.setattr(
+        adapters,
+        "probe",
+        lambda **_: KeyProbeOutcome(
+            ok=False,
+            failure_kind="rate_limit",
+            detail="quota",
+            provider="gemini",
+            status_code=429,
+            exception_class="litellm.exceptions.RateLimitError",
+        ),
+    )
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "c"],
+        confirm_answers=[],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
+async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
+    monkeypatch, manager, fake_catalogs
+):
+    """If the retry reveals a *different* failure (e.g. the rate limit
+    cleared and now auth fails), the wizard must leave the rate-limit
+    prompt and drop back to the 'enter a different key' outer loop."""
+    call_count = {"n": 0}
+
+    def flaky_probe(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False, failure_kind="rate_limit",
+                detail="quota", provider="gemini", status_code=429,
+                exception_class="litellm.exceptions.RateLimitError",
+            )
+        if call_count["n"] == 2:
+            return KeyProbeOutcome(
+                ok=False, failure_kind="auth",
+                detail="bad key", provider="gemini", status_code=401,
+                exception_class="litellm.exceptions.AuthenticationError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", flaky_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "throttled-but-bad-key",   # first key
+            "r",                        # retry -> now auth-rejected
+            "actually-valid-key",       # new key via outer loop
+            "prof-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].api_key == "actually-valid-key"
+    assert call_count["n"] == 3
