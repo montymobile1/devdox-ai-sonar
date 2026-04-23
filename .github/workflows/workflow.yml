@@ -41,9 +41,12 @@ jobs:
           pull-request: ${{ github.event.inputs.pr_number }}
 
           # ── LLM ─────────────────────────────────────────────────────────────
-          llm-provider: ${{ secrets.LLM_API_PROVIDER }}
+          # LLM_MODEL is the OpenHands 'provider/model-name' identifier
+          # (e.g. 'openai/gpt-4o', 'gemini/gemini-2.5-flash', 'vllm/my-model').
+          # LLM_BASE_URL is optional; set only for self-hosted / proxied endpoints.
+          llm-model: ${{ secrets.LLM_MODEL }}
           llm-api-key: ${{ secrets.LLM_API_KEY }}
-          llm-default-model: ${{ secrets.LLM_MODEL }}
+          llm-base-url: ${{ secrets.LLM_BASE_URL }}
 
           # ── Optional tuning ─────────────────────────────────────────────────
           max-fixes: "10"
