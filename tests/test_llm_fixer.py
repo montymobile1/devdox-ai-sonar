@@ -5732,8 +5732,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.successful_fixes) == 1
 
@@ -5766,8 +5765,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.successful_fixes) == 1
 
@@ -5792,8 +5790,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "no improved fix" in result.failed_fixes[0]["error"]
@@ -5819,8 +5816,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "still failed" in result.failed_fixes[0]["error"]
@@ -5846,8 +5842,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "Rejected" in result.failed_fixes[0]["error"]
@@ -5873,8 +5868,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "manual review" in result.failed_fixes[0]["error"]
@@ -5896,8 +5890,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.side_effect = Exception("validator crash")
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "Validator error" in result.failed_fixes[0]["error"]
