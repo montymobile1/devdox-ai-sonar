@@ -1067,6 +1067,59 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
 
 
 # ---------------------------------------------------------------------------
+# Verified-star legend
+# ---------------------------------------------------------------------------
+
+
+async def test_verified_legend_printed_once_per_wizard_run(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """The ⭐ legend is educational, not a status indicator, so it
+    prints exactly once per wizard invocation."""
+    _queue_responses(
+        monkeypatch,
+        iter(["⭐ openai", "⭐ gpt-4o"]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "p"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    out = capsys.readouterr().out
+    assert out.count("⭐ = verified by OpenHands") == 1
+
+
+async def test_verified_legend_suppressed_when_no_verified_entries(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """No stars in the menu means no legend -- don't noisily explain a
+    symbol the user won't see."""
+    monkeypatch.setattr(adapters, "list_verified_models", lambda: {})
+    monkeypatch.setattr(
+        adapters,
+        "list_unverified_models",
+        lambda: {"together_ai": ["mixtral-8x7b"]},
+    )
+    _queue_responses(
+        monkeypatch,
+        iter(["together_ai", "mixtral-8x7b"]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "p"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    out = capsys.readouterr().out
+    assert "⭐ = verified by OpenHands" not in out
+
+
+# ---------------------------------------------------------------------------
 # Model-shaped probe failures restart the wizard at the provider picker
 # ---------------------------------------------------------------------------
 
