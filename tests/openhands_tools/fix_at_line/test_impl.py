@@ -267,6 +267,91 @@ class TestFixAtLineExecutorDuplicateLines:
 
 
 # ============================================================================
+# SUBSTRING REPLACEMENT — `old_block` is a piece of the line, not the whole line
+# ============================================================================
+
+
+class TestFixAtLineExecutorSubstring:
+    """When ``old_block`` is a unique substring of the anchored line(s),
+    do an in-place find-and-replace instead of rejecting the edit.
+
+    The line range is still the anchor -- the search space is bounded
+    to those lines, so the whole-file ambiguity problem fix_at_line was
+    built for does not come back.
+    """
+
+    def test_substring_unique_within_line_is_replaced(
+        self, executor, tmp_path
+    ):
+        path = tmp_path / "sub.py"
+        path.write_text('    value = greet("hello")\n')
+
+        obs = executor(_action(
+            path, 1, 1,
+            old='"hello"',
+            new="GREETING",
+        ))
+
+        assert obs.is_error is False
+        assert path.read_text() == '    value = greet(GREETING)\n'
+
+    def test_substring_ambiguous_within_line_is_rejected(
+        self, executor, tmp_path
+    ):
+        """Two copies of the same fragment on one line -> we don't
+        know which to replace. Error; file untouched."""
+        path = tmp_path / "ambig.py"
+        original = '    value = "hello" + "hello"\n'
+        path.write_text(original)
+
+        obs = executor(_action(
+            path, 1, 1,
+            old='"hello"',
+            new='HELLO',
+        ))
+
+        assert obs.is_error is True
+        assert path.read_text() == original
+        # The error tells the agent exactly why it's ambiguous and
+        # what to do about it.
+        assert "2" in obs.text or "multiple" in obs.text.lower()
+
+    def test_substring_replacement_preserves_trailing_newline(
+        self, executor, tmp_path
+    ):
+        """A substring edit must leave the file's trailing newline byte
+        untouched -- regressions here corrupt diffs on every fix."""
+        path = tmp_path / "nl.py"
+        path.write_text('    x = greet("hello")\n')
+        original_ends_with_newline = path.read_bytes().endswith(b"\n")
+        assert original_ends_with_newline  # fixture sanity
+
+        obs = executor(_action(
+            path, 1, 1,
+            old='"hello"',
+            new='GREETING',
+        ))
+
+        assert obs.is_error is False
+        assert path.read_bytes().endswith(b"\n")
+
+    def test_empty_old_block_is_rejected(self, executor, sample_file):
+        """An empty string is technically a substring of anything --
+        guard the substring branch so the agent can't trigger runaway
+        replacement with an empty payload."""
+        original = sample_file.read_text()
+
+        obs = executor(_action(
+            sample_file, 3, 3,
+            old="",
+            new="anything",
+        ))
+
+        assert obs.is_error is True
+        assert sample_file.read_text() == original
+
+
+# ============================================================================
 # ERROR CASES — INVALID INPUTS & INFEASIBLE EDITS
 # ============================================================================
 
