@@ -456,6 +456,78 @@ async def test_update_profile_flow_model_change_triggers_reprobe(
     assert updated.api_key == "k"  # untouched
 
 
+async def test_update_profile_flow_blocks_picking_a_used_model(
+    monkeypatch, manager, fake_catalogs
+):
+    """During update, every saved profile's model is rendered with a
+    ``(current)`` suffix and cannot be selected. Picking one warns and
+    re-enters the model picker; the user then picks a genuinely free
+    model and the update proceeds."""
+    monkeypatch.setattr(
+        adapters,
+        "list_verified_models",
+        lambda: {
+            "openai": ["gpt-4o", "gpt-4o-mini"],
+            "openhands": ["claude-sonnet-4-6"],
+        },
+    )
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+    await save_profile(
+        manager,
+        LLMProfile(
+            name="other",
+            model="openhands/claude-sonnet-4-6",
+            api_key="k2",
+        ),
+        set_as_default=False,
+    )
+
+    captured_model_menu: list[list[str]] = []
+    picks = iter([
+        "p",                                # pick profile
+        "📋 Pick from curated list",        # mode
+        "⭐ openai",                        # provider
+        "⭐ gpt-4o (current)",              # blocked -- same profile
+        "⭐ gpt-4o-mini",                   # free choice
+    ])
+
+    async def recording_select(choices, message, use_search=True):
+        if "openai model" in message:
+            captured_model_menu.append(list(choices))
+        return next(picks, None)
+
+    monkeypatch.setattr(interactive, "select_from_list", recording_select)
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[],
+        confirm_answers=[
+            True,   # Keep name?
+            False,  # Change key?
+            False,  # Keep model? -> no
+            False,  # Set as default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    assert captured_model_menu, "openai model menu was never shown"
+    first_menu = captured_model_menu[0]
+    assert "⭐ gpt-4o (current)" in first_menu
+    assert "⭐ gpt-4o-mini" in first_menu
+    # The picker was re-entered after the blocked pick.
+    assert len(captured_model_menu) >= 2
+
+    reloaded = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    p_updated = next(prof for prof in reloaded if prof.name == "p")
+    assert p_updated.model == "openai/gpt-4o-mini"
+
+
 async def test_update_profile_flow_probe_failure_rolls_back(
     monkeypatch, manager, fake_catalogs
 ):
