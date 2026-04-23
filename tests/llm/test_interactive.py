@@ -1137,7 +1137,10 @@ async def test_rate_limited_probe_retries_successfully(
 async def test_rate_limited_probe_cancel_aborts_wizard(
     monkeypatch, manager, fake_catalogs
 ):
-    """The 'c' choice stops the wizard without saving."""
+    """The 'c' choice abandons this profile but still defers to the
+    "Add another profile?" prompt. When the user declines (default
+    False via the exhausted confirm iter), the wizard exits without
+    saving."""
     monkeypatch.setattr(
         adapters,
         "probe",
@@ -1157,13 +1160,71 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
     _patch_prompt(
         monkeypatch,
         text_answers=["sk-key", "c"],
-        confirm_answers=[],
+        confirm_answers=[],   # "Add another?" defaults to False -> exit
     )
 
     await interactive.add_profile_flow(manager)
 
     profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
     assert profiles == []
+
+
+async def test_rate_limited_probe_cancel_then_add_another_tries_again(
+    monkeypatch, manager, fake_catalogs
+):
+    """Picking 'c' at the rate-limit prompt should NOT drop the user
+    back to the top-level CLI. It should offer "Add another profile?"
+    so a user who hit a 429 can immediately try a different provider."""
+    probe_calls = {"n": 0}
+
+    def probe_by_attempt(**_):
+        probe_calls["n"] += 1
+        if probe_calls["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="rate_limit",
+                detail="quota",
+                provider="gemini",
+                status_code=429,
+                exception_class="litellm.exceptions.RateLimitError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", probe_by_attempt)
+    _queue_responses(
+        monkeypatch,
+        iter([
+            # First attempt: rate-limited, user picks 'c'.
+            "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
+            # Second attempt after "Add another?": different provider.
+            "📋 Pick from curated list",
+            "⭐ openhands", "⭐ claude-sonnet-4-6",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-throttled",           # first key
+            "c",                       # abandon first profile
+            "sk-ok",                   # second key
+            "profile-kept",            # profile name for the second one
+        ],
+        confirm_answers=[
+            True,    # "Add another?" after the abandoned first attempt
+            True,    # Set as default? (second profile)
+            False,   # Add another? -> exit
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert len(profiles) == 1
+    assert profiles[0].name == "profile-kept"
+    assert profiles[0].model == "openhands/claude-sonnet-4-6"
+    assert probe_calls["n"] == 2
 
 
 # ---------------------------------------------------------------------------
