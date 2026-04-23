@@ -68,6 +68,25 @@ _console = Console()
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
 
+# Process-wide toggle set by the CLI entry point via :func:`set_verbose`.
+# When true, probe-failure details (litellm exception class, provider
+# identifier, HTTP status, raw detail) are printed under the failure
+# headline. When false (the default) those are suppressed -- the
+# headline alone is enough information for a regular user.
+_VERBOSE: bool = False
+
+
+def set_verbose(flag: bool) -> None:
+    """Toggle whether probe-failure provenance is shown to the user.
+
+    Called once from the CLI entry point (mirroring the ``--verbose`` /
+    ``-v`` flag). Left as a process-wide mutable rather than threaded
+    through every function because it's a display concern that touches
+    deep helpers; tests can still flip it via ``monkeypatch.setattr``.
+    """
+    global _VERBOSE
+    _VERBOSE = flag
+
 
 @dataclass
 class ProfileUpdateContext:
@@ -130,38 +149,52 @@ async def add_profile_flow(manager: ConfigManager) -> None:
 
 
 async def _collect_and_validate_profile() -> Optional[LLMProfile]:
-    """Walk steps 1-6 of the wizard; return a ready-to-save profile or None."""
-    picked_provider = await _prompt_for_provider()
-    if picked_provider is None:
-        return None
+    """Walk the add-profile wizard, handling restart-on-bad-model.
 
-    if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = _prompt_for_custom_model()
-        if model_and_base is None:
+    The outer ``while True`` exists solely so a model-shaped probe
+    failure (the endpoint doesn't serve the picked model) can send the
+    user back to the provider picker instead of trapping them on the
+    API-key prompt. Normal success or an explicit cancel break out
+    immediately.
+    """
+    while True:
+        picked_provider = await _prompt_for_provider()
+        if picked_provider is None:
             return None
-        model, base_url = model_and_base
-        family_label = "custom endpoint"
-    else:
-        model_id = await _prompt_for_model(picked_provider)
-        if model_id is None:
+
+        if picked_provider == _CUSTOM_SENTINEL:
+            model_and_base = _prompt_for_custom_model()
+            if model_and_base is None:
+                return None
+            model, base_url = model_and_base
+            family_label = "custom endpoint"
+        else:
+            model_id = await _prompt_for_model(picked_provider)
+            if model_id is None:
+                return None
+            model = f"{picked_provider}/{model_id}"
+            base_url = None
+            family_label = picked_provider
+
+        validated = _validate_or_report(model, base_url)
+        if validated is None:
             return None
-        model = f"{picked_provider}/{model_id}"
-        base_url = None
-        family_label = picked_provider
 
-    validated = _validate_or_report(model, base_url)
-    if validated is None:
-        return None
+        result = _prompt_for_api_key_until_valid(family_label, model, base_url)
+        if result.kind == "cancelled":
+            return None
+        if result.kind == "restart_model_selection":
+            continue
+        # result.kind == "validated"
+        api_key = result.key or ""
 
-    api_key = _prompt_for_api_key_until_valid(family_label, model, base_url)
-    if api_key is None:
-        return None
+        name = _prompt_profile_name(default=_suggest_profile_name(model))
+        if name is None:
+            return None
 
-    name = _prompt_profile_name(default=_suggest_profile_name(model))
-    if name is None:
-        return None
-
-    return LLMProfile(name=name, model=model, api_key=api_key, base_url=base_url)
+        return LLMProfile(
+            name=name, model=model, api_key=api_key, base_url=base_url
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -301,33 +334,54 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
     return picked
 
 
+@dataclass(frozen=True)
+class _KeyLoopResult:
+    """Outcome of the API-key-collection sub-step.
+
+    Three possibilities matter to the wizard's outer loop:
+
+    * ``kind == "validated"`` -- the probe succeeded (or the user saved
+      through a rate-limit); ``key`` holds the accepted credential.
+    * ``kind == "cancelled"`` -- the user pressed Ctrl+C / EOF at the
+      prompt; the whole wizard should exit.
+    * ``kind == "restart_model_selection"`` -- the probe revealed a
+      model-shaped failure (bad model ID, deprecated, not in the
+      endpoint's catalogue). Looping on the same key-prompt is useless
+      here; the outer wizard restarts from provider/model selection.
+    """
+
+    kind: Literal["validated", "cancelled", "restart_model_selection"]
+    key: Optional[str] = None
+
+
 def _prompt_for_api_key_until_valid(
     family_label: str,
     model: str,
     base_url: Optional[str],
-) -> Optional[str]:
-    """Prompt for an API key and re-prompt until the probe resolves.
+) -> _KeyLoopResult:
+    """Prompt for an API key and loop until the probe resolves or the
+    outer wizard needs to take over.
 
-    "Resolves" means one of:
-    * The live probe passes -> return the key.
-    * The probe fails in a way that's specifically *credentials-bad*
-      (auth / bad_request / unknown) -> re-prompt for a different key.
-    * The probe fails with a rate-limit -> hand off to a three-way
-      ``save / retry / cancel`` prompt. If the user saves, we accept
-      the key as-is; retry re-runs the probe; cancel aborts.
-    * The user cancels (Ctrl+C / EOF at the key prompt) -> return
-      ``None``.
+    A credentials-shaped failure (auth / unknown / connection) keeps
+    the user on this prompt -- just enter a different key. A
+    model-shaped failure (not_found / bad_request) propagates up as
+    ``restart_model_selection`` so the wizard re-runs provider and
+    model selection; it's pointless to keep typing keys when the
+    model itself is the problem. Rate-limit has its own three-way
+    ``save / retry / cancel`` sub-prompt.
     """
     while True:
         api_key = _prompt_for_api_key(family_label)
         if api_key is None:
-            return None
+            return _KeyLoopResult(kind="cancelled")
 
         outcome = _probe_and_handle(model, api_key, base_url)
         if outcome == "accepted":
-            return api_key
+            return _KeyLoopResult(kind="validated", key=api_key)
         if outcome == "cancel":
-            return None
+            return _KeyLoopResult(kind="cancelled")
+        if outcome == "pick_different_model":
+            return _KeyLoopResult(kind="restart_model_selection")
         # outcome == "try_new_key"
         _console.print(
             "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
@@ -493,7 +547,12 @@ def _validate_or_report(
     return None
 
 
-ProbeOutcome = Literal["accepted", "cancel", "try_new_key"]
+ProbeOutcome = Literal[
+    "accepted",
+    "cancel",
+    "try_new_key",
+    "pick_different_model",
+]
 
 # Short human labels for the well-known upstream providers, to help the
 # reader tell "I got rate-limited by Google" apart from "I got
@@ -521,12 +580,16 @@ def _probe_and_handle(
 ) -> ProbeOutcome:
     """Run the live probe and decide what the caller should do next.
 
-    Returns one of three sentinels:
+    Returns one of four sentinels:
     * ``"accepted"`` -- key is good (or user explicitly saved through
       a rate-limited probe); caller should persist the profile.
     * ``"try_new_key"`` -- probe failed in a way that points at the
-      credentials (auth, bad request, unknown); caller should
-      re-prompt for a different key.
+      credentials (auth, connection, unknown); caller should re-prompt
+      for a different key.
+    * ``"pick_different_model"`` -- probe failed in a way that points
+      at the model (not_found, bad_request); caller should restart
+      the wizard from the provider/model picker rather than loop on
+      the same key-prompt.
     * ``"cancel"`` -- user chose to abort the whole wizard.
     """
     _console.print("[cyan]Validating credentials...[/cyan]")
@@ -542,37 +605,45 @@ def _probe_and_handle(
     if err.kind == "rate_limit":
         return _handle_rate_limited(model, api_key, base_url)
 
-    # Connection failures are usually the endpoint URL, not the key,
-    # but the user still needs to re-enter (or re-run) to proceed, so
-    # treat them like any other "try again" path.
+    if err.kind in ("not_found", "bad_request"):
+        # Model-shaped failure: the key isn't the problem. Restart at
+        # the provider/model picker instead of looping on the key.
+        return "pick_different_model"
+
+    # auth / connection / unknown -- let the user type a different key.
     return "try_new_key"
 
 
 def _print_probe_failure(err: KeyProbeError) -> None:
-    """Headline + dimmed provenance for a probe failure."""
-    if err.kind == "auth":
-        _console.print("[red]❌ Key rejected by the provider[/red]")
-    elif err.kind == "connection":
-        _console.print(
-            "[red]❌ Could not reach endpoint (check base_url / network)[/red]"
-        )
-    elif err.kind == "bad_request":
-        _console.print(
+    """Concise headline, plus dimmed provenance only in verbose mode."""
+    _HEADLINES: dict[str, str] = {
+        "auth": "[red]❌ Key rejected by the provider[/red]",
+        "connection": (
+            "[red]❌ Could not reach endpoint "
+            "(check base_url / network)[/red]"
+        ),
+        "bad_request": (
             "[red]❌ Endpoint rejected the request (model may be invalid)[/red]"
-        )
-    elif err.kind == "rate_limit":
-        _console.print(
-            "[yellow]⚠ Endpoint rate-limited the probe.[/yellow]"
-        )
-    else:
-        _console.print(f"[red]❌ Probe failed: {err.detail}[/red]")
+        ),
+        "not_found": (
+            "[red]❌ Model not served by this endpoint "
+            "(deprecated or unknown)[/red]"
+        ),
+        "rate_limit": "[yellow]⚠ Endpoint rate-limited the probe.[/yellow]",
+    }
+    _console.print(_HEADLINES.get(err.kind, "[red]❌ Probe failed[/red]"))
 
-    # Provenance -- dim so it doesn't overshadow the headline but is
-    # always there for a developer debugging why a key got rejected.
-    _console.print(_format_provenance(err))
+    # Provenance is only shown in verbose mode. A regular user doesn't
+    # need to stare at litellm exception-class paths.
+    if _VERBOSE:
+        provenance = _format_provenance(err)
+        if provenance:
+            _console.print(provenance)
 
 
 def _format_provenance(err: KeyProbeError) -> str:
+    if not _VERBOSE:
+        return ""
     lines = []
     if err.exception_class:
         lines.append(f"source:   {err.exception_class}")
@@ -583,9 +654,7 @@ def _format_provenance(err: KeyProbeError) -> str:
     if err.status_code is not None:
         lines.append(f"status:   HTTP {err.status_code}")
     if err.detail:
-        # Collapse to one line in the summary; full detail is still in
-        # err.detail for callers that want to inspect it programmatically.
-        one_line = err.detail.splitlines()[0] if err.detail else ""
+        one_line = err.detail.splitlines()[0]
         lines.append(f"detail:   {one_line}")
     if not lines:
         return ""
@@ -608,10 +677,20 @@ def _handle_rate_limited(
         "[dim]Auth checks usually run before rate-limiting, so the key "
         "is almost certainly valid; the endpoint is just throttling.[/dim]"
     )
+    # NB: the bracketed key letters below use explicit bold markup
+    # rather than literal ``[s]`` / ``[r]`` / ``[c]`` -- Rich would
+    # otherwise interpret the bare brackets as unknown style tags and
+    # strip them, leaving the user to stare at ``ave anyway /
+    # etry probe now / ancel``.
+    prompt_text = (
+        "[bold green]S[/bold green]ave anyway / "
+        "[bold green]R[/bold green]etry probe now / "
+        "[bold green]C[/bold green]ancel"
+    )
     while True:
         try:
             choice = Prompt.ask(
-                "[s]ave anyway / [r]etry probe now / [c]ancel",
+                prompt_text,
                 choices=["s", "r", "c"],
                 default="s",
                 show_choices=False,
