@@ -204,8 +204,9 @@ class LLMCaller(Protocol):
 class LLMFixerAdapter:
     """Adapts an ``LLMFixer`` instance to the :class:`LLMCaller` protocol.
 
-    Reuses the existing provider infrastructure (client, model, API key)
-    but makes a simpler JSON-only call.
+    Reuses the fixer's already-constructed OpenHands ``LLM`` client to
+    run a single JSON-mode completion for constant naming. No per-provider
+    dispatch: OpenHands/litellm routes based on the model's prefix.
     """
 
     def __init__(self, llm_fixer: Any) -> None:
@@ -214,57 +215,71 @@ class LLMFixerAdapter:
     def call_for_json(
         self, system_prompt: str, user_prompt: str
     ) -> Optional[Dict[str, str]]:
+        # Local import to avoid tightening the module's top-level import
+        # graph; Message / TextContent are only needed on this code path.
+        from openhands.sdk import Message, TextContent
+
         try:
-            if self._fixer.provider in ("openai", "togetherai", "openrouter"):
-                return self._call_openai_compatible(system_prompt, user_prompt)
-            elif self._fixer.provider == "gemini":
-                return self._call_gemini(system_prompt, user_prompt)
-            else:
-                logger.error(
-                    "Unknown provider for constant naming: %s",
-                    self._fixer.provider,
-                )
-                return None
+            response = self._fixer.client.completion(
+                messages=[
+                    Message(
+                        role="system",
+                        content=[TextContent(text=system_prompt)],
+                    ),
+                    Message(
+                        role="user",
+                        content=[TextContent(text=user_prompt)],
+                    ),
+                ],
+                response_format={"type": "json_object"},
+                max_tokens=2000,
+                temperature=0.05,
+            )
         except Exception:
             logger.error("LLM call for constant naming failed", exc_info=True)
             return None
 
-    def _call_openai_compatible(
-        self, system_prompt: str, user_prompt: str
-    ) -> Optional[Dict[str, str]]:
-        """Call an OpenAI-compatible chat completions endpoint."""
-        response = self._fixer.client.chat.completions.create(
-            model=self._fixer.model,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=2000,
-            temperature=0.05,
-        )
-        content = response.choices[0].message.content
+        content = _extract_completion_content(response)
         if content is None:
             return None
-        return _names_adapter.validate_json(content)
 
-    def _call_gemini(
-        self, system_prompt: str, user_prompt: str
-    ) -> Optional[Dict[str, str]]:
-        """Call the Google Gemini content generation endpoint."""
-        from google.genai import types  # local to avoid hard dep
-
-        response = self._fixer.client.models.generate_content(
-            model=self._fixer.model,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                response_mime_type="application/json",
-            ),
-        )
-        if response.text is None:
+        try:
+            return _names_adapter.validate_json(content)
+        except Exception:
+            logger.error(
+                "Constant-naming response did not match expected shape",
+                exc_info=True,
+            )
             return None
-        return _names_adapter.validate_json(response.text)
+
+
+def _extract_completion_content(response: Any) -> Optional[str]:
+    """Pull text content from an OpenHands ``LLMResponse`` or raw ``ModelResponse``.
+
+    Mirrors the same-named helper in ``fix_validator`` -- kept private to
+    this module so the two call sites can evolve independently without a
+    shared utility drift.
+    """
+    message = getattr(response, "message", None)
+    content = getattr(message, "content", None)
+    if isinstance(content, (list, tuple)):
+        parts: List[str] = []
+        for block in content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        if parts:
+            return "".join(parts)
+
+    try:
+        choices = response.choices
+        if not choices:
+            return None
+        litellm_message = choices[0].message
+        litellm_content = getattr(litellm_message, "content", None)
+        return litellm_content if isinstance(litellm_content, str) else None
+    except (AttributeError, IndexError, TypeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
