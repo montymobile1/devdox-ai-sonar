@@ -68,6 +68,7 @@ _console = Console()
 # provider name.
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
+_VERIFIED_MARK = "⭐ "
 
 # Maximum credential-shaped (auth / unknown / connection) probe failures
 # tolerated in a single API-key prompt loop before the wizard gives up
@@ -331,18 +332,24 @@ async def _prompt_for_provider() -> Optional[str]:
     """Step 1: provider picker.
 
     Returns the picked provider name, :data:`_CUSTOM_SENTINEL` when the
-    user chose the 🔧 Custom option, or ``None`` on cancel.
+    user chose the 🔧 Custom option, or ``None`` on cancel. Verified
+    providers get a ⭐ prefix so users can spot the curated ones at a
+    glance.
     """
     menu = selection.build_provider_menu()
-    names = [entry.name for entry in menu]
-    names.append(_CUSTOM_LABEL)
+    labels_to_value: dict[str, str] = {}
+    display: list[str] = []
+    for entry in menu:
+        label = f"{_VERIFIED_MARK}{entry.name}" if entry.verified else entry.name
+        labels_to_value[label] = entry.name
+        display.append(label)
+    labels_to_value[_CUSTOM_LABEL] = _CUSTOM_SENTINEL
+    display.append(_CUSTOM_LABEL)
 
-    picked = await select_from_list(names, "Select an LLM provider")
+    picked = await select_from_list(display, "Select an LLM provider")
     if picked is None:
         return None
-    if picked == _CUSTOM_LABEL:
-        return _CUSTOM_SENTINEL
-    return picked
+    return labels_to_value.get(picked)
 
 
 def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
@@ -376,7 +383,11 @@ def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
 
 
 async def _prompt_for_model(provider: str) -> Optional[str]:
-    """Step 2: pick a model id from a known provider's catalog."""
+    """Step 2: pick a model id from a known provider's catalog.
+
+    Verified entries are prefixed with ⭐ for the display; the returned
+    value is the bare model id (without the mark).
+    """
     menu = selection.build_model_menu(provider)
     if not menu:
         _console.print(
@@ -384,9 +395,21 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
         )
         return None
 
-    ids = [entry.model_id for entry in menu]
-    picked = await select_from_list(ids, f"Select a {provider} model")
-    return picked
+    labels_to_value: dict[str, str] = {}
+    display: list[str] = []
+    for entry in menu:
+        label = (
+            f"{_VERIFIED_MARK}{entry.model_id}"
+            if entry.verified
+            else entry.model_id
+        )
+        labels_to_value[label] = entry.model_id
+        display.append(label)
+
+    picked = await select_from_list(display, f"Select a {provider} model")
+    if picked is None:
+        return None
+    return labels_to_value.get(picked)
 
 
 @dataclass(frozen=True)
