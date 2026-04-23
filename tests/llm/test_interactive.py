@@ -881,12 +881,13 @@ async def test_bad_request_probe_also_restarts_wizard(
 # ---------------------------------------------------------------------------
 
 
-async def test_verified_legend_printed_before_pickers_with_stars(
+async def test_verified_legend_printed_once_per_wizard_run(
     monkeypatch, manager, fake_catalogs, capsys
 ):
-    """The ⭐ legend is a dim one-liner printed above each picker that
-    has at least one verified entry. Regression guard so the
-    description requested by the team doesn't silently go missing."""
+    """The ⭐ legend is educational, not a status indicator, so it
+    prints exactly once per wizard invocation -- above the first
+    picker that contains verified entries. Subsequent pickers in the
+    same run stay silent even though they also show stars."""
     _queue_responses(
         monkeypatch,
         iter([
@@ -904,13 +905,48 @@ async def test_verified_legend_printed_before_pickers_with_stars(
     await interactive.add_profile_flow(manager)
 
     out = capsys.readouterr().out
-    # The legend appears at least once for the provider picker and
-    # once for the model picker.
     legend_count = out.count("⭐ = verified by OpenHands")
-    assert legend_count >= 2, (
-        f"expected the legend to appear above provider + model pickers; "
+    assert legend_count == 1, (
+        f"expected the legend exactly once per wizard run; "
         f"saw {legend_count} occurrences"
     )
+
+
+async def test_verified_legend_resets_between_wizard_runs(
+    monkeypatch, manager, fake_catalogs, capsys
+):
+    """A fresh add/update invocation is a new session -- reset the
+    'legend already shown' flag so a new user running the tool later
+    still sees the explanation."""
+    queued = iter([
+        # First run.
+        "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
+        # Second run (after capsys readout in between -- separate
+        # invocation of add_profile_flow).
+        "📋 Pick from curated list", "⭐ openhands", "⭐ claude-sonnet-4-6",
+    ])
+    # monkeypatch shares a single fake_select across both runs by
+    # reading from the same iterator.
+    _queue_responses(monkeypatch, queued)
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-key", "prof-one",
+            "sk-key", "prof-two",
+        ],
+        confirm_answers=[
+            True, False,   # default? / add another? -> no (first run)
+            True, False,   # default? / add another? -> no (second run)
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+    out1 = capsys.readouterr().out
+    assert out1.count("⭐ = verified by OpenHands") == 1
+
+    await interactive.add_profile_flow(manager)
+    out2 = capsys.readouterr().out
+    assert out2.count("⭐ = verified by OpenHands") == 1
 
 
 async def test_verified_legend_suppressed_when_no_verified_entries(

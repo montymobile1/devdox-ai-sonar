@@ -68,6 +68,26 @@ _VERIFIED_LEGEND = (
     "(tested and known to work well for code fixes)[/dim]"
 )
 
+# Per-invocation flag: the ⭐ legend is educational, not a repeating
+# status indicator. Show it once the first time a picker with stars
+# opens, then stay quiet for the rest of that add/update flow. Reset
+# to False at the top of each top-level wizard entry point so the
+# NEXT invocation explains the symbol to a user who might be new.
+_legend_shown_this_run: bool = False
+
+
+def _show_verified_legend_once(menu_has_stars: bool) -> None:
+    """Print the ⭐ legend at most once per wizard invocation.
+
+    ``menu_has_stars`` short-circuits: no stars on screen means no
+    symbol to explain, so we stay silent regardless of state.
+    """
+    global _legend_shown_this_run
+    if not menu_has_stars or _legend_shown_this_run:
+        return
+    _console.print(_VERIFIED_LEGEND)
+    _legend_shown_this_run = True
+
 # Mode-picker (Step 0) and back-navigation wiring.
 #
 # The wizard's top-level choice is "curated catalogue" vs "custom
@@ -148,6 +168,8 @@ class ProfileUpdateContext:
 
 async def add_profile_flow(manager: ConfigManager) -> None:
     """Run the 8-step add-profile wizard, looping on "Add another?"."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     while True:
         # Re-read existing names on every iteration -- a just-saved
         # profile in the previous pass becomes a duplicate for the
@@ -336,6 +358,8 @@ async def _gather_curated_model(
 
 async def update_profile_flow(manager: ConfigManager) -> None:
     """Walk every updatable field in order, probe once, commit atomically."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     profiles = await load_profiles(manager)
     if not profiles:
         _console.print("[yellow]⚠ No profiles configured; use add_provider first[/yellow]")
@@ -457,8 +481,7 @@ async def _prompt_for_provider() -> Optional[str]:
     labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
     display.append(_BACK_LABEL)
 
-    if any(entry.verified for entry in menu):
-        _console.print(_VERIFIED_LEGEND)
+    _show_verified_legend_once(any(entry.verified for entry in menu))
     picked_label = await select_from_list(display, "Select an LLM provider")
     if picked_label is None:
         return None
@@ -518,8 +541,7 @@ async def _prompt_for_model(
 
     has_verified = any(entry.verified for entry in menu)
     while True:
-        if has_verified:
-            _console.print(_VERIFIED_LEGEND)
+        _show_verified_legend_once(has_verified)
         picked = await select_from_list(display, f"Select a {provider} model")
         if picked is None:
             return None
