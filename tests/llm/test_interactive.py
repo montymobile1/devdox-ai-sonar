@@ -121,8 +121,9 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
     _queue_responses(
         monkeypatch,
         iter([
-            "⭐ openai",          # provider picker
-            "⭐ gpt-4o",          # model picker
+            "📋 Pick from curated list",  # mode picker
+            "⭐ openai",                   # provider picker
+            "⭐ gpt-4o",                   # model picker
         ]),
     )
     _patch_prompt(
@@ -149,8 +150,8 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
 async def test_add_profile_flow_custom_endpoint(
     monkeypatch, manager, fake_catalogs
 ):
-    """Pick Custom, supply a vllm/ model and base_url."""
-    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    """Pick Custom at the mode picker, supply a vllm/ model and base_url."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom endpoint"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -183,6 +184,7 @@ async def test_add_profile_flow_openhands_family_accepted(
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openhands",
             "⭐ claude-sonnet-4-6",
         ]),
@@ -211,7 +213,10 @@ async def test_add_profile_flow_rejects_unreachable_key(
             ok=False, failure_kind="auth", detail="bad key"
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=["bad-key"],
@@ -224,10 +229,10 @@ async def test_add_profile_flow_rejects_unreachable_key(
     assert profiles == []
 
 
-async def test_add_profile_flow_cancelled_at_provider_picker(
+async def test_add_profile_flow_cancelled_at_mode_picker(
     monkeypatch, manager, fake_catalogs
 ):
-    """Ctrl+C at the provider picker returns None; wizard exits without saving."""
+    """Ctrl+C at the mode picker returns None; wizard exits without saving."""
     _queue_responses(monkeypatch, iter([None]))
     _patch_prompt(monkeypatch, text_answers=[], confirm_answers=[])
 
@@ -240,12 +245,13 @@ async def test_add_profile_flow_cancelled_at_provider_picker(
 async def test_add_profile_flow_loops_on_add_another(
     monkeypatch, manager, fake_catalogs
 ):
-    """Two profiles configured in sequence via the "Add another?" loop."""
+    """Two profiles configured in sequence via the "Add another?" loop.
+    Each iteration re-enters the mode picker."""
     _queue_responses(
         monkeypatch,
         iter([
-            "⭐ openai", "⭐ gpt-4o",
-            "⭐ openhands", "⭐ claude-sonnet-4-6",
+            "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list", "⭐ openhands", "⭐ claude-sonnet-4-6",
         ]),
     )
     _patch_prompt(
@@ -324,9 +330,10 @@ async def test_update_profile_flow_model_change_triggers_reprobe(
     _queue_responses(
         monkeypatch,
         iter([
-            "p",                    # pick profile
-            "⭐ openhands",         # new provider
-            "⭐ claude-sonnet-4-6", # new model
+            "p",                          # pick profile
+            "📋 Pick from curated list",  # mode picker
+            "⭐ openhands",               # new provider
+            "⭐ claude-sonnet-4-6",       # new model
         ]),
     )
     _patch_prompt(
@@ -477,7 +484,10 @@ async def test_rate_limited_probe_saves_when_user_picks_s(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -519,7 +529,10 @@ async def test_rate_limited_probe_retries_successfully(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(key_probe, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -553,7 +566,10 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=["sk-key", "c"],
@@ -598,8 +614,8 @@ async def test_not_found_probe_restarts_wizard_at_provider_picker(
     _queue_responses(
         monkeypatch,
         iter([
-            "⭐ openai", "⭐ gpt-4o",              # first attempt
-            "⭐ openhands", "⭐ claude-sonnet-4-6", # second attempt
+            "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list", "⭐ openhands", "⭐ claude-sonnet-4-6",
         ]),
     )
     _patch_prompt(
@@ -644,8 +660,8 @@ async def test_bad_request_probe_also_restarts_wizard(
     _queue_responses(
         monkeypatch,
         iter([
-            "⭐ openai", "⭐ gpt-4o",
-            "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o",
         ]),
     )
     _patch_prompt(
@@ -733,7 +749,10 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(key_probe, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -770,11 +789,16 @@ async def test_add_flow_hides_excluded_provider_from_picker(
     monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
 
     # Track what was actually shown to select_from_list so we can
-    # assert ``openhands`` never made it into the menu.
+    # assert ``openhands`` never made it into the menu. Skip the
+    # mode-picker screen (identified by its fixed two-choice menu)
+    # when asserting.
     shown_to_user: list[list[str]] = []
 
     async def recording_select(choices, message, use_search=True):
         shown_to_user.append(list(choices))
+        # First screen is the mode picker.
+        if "📋 Pick from curated list" in choices:
+            return "📋 Pick from curated list"
         # Pick openai and its gpt-4o as a viable, non-excluded path.
         if "⭐ openai" in choices:
             return "⭐ openai"
@@ -791,7 +815,8 @@ async def test_add_flow_hides_excluded_provider_from_picker(
 
     await interactive.add_profile_flow(manager)
 
-    provider_menu = shown_to_user[0]
+    # shown_to_user[0] is the mode picker; the provider menu is [1].
+    provider_menu = shown_to_user[1]
     assert "⭐ openhands" not in provider_menu
     assert "openhands" not in provider_menu
 
@@ -806,10 +831,24 @@ async def test_add_flow_hides_excluded_model_from_picker(
     monkeypatch.setattr(
         exclusions, "EXCLUDED_MODELS", frozenset({"openai/gpt-4o"})
     )
+    # Give openai a second model so the picker still has a
+    # non-excluded option; otherwise the new back-nav on an empty
+    # model list would loop the wizard back to the provider picker.
+    monkeypatch.setattr(
+        verified_models,
+        "list_providers",
+        lambda: {
+            "openai": ["gpt-4o", "gpt-4o-mini"],
+            "openhands": ["claude-sonnet-4-6"],
+        },
+    )
 
     shown_model_menu: list[list[str]] = []
 
     async def recording_select(choices, message, use_search=True):
+        # Mode picker first.
+        if "📋 Pick from curated list" in choices:
+            return "📋 Pick from curated list"
         if message.startswith("Select a openai model") or "model" in message:
             shown_model_menu.append(list(choices))
         if "⭐ openai" in choices:
