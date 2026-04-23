@@ -15,6 +15,7 @@ Menu shape:
 """
 
 from dataclasses import dataclass
+from typing import Iterable
 
 from devdox_ai_sonar.llm import adapters
 
@@ -61,52 +62,90 @@ class ModelInfo:
     verified: bool
 
 
-def build_provider_menu() -> list[ProviderInfo]:
+def build_provider_menu(
+    *,
+    excluded_providers: Iterable[str] = (),
+    included_providers: Iterable[str] = (),
+) -> list[ProviderInfo]:
     """Return the provider picker entries.
 
     Union of verified and unverified provider names, alphabetised, with
     the ``verified`` flag set on entries present in the curated list.
+
+    Filter semantics (inclusion narrows, exclusion always wins):
+
+    * If ``included_providers`` is empty, no inclusion constraint.
+    * If ``included_providers`` is non-empty, only those providers
+      survive.
+    * After any inclusion narrowing, any provider in
+      ``excluded_providers`` is dropped.
+
+    Unknown entries in either filter are silently ignored (so a typo
+    in the developer-owned list can't crash the UI).
     """
     verified = adapters.list_verified_models()
     unverified = adapters.list_unverified_models()
+    universe = set(verified.keys()) | set(unverified.keys())
 
-    all_names = sorted(set(verified.keys()) | set(unverified.keys()))
+    allowed = frozenset(included_providers)
+    blocked = frozenset(excluded_providers)
+    if allowed:
+        universe &= allowed
+    universe -= blocked
+
     return [
         ProviderInfo(name=name, verified=name in verified)
-        for name in all_names
+        for name in sorted(universe)
     ]
 
 
-def build_model_menu(provider: str) -> list[ModelInfo]:
+def build_model_menu(
+    provider: str,
+    *,
+    excluded_models: Iterable[str] = (),
+    included_models: Iterable[str] = (),
+) -> list[ModelInfo]:
     """Return the model picker entries for a given provider.
 
     Verified entries come first (for ⭐-prefixed display), alphabetised
     among themselves, followed by the unverified catalogue, also
-    alphabetised. Duplicates are collapsed: the upstream
-    ``UNVERIFIED_MODELS_EXCLUDING_BEDROCK`` catalogue contains repeated
-    ids within its own lists for many providers, and the
-    verified-vs-unverified disjointness is a convention rather than a
-    guarantee -- we rely on neither.
+    alphabetised. Duplicates are collapsed.
+
+    Filter semantics (same as :func:`build_provider_menu`): inclusion
+    narrows, exclusion always wins. All filter strings are full
+    ``provider/model-id`` form, so a ``gemini/gpt-4o`` typo cannot
+    accidentally hide OpenAI's gpt-4o.
 
     Args:
         provider: A provider family name.
+        excluded_models: Full ``provider/model-id`` strings to drop.
+        included_models: Full ``provider/model-id`` strings to keep.
+            Empty means "no inclusion constraint".
 
     Returns:
         A list of :class:`ModelInfo`, empty if the provider is unknown
-        to both catalogues.
+        to both catalogues or if the filters leave nothing visible.
     """
     verified = adapters.list_verified_models().get(provider, [])
     unverified = adapters.list_unverified_models().get(provider, [])
+    allowed = frozenset(included_models)
+    blocked = frozenset(excluded_models)
+
+    def visible(model_id: str) -> bool:
+        full = f"{provider}/{model_id}"
+        if allowed and full not in allowed:
+            return False
+        return full not in blocked
 
     entries: list[ModelInfo] = []
     seen: set[str] = set()
     for model_id in sorted(verified):
-        if model_id in seen:
+        if model_id in seen or not visible(model_id):
             continue
         seen.add(model_id)
         entries.append(ModelInfo(model_id=model_id, verified=True))
     for model_id in sorted(unverified):
-        if model_id in seen:
+        if model_id in seen or not visible(model_id):
             continue
         seen.add(model_id)
         entries.append(ModelInfo(model_id=model_id, verified=False))

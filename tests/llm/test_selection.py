@@ -120,6 +120,104 @@ def test_model_menu_unknown_provider_returns_empty(monkeypatch):
     assert build_model_menu("never-heard-of-it") == []
 
 
+# ---------------------------------------------------------------------------
+# Filter lists (exclusion + inclusion)
+# ---------------------------------------------------------------------------
+
+
+def test_provider_menu_excluded_providers_dropped(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"stability": ["sd-xl"], "groq": ["llama-3"]},
+    )
+    names = [p.name for p in build_provider_menu(
+        excluded_providers={"stability"}
+    )]
+    assert "stability" not in names
+    assert "openai" in names
+    assert "groq" in names
+
+
+def test_provider_menu_inclusion_narrows_to_listed(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "anthropic": ["claude-4"]},
+        unverified={"groq": ["llama-3"]},
+    )
+    names = [p.name for p in build_provider_menu(
+        included_providers={"openai"}
+    )]
+    assert names == ["openai"]
+
+
+def test_provider_menu_exclusion_wins_over_inclusion(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "anthropic": ["claude-4"]},
+        unverified={},
+    )
+    names = [p.name for p in build_provider_menu(
+        included_providers={"openai", "anthropic"},
+        excluded_providers={"openai"},
+    )]
+    assert names == ["anthropic"]
+
+
+def test_model_menu_excluded_models_dropped(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    ids = [m.model_id for m in build_model_menu(
+        "openai", excluded_models={"openai/gpt-5"}
+    )]
+    assert "gpt-5" not in ids
+    assert "gpt-4o" in ids
+    assert "gpt-3.5" in ids
+
+
+def test_model_menu_inclusion_narrows_to_listed(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    ids = [m.model_id for m in build_model_menu(
+        "openai", included_models={"openai/gpt-4o"}
+    )]
+    assert ids == ["gpt-4o"]
+
+
+def test_model_menu_exclusion_wins_over_inclusion(monkeypatch):
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"]},
+        unverified={},
+    )
+    ids = [m.model_id for m in build_model_menu(
+        "openai",
+        included_models={"openai/gpt-4o", "openai/gpt-5"},
+        excluded_models={"openai/gpt-5"},
+    )]
+    assert ids == ["gpt-4o"]
+
+
+def test_model_menu_filter_is_scoped_to_matching_provider(monkeypatch):
+    """A filter string is the full ``provider/model-id`` form; it cannot
+    accidentally hide a same-named model under a different provider."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "gemini": ["gpt-4o"]},
+        unverified={},
+    )
+    openai_ids = [m.model_id for m in build_model_menu(
+        "openai", excluded_models={"gemini/gpt-4o"}
+    )]
+    assert openai_ids == ["gpt-4o"]   # unaffected
+
+
 def test_selection_does_not_touch_sdk_directly():
     """Selection imports only from the adapters module. If someone adds a
     direct openhands / litellm import, this breaks."""
