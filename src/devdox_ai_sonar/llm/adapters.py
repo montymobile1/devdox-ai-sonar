@@ -26,6 +26,7 @@ from litellm.exceptions import (
     APIConnectionError,
     AuthenticationError,
     BadRequestError,
+    NotFoundError,
     RateLimitError,
     ServiceUnavailableError,
     Timeout,
@@ -116,7 +117,7 @@ def infer_provider(model: str, api_base: str | None) -> str | None:
 
 
 FailureKind = Literal[
-    "auth", "connection", "bad_request", "rate_limit", "unknown"
+    "auth", "connection", "bad_request", "not_found", "rate_limit", "unknown"
 ]
 
 
@@ -215,6 +216,8 @@ def probe(
         return _failure_from_exception("connection", exc)
     except (Timeout, ServiceUnavailableError) as exc:
         return _failure_from_exception("connection", exc)
+    except NotFoundError as exc:
+        return _failure_from_exception("not_found", exc)
     except BadRequestError as exc:
         return _failure_from_exception("bad_request", exc)
     except RateLimitError as exc:
