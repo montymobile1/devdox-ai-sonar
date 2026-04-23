@@ -58,9 +58,9 @@ class OpenHandsSdkUnavailableError(DevDoxSonarError):
 class ConfigStorageError(DevDoxSonarError):
     """Raised when ``config.toml`` cannot be read, written, or interpreted.
 
-    Includes the case where an old ``[[llm.providers]]`` shape is detected:
-    there is no automatic migration path, so the user is asked to delete
-    the file and re-run configuration.
+    Also raised when the file carries a schema that is no longer
+    supported (e.g. an older ``[[llm.providers]]`` array), in which
+    case the caller is told to delete the file and reconfigure.
     """
 
 

@@ -57,10 +57,8 @@ def sample_code_block():
                      context="new_code"
                      )
 
-# Post-OpenHands migration: every provider flows through
-# ``openhands.sdk.LLM`` — so every mock_* fixture below patches the same
-# target.  The fixture names are kept for backwards compatibility with
-# tests that were written against the per-provider client classes.
+# Every LLM call flows through ``openhands.sdk.LLM``; each mock_* fixture
+# below patches that single target and is named for historical clarity.
 
 
 @pytest.fixture
@@ -204,7 +202,7 @@ class TestLLMFixerInitialization:
         assert fixer.profile is profile
         assert fixer.model == "openai/gpt-4o"
         assert fixer.api_key == "sk-test"
-        assert fixer.provider == "openai"  # derived from model prefix
+        assert fixer.profile.family() == "openai"
         mock_openai_client.assert_called_once()
 
     def test_init_default_context_lines(self, mock_openai_client):
@@ -245,20 +243,6 @@ class TestLLMFixerInitialization:
         fixer = LLMFixer(profile=profile)
         assert fixer.jinja_env is not None
         assert fixer.jinja_env_templates is not None
-
-    def test_provider_shim_tracks_profile_family(self, mock_openai_client):
-        """``self.provider`` is a compatibility shim retained for
-        downstream code that still reads it; it must mirror
-        ``profile.family()``."""
-        for model, expected_family in [
-            ("openai/gpt-4o", "openai"),
-            ("gemini/gemini-2.5-flash", "gemini"),
-            ("together_ai/meta-llama/Llama-3-70b-chat", "together_ai"),
-            ("openrouter/anthropic/claude-sonnet-4", "openrouter"),
-        ]:
-            profile = LLMProfile(name="p", model=model, api_key="k")
-            fixer = LLMFixer(profile=profile)
-            assert fixer.provider == expected_family
 
 
 class TestContextExtraction:
@@ -3763,7 +3747,7 @@ class TestPrepareFixContext:
 
 @pytest.mark.skip(
     reason=(
-        "Post-OpenHands migration: _call_llm_list no longer invokes "
+        "_call_llm_list no longer invokes "
         "fixer.client.responses.parse / .models.generate_content / "
         ".chat.completions.create directly.  It builds an Agent + "
         "Conversation and lets the OpenHands runtime handle the loop, so "
@@ -5413,7 +5397,7 @@ class TestGenerateFixByFile:
 
         mock_fix_response = Mock()
         mock_fix_response.FIXED_CODE_BLOCKS = []
-        # Post-OpenHands migration: generate_fix_by_file now inspects
+        # generate_fix_by_file now inspects
         # ``applied_by_agent`` on each fix response and skips the
         # suggestion-building branch when any response was already applied
         # by the agent.  Mock()'s auto-generated attributes are truthy, so
@@ -5525,7 +5509,7 @@ class TestApplyFixesFailurePath:
 
 @pytest.mark.skip(
     reason=(
-        "Post-OpenHands migration: unknown-provider handling is now done by "
+        "unknown-provider handling is now done by "
         "LiteLLM inside openhands.sdk.LLM.  _call_llm_list no longer has a "
         "per-provider branch to return None for unknowns."
     )

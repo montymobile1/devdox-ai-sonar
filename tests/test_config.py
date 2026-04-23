@@ -128,7 +128,7 @@ class TestSettingsEnvironmentVariables:
 
 
 class TestRemovedFieldsAreSilentlyIgnored:
-    """Pre-DEVDOX-63 env vars must not leak into Settings attributes.
+    """Older provider-specific env vars must not leak into Settings attributes.
 
     ``extra = "ignore"`` in Pydantic config means unknown vars from a
     user's old ``.env`` file do not crash the app -- they're just unused.

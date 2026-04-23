@@ -151,12 +151,8 @@ class FixValidator:
                 are marked :attr:`ValidationStatus.NEEDS_REVIEW`.
         """
         self.profile = profile
-        # Convenience aliases so existing callers (and downstream code
-        # that reads ``validator.model`` / ``validator.api_key`` /
-        # ``validator.provider``) keep working.
         self.model = profile.model
         self.api_key = profile.api_key
-        self.provider = profile.family()
         self.min_confidence_threshold = min_confidence_threshold
         self.client: LLM = LLM(
             model=profile.model,
