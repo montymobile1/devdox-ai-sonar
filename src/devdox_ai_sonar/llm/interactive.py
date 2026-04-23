@@ -68,6 +68,30 @@ _console = Console()
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
 _VERIFIED_MARK = "⭐ "
+_VERIFIED_LEGEND = (
+    "[dim]⭐ = verified by OpenHands "
+    "(tested and known to work well for code fixes)[/dim]"
+)
+
+# Per-invocation flag: the ⭐ legend is educational, not a repeating
+# status indicator. Show it the first time a picker with stars opens,
+# then stay quiet for the rest of that add/update flow. Reset to False
+# at the top of each top-level wizard entry point so the NEXT
+# invocation explains the symbol to a user who might be new.
+_legend_shown_this_run: bool = False
+
+
+def _show_verified_legend_once(menu_has_stars: bool) -> None:
+    """Print the ⭐ legend at most once per wizard invocation.
+
+    ``menu_has_stars`` short-circuits: no stars on screen means no
+    symbol to explain, so we stay silent regardless of state.
+    """
+    global _legend_shown_this_run
+    if not menu_has_stars or _legend_shown_this_run:
+        return
+    _console.print(_VERIFIED_LEGEND)
+    _legend_shown_this_run = True
 
 # Process-wide toggle set by the CLI entry point via :func:`set_verbose`.
 # When true, probe-failure details (litellm exception class, provider
@@ -130,6 +154,8 @@ class ProfileUpdateContext:
 
 async def add_profile_flow(manager: ConfigManager) -> None:
     """Run the add-profile wizard, looping on "Add another?"."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     while True:
         profile = await _collect_and_validate_profile()
         if profile is None:
@@ -216,6 +242,8 @@ async def _pick_provider_and_model() -> Optional[tuple[str, Optional[str], str]]
 
 async def update_profile_flow(manager: ConfigManager) -> None:
     """Walk every updatable field in order, probe once, commit atomically."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     profiles = await load_profiles(manager)
     if not profiles:
         _console.print(
@@ -302,6 +330,7 @@ async def _prompt_for_provider() -> Optional[str]:
     labels_to_value[_CUSTOM_LABEL] = _CUSTOM_SENTINEL
     display.append(_CUSTOM_LABEL)
 
+    _show_verified_legend_once(any(entry.verified for entry in menu))
     picked = await select_from_list(display, "Select an LLM provider")
     if picked is None:
         return None
@@ -362,6 +391,7 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
         labels_to_value[label] = entry.model_id
         display.append(label)
 
+    _show_verified_legend_once(any(entry.verified for entry in menu))
     picked = await select_from_list(display, f"Select a {provider} model")
     if picked is None:
         return None
