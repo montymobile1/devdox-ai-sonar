@@ -1097,5 +1097,154 @@ class TestFormatCodeBlocksForValidation:
         assert end == 50
 
 
+class TestExtractCompletionContent:
+    """Pure-function tests for _extract_completion_content.
+
+    Covers both shapes: OpenHands LLMResponse (``.message.content`` is a
+    list of TextContent blocks) and raw litellm ModelResponse
+    (``.choices[0].message.content`` is a string).
+    """
+
+    def _extract(self, response):
+        from devdox_ai_sonar.fix_validator import _extract_completion_content
+        return _extract_completion_content(response)
+
+    def test_openhands_response_concatenates_text_blocks(self):
+        block_a = MagicMock()
+        block_a.text = "hello "
+        block_b = MagicMock()
+        block_b.text = "world"
+        response = MagicMock()
+        response.message.content = [block_a, block_b]
+        assert self._extract(response) == "hello world"
+
+    def test_openhands_response_ignores_non_text_blocks(self):
+        """ImageContent / other blocks have no .text attr; they're skipped."""
+        text_block = MagicMock()
+        text_block.text = "only text"
+        opaque_block = object()  # no .text attribute
+        response = MagicMock()
+        response.message.content = [opaque_block, text_block]
+        assert self._extract(response) == "only text"
+
+    def test_litellm_response_returns_message_content_string(self):
+        response = MagicMock()
+        response.message = None  # force OpenHands branch to miss
+        choice = MagicMock()
+        choice.message.content = "litellm content"
+        response.choices = [choice]
+        assert self._extract(response) == "litellm content"
+
+    def test_empty_choices_returns_none(self):
+        response = MagicMock()
+        response.message = None
+        response.choices = []
+        assert self._extract(response) is None
+
+    def test_missing_attributes_returns_none(self):
+        """A response shaped like neither schema returns None (logged)."""
+        response = MagicMock(spec=[])  # no .message, no .choices
+        assert self._extract(response) is None
+
+
+class TestParseValidatorResponse:
+    """Pure-function tests for _parse_validator_response -- valid JSON,
+    markdown-fence recovery, malformed JSON, schema-validation error."""
+
+    def _make_valid_json(self):
+        """Produce a JSON string that matches the SonarFixResponse schema."""
+        return (
+            '{"FIXED_CODE_BLOCKS": [{"block_name": "b", "start_line": "1", '
+            '"end_line": "10", "has_changes": true, "change_type": "FULL_CODE", '
+            '"block_type": "function", "context": ""}], '
+            '"NEW_HELPER_CODE": "", "PLACEMENT": "GLOBAL_TOP", '
+            '"EXPLANATION": "ok", "CONFIDENCE": 0.9}'
+        )
+
+    def _parse(self, text):
+        from devdox_ai_sonar.fix_validator import _parse_validator_response
+        return _parse_validator_response(text, model="openai/gpt-4o")
+
+    def test_valid_json_parses_to_sonar_fix_response(self):
+        from devdox_ai_sonar.models.sonar import SonarFixResponse
+        result = self._parse(self._make_valid_json())
+        assert isinstance(result, SonarFixResponse)
+
+    def test_markdown_fenced_json_is_recovered(self):
+        fenced = f"```json\n{self._make_valid_json()}\n```"
+        result = self._parse(fenced)
+        assert result is not None
+
+    def test_malformed_json_raises_value_error(self):
+        with pytest.raises(ValueError, match="malformed JSON"):
+            self._parse("{not valid json at all")
+
+    def test_schema_mismatch_raises_value_error(self):
+        """Valid JSON but wrong shape -> ValueError (callers fall back)."""
+        wrong_shape = '{"totally": "different shape"}'
+        with pytest.raises(ValueError, match="did not match expected schema"):
+            self._parse(wrong_shape)
+
+
+class TestCallLlmValidator:
+    """Tests for FixValidator._call_llm_validator.
+
+    The method sits on top of self.client (an openhands.sdk.LLM) and
+    the two helpers above. Behaviour is: guard on missing client,
+    call completion, extract content, parse. Exceptions on either
+    end become None.
+    """
+
+    def _make_validator(self):
+        profile = LLMProfile(
+            name="p", model="openai/gpt-4o", api_key="sk-x"
+        )
+        return FixValidator(profile=profile)
+
+    def test_returns_none_when_client_missing(self):
+        validator = self._make_validator()
+        validator.client = None
+        assert validator._call_llm_validator("prompt") is None
+
+    def test_returns_none_when_completion_raises(self):
+        validator = self._make_validator()
+        client = MagicMock()
+        client.completion.side_effect = RuntimeError("network down")
+        validator.client = client
+        assert validator._call_llm_validator("prompt") is None
+
+    def test_returns_none_when_content_is_unextractable(self):
+        """A response whose shape matches neither branch -> None."""
+        validator = self._make_validator()
+        empty_response = MagicMock(spec=[])
+        client = MagicMock()
+        client.completion.return_value = empty_response
+        validator.client = client
+        assert validator._call_llm_validator("prompt") is None
+
+    def test_returns_parsed_response_on_success(self):
+        """Happy path: completion returns a text-shaped response, the
+        parser produces a SonarFixResponse."""
+        from devdox_ai_sonar.models.sonar import SonarFixResponse
+        validator = self._make_validator()
+        content_block = MagicMock()
+        content_block.text = (
+            '{"FIXED_CODE_BLOCKS": [{"block_name": "b", "start_line": "1", '
+            '"end_line": "10", "has_changes": true, "change_type": "FULL_CODE", '
+            '"block_type": "function", "context": ""}], '
+            '"NEW_HELPER_CODE": "", "PLACEMENT": "GLOBAL_TOP", '
+            '"EXPLANATION": "ok", "CONFIDENCE": 0.9}'
+        )
+        response = MagicMock()
+        response.message.content = [content_block]
+        client = MagicMock()
+        client.completion.return_value = response
+        validator.client = client
+
+        result = validator._call_llm_validator("prompt")
+
+        assert isinstance(result, SonarFixResponse)
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
