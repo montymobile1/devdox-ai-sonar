@@ -147,6 +147,51 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
     assert saved.base_url is None
 
 
+async def test_add_profile_flow_rejects_duplicate_name_and_reprompts(
+    monkeypatch, manager, fake_catalogs
+):
+    """If the first typed name collides with an existing profile, the
+    wizard must reject it immediately (before the set-as-default
+    prompt) and re-ask. The second, unique name is accepted and
+    persisted. Regression test: previously the collision was only
+    caught at save time, after the user had clicked past
+    "Set as default?"."""
+    await save_profile(
+        manager,
+        LLMProfile(name="gemini", model="openai/gpt-4o", api_key="k"),
+        set_as_default=False,
+    )
+
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "📋 Pick from curated list",
+            "⭐ openai",
+            "⭐ gpt-4o",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-new-key",
+            "gemini",        # duplicate -> rejected + re-prompt
+            "gemini-alt",    # unique -> accepted
+        ],
+        confirm_answers=[
+            False,  # Set as default?
+            False,  # Add another?
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    names = {p.name for p in profiles}
+    assert names == {"gemini", "gemini-alt"}
+
+
 async def test_add_profile_flow_custom_endpoint(
     monkeypatch, manager, fake_catalogs
 ):

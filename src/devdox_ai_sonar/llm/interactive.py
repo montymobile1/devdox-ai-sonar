@@ -145,7 +145,15 @@ class ProfileUpdateContext:
 async def add_profile_flow(manager: ConfigManager) -> None:
     """Run the 8-step add-profile wizard, looping on "Add another?"."""
     while True:
-        attempt = await _collect_and_validate_profile()
+        # Re-read existing names on every iteration -- a just-saved
+        # profile in the previous pass becomes a duplicate for the
+        # next one.
+        existing_names = frozenset(
+            p.name for p in await load_profiles(manager)
+        )
+        attempt = await _collect_and_validate_profile(
+            existing_names=existing_names
+        )
         if attempt.kind == "cancelled":
             _console.print("[yellow]⚠ Profile configuration cancelled[/yellow]")
             break
@@ -189,7 +197,9 @@ class _AttemptResult:
     profile: Optional[LLMProfile] = None
 
 
-async def _collect_and_validate_profile() -> _AttemptResult:
+async def _collect_and_validate_profile(
+    existing_names: frozenset[str] = frozenset(),
+) -> _AttemptResult:
     """Walk the add-profile wizard, handling back-nav and restart-on-bad-model.
 
     The outer ``while True`` exists so a model-shaped probe failure
@@ -198,6 +208,11 @@ async def _collect_and_validate_profile() -> _AttemptResult:
     on the API-key prompt. Normal success, explicit cancel, and
     explicit abandon all break out immediately; the caller
     distinguishes them via :class:`_AttemptResult.kind`.
+
+    ``existing_names`` is the set of profile names already on disk;
+    the name prompt rejects duplicates before the wizard walks any
+    further, so the user doesn't click past "Set as default?" only
+    to hit a save-time collision.
     """
     while True:
         gathered = await _gather_model_and_base_url()
@@ -219,7 +234,10 @@ async def _collect_and_validate_profile() -> _AttemptResult:
         # result.kind == "validated"
         api_key = result.key or ""
 
-        name = _prompt_profile_name(default=_suggest_profile_name(model))
+        name = _prompt_profile_name(
+            default=_suggest_profile_name(model),
+            existing_names=existing_names,
+        )
         if name is None:
             return _AttemptResult(kind="cancelled")
 
@@ -649,11 +667,30 @@ def _confirm_add_another() -> bool:
         return False
 
 
-def _prompt_profile_name(default: str) -> Optional[str]:
-    try:
-        return Prompt.ask("Profile name", default=default).strip() or None
-    except KeyboardInterrupt:
-        return None
+def _prompt_profile_name(
+    default: str, *, existing_names: frozenset[str] = frozenset()
+) -> Optional[str]:
+    """Prompt for a profile name, re-asking on duplicates.
+
+    Returns the accepted name, or ``None`` if the user cancels with
+    Ctrl+C / EOF. A duplicate against ``existing_names`` prints a
+    short error and re-enters the prompt instead of letting the user
+    walk further into the wizard only to hit a save-time collision.
+    """
+    while True:
+        try:
+            name = Prompt.ask("Profile name", default=default).strip() or None
+        except KeyboardInterrupt:
+            return None
+        if name is None:
+            return None
+        if name in existing_names:
+            _console.print(
+                f"[red]❌ A profile named '{name}' already exists. "
+                "Pick a different name.[/red]"
+            )
+            continue
+        return name
 
 
 def _suggest_profile_name(model: str) -> str:
