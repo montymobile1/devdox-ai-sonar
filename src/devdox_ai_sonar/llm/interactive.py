@@ -29,7 +29,7 @@ land or none do.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
@@ -236,12 +236,16 @@ async def update_profile_flow(manager: ConfigManager) -> None:
         _console.print("[yellow]⚠ No changes requested[/yellow]")
         return
 
-    # Single live probe of the final combined state.
-    if not _probe_or_report(
+    # Single live probe of the final combined state. Option-B updates
+    # intentionally do NOT enter the retry / save-on-rate-limit loop --
+    # that belongs to the add-profile flow. Here, any failure aborts
+    # the update and leaves the persisted profile untouched.
+    outcome = _probe_and_handle(
         ctx.final_model(),
         ctx.final_api_key(),
         ctx.final_base_url(),
-    ):
+    )
+    if outcome != "accepted":
         _console.print("[red]❌ Update cancelled; no changes written[/red]")
         return
 
@@ -339,18 +343,29 @@ def _prompt_for_api_key_until_valid(
     model: str,
     base_url: Optional[str],
 ) -> Optional[str]:
-    """Prompt for an API key and re-prompt until the live probe passes.
+    """Prompt for an API key and re-prompt until the probe resolves.
 
-    Only an explicit Ctrl+C (or EOF on stdin) aborts the loop; any
-    probe failure keeps asking for a new key. Returns the validated
-    key on success, or ``None`` if the user cancelled.
+    "Resolves" means one of:
+    * The live probe passes -> return the key.
+    * The probe fails in a way that's specifically *credentials-bad*
+      (auth / bad_request / unknown) -> re-prompt for a different key.
+    * The probe fails with a rate-limit -> hand off to a three-way
+      ``save / retry / cancel`` prompt. If the user saves, we accept
+      the key as-is; retry re-runs the probe; cancel aborts.
+    * The user cancels (Ctrl+C / EOF at the key prompt) -> return
+      ``None``.
     """
     while True:
         api_key = _prompt_for_api_key(family_label)
         if api_key is None:
             return None
-        if _probe_or_report(model, api_key, base_url):
+
+        outcome = _probe_and_handle(model, api_key, base_url)
+        if outcome == "accepted":
             return api_key
+        if outcome == "cancel":
+            return None
+        # outcome == "try_new_key"
         _console.print(
             "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
         )
@@ -515,15 +530,63 @@ def _validate_or_report(
     return None
 
 
-def _probe_or_report(model: str, api_key: str, base_url: Optional[str]) -> bool:
+ProbeOutcome = Literal["accepted", "cancel", "try_new_key"]
+
+# Short human labels for the well-known upstream providers, to help the
+# reader tell "I got rate-limited by Google" apart from "I got
+# rate-limited by our own gateway". Absent entries fall back to just
+# the raw provider identifier from litellm.
+_PROVIDER_HUMAN_NAMES: dict[str, str] = {
+    "openai": "OpenAI API",
+    "gemini": "Google Gemini API",
+    "anthropic": "Anthropic API",
+    "together_ai": "TogetherAI API",
+    "openrouter": "OpenRouter API",
+    "groq": "Groq API",
+    "cohere": "Cohere API",
+    "azure": "Azure OpenAI",
+    "mistral": "Mistral API",
+    "deepseek": "DeepSeek API",
+    "ollama": "Ollama (local/self-hosted)",
+    "vllm": "vLLM (self-hosted)",
+    "litellm_proxy": "LiteLLM proxy",
+}
+
+
+def _probe_and_handle(
+    model: str, api_key: str, base_url: Optional[str]
+) -> ProbeOutcome:
+    """Run the live probe and decide what the caller should do next.
+
+    Returns one of three sentinels:
+    * ``"accepted"`` -- key is good (or user explicitly saved through
+      a rate-limited probe); caller should persist the profile.
+    * ``"try_new_key"`` -- probe failed in a way that points at the
+      credentials (auth, bad request, unknown); caller should
+      re-prompt for a different key.
+    * ``"cancel"`` -- user chose to abort the whole wizard.
+    """
     _console.print("[cyan]Validating credentials...[/cyan]")
     result = validation.probe_api_key(model, api_key, base_url)
     if result.is_ok():
         _console.print("[green]✓ Credentials accepted[/green]")
-        return True
+        return "accepted"
 
     err = result.error
     assert isinstance(err, KeyProbeError)
+    _print_probe_failure(err)
+
+    if err.kind == "rate_limit":
+        return _handle_rate_limited(model, api_key, base_url)
+
+    # Connection failures are usually the endpoint URL, not the key,
+    # but the user still needs to re-enter (or re-run) to proceed, so
+    # treat them like any other "try again" path.
+    return "try_new_key"
+
+
+def _print_probe_failure(err: KeyProbeError) -> None:
+    """Headline + dimmed provenance for a probe failure."""
     if err.kind == "auth":
         _console.print("[red]❌ Key rejected by the provider[/red]")
     elif err.kind == "connection":
@@ -536,8 +599,84 @@ def _probe_or_report(model: str, api_key: str, base_url: Optional[str]) -> bool:
         )
     elif err.kind == "rate_limit":
         _console.print(
-            "[red]❌ Endpoint rate-limited the probe; try again shortly[/red]"
+            "[yellow]⚠ Endpoint rate-limited the probe.[/yellow]"
         )
     else:
         _console.print(f"[red]❌ Probe failed: {err.detail}[/red]")
-    return False
+
+    # Provenance -- dim so it doesn't overshadow the headline but is
+    # always there for a developer debugging why a key got rejected.
+    _console.print(_format_provenance(err))
+
+
+def _format_provenance(err: KeyProbeError) -> str:
+    lines = []
+    if err.exception_class:
+        lines.append(f"source:   {err.exception_class}")
+    if err.provider:
+        human = _PROVIDER_HUMAN_NAMES.get(err.provider)
+        pretty = f"{err.provider} ({human})" if human else err.provider
+        lines.append(f"provider: {pretty}")
+    if err.status_code is not None:
+        lines.append(f"status:   HTTP {err.status_code}")
+    if err.detail:
+        # Collapse to one line in the summary; full detail is still in
+        # err.detail for callers that want to inspect it programmatically.
+        one_line = err.detail.splitlines()[0] if err.detail else ""
+        lines.append(f"detail:   {one_line}")
+    if not lines:
+        return ""
+    indented = "\n".join(f"  {line}" for line in lines)
+    return f"[dim]{indented}[/dim]"
+
+
+def _handle_rate_limited(
+    model: str, api_key: str, base_url: Optional[str]
+) -> ProbeOutcome:
+    """Three-way prompt for a rate-limited probe.
+
+    The provider's auth check runs before quota enforcement on every
+    mainstream endpoint we've seen, so a 429 strongly implies the key
+    is valid and the endpoint is just throttling. The prompt reflects
+    that: ``save`` is the default, with explicit ``retry`` and
+    ``cancel`` options.
+    """
+    _console.print(
+        "[dim]Auth checks usually run before rate-limiting, so the key "
+        "is almost certainly valid; the endpoint is just throttling.[/dim]"
+    )
+    while True:
+        try:
+            choice = Prompt.ask(
+                "[s]ave anyway / [r]etry probe now / [c]ancel",
+                choices=["s", "r", "c"],
+                default="s",
+                show_choices=False,
+            )
+        except (KeyboardInterrupt, EOFError):
+            return "cancel"
+
+        if choice == "s":
+            _console.print(
+                "[green]✓ Profile accepted without successful probe[/green]"
+            )
+            return "accepted"
+        if choice == "c":
+            return "cancel"
+
+        # choice == "r": re-run the probe with the same key.
+        _console.print("[cyan]Retrying...[/cyan]")
+        result = validation.probe_api_key(model, api_key, base_url)
+        if result.is_ok():
+            _console.print("[green]✓ Credentials accepted[/green]")
+            return "accepted"
+
+        err = result.error
+        assert isinstance(err, KeyProbeError)
+        _print_probe_failure(err)
+        if err.kind != "rate_limit":
+            # The retry surfaced a different failure (commonly: the
+            # rate-limit cleared and now auth actually fails).
+            # Fall through to the caller's "try a different key" loop.
+            return "try_new_key"
+        # Still rate-limited -- loop and re-ask.
