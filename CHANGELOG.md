@@ -6,6 +6,88 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ---
+## [Unreleased]
+
+### Breaking
+
+- **LLM layer standardises on OpenHands SDK.** Every LLM call now routes
+  through `openhands.sdk.LLM` (which itself uses litellm under the hood),
+  so any provider either library supports is reachable. The direct
+  `openai` / `google-genai` / `together` integrations are gone.
+- **Config schema changed.** `~/devdox/config.toml` moved from a
+  `[[llm.providers]]` array with `default_provider` / `default_model`
+  top-level keys to a `[[llm.profiles]]` array with a single
+  `default_profile` key. Each profile holds `{name, model, api_key,
+  base_url?}` where `model` is the OpenHands `provider/model-name`
+  string (e.g. `openai/gpt-4o`, `gemini/gemini-2.5-flash`,
+  `vllm/my-local-model`). There is **no automatic migration**: the
+  loader detects the old shape and tells the user to delete the file
+  and reconfigure.
+- **Environment variable names changed.** `OPENAI_API_KEY`,
+  `GEMINI_API_KEY`, `OPENROUTER_API_KEY`, `LLM_PROVIDER` are gone.
+  The new triplet is `LLM_MODEL` (fully-qualified model string),
+  `LLM_API_KEY`, and optional `LLM_BASE_URL`. Any of the old names
+  left in a user's `.env` will be silently ignored.
+- **CLI flag renamed.** `--llm-provider` is replaced by `--llm-model`
+  (free-text model string); a new `--llm-base-url` joins `--llm-api-key`.
+- **GitHub Action inputs renamed.** `llm-provider` and
+  `llm-default-model` are replaced by `llm-model` and `llm-base-url`.
+  Existing workflows pinned to `@0.0.7` or earlier keep working; those
+  pointing at `main` must update.
+
+### Feat
+
+- **70-provider LLM picker.** The interactive wizard now shows every
+  provider OpenHands/litellm can reach (~70). Eight "verified"
+  providers (openai, anthropic, gemini, mistral, deepseek, moonshot,
+  minimax, openhands) appear with a ⭐; the rest are below as advanced
+  picks. A 🔧 Custom entry at the bottom accepts a free-form
+  `provider/model-name` + optional `base_url` for self-hosted or
+  proxied endpoints (vLLM, LiteLLM proxy, Ollama at a non-default
+  host, etc.).
+- **Live credential probe.** On add/update, the wizard probes the
+  configured endpoint with a minimal completion call before saving
+  the profile. Bad keys, unreachable endpoints, and rejected model
+  strings surface immediately with actionable error messages.
+- **Three LLM configuration sources with precedence.** CLI flags >
+  environment / `.env` > saved profile in `config.toml`. CI / scripts
+  can inject `LLM_MODEL` + `LLM_API_KEY` in the environment and skip
+  the interactive setup entirely.
+
+### Migration
+
+For users upgrading from 0.0.7 or earlier:
+
+1. **Delete your existing `~/devdox/config.toml`** -- the old provider
+   schema is no longer accepted.
+2. **Remove the old env vars** (`OPENAI_API_KEY` / `GEMINI_API_KEY` /
+   `OPENROUTER_API_KEY` / `LLM_PROVIDER` / bare `LLM_MODEL` if it
+   carried an unqualified model name) from any `.env` files.
+3. **Run `devdox_sonar`** -- the wizard re-runs, picks up your
+   Sonar auth from the existing `~/devdox/auth.json` (unchanged), and
+   walks you through creating a new LLM profile.
+4. For GitHub Actions, update secret names: rename `LLM_API_PROVIDER`
+   to `LLM_MODEL` and set it to the qualified form
+   (e.g. `openai/gpt-4o`). The new optional `LLM_BASE_URL` secret is
+   only needed for self-hosted endpoints.
+
+### Removed
+
+- `OPENAI_API_KEY`, `GEMINI_API_KEY`, `OPENROUTER_API_KEY`,
+  `LLM_PROVIDER` environment variables.
+- `--llm-provider` CLI flag (use `--llm-model` instead).
+- Commented-out `openai`, `google-genai`, `together` package
+  dependencies.
+- `langchain-core` dependency (was unused in the codebase).
+- The old `ProviderType` enum, `ProviderValidator` class, and
+  `VALID_LLM_PROVIDERS` hardcoded set.
+- `services.configuration.LLMConfig` dataclass (superseded by
+  `llm.profile.LLMProfile`).
+- `ConfigManager.add_provider` / `update_provider` / `remove_provider`
+  / `list_providers` / `show_provider` methods (superseded by the
+  functions in `llm.profile_store`).
+
+---
 ## [0.0.7] - 2026-03-31
 
 ### Feat
