@@ -125,6 +125,7 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openai",          # provider picker
             "⭐ gpt-4o",          # model picker
         ]),
@@ -156,7 +157,7 @@ async def test_add_profile_flow_custom_endpoint(
     """Pick the 🔧 Custom option and supply a vllm/ model with a base URL.
     The saved profile should carry both the typed model string and the
     base URL verbatim."""
-    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _queue_responses(monkeypatch, iter(["🔧 Custom endpoint"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -188,7 +189,7 @@ async def test_add_profile_flow_custom_endpoint_rejects_empty_model(
 ):
     """An empty model string at the custom prompt aborts the wizard
     cleanly without saving."""
-    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _queue_responses(monkeypatch, iter(["🔧 Custom endpoint"]))
     _patch_prompt(
         monkeypatch,
         text_answers=[""],   # model -> empty -> abort
@@ -217,8 +218,8 @@ async def test_update_profile_flow_switch_to_custom_endpoint(
     _queue_responses(
         monkeypatch,
         iter([
-            "p",           # pick profile
-            "🔧 Custom",   # new provider -> custom
+            "p",                   # pick profile
+            "🔧 Custom endpoint",   # mode picker -> custom
         ]),
     )
     _patch_prompt(
@@ -252,6 +253,7 @@ async def test_add_profile_flow_openhands_family_accepted(
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openhands",
             "⭐ claude-sonnet-4-6",
         ]),
@@ -280,7 +282,10 @@ async def test_add_profile_flow_rejects_unreachable_key(
             ok=False, failure_kind="auth", detail="bad key"
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=["bad-key"],
@@ -313,7 +318,9 @@ async def test_add_profile_flow_loops_on_add_another(
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list",
             "⭐ openhands", "⭐ claude-sonnet-4-6",
         ]),
     )
@@ -393,9 +400,10 @@ async def test_update_profile_flow_model_change_triggers_reprobe(
     _queue_responses(
         monkeypatch,
         iter([
-            "p",                    # pick profile
-            "⭐ openhands",            # new provider
-            "⭐ claude-sonnet-4-6",    # new model
+            "p",                          # pick profile
+            "📋 Pick from curated list",  # mode picker
+            "⭐ openhands",                # new provider
+            "⭐ claude-sonnet-4-6",        # new model
         ]),
     )
     _patch_prompt(
@@ -946,7 +954,10 @@ async def test_rate_limited_probe_saves_when_user_picks_s(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -988,7 +999,10 @@ async def test_rate_limited_probe_retries_successfully(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(adapters, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -1022,7 +1036,10 @@ async def test_rate_limited_probe_cancel_aborts_wizard(
             exception_class="litellm.exceptions.RateLimitError",
         ),
     )
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=["sk-key", "c"],
@@ -1047,7 +1064,11 @@ async def test_verified_legend_printed_once_per_wizard_run(
     prints exactly once per wizard invocation."""
     _queue_responses(
         monkeypatch,
-        iter(["⭐ openai", "⭐ gpt-4o"]),
+        iter([
+            "📋 Pick from curated list",
+            "⭐ openai",
+            "⭐ gpt-4o",
+        ]),
     )
     _patch_prompt(
         monkeypatch,
@@ -1074,7 +1095,11 @@ async def test_verified_legend_suppressed_when_no_verified_entries(
     )
     _queue_responses(
         monkeypatch,
-        iter(["together_ai", "mixtral-8x7b"]),
+        iter([
+            "📋 Pick from curated list",
+            "together_ai",
+            "mixtral-8x7b",
+        ]),
     )
     _patch_prompt(
         monkeypatch,
@@ -1120,7 +1145,9 @@ async def test_not_found_probe_restarts_wizard_at_provider_picker(
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openai", "⭐ gpt-4o",                 # first attempt
+            "📋 Pick from curated list",
             "⭐ openhands", "⭐ claude-sonnet-4-6",   # second attempt
         ]),
     )
@@ -1166,7 +1193,9 @@ async def test_bad_request_probe_also_restarts_wizard(
     _queue_responses(
         monkeypatch,
         iter([
+            "📋 Pick from curated list",
             "⭐ openai", "⭐ gpt-4o",
+            "📋 Pick from curated list",
             "⭐ openai", "⭐ gpt-4o",
         ]),
     )
@@ -1255,7 +1284,10 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
         return KeyProbeOutcome(ok=True)
 
     monkeypatch.setattr(adapters, "probe", flaky_probe)
-    _queue_responses(monkeypatch, iter(["⭐ openai", "⭐ gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=[
@@ -1273,68 +1305,3 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
     assert len(profiles) == 1
     assert profiles[0].api_key == "actually-valid-key"
     assert call_count["n"] == 3
-
-
-# ---------------------------------------------------------------------------
-# _pick_provider_and_model — direct unit tests for the extracted helper
-# ---------------------------------------------------------------------------
-
-
-async def test_pick_provider_and_model_provider_cancel_returns_none(
-    monkeypatch, fake_catalogs
-):
-    """If the provider picker is cancelled, the helper short-circuits to None."""
-    _queue_responses(monkeypatch, iter([None]))
-
-    result = await interactive._pick_provider_and_model()
-
-    assert result is None
-
-
-async def test_pick_provider_and_model_custom_cancel_returns_none(
-    monkeypatch, fake_catalogs
-):
-    """Custom endpoint path: empty model input aborts and returns None."""
-    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
-    _patch_prompt(monkeypatch, text_answers=[""])  # empty -> None
-
-    result = await interactive._pick_provider_and_model()
-
-    assert result is None
-
-
-async def test_pick_provider_and_model_custom_success_returns_custom_label(
-    monkeypatch, fake_catalogs
-):
-    """Custom endpoint success returns model + base_url + 'custom endpoint' label."""
-    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
-    _patch_prompt(
-        monkeypatch,
-        text_answers=["vllm/my-local-model", "https://vllm.local"],
-    )
-
-    result = await interactive._pick_provider_and_model()
-
-    assert result == ("vllm/my-local-model", "https://vllm.local", "custom endpoint")
-
-
-async def test_pick_provider_and_model_catalog_model_cancel_returns_none(
-    monkeypatch, fake_catalogs
-):
-    """Regular catalog path: cancelling at the model picker aborts."""
-    _queue_responses(monkeypatch, iter(["openai", None]))
-
-    result = await interactive._pick_provider_and_model()
-
-    assert result is None
-
-
-async def test_pick_provider_and_model_catalog_success_returns_provider_label(
-    monkeypatch, fake_catalogs
-):
-    """Regular catalog success returns 'provider/model', None base_url, provider label."""
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
-
-    result = await interactive._pick_provider_and_model()
-
-    assert result == ("openai/gpt-4o", None, "openai")

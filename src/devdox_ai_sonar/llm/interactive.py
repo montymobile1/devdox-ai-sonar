@@ -68,6 +68,20 @@ _console = Console()
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
 _VERIFIED_MARK = "⭐ "
+
+# Mode-picker (Step 0) labels. The wizard's top-level choice is now
+# "curated catalogue" vs "custom endpoint"; before Step 0 existed, the
+# 🔧 Custom option was the last entry of the provider picker and easy
+# to miss.
+_MODE_CURATED_LABEL = "📋 Pick from curated list"
+_MODE_CUSTOM_LABEL = "🔧 Custom endpoint"
+_MODE_CURATED = "curated"
+_MODE_CUSTOM = "custom"
+
+# Selecting ``_BACK_LABEL`` in a menu (or typing ``back`` at a text
+# prompt inside the custom flow) pops one level up the wizard.
+_BACK_LABEL = "← Back"
+_BACK_SENTINEL = "__back__"
 _VERIFIED_LEGEND = (
     "[dim]⭐ = verified by OpenHands "
     "(tested and known to work well for code fixes)[/dim]"
@@ -176,19 +190,19 @@ async def add_profile_flow(manager: ConfigManager) -> None:
 
 
 async def _collect_and_validate_profile() -> Optional[LLMProfile]:
-    """Walk the add-profile wizard, handling restart-on-bad-model.
+    """Walk the add-profile wizard, handling back-nav and restart-on-bad-model.
 
-    The outer ``while True`` exists solely so a model-shaped probe
-    failure (the endpoint doesn't serve the picked model) can send the
-    user back to the provider picker instead of trapping them on the
-    API-key prompt. Normal success or an explicit cancel break out
-    immediately.
+    The outer ``while True`` exists so a model-shaped probe failure
+    (the endpoint doesn't serve the picked model) can send the user
+    back to the mode/provider/model pickers instead of trapping them
+    on the API-key prompt. Normal success or an explicit cancel break
+    out immediately.
     """
     while True:
-        picked = await _pick_provider_and_model()
-        if picked is None:
+        gathered = await _gather_model_and_base_url()
+        if gathered is None:
             return None
-        model, base_url, family_label = picked
+        model, base_url, family_label = gathered
 
         validated = _validate_or_report(model, base_url)
         if validated is None:
@@ -209,30 +223,6 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
         return LLMProfile(
             name=name, model=model, api_key=api_key, base_url=base_url
         )
-
-
-async def _pick_provider_and_model() -> Optional[tuple[str, Optional[str], str]]:
-    """Pick provider and model; return (model, base_url, family_label) or None.
-
-    Returns ``None`` if the user cancels at any step. The ``family_label`` is
-    the human-readable bucket used in downstream prompts (the literal provider
-    name for catalog picks, ``"custom endpoint"`` for the Custom path).
-    """
-    picked_provider = await _prompt_for_provider()
-    if picked_provider is None:
-        return None
-
-    if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = _prompt_for_custom_model()
-        if model_and_base is None:
-            return None
-        model, base_url = model_and_base
-        return model, base_url, "custom endpoint"
-
-    model_id = await _prompt_for_model(picked_provider)
-    if model_id is None:
-        return None
-    return f"{picked_provider}/{model_id}", None, picked_provider
 
 
 # ---------------------------------------------------------------------------
@@ -312,13 +302,104 @@ async def _set_default(manager: ConfigManager, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _prompt_for_provider() -> Optional[str]:
-    """Step 1: provider picker.
+async def _gather_model_and_base_url() -> (
+    Optional[tuple[str, Optional[str], str]]
+):
+    """Run Step 0 (mode) + Step 1/2 (selection) with single-level back.
 
-    Returns the picked provider name, :data:`_CUSTOM_SENTINEL` when the
-    user chose the 🔧 Custom option, or ``None`` on cancel. Verified
-    providers get a ⭐ prefix so users can spot the curated ones at a
-    glance.
+    Returns ``(full_model_string, base_url, family_label)`` or ``None``
+    if the user cancelled at any point. ``family_label`` is what the
+    subsequent API-key prompt shows the user ("openai", "custom
+    endpoint", etc.).
+
+    Back navigation is strictly one level at a time:
+
+    * Back from the provider picker  -> mode picker
+    * Back from the model picker     -> provider picker
+    * Back from the custom-input flow-> mode picker
+
+    Ctrl+C at any screen cancels the whole wizard (returns ``None``).
+    """
+    while True:
+        mode = await _prompt_for_mode()
+        if mode is None:
+            return None
+
+        if mode == _MODE_CUSTOM:
+            custom_result = await _prompt_for_custom_model()
+            if custom_result is None:
+                return None  # cancelled
+            if custom_result == _BACK_SENTINEL:
+                continue  # back to mode picker
+            model, base_url = custom_result
+            return model, base_url, "custom endpoint"
+
+        # mode == _MODE_CURATED
+        curated_result = await _gather_curated_model()
+        if curated_result is None:
+            return None  # cancelled
+        if curated_result == _BACK_SENTINEL:
+            continue  # back to mode picker
+        provider, model_id = curated_result
+        return f"{provider}/{model_id}", None, provider
+
+
+async def _gather_curated_model() -> (
+    Optional[tuple[str, str] | str]
+):
+    """Walk the provider -> model pickers with back-nav between them.
+
+    Returns ``(provider, model_id)`` on a complete selection,
+    :data:`_BACK_SENTINEL` when the user backs out of the provider
+    picker (caller returns to the mode picker), or ``None`` when the
+    user cancels the wizard (Ctrl+C).
+    """
+    while True:
+        picked_provider = await _prompt_for_provider()
+        if picked_provider is None:
+            return None
+        if picked_provider == _BACK_SENTINEL:
+            return _BACK_SENTINEL
+
+        model_id = await _prompt_for_model(picked_provider)
+        if model_id is None:
+            return None
+        if model_id == _BACK_SENTINEL:
+            # Back from model picker -> re-enter provider picker.
+            continue
+        return picked_provider, model_id
+
+
+async def _prompt_for_mode() -> Optional[str]:
+    """Step 0: pick "curated catalogue" vs "custom endpoint".
+
+    This screen is the wizard's top level; a Ctrl+C cancels the whole
+    wizard. There is no ``← Back`` here -- you can't back out of the
+    root.
+
+    Returns :data:`_MODE_CURATED`, :data:`_MODE_CUSTOM`, or ``None``.
+    """
+    labels_to_value = {
+        _MODE_CURATED_LABEL: _MODE_CURATED,
+        _MODE_CUSTOM_LABEL: _MODE_CUSTOM,
+    }
+    display = [_MODE_CURATED_LABEL, _MODE_CUSTOM_LABEL]
+    picked = await select_from_list(
+        display, "How would you like to configure the model?"
+    )
+    if picked is None:
+        return None
+    return labels_to_value.get(picked)
+
+
+async def _prompt_for_provider() -> Optional[str]:
+    """Step 1: provider picker inside the curated-list branch.
+
+    A ``← Back`` entry at the end of the list returns to the mode
+    picker without cancelling the wizard. Verified providers get a
+    ⭐ prefix so users can spot the curated ones at a glance.
+
+    Returns the provider name, :data:`_BACK_SENTINEL`, or ``None``.
     """
     menu = selection.build_provider_menu()
     labels_to_value: dict[str, str] = {}
@@ -327,8 +408,8 @@ async def _prompt_for_provider() -> Optional[str]:
         label = f"{_VERIFIED_MARK}{entry.name}" if entry.verified else entry.name
         labels_to_value[label] = entry.name
         display.append(label)
-    labels_to_value[_CUSTOM_LABEL] = _CUSTOM_SENTINEL
-    display.append(_CUSTOM_LABEL)
+    labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
+    display.append(_BACK_LABEL)
 
     _show_verified_legend_once(any(entry.verified for entry in menu))
     picked = await select_from_list(display, "Select an LLM provider")
@@ -337,25 +418,31 @@ async def _prompt_for_provider() -> Optional[str]:
     return labels_to_value.get(picked)
 
 
-def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
+async def _prompt_for_custom_model() -> (
+    Optional[tuple[str, Optional[str]] | str]
+):
     """Typed-input flow for self-hosted / non-curated endpoints.
 
     Prompts for a fully-qualified model string in ``provider/model-name``
-    form and an optional base URL. Returns ``(model, base_url)`` or
-    ``None`` on cancel / invalid input.
+    form and an optional base URL. Typing ``back`` (case-insensitive)
+    at the model prompt returns :data:`_BACK_SENTINEL` so the wizard
+    pops up to the mode picker. Ctrl+C cancels the wizard entirely.
     """
     _console.print(
         "[cyan]Custom endpoint: enter a model string in "
         "'provider/model-name' form (e.g. 'vllm/my-model', "
-        "'openai/my-finetune').[/cyan]"
+        "'openai/my-finetune'). Type 'back' to return to the mode "
+        "picker.[/cyan]"
     )
     try:
         model = Prompt.ask("Model").strip()
     except KeyboardInterrupt:
         return None
+    if model.lower() == "back":
+        return _BACK_SENTINEL
     if not model:
         _console.print("[red]❌ Model cannot be empty[/red]")
-        return None
+        return _BACK_SENTINEL
 
     try:
         base_url_raw = Prompt.ask(
@@ -371,14 +458,18 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
     """Step 2: pick a model id from a known provider's catalog.
 
     Verified entries are prefixed with ⭐ for the display; the returned
-    value is the bare model id (without the mark).
+    value is the bare model id (without the mark). A ``← Back`` entry
+    returns to the provider picker. If the provider has no visible
+    models, the caller sees a clear message and we return
+    :data:`_BACK_SENTINEL` so the wizard can re-enter provider
+    selection rather than cancel outright.
     """
     menu = selection.build_model_menu(provider)
     if not menu:
         _console.print(
             f"[red]❌ No models available for provider '{provider}'[/red]"
         )
-        return None
+        return _BACK_SENTINEL
 
     labels_to_value: dict[str, str] = {}
     display: list[str] = []
@@ -390,6 +481,8 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
         )
         labels_to_value[label] = entry.model_id
         display.append(label)
+    labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
+    display.append(_BACK_LABEL)
 
     _show_verified_legend_once(any(entry.verified for entry in menu))
     picked = await select_from_list(display, f"Select a {provider} model")
@@ -548,22 +641,15 @@ async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
         f"Keep current model '{ctx.profile.model}'?", default=True
     ):
         return
-    picked_provider = await _prompt_for_provider()
-    if picked_provider is None:
+    # Delegate to the same mode-picker + back-nav state machine the
+    # add flow uses, so "change my mind mid-picker" works the same
+    # way during update as during add.
+    gathered = await _gather_model_and_base_url()
+    if gathered is None:
         return
-    if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = _prompt_for_custom_model()
-        if model_and_base is None:
-            return
-        new_model, new_base_url = model_and_base
-        ctx.updates["model"] = new_model
-        ctx.updates["base_url"] = new_base_url
-    else:
-        model_id = await _prompt_for_model(picked_provider)
-        if model_id is None:
-            return
-        ctx.updates["model"] = f"{picked_provider}/{model_id}"
-        ctx.updates["base_url"] = None
+    new_model, new_base_url, _family = gathered
+    ctx.updates["model"] = new_model
+    ctx.updates["base_url"] = new_base_url
 
 
 def _sequential_base_url_prompt(ctx: ProfileUpdateContext) -> None:
