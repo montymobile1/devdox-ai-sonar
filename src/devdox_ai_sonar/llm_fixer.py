@@ -2058,9 +2058,6 @@ class LLMFixer:
         create_backup: bool = True,
         dry_run: bool = False,
         use_validator: bool = True,
-        validator_provider: str = "openai",
-        validator_model: Optional[str] = None,
-        validator_api_key: Optional[str] = None,
         min_confidence: float = 0.7,
     ) -> FixResult:
         """
@@ -2079,10 +2076,9 @@ class LLMFixer:
             create_backup: Whether to create a backup before applying
             dry_run: If True, don't actually modify files
             use_validator: If True, use AI validator as fallback when validation fails
-            validator_provider: LLM provider for validation
-            validator_model: LLM model for validation
-            validator_api_key: API key for validator
-            min_confidence: Minimum confidence threshold for approval
+            min_confidence: Minimum confidence threshold for approval.
+                When the validator uses this fixer's own profile, so no
+                separate credentials are needed.
 
         Returns:
             FixResult with detailed application results
@@ -2093,10 +2089,6 @@ class LLMFixer:
 
         validator = None
         if use_validator:
-            # validator_provider/model/api_key are ignored as of DEVDOX-63:
-            # the validator now shares the fixer's own LLMProfile. They
-            # remain in the signature until commit 11 rewrites cli.py's
-            # call site.
             validator = FixValidator(
                 profile=self.profile,
                 min_confidence_threshold=min_confidence,
