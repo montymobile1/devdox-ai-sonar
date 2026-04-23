@@ -81,6 +81,7 @@ class ModelInfo:
 def build_provider_menu(
     *,
     excluded_providers: Iterable[str] = (),
+    included_providers: Iterable[str] = (),
 ) -> list[ProviderInfo]:
     """Return the provider picker entries.
 
@@ -89,27 +90,38 @@ def build_provider_menu(
     Does **not** include the "Custom" option -- the UI layer appends
     that itself after this list is rendered.
 
-    Args:
-        excluded_providers: Provider names the user has hidden via
-            ``[llm].excluded_providers`` in config.toml. Matching is
-            exact string equality against the union of both
-            catalogues' keys; unknown exclusion entries are silently
-            ignored (so a typo in the config doesn't crash the UI).
+    Filter semantics (inclusion narrows, exclusion always wins):
+
+    * If ``included_providers`` is empty, no inclusion constraint.
+    * If ``included_providers`` is non-empty, only those providers
+      survive.
+    * After any inclusion narrowing, any provider in
+      ``excluded_providers`` is dropped.
+
+    Unknown entries in either list are silently ignored (so a typo in
+    the developer-owned list can't crash the UI).
     """
     verified = verified_models.list_providers()
     unverified = unverified_models.list_providers()
-    blocked = frozenset(excluded_providers)
+    universe = set(verified.keys()) | set(unverified.keys())
 
-    all_names = sorted(
-        (set(verified.keys()) | set(unverified.keys())) - blocked
-    )
-    return [ProviderInfo(name=name, verified=name in verified) for name in all_names]
+    allowed = frozenset(included_providers)
+    blocked = frozenset(excluded_providers)
+    if allowed:
+        universe &= allowed
+    universe -= blocked
+
+    return [
+        ProviderInfo(name=name, verified=name in verified)
+        for name in sorted(universe)
+    ]
 
 
 def build_model_menu(
     provider: str,
     *,
     excluded_models: Iterable[str] = (),
+    included_models: Iterable[str] = (),
 ) -> list[ModelInfo]:
     """Return the model picker entries for a given provider.
 
@@ -119,27 +131,34 @@ def build_model_menu(
     ``VERIFIED_MODELS`` for any given provider, so no de-duplication
     is performed here.
 
+    Filter semantics (same as :func:`build_provider_menu`): inclusion
+    narrows, exclusion always wins. All filter strings are full
+    ``provider/model-id`` form, so a ``gemini/gpt-4o`` typo cannot
+    accidentally hide OpenAI's gpt-4o.
+
     Args:
         provider: A real provider family name. Passing
             :data:`CUSTOM_PROVIDER_SENTINEL` is a caller bug -- use
             the custom-input prompt instead.
-        excluded_models: Models the user has hidden via
-            ``[llm].excluded_models`` in config.toml, in full
-            ``provider/model-id`` form (so a ``"gemini/gpt-4o"``
-            typo doesn't accidentally hide OpenAI's gpt-4o).
-            Matching is exact.
+        excluded_models: Full ``provider/model-id`` strings to drop.
+        included_models: Full ``provider/model-id`` strings to keep.
+            Empty means "no inclusion constraint".
 
     Returns:
         A list of :class:`ModelInfo`, empty if the provider is
-        unknown to both catalogues or if every model has been
-        excluded.
+        unknown to both catalogues or if the filters leave nothing
+        visible.
     """
     verified = verified_models.list_providers().get(provider, [])
     unverified = unverified_models.list_providers().get(provider, [])
+    allowed = frozenset(included_models)
     blocked = frozenset(excluded_models)
 
     def visible(model_id: str) -> bool:
-        return f"{provider}/{model_id}" not in blocked
+        full = f"{provider}/{model_id}"
+        if allowed and full not in allowed:
+            return False
+        return full not in blocked
 
     entries = [
         ModelInfo(model_id=m, verified=True) for m in verified if visible(m)

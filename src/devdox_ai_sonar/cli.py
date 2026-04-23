@@ -36,7 +36,7 @@ from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
 from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig
 from devdox_ai_sonar.llm import interactive as _llm_interactive
 from devdox_ai_sonar.llm.env_profile import profile_from_env
-from devdox_ai_sonar.llm.exclusions import check_profile_against_exclusions
+from devdox_ai_sonar.llm.exclusions import check_profile_against_filters
 from devdox_ai_sonar.llm.interactive import add_profile_flow, update_profile_flow
 from devdox_ai_sonar.llm.profile import LLMProfile
 from devdox_ai_sonar.llm.profile_store import (
@@ -1298,9 +1298,9 @@ async def _load_and_validate_config(
         console.print("[red]❌ No LLM profile configured[/red]")
         raise click.Abort()
 
-    exclusion_warning = check_profile_against_exclusions(profile)
-    if exclusion_warning:
-        console.print(f"[yellow]⚠ {exclusion_warning}[/yellow]")
+    filter_warning = check_profile_against_filters(profile)
+    if filter_warning:
+        console.print(f"[yellow]⚠ {filter_warning}[/yellow]")
 
     if use_predefined:
         branch, pull_request = await branch_or_pr(manager)

@@ -219,3 +219,127 @@ def test_model_menu_default_no_exclusions_unchanged(monkeypatch):
     )
     result = build_model_menu("openai")
     assert [m.model_id for m in result] == ["gpt-4o", "gpt-3.5"]
+
+
+# ---------------------------------------------------------------------------
+# Inclusion lists: included_providers / included_models
+# ---------------------------------------------------------------------------
+
+
+def test_provider_menu_empty_inclusion_means_no_constraint(monkeypatch):
+    """An empty ``included_providers`` must be treated as 'no filter',
+    not 'allow nothing'. This is what lets the default (no inclusion
+    configured) behave identically to the pre-inclusion codebase."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"groq": ["llama-3"]},
+    )
+    result = build_provider_menu(included_providers=())
+    assert [p.name for p in result] == ["groq", "openai"]
+
+
+def test_provider_menu_non_empty_inclusion_acts_as_allowlist(monkeypatch):
+    """Only providers on ``included_providers`` survive."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "anthropic": ["claude-4"]},
+        unverified={"groq": ["llama-3"], "together_ai": ["mixtral"]},
+    )
+    result = build_provider_menu(
+        included_providers={"openai", "anthropic"}
+    )
+    assert {p.name for p in result} == {"openai", "anthropic"}
+
+
+def test_provider_menu_inclusion_with_unknown_entries_is_silent(monkeypatch):
+    """Typos in the dev-owned allowlist must not crash; they just
+    contribute nothing to the intersection."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"groq": ["llama-3"]},
+    )
+    result = build_provider_menu(
+        included_providers={"openai", "not-a-real-provider"}
+    )
+    assert [p.name for p in result] == ["openai"]
+
+
+def test_provider_menu_exclusion_wins_over_inclusion(monkeypatch):
+    """A provider on BOTH lists still disappears. 'No' is authoritative
+    so a maintainer can ship an exclusion without having to audit every
+    inclusion list for conflicts."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"], "anthropic": ["claude-4"]},
+        unverified={},
+    )
+    result = build_provider_menu(
+        included_providers={"openai", "anthropic"},
+        excluded_providers={"anthropic"},
+    )
+    assert [p.name for p in result] == ["openai"]
+
+
+def test_model_menu_empty_inclusion_means_no_constraint(monkeypatch):
+    """Parallel to provider menu: empty ``included_models`` preserves
+    pre-inclusion behavior for existing callers."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    result = build_model_menu("openai", included_models=())
+    assert [m.model_id for m in result] == ["gpt-4o", "gpt-3.5"]
+
+
+def test_model_menu_non_empty_inclusion_acts_as_allowlist(monkeypatch):
+    """Only full ``provider/model-id`` strings on ``included_models``
+    survive. Same-named models under other providers aren't affected."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"], "gemini": ["gpt-4o"]},
+        unverified={"openai": ["gpt-3.5"]},
+    )
+    openai_menu = build_model_menu(
+        "openai", included_models={"openai/gpt-4o", "openai/gpt-3.5"}
+    )
+    assert [m.model_id for m in openai_menu] == ["gpt-4o", "gpt-3.5"]
+
+    # Gemini's gpt-4o is not on the (openai-scoped) inclusion list, so
+    # it is filtered out -- inclusion entries name the provider.
+    gemini_menu = build_model_menu(
+        "gemini", included_models={"openai/gpt-4o", "openai/gpt-3.5"}
+    )
+    assert gemini_menu == []
+
+
+def test_model_menu_exclusion_wins_over_inclusion(monkeypatch):
+    """A model explicitly listed on BOTH inclusion and exclusion still
+    disappears."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o", "gpt-5"]},
+        unverified={},
+    )
+    result = build_model_menu(
+        "openai",
+        included_models={"openai/gpt-4o", "openai/gpt-5"},
+        excluded_models={"openai/gpt-5"},
+    )
+    assert [m.model_id for m in result] == ["gpt-4o"]
+
+
+def test_model_menu_inclusion_with_unknown_entries_is_silent(monkeypatch):
+    """Typos in the inclusion list produce no match but no crash."""
+    _fake_catalogs(
+        monkeypatch,
+        verified={"openai": ["gpt-4o"]},
+        unverified={},
+    )
+    result = build_model_menu(
+        "openai",
+        included_models={"openai/never-shipped-model"},
+    )
+    assert result == []

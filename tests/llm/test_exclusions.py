@@ -1,9 +1,9 @@
 """Tests for llm/exclusions.py.
 
-Exercises the developer-owned exclusion lists and the runtime warning
-helper that informs users when their saved profile references an
-entry on the list. Tests patch the module-level constants via
-``monkeypatch.setattr`` so they stay hermetic even as the shipped
+Exercises the developer-owned exclusion and inclusion lists and the
+runtime warning helper that informs users when their saved profile
+references a filtered entry. Tests patch the module-level constants
+via ``monkeypatch.setattr`` so they stay hermetic even as the shipped
 lists evolve.
 """
 
@@ -40,7 +40,7 @@ def test_check_returns_none_for_clean_profile(monkeypatch):
     profile = LLMProfile(
         name="clean", model="openai/gpt-4o", api_key="sk"
     )
-    assert exclusions.check_profile_against_exclusions(profile) is None
+    assert exclusions.check_profile_against_filters(profile) is None
 
 
 def test_check_warns_on_excluded_model(monkeypatch):
@@ -56,7 +56,7 @@ def test_check_warns_on_excluded_model(monkeypatch):
         model="gemini/gemini-1.5-flash",
         api_key="g",
     )
-    warning = exclusions.check_profile_against_exclusions(profile)
+    warning = exclusions.check_profile_against_filters(profile)
     assert warning is not None
     assert "gemini/gemini-1.5-flash" in warning
     assert "stale" in warning  # profile name surfaces in the message
@@ -76,7 +76,7 @@ def test_check_warns_on_excluded_provider(monkeypatch):
         model="aws_polly/some-voice",
         api_key="x",
     )
-    warning = exclusions.check_profile_against_exclusions(profile)
+    warning = exclusions.check_profile_against_filters(profile)
     assert warning is not None
     assert "aws_polly" in warning
     assert "polly" in warning
@@ -99,7 +99,7 @@ def test_model_exclusion_takes_precedence_over_provider_match(monkeypatch):
     profile = LLMProfile(
         name="p", model="gemini/gemini-1.5-flash", api_key="g"
     )
-    warning = exclusions.check_profile_against_exclusions(profile)
+    warning = exclusions.check_profile_against_filters(profile)
     assert warning is not None
     # Specific model wording ("uses 'gemini/gemini-1.5-flash'") appears;
     # the coarser provider wording ("uses provider 'gemini'") does not.
@@ -127,4 +127,125 @@ def test_check_ignores_clean_custom_style_profile(monkeypatch):
         api_key="",
         base_url="https://vllm.company.internal/v1",
     )
-    assert exclusions.check_profile_against_exclusions(profile) is None
+    assert exclusions.check_profile_against_filters(profile) is None
+
+
+# ---------------------------------------------------------------------------
+# Inclusion lists (INCLUDED_PROVIDERS / INCLUDED_MODELS)
+# ---------------------------------------------------------------------------
+
+
+def test_inclusion_constants_default_to_empty():
+    """Ship day: inclusion lists are empty so behavior matches the
+    legacy denylist-only regime. Anyone opening the module should see
+    two obvious 'off' switches."""
+    assert exclusions.INCLUDED_PROVIDERS == frozenset()
+    assert exclusions.INCLUDED_MODELS == frozenset()
+
+
+def test_inclusion_constants_are_frozensets_of_strings():
+    """Same runtime guarantees as the exclusion lists -- immutable and
+    O(1) membership checks on the hot picker path."""
+    assert isinstance(exclusions.INCLUDED_PROVIDERS, frozenset)
+    assert isinstance(exclusions.INCLUDED_MODELS, frozenset)
+    for value in exclusions.INCLUDED_PROVIDERS | exclusions.INCLUDED_MODELS:
+        assert isinstance(value, str)
+
+
+def test_check_warns_on_model_not_in_included_models(monkeypatch):
+    """Non-empty ``INCLUDED_MODELS`` acts as an allowlist; a profile
+    whose model is unlisted gets a curated-list warning."""
+    monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(exclusions, "INCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(
+        exclusions,
+        "INCLUDED_MODELS",
+        frozenset({"openai/gpt-4o"}),
+    )
+
+    profile = LLMProfile(
+        name="stray", model="openai/gpt-3.5", api_key="sk"
+    )
+    warning = exclusions.check_profile_against_filters(profile)
+    assert warning is not None
+    assert "openai/gpt-3.5" in warning
+    assert "curated" in warning  # distinguishes from exclusion warning
+
+
+def test_check_warns_on_provider_not_in_included_providers(monkeypatch):
+    """Non-empty ``INCLUDED_PROVIDERS`` narrows by family; a profile
+    targeting an unlisted family gets a curated-provider warning."""
+    monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(
+        exclusions, "INCLUDED_PROVIDERS", frozenset({"openai", "anthropic"})
+    )
+    monkeypatch.setattr(exclusions, "INCLUDED_MODELS", frozenset())
+
+    profile = LLMProfile(
+        name="off-list", model="groq/llama-3", api_key="k"
+    )
+    warning = exclusions.check_profile_against_filters(profile)
+    assert warning is not None
+    assert "groq" in warning
+    assert "curated" in warning
+
+
+def test_check_empty_inclusion_lists_are_no_op(monkeypatch):
+    """Empty allowlists must act as 'no constraint' -- any profile
+    passes when both inclusion lists are empty and no exclusion fires."""
+    monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(exclusions, "INCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(exclusions, "INCLUDED_MODELS", frozenset())
+
+    profile = LLMProfile(
+        name="anything", model="totally/made-up", api_key=""
+    )
+    assert exclusions.check_profile_against_filters(profile) is None
+
+
+def test_check_model_inclusion_match_silences_provider_inclusion_miss(monkeypatch):
+    """A profile explicitly on ``INCLUDED_MODELS`` must not also trip
+    ``INCLUDED_PROVIDERS`` just because its family happens to be
+    outside the provider allowlist. The more specific match wins."""
+    monkeypatch.setattr(exclusions, "EXCLUDED_MODELS", frozenset())
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(
+        exclusions, "INCLUDED_PROVIDERS", frozenset({"openai"})
+    )
+    monkeypatch.setattr(
+        exclusions, "INCLUDED_MODELS", frozenset({"anthropic/claude-4"})
+    )
+
+    profile = LLMProfile(
+        name="exception", model="anthropic/claude-4", api_key="k"
+    )
+    assert exclusions.check_profile_against_filters(profile) is None
+
+
+def test_exclusion_wins_over_inclusion_match(monkeypatch):
+    """A model listed on BOTH ``INCLUDED_MODELS`` and ``EXCLUDED_MODELS``
+    must still trip the exclusion warning. 'No' always wins."""
+    monkeypatch.setattr(
+        exclusions,
+        "EXCLUDED_MODELS",
+        frozenset({"openai/gpt-4o"}),
+    )
+    monkeypatch.setattr(exclusions, "EXCLUDED_PROVIDERS", frozenset())
+    monkeypatch.setattr(
+        exclusions, "INCLUDED_PROVIDERS", frozenset()
+    )
+    monkeypatch.setattr(
+        exclusions, "INCLUDED_MODELS", frozenset({"openai/gpt-4o"})
+    )
+
+    profile = LLMProfile(
+        name="conflict", model="openai/gpt-4o", api_key="k"
+    )
+    warning = exclusions.check_profile_against_filters(profile)
+    assert warning is not None
+    # Exclusion wording wins; curated wording must not appear.
+    assert "exclusion list" in warning
+    assert "curated" not in warning

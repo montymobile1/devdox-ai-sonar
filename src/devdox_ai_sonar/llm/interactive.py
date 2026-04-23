@@ -281,7 +281,8 @@ async def _prompt_for_provider() -> Optional[str]:
     exclusions (it's a typed-input path, not a catalogue entry).
     """
     menu = selection.build_provider_menu(
-        excluded_providers=exclusions.EXCLUDED_PROVIDERS
+        excluded_providers=exclusions.EXCLUDED_PROVIDERS,
+        included_providers=exclusions.INCLUDED_PROVIDERS,
     )
     labels_to_value: dict[str, str] = {}
     display: list[str] = []
@@ -307,7 +308,9 @@ async def _prompt_for_model(provider: str) -> Optional[str]:
     caller sees a clear "no models available" message.
     """
     menu = selection.build_model_menu(
-        provider, excluded_models=exclusions.EXCLUDED_MODELS
+        provider,
+        excluded_models=exclusions.EXCLUDED_MODELS,
+        included_models=exclusions.INCLUDED_MODELS,
     )
     if not menu:
         _console.print(
