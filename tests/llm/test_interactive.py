@@ -144,6 +144,100 @@ async def test_add_profile_flow_happy_path(monkeypatch, manager, fake_catalogs):
     assert saved.base_url is None
 
 
+async def test_add_profile_flow_custom_endpoint(
+    monkeypatch, manager, fake_catalogs
+):
+    """Pick the 🔧 Custom option and supply a vllm/ model with a base URL.
+    The saved profile should carry both the typed model string and the
+    base URL verbatim."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "vllm/my-local-model",   # model
+            "https://vllm.local",    # base_url
+            "",                      # api_key (local, no auth)
+            "vllm-prof",             # profile name
+        ],
+        confirm_answers=[
+            False,  # Set as default?
+            False,  # Add another?
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert len(profiles) == 1
+    saved = profiles[0]
+    assert saved.model == "vllm/my-local-model"
+    assert saved.base_url == "https://vllm.local"
+    assert saved.api_key == ""
+
+
+async def test_add_profile_flow_custom_endpoint_rejects_empty_model(
+    monkeypatch, manager, fake_catalogs
+):
+    """An empty model string at the custom prompt aborts the wizard
+    cleanly without saving."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[""],   # model -> empty -> abort
+        confirm_answers=[],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert profiles == []
+
+
+async def test_update_profile_flow_switch_to_custom_endpoint(
+    monkeypatch, manager, fake_catalogs
+):
+    """Update an existing profile to point at a custom endpoint. The
+    model string + base_url are both persisted."""
+    await save_profile(
+        manager,
+        LLMProfile(name="p", model="openai/gpt-4o", api_key="sk"),
+        set_as_default=False,
+    )
+
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "p",           # pick profile
+            "🔧 Custom",   # new provider -> custom
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "vllm/new-local",     # custom model
+            "https://vllm.co",    # base_url
+        ],
+        confirm_answers=[
+            True,    # Keep name?
+            False,   # Change key?
+            False,   # Keep model? -> no
+            False,   # Set as default?
+        ],
+    )
+
+    await interactive.update_profile_flow(manager)
+
+    [updated] = await load_profiles(
+        ConfigManager(config_path=manager.config_path)
+    )
+    assert updated.model == "vllm/new-local"
+    assert updated.base_url == "https://vllm.co"
+
+
 async def test_add_profile_flow_openhands_family_accepted(
     monkeypatch, manager, fake_catalogs
 ):

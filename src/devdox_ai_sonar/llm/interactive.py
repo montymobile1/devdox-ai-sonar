@@ -7,8 +7,11 @@ pick model, collect key, validate) wired together through
 add_profile_flow (the wizard)
 -----------------------------
 1. Build provider menu from the catalog adapters.
-2. Ask the user to pick one.
-3. Pick a model from that provider's model list.
+2. Ask the user to pick one (or the ``"🔧 Custom"`` escape hatch for
+   self-hosted / non-curated endpoints).
+3. If not Custom: pick a model from that provider's model list.
+   If Custom: prompt for a fully-qualified ``provider/model`` string
+   and an optional ``base_url``.
 4. Validate the resulting model string via
    :func:`validation.validate_model_string`.
 5. Prompt for an API key (blank allowed).
@@ -58,6 +61,13 @@ __all__ = [
 
 
 _console = Console()
+
+# UI label for the "type your own model string" escape hatch and the
+# sentinel returned when the user picks it. The sentinel is a
+# synthetic-looking string so it cannot collide with a real litellm
+# provider name.
+_CUSTOM_LABEL = "🔧 Custom"
+_CUSTOM_SENTINEL = "__custom__"
 
 
 @dataclass
@@ -162,24 +172,33 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
     if picked_provider is None:
         return None
 
-    model_id = await _prompt_for_model(picked_provider)
-    if model_id is None:
-        return None
-    model = f"{picked_provider}/{model_id}"
+    if picked_provider == _CUSTOM_SENTINEL:
+        model_and_base = await _prompt_for_custom_model()
+        if model_and_base is None:
+            return None
+        model, base_url = model_and_base
+        family_label = "custom endpoint"
+    else:
+        model_id = await _prompt_for_model(picked_provider)
+        if model_id is None:
+            return None
+        model = f"{picked_provider}/{model_id}"
+        base_url = None
+        family_label = picked_provider
 
-    validated = _validate_or_report(model, base_url=None)
+    validated = _validate_or_report(model, base_url)
     if validated is None:
         return None
 
-    api_key = _prompt_for_api_key(picked_provider)
-    if not _probe_or_report(model, api_key, base_url=None):
+    api_key = _prompt_for_api_key(family_label)
+    if not _probe_or_report(model, api_key, base_url):
         return None
 
     name = _prompt_profile_name(default=_suggest_profile_name(model))
     if name is None:
         return None
 
-    return LLMProfile(name=name, model=model, api_key=api_key, base_url=None)
+    return LLMProfile(name=name, model=model, api_key=api_key, base_url=base_url)
 
 
 # ---------------------------------------------------------------------------
@@ -254,11 +273,51 @@ async def _set_default(manager: ConfigManager, name: str) -> None:
 
 
 async def _prompt_for_provider() -> Optional[str]:
-    """Step 1: provider picker. Returns the picked name or None on cancel."""
+    """Step 1: provider picker.
+
+    Returns the picked provider name, :data:`_CUSTOM_SENTINEL` when the
+    user chose the 🔧 Custom option, or ``None`` on cancel.
+    """
     menu = selection.build_provider_menu()
     names = [entry.name for entry in menu]
+    names.append(_CUSTOM_LABEL)
+
     picked = await select_from_list(names, "Select an LLM provider")
+    if picked is None:
+        return None
+    if picked == _CUSTOM_LABEL:
+        return _CUSTOM_SENTINEL
     return picked
+
+
+async def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
+    """Typed-input flow for self-hosted / non-curated endpoints.
+
+    Prompts for a fully-qualified model string in ``provider/model-name``
+    form and an optional base URL. Returns ``(model, base_url)`` or
+    ``None`` on cancel / invalid input.
+    """
+    _console.print(
+        "[cyan]Custom endpoint: enter a model string in "
+        "'provider/model-name' form (e.g. 'vllm/my-model', "
+        "'openai/my-finetune').[/cyan]"
+    )
+    try:
+        model = Prompt.ask("Model").strip()
+    except KeyboardInterrupt:
+        return None
+    if not model:
+        _console.print("[red]❌ Model cannot be empty[/red]")
+        return None
+
+    try:
+        base_url_raw = Prompt.ask(
+            "Base URL (press Enter to use the provider default)", default=""
+        ).strip()
+    except KeyboardInterrupt:
+        return None
+    base_url = base_url_raw or None
+    return model, base_url
 
 
 async def _prompt_for_model(provider: str) -> Optional[str]:
@@ -366,11 +425,19 @@ async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
     picked_provider = await _prompt_for_provider()
     if picked_provider is None:
         return
-    model_id = await _prompt_for_model(picked_provider)
-    if model_id is None:
-        return
-    ctx.updates["model"] = f"{picked_provider}/{model_id}"
-    ctx.updates["base_url"] = None
+    if picked_provider == _CUSTOM_SENTINEL:
+        model_and_base = await _prompt_for_custom_model()
+        if model_and_base is None:
+            return
+        new_model, new_base_url = model_and_base
+        ctx.updates["model"] = new_model
+        ctx.updates["base_url"] = new_base_url
+    else:
+        model_id = await _prompt_for_model(picked_provider)
+        if model_id is None:
+            return
+        ctx.updates["model"] = f"{picked_provider}/{model_id}"
+        ctx.updates["base_url"] = None
 
 
 def _sequential_base_url_prompt(ctx: ProfileUpdateContext) -> None:
