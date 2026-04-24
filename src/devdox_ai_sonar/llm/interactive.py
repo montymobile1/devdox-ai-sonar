@@ -423,7 +423,7 @@ async def _gather_model_and_base_url(
             return None
 
         if mode == _MODE_CUSTOM:
-            custom_result = await _prompt_for_custom_model(used_models)
+            custom_result = _prompt_for_custom_model(used_models)
             if custom_result is None:
                 return None  # cancelled
             if custom_result == _BACK_SENTINEL:
@@ -515,7 +515,7 @@ async def _prompt_for_provider() -> Optional[str]:
     return labels_to_value.get(picked)
 
 
-async def _prompt_for_custom_model(
+def _prompt_for_custom_model(
     used_models: frozenset[str] = frozenset(),
 ) -> Optional[tuple[str, Optional[str]] | str]:
     """Typed-input flow for self-hosted / non-curated endpoints.
