@@ -847,7 +847,10 @@ async def test_prompt_for_model_empty_catalog_returns_none(
     )
     monkeypatch.setattr(adapters, "list_unverified_models", lambda: {})
 
-    _queue_responses(monkeypatch, iter(["empty-provider"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ empty-provider"]),
+    )
     _patch_prompt(monkeypatch, text_answers=[], confirm_answers=[])
 
     await interactive.add_profile_flow(manager)
