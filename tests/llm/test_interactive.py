@@ -1220,3 +1220,68 @@ async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
     assert len(profiles) == 1
     assert profiles[0].api_key == "actually-valid-key"
     assert call_count["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# _pick_provider_and_model — direct unit tests for the extracted helper
+# ---------------------------------------------------------------------------
+
+
+async def test_pick_provider_and_model_provider_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """If the provider picker is cancelled, the helper short-circuits to None."""
+    _queue_responses(monkeypatch, iter([None]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_custom_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """Custom endpoint path: empty model input aborts and returns None."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(monkeypatch, text_answers=[""])  # empty -> None
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_custom_success_returns_custom_label(
+    monkeypatch, fake_catalogs
+):
+    """Custom endpoint success returns model + base_url + 'custom endpoint' label."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["vllm/my-local-model", "https://vllm.local"],
+    )
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result == ("vllm/my-local-model", "https://vllm.local", "custom endpoint")
+
+
+async def test_pick_provider_and_model_catalog_model_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """Regular catalog path: cancelling at the model picker aborts."""
+    _queue_responses(monkeypatch, iter(["openai", None]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_catalog_success_returns_provider_label(
+    monkeypatch, fake_catalogs
+):
+    """Regular catalog success returns 'provider/model', None base_url, provider label."""
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result == ("openai/gpt-4o", None, "openai")
