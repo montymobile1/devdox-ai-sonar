@@ -1117,7 +1117,7 @@ async def _run_analyze(ctx: click.Context) -> None:
         raise
 
 
-async def _run_inspect(ctx: click.Context) -> None:
+async def _run_inspect(_ctx: click.Context) -> None:
     """Run the inspect command."""
     console.print("\n[bold cyan]🔍 Inspect Local Project[/bold cyan]\n")
 
