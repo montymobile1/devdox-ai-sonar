@@ -5977,3 +5977,188 @@ class TestFetchIssuesByTypeRegular:
         assert len(result) == 1
         mock_analyzer.get_fixable_issues_by_types.assert_called_once()
 
+
+# ============================================================================
+# _resolve_llm_profile — precedence chain
+# ============================================================================
+
+
+class TestResolveLlmProfile:
+    """The resolver walks CLI flag > env > config default, stopping at
+    the first source that provides a profile."""
+
+    @pytest.mark.asyncio
+    async def test_cli_flags_take_precedence(self):
+        from devdox_ai_sonar.cli import _resolve_llm_profile
+        from devdox_ai_sonar.llm.profile import LLMProfile
+        manager = Mock()
+
+        result = await _resolve_llm_profile(
+            manager,
+            cli_model="openai/gpt-4o",
+            cli_api_key="sk-cli",
+            cli_base_url="https://cli.example.com",
+        )
+
+        assert isinstance(result, LLMProfile)
+        assert result.name == "__cli__"
+        assert result.model == "openai/gpt-4o"
+        assert result.api_key == "sk-cli"
+        assert result.base_url == "https://cli.example.com"
+
+    @pytest.mark.asyncio
+    async def test_cli_flags_allow_missing_api_key_and_base_url(self):
+        from devdox_ai_sonar.cli import _resolve_llm_profile
+        manager = Mock()
+
+        result = await _resolve_llm_profile(
+            manager, cli_model="openai/gpt-4o"
+        )
+
+        assert result.api_key == ""
+        assert result.base_url is None
+
+    @pytest.mark.asyncio
+    async def test_env_profile_used_when_no_cli_flag(self):
+        from devdox_ai_sonar.cli import _resolve_llm_profile
+        from devdox_ai_sonar.llm.profile import LLMProfile
+        manager = Mock()
+        env_profile = LLMProfile(
+            name="__env__", model="gemini/gemini-2.5-flash", api_key="env-key"
+        )
+
+        with patch(
+            "devdox_ai_sonar.cli.profile_from_env",
+            return_value=env_profile,
+        ):
+            result = await _resolve_llm_profile(manager)
+
+        assert result is env_profile
+
+    @pytest.mark.asyncio
+    async def test_config_default_used_when_no_cli_and_no_env(self):
+        from devdox_ai_sonar.cli import _resolve_llm_profile
+        from devdox_ai_sonar.llm.profile import LLMProfile
+        manager = Mock()
+        saved_profile = LLMProfile(
+            name="saved", model="openhands/claude-sonnet-4-6", api_key="k"
+        )
+
+        with patch(
+            "devdox_ai_sonar.cli.profile_from_env", return_value=None
+        ), patch(
+            "devdox_ai_sonar.cli.get_default_profile",
+            new=AsyncMock(return_value=saved_profile),
+        ):
+            result = await _resolve_llm_profile(manager)
+
+        assert result is saved_profile
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_source_has_a_profile(self):
+        from devdox_ai_sonar.cli import _resolve_llm_profile
+        manager = Mock()
+
+        with patch(
+            "devdox_ai_sonar.cli.profile_from_env", return_value=None
+        ), patch(
+            "devdox_ai_sonar.cli.get_default_profile",
+            new=AsyncMock(return_value=None),
+        ):
+            result = await _resolve_llm_profile(manager)
+
+        assert result is None
+
+
+# ============================================================================
+# add_provider / update_provider — CLI subcommand wiring
+# ============================================================================
+
+
+class TestAddProviderCommand:
+    """The add_provider CLI entry point is a thin wrapper around
+    llm.interactive.add_profile_flow. Verify it builds managers, loads
+    config, invokes the flow, and routes exceptions through
+    _handle_cli_error."""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_invokes_add_profile_flow(self):
+        manager = MagicMock()
+        manager.load_config = AsyncMock()
+
+        with patch(
+            "devdox_ai_sonar.cli._initialize_managers",
+            return_value=(manager, MagicMock(), MagicMock()),
+        ), patch(
+            "devdox_ai_sonar.cli.add_profile_flow",
+            new=AsyncMock(),
+        ) as mock_flow:
+            await add_provider()
+
+        mock_flow.assert_awaited_once_with(manager)
+        manager.load_config.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_exception_routed_to_cli_error_handler(self):
+        with patch(
+            "devdox_ai_sonar.cli._initialize_managers",
+            side_effect=RuntimeError("boom"),
+        ), patch("devdox_ai_sonar.cli._handle_cli_error") as mock_handle:
+            await add_provider()
+
+        mock_handle.assert_called_once()
+        # The exception object is passed through so the handler can
+        # surface its message.
+        (err,), _ = mock_handle.call_args
+        assert isinstance(err, RuntimeError)
+
+
+class TestUpdateProviderCommand:
+    """Parallel of TestAddProviderCommand for the update flow."""
+
+    @pytest.mark.asyncio
+    async def test_happy_path_invokes_update_profile_flow(self):
+        manager = MagicMock()
+        manager.load_config = AsyncMock()
+
+        with patch(
+            "devdox_ai_sonar.cli._initialize_managers",
+            return_value=(manager, MagicMock(), MagicMock()),
+        ), patch(
+            "devdox_ai_sonar.cli.update_profile_flow",
+            new=AsyncMock(),
+        ) as mock_flow:
+            await update_provider()
+
+        mock_flow.assert_awaited_once_with(manager)
+
+    @pytest.mark.asyncio
+    async def test_exception_routed_to_cli_error_handler(self):
+        with patch(
+            "devdox_ai_sonar.cli._initialize_managers",
+            side_effect=RuntimeError("oops"),
+        ), patch("devdox_ai_sonar.cli._handle_cli_error") as mock_handle:
+            await update_provider()
+
+        mock_handle.assert_called_once()
+
+
+# ============================================================================
+# _initialize_managers — smoke test
+# ============================================================================
+
+
+def test_initialize_managers_returns_three_objects():
+    """The helper returns a (ConfigManager, SonarCloudConfigUI,
+    ConfigService) triple. Smoke-test that it builds all three."""
+    from devdox_ai_sonar.cli import _initialize_managers
+    from devdox_ai_sonar.models.llm_config import ConfigManager
+    from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
+    from devdox_ai_sonar.services.configuration import ConfigService
+
+    manager, sonar_ui, config_service = _initialize_managers()
+
+    assert isinstance(manager, ConfigManager)
+    assert isinstance(sonar_ui, SonarCloudConfigUI)
+    assert isinstance(config_service, ConfigService)
+
