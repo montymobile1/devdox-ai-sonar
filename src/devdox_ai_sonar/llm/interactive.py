@@ -195,23 +195,10 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
     immediately.
     """
     while True:
-        picked_provider = await _prompt_for_provider()
-        if picked_provider is None:
+        picked = await _pick_provider_and_model()
+        if picked is None:
             return None
-
-        if picked_provider == _CUSTOM_SENTINEL:
-            model_and_base = _prompt_for_custom_model()
-            if model_and_base is None:
-                return None
-            model, base_url = model_and_base
-            family_label = "custom endpoint"
-        else:
-            model_id = await _prompt_for_model(picked_provider)
-            if model_id is None:
-                return None
-            model = f"{picked_provider}/{model_id}"
-            base_url = None
-            family_label = picked_provider
+        model, base_url, family_label = picked
 
         validated = _validate_or_report(model, base_url)
         if validated is None:
@@ -232,6 +219,30 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
         return LLMProfile(
             name=name, model=model, api_key=api_key, base_url=base_url
         )
+
+
+async def _pick_provider_and_model() -> Optional[tuple[str, Optional[str], str]]:
+    """Pick provider and model; return (model, base_url, family_label) or None.
+
+    Returns ``None`` if the user cancels at any step. The ``family_label`` is
+    the human-readable bucket used in downstream prompts (the literal provider
+    name for catalog picks, ``"custom endpoint"`` for the Custom path).
+    """
+    picked_provider = await _prompt_for_provider()
+    if picked_provider is None:
+        return None
+
+    if picked_provider == _CUSTOM_SENTINEL:
+        model_and_base = _prompt_for_custom_model()
+        if model_and_base is None:
+            return None
+        model, base_url = model_and_base
+        return model, base_url, "custom endpoint"
+
+    model_id = await _prompt_for_model(picked_provider)
+    if model_id is None:
+        return None
+    return f"{picked_provider}/{model_id}", None, picked_provider
 
 
 # ---------------------------------------------------------------------------
