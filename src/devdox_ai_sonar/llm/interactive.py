@@ -173,7 +173,7 @@ async def _collect_and_validate_profile() -> Optional[LLMProfile]:
         return None
 
     if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = await _prompt_for_custom_model()
+        model_and_base = _prompt_for_custom_model()
         if model_and_base is None:
             return None
         model, base_url = model_and_base
@@ -290,7 +290,7 @@ async def _prompt_for_provider() -> Optional[str]:
     return picked
 
 
-async def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
+def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
     """Typed-input flow for self-hosted / non-curated endpoints.
 
     Prompts for a fully-qualified model string in ``provider/model-name``
@@ -426,7 +426,7 @@ async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
     if picked_provider is None:
         return
     if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = await _prompt_for_custom_model()
+        model_and_base = _prompt_for_custom_model()
         if model_and_base is None:
             return
         new_model, new_base_url = model_and_base
