@@ -11,21 +11,33 @@ Your ONLY job is to edit the file using your tools. Do NOT output JSON. Do NOT o
 
 1. Call `file_editor` with command `view` on `{{ file_path }}` (use `view_range` to focus on the issue's line range) to read the current content
 2. Identify the minimal change needed to fix the SonarQube rule
-3. Apply the fix with `fix_at_line`:
-   - Set `start_line` and `end_line` to the inclusive 1-indexed range you want to replace (use `start_line == end_line` for a single-line fix)
-   - Set `old_block` to the EXACT current content of lines `start_line..end_line` as shown by `view` (indentation included, no line-number prefix)
-   - Set `new_block` to the replacement content, including correct indentation
-   - `fix_at_line` anchors by line number, not content, so duplicated lines elsewhere in the file cannot cause failures
+3. Apply the fix by invoking the `fix_at_line` tool. Set `old_block` to the exact content `view` returned for the target range.
 4. Call `terminal` to verify syntax:
    `python -m py_compile {{ file_path }} && echo "SYNTAX_OK"`
 5. If `fix_at_line` returns an `old_block` mismatch, re-`view` the file and retry with the actual current block
 6. If syntax fails, re-read the file and apply another `fix_at_line` to correct the regression
 7. Once `SYNTAX_OK` is printed, stop — you are done
 
+## Applying the fix
+
+To edit the file, emit exactly one `fix_at_line` tool call. The message carrying that call MUST contain only the call.
+
+The tool's parameter schema is in its own description; do not quote it in your reply.
+
+Each of the following invalidates the call (the file stays unedited):
+
+- A literal-syntax call written as text, e.g. `fix_at_line(start_line=..., ...)`.
+- A code block holding the call or its arguments.
+- A JSON object representing the call.
+- Prose describing the call or any of its arguments.
+
+If any is present, discard the message and emit only the tool call.
+
 ## Absolute rules
 - Use tools — `fix_at_line`, `file_editor` (for `view` only), and `terminal`
 - Always `view` before `fix_at_line` so `old_block` is accurate
 - Do NOT use `file_editor str_replace` — it fails when lines repeat; use `fix_at_line` instead
+- `fix_at_line` is invoked as a tool call only; never as text in your reply
 - Do NOT write JSON in your reply
 - Do NOT paste the fixed code as text in your message
 - Make the MINIMAL change that satisfies the rule — nothing more

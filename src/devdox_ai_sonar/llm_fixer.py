@@ -106,7 +106,6 @@ _LITELLM_PREFIX_MAP = {
     "gemini": "gemini",
 }
 
-
 def _build_agent_tools() -> List[Tool]:
     """Return the ordered tool list the SonarCloud fix-agent runs with.
 
@@ -289,6 +288,40 @@ def _render_file_editor_observation(
         console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
     else:
         console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
+
+
+def _is_fix_at_line_action(event: Any) -> bool:
+    """Return True if ``event`` is an ``ActionEvent`` invoking ``fix_at_line``.
+
+    Used to detect whether the agent actually invoked the tool (vs. narrating
+    the call as text). Defensive against missing ``tool_name`` attribute.
+    """
+    return (
+        isinstance(event, ActionEvent)
+        and getattr(event, "tool_name", "") == FixAtLineTool.name
+    )
+
+
+def _make_event_callback(
+    console: Console,
+    file_path: Path,
+    messages_accum: List[str],
+    fix_at_line_called: List[bool],
+) -> Any:
+    """Build the conversation callback used by ``LLMFixer._call_llm_list``.
+
+    Renders the event via :func:`_handle_agent_event` and flips
+    ``fix_at_line_called[0]`` when the agent invokes the ``fix_at_line``
+    tool. Extracted from the closure so the wiring is unit-testable
+    without constructing a real ``Conversation``.
+    """
+
+    def _on_event(event: Event) -> None:
+        _handle_agent_event(event, console, file_path, messages_accum)
+        if _is_fix_at_line_action(event):
+            fix_at_line_called[0] = True
+
+    return _on_event
 
 
 class LLMFixer:
@@ -1100,18 +1133,27 @@ class LLMFixer:
         )
 
         all_agent_messages: List[str] = []
+        fix_at_line_called: List[bool] = [False]
 
         conversation = Conversation(
             agent=agent,
             workspace=str(project_path),
             callbacks=[
-                lambda event: _handle_agent_event(
-                    event, _console, file_path, all_agent_messages
+                _make_event_callback(
+                    _console, file_path, all_agent_messages, fix_at_line_called,
                 )
             ],
         )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
         conversation.run()
+
+        if not fix_at_line_called[0]:
+            logger.warning(
+                "Agent finished without invoking fix_at_line on %s — "
+                "narration suspected; no fix applied.",
+                file_path.name,
+            )
+            return None
 
         try:
 
