@@ -499,15 +499,16 @@ class SonarCloudAnalyzer:
                 flows = issue_data.get("flows", [])
                 last_line = first_line  # default
 
-                for flow in flows:
-                    for location in flow.get("locations", []):
-                        text_range = location.get("textRange", {})
-                        end_line = text_range.get("endLine")
-                        if end_line:
-                            problem_lines.append(int(end_line))
-                            end_line = int(end_line)
-                            if end_line > last_line:
-                                last_line = end_line
+                if last_line is not None:
+                    for flow in flows:
+                        for location in flow.get("locations", []):
+                            text_range = location.get("textRange", {})
+                            end_line = text_range.get("endLine")
+                            if end_line:
+                                problem_lines.append(int(end_line))
+                                end_line = int(end_line)
+                                if end_line > last_line:
+                                    last_line = end_line
 
                 issue = SonarIssue(
                     key=issue_data.get("key", ""),
