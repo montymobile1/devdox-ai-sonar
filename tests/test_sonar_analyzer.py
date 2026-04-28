@@ -591,9 +591,8 @@ class TestParseIssues:
         assert len(issues) == 1
         assert issues[0].last_line == 10
 
-    @pytest.mark.skip(reason="Need update")
-    def test_parse_issues_none_line_numbers(self, analyzer):
-        """Test parsing when line numbers are None"""
+    def test_parse_issues_none_line_number(self, analyzer):
+        """Issue with line: None is parsed with first_line=None, last_line=None."""
         issue_data = {
             "key": "issue-1",
             "rule": "python:S1234",
@@ -608,6 +607,106 @@ class TestParseIssues:
 
         assert len(issues) == 1
         assert issues[0].first_line is None
+        assert issues[0].last_line is None
+
+    def test_parse_issues_missing_line_field(self, analyzer):
+        """Issue with no 'line' key at all is parsed without crashing."""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S1234",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "message": "File-level issue"
+            # no "line" key
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].first_line is None
+        assert issues[0].last_line is None
+
+    def test_parse_issues_no_line_with_flows(self, analyzer):
+        """Issue without line but with flows does not crash on int > None."""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S3776",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "message": "File-level complexity issue",
+            # no "line" key
+            "flows": [
+                {
+                    "locations": [
+                        {
+                            "textRange": {"startLine": 10, "endLine": 30}
+                        }
+                    ]
+                }
+            ]
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].first_line is None
+        assert issues[0].last_line is None
+
+    def test_parse_issues_no_line_with_flows_not_fixable(self, analyzer):
+        """Issue without line number is created but is_fixable returns False."""
+        issue_data = {
+            "key": "issue-1",
+            "rule": "python:S3776",
+            "severity": "MAJOR",
+            "type": "CODE_SMELL",
+            "component": "test.py",
+            "project": "project",
+            "message": "File-level issue",
+            "flows": [
+                {
+                    "locations": [
+                        {"textRange": {"startLine": 5, "endLine": 20}}
+                    ]
+                }
+            ]
+        }
+
+        issues = analyzer._parse_issues([issue_data])
+
+        assert len(issues) == 1
+        assert issues[0].is_fixable is False
+
+    def test_parse_issues_no_line_does_not_block_other_issues(self, analyzer):
+        """An issue without line numbers does not prevent other issues from parsing."""
+        no_line_issue = {
+            "key": "no-line",
+            "rule": "python:S3776",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "message": "No line",
+            "flows": [
+                {"locations": [{"textRange": {"endLine": 30}}]}
+            ]
+        }
+        normal_issue = {
+            "key": "has-line",
+            "rule": "python:S1192",
+            "severity": "MAJOR",
+            "component": "test.py",
+            "project": "project",
+            "line": 42,
+            "message": "Normal issue"
+        }
+
+        issues = analyzer._parse_issues([no_line_issue, normal_issue])
+
+        assert len(issues) == 2
+        keys = {i.key for i in issues}
+        assert "no-line" in keys
+        assert "has-line" in keys
 
 
     def test_parse_issues_exception_in_single_issue(self, analyzer):
