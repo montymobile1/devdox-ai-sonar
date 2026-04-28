@@ -340,6 +340,37 @@ async def test_add_profile_flow_rejects_unreachable_key(
     assert profiles == []
 
 
+async def test_add_profile_flow_bounded_retries_on_repeated_bad_keys(
+    monkeypatch, manager, fake_catalogs
+):
+    """The API-key loop must stop after _MAX_API_KEY_ATTEMPTS auth failures.
+
+    Provide more bad keys than the cap and verify the probe was invoked
+    exactly the configured number of times (i.e. the loop exited via the
+    bound, not via queue exhaustion). The wizard then exits cleanly with
+    no profile saved.
+    """
+    probe_call_count = {"n": 0}
+
+    def counting_probe(**_):
+        probe_call_count["n"] += 1
+        return KeyProbeOutcome(ok=False, failure_kind="auth", detail="bad key")
+
+    monkeypatch.setattr(adapters, "probe", counting_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["bad-1", "bad-2", "bad-3", "bad-4-never-tried"],
+        confirm_answers=[False],  # Add another? -> false
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    assert probe_call_count["n"] == interactive._MAX_API_KEY_ATTEMPTS
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
 async def test_add_profile_flow_cancelled_at_provider_picker(
     monkeypatch, manager, fake_catalogs
 ):
