@@ -69,6 +69,13 @@ _console = Console()
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
 
+# Maximum credential-shaped (auth / unknown / connection) probe failures
+# tolerated in a single API-key prompt loop before the wizard gives up
+# and asks the user to verify their credentials. Bounded so a confused
+# user, a misbehaving auth endpoint, or a non-interactive run cannot
+# keep the wizard stuck forever.
+_MAX_API_KEY_ATTEMPTS = 3
+
 # Process-wide toggle set by the CLI entry point via :func:`set_verbose`.
 # When true, probe-failure details (litellm exception class, provider
 # identifier, HTTP status, raw detail) are printed under the failure
@@ -411,14 +418,16 @@ def _prompt_for_api_key_until_valid(
     outer wizard needs to take over.
 
     A credentials-shaped failure (auth / unknown / connection) keeps
-    the user on this prompt -- just enter a different key. A
-    model-shaped failure (not_found / bad_request) propagates up as
+    the user on this prompt -- just enter a different key -- but is
+    bounded by :data:`_MAX_API_KEY_ATTEMPTS` so a stuck user or
+    misbehaving auth endpoint cannot keep the wizard running forever.
+    A model-shaped failure (not_found / bad_request) propagates up as
     ``restart_model_selection`` so the wizard re-runs provider and
     model selection; it's pointless to keep typing keys when the
     model itself is the problem. Rate-limit has its own three-way
     ``save / retry / cancel`` sub-prompt.
     """
-    while True:
+    for attempt in range(1, _MAX_API_KEY_ATTEMPTS + 1):
         api_key = _prompt_for_api_key(family_label)
         if api_key is None:
             return _KeyLoopResult(kind="cancelled")
@@ -431,9 +440,16 @@ def _prompt_for_api_key_until_valid(
         if outcome == "pick_different_model":
             return _KeyLoopResult(kind="restart_model_selection")
         # outcome == "try_new_key"
-        _console.print(
-            "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
-        )
+        if attempt < _MAX_API_KEY_ATTEMPTS:
+            _console.print(
+                "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
+            )
+
+    _console.print(
+        f"[red]❌ {_MAX_API_KEY_ATTEMPTS} keys rejected. "
+        "Please verify your credentials and try again.[/red]"
+    )
+    return _KeyLoopResult(kind="cancelled")
 
 
 def _prompt_for_api_key(family_label: str) -> Optional[str]:
