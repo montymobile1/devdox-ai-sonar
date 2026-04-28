@@ -303,6 +303,39 @@ def _make_event_callback(
     """
 
     def _on_event(event: Event) -> None:
+        if isinstance(event, ActionEvent):
+            tool_name = getattr(event, "tool_name", "<unknown>")
+            thought = getattr(event, "thought", None) or "<none>"
+            thought_preview = (
+                thought[:200] + "..." if len(thought) > 200 else thought
+            )
+            logger.info(
+                "[fix_at_line-diagnostic] ActionEvent: tool=%s | thought=%s",
+                tool_name,
+                thought_preview,
+            )
+        elif isinstance(event, ObservationEvent):
+            tool_name = getattr(event, "tool_name", "<unknown>")
+            obs = getattr(event, "observation", None)
+            is_error = getattr(obs, "is_error", None)
+            obs_text = _extract_observation_text(event) or ""
+            text_preview = (
+                obs_text[:200] + "..." if len(obs_text) > 200 else obs_text
+            )
+            logger.info(
+                "[fix_at_line-diagnostic] ObservationEvent: tool=%s | is_error=%s | text=%s",
+                tool_name,
+                is_error,
+                text_preview,
+            )
+        elif isinstance(event, MessageEvent) and event.source == "agent":
+            text = _extract_agent_message_text(event) or ""
+            text_preview = text[:300] + "..." if len(text) > 300 else text
+            logger.info(
+                "[fix_at_line-diagnostic] Agent MessageEvent: text=%s",
+                text_preview,
+            )
+
         _handle_agent_event(event, console, file_path, messages_accum)
         if _is_fix_at_line_action(event):
             fix_at_line_called[0] = True
@@ -1003,9 +1036,17 @@ class LLMFixer:
             ],
         )
 
+        agent_tools = _build_agent_tools()
+        logger.info(
+            "[fix_at_line-diagnostic] Starting fix run: model=%s | file=%s | tools=%s",
+            self.model,
+            file_path.name,
+            [t.name for t in agent_tools],
+        )
+
         agent = Agent(
             llm=self.client,
-            tools=_build_agent_tools(),
+            tools=agent_tools,
             agent_context=agent_context,
         )
 
@@ -1023,6 +1064,13 @@ class LLMFixer:
         )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
         conversation.run()
+
+        logger.info(
+            "[fix_at_line-diagnostic] Conversation finished: "
+            "fix_at_line_called=%s | agent_message_count=%s",
+            fix_at_line_called[0],
+            len(all_agent_messages),
+        )
 
         if not fix_at_line_called[0]:
             logger.warning(
