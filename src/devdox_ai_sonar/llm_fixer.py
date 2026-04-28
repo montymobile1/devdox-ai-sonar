@@ -102,9 +102,11 @@ def apply_fixes_safe(
             logger.warning("Fix %s skipped: %s", fix.issue_key, result.reason)
             continue
         file_path_tmp = file_path.with_suffix(f".tmp{file_path.suffix}")
-        write_file_lines(file_path_tmp, candidate)
-        validate, msg = validate_fn(file_path_tmp)
-        cleanup_tmp_py_file(file_path_tmp)
+        try:
+            write_file_lines(file_path_tmp, candidate)
+            validate, msg = validate_fn(file_path_tmp)
+        finally:
+            cleanup_tmp_py_file(file_path_tmp)
         result.success = validate
         result.reason = msg or ""
         results.append(result)
