@@ -17,6 +17,7 @@ from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_su
                                        _generate_fix_key,
                                        _extract_problem_lines,
                                        FUNCTION_ALREADY_CALLED,
+                                       apply_fixes_safe,
                                        )
 from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
 from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info,
@@ -42,7 +43,7 @@ from devdox_ai_sonar.models.sonar import (
     PlacementType,
 
 )
-from devdox_ai_sonar.models.file_structures import FixContext
+from devdox_ai_sonar.models.file_structures import FixContext, FixApplication
 from devdox_ai_sonar.services.rule_handler import _resolve_effective_values, _resolve_relative_path
 
 @pytest.fixture
@@ -6917,4 +6918,147 @@ class TestProcessValidationResult:
 
         assert len(result.failed_fixes) == 1
         assert "no improved fix" in result.failed_fixes[0]["error"]
+
+
+class TestApplyFixesSafe:
+    """Verify single-write and in-memory rollback behaviour of apply_fixes_safe.
+
+    Uses pyfakefs so write_file_lines / cleanup_tmp_py_file hit a real
+    (in-memory) filesystem — no patching of I/O functions needed.
+    """
+
+    @staticmethod
+    def _make_fix(key, original, fixed, line):
+        cb = CodeBlock(
+            block_name="t", start_line=line, end_line=line, has_changes=True,
+            change_type=ChangeType.FULL_CODE, block_type=BlockType.MODULE,
+            context=fixed,
+        )
+        return FixSuggestion(
+            issue_key=key, file_path="test.py", original_code=original,
+            fixed_code=fixed, explanation="fix", confidence=0.9,
+            sonar_line_number=line, llm_model="m", fixed_code_blocks=[cb],
+        )
+
+    @staticmethod
+    def _fake_apply_factory():
+        call_count = [0]
+        inputs = []
+        def fake_apply(lines, fix):
+            call_count[0] += 1
+            inputs.append(list(lines))
+            new = list(lines)
+            idx = fix.sonar_line_number - 1
+            new[idx] = fix.fixed_code + "\n"
+            return FixApplication(fix=fix, success=True, reason=""), new
+        return fake_apply, call_count, inputs
+
+    def test_all_fixes_succeed_writes_file_once(self, fs):
+        fs.create_file("/target/test.py", contents="a\nb\nc\n")
+        fix1 = self._make_fix("k1", "a", "A", 1)
+        fix2 = self._make_fix("k2", "b", "B", 2)
+        fake_apply, _, _ = self._fake_apply_factory()
+
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", side_effect=fake_apply):
+            success, results = apply_fixes_safe(
+                Path("/target/test.py"), [fix1, fix2],
+                ["a\n", "b\n", "c\n"],
+                validate_fn=lambda _p: (True, None),
+            )
+
+        assert success is True
+        assert len(results) == 2
+        assert Path("/target/test.py").read_text() == "A\nB\nc\n"
+
+    def test_no_fixes_succeed_file_untouched(self, fs):
+        fs.create_file("/target/test.py", contents="a\nb\n")
+        fix1 = self._make_fix("k1", "a", "A", 1)
+        fake_apply, _, _ = self._fake_apply_factory()
+
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", side_effect=fake_apply):
+            success, results = apply_fixes_safe(
+                Path("/target/test.py"), [fix1],
+                ["a\n", "b\n"],
+                validate_fn=lambda _p: (False, "SyntaxError"),
+            )
+
+        assert success is False
+        assert Path("/target/test.py").read_text() == "a\nb\n"
+
+    def test_failed_fix_does_not_leak_into_file(self, fs):
+        fs.create_file("/target/test.py", contents="a\nb\nc\n")
+        fix1 = self._make_fix("k1", "a", "A", 1)
+        fix2 = self._make_fix("k2", "b", "BAD", 2)
+        fix3 = self._make_fix("k3", "c", "C", 3)
+        fake_apply, _, _ = self._fake_apply_factory()
+
+        call_count = [0]
+        def validate_fn(_p):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return False, "SyntaxError"
+            return True, None
+
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", side_effect=fake_apply):
+            success, results = apply_fixes_safe(
+                Path("/target/test.py"), [fix1, fix2, fix3],
+                ["a\n", "b\n", "c\n"],
+                validate_fn=validate_fn,
+            )
+
+        assert success is False
+        content = Path("/target/test.py").read_text()
+        assert "BAD" not in content
+        assert content == "A\nb\nC\n"
+
+    def test_rejected_fix_does_not_poison_next_fix_input(self, fs):
+        fs.create_file("/target/test.py", contents="a\nb\nc\n")
+        fix1 = self._make_fix("k1", "a", "A", 1)
+        fix2 = self._make_fix("k2", "b", "BAD", 2)
+        fix3 = self._make_fix("k3", "c", "C", 3)
+        fake_apply, _, inputs = self._fake_apply_factory()
+
+        call_count = [0]
+        def validate_fn(_p):
+            call_count[0] += 1
+            if call_count[0] == 2:
+                return False, "SyntaxError"
+            return True, None
+
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", side_effect=fake_apply):
+            apply_fixes_safe(
+                Path("/target/test.py"), [fix1, fix2, fix3],
+                ["a\n", "b\n", "c\n"],
+                validate_fn=validate_fn,
+            )
+
+        assert inputs[2] == ["A\n", "b\n", "c\n"], \
+            "Fix 3 must receive post-fix-1 lines, not post-fix-2 (rejected) lines"
+
+    def test_empty_fix_list_writes_nothing(self, fs):
+        fs.create_file("/target/test.py", contents="a\n")
+
+        success, results = apply_fixes_safe(
+            Path("/target/test.py"), [],
+            ["a\n"],
+            validate_fn=lambda _p: (True, None),
+        )
+
+        assert success is True
+        assert results == []
+        assert Path("/target/test.py").read_text() == "a\n"
+
+    def test_temp_file_is_cleaned_up(self, fs):
+        fs.create_file("/target/test.py", contents="a\n")
+        fix1 = self._make_fix("k1", "a", "A", 1)
+        fake_apply, _, _ = self._fake_apply_factory()
+
+        with patch("devdox_ai_sonar.llm_fixer.apply_single_fix", side_effect=fake_apply):
+            apply_fixes_safe(
+                Path("/target/test.py"), [fix1],
+                ["a\n"],
+                validate_fn=lambda _p: (True, None),
+            )
+
+        assert not Path("/target/test.tmp.py").exists(), "Temp file must be cleaned up"
 
