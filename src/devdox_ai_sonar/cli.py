@@ -38,6 +38,7 @@ from devdox_ai_sonar.llm.env_profile import profile_from_env
 from devdox_ai_sonar.llm.exclusions import check_profile_against_filters
 from devdox_ai_sonar.llm.interactive import (
     add_profile_flow,
+    offer_legacy_llm_recovery,
     set_verbose as _set_interactive_verbose,
     update_profile_flow,
 )
@@ -497,6 +498,9 @@ async def init_config(
         manager.create_default_config()
         await manager.load_config()
 
+        if not await offer_legacy_llm_recovery(manager):
+            raise click.Abort()
+
         existing_profiles = await load_profiles(manager)
         if not _check_reconfiguration_consent(existing_profiles):
             return
@@ -537,6 +541,8 @@ async def add_provider() -> None:
     try:
         manager, _, _ = _initialize_managers()
         await manager.load_config()
+        if not await offer_legacy_llm_recovery(manager):
+            raise click.Abort()
         _display_operation_header("🚀 ADD NEW LLM PROFILE")
         await add_profile_flow(manager)
         _display_completion_message()
@@ -549,6 +555,8 @@ async def update_provider() -> None:
     try:
         manager, _, _ = _initialize_managers()
         await manager.load_config()
+        if not await offer_legacy_llm_recovery(manager):
+            raise click.Abort()
         _display_operation_header("🔧 UPDATE EXISTING LLM PROFILE")
         await update_profile_flow(manager)
         _display_completion_message()
