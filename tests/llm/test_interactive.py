@@ -357,7 +357,10 @@ async def test_add_profile_flow_bounded_retries_on_repeated_bad_keys(
         return KeyProbeOutcome(ok=False, failure_kind="auth", detail="bad key")
 
     monkeypatch.setattr(adapters, "probe", counting_probe)
-    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _queue_responses(
+        monkeypatch,
+        iter(["📋 Pick from curated list", "⭐ openai", "⭐ gpt-4o"]),
+    )
     _patch_prompt(
         monkeypatch,
         text_answers=["bad-1", "bad-2", "bad-3", "bad-4-never-tried"],
