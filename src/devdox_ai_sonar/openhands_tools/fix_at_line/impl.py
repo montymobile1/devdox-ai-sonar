@@ -6,6 +6,7 @@ mirroring the semantics of ``file_editor str_replace`` but anchored by line
 number instead of content match.
 """
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -15,6 +16,9 @@ from devdox_ai_sonar.openhands_tools.fix_at_line.definition import (
     FixAtLineAction,
     FixAtLineObservation,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
@@ -29,6 +33,15 @@ class FixAtLineExecutor(ToolExecutor):
         action: FixAtLineAction,
         conversation: "BaseConversation | None" = None,
     ) -> FixAtLineObservation:
+        logger.info(
+            "[fix_at_line-diagnostic] FixAtLineExecutor INVOKED: "
+            "path=%s start_line=%s end_line=%s old_block_len=%s new_block_len=%s",
+            action.path,
+            action.start_line,
+            action.end_line,
+            len(action.old_block or ""),
+            len(action.new_block or ""),
+        )
         target = Path(action.path)
 
         if not target.is_absolute():
