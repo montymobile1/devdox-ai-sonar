@@ -52,6 +52,7 @@ from devdox_ai_sonar.utils.ui_prompts import select_from_list
 __all__ = [
     "ProfileUpdateContext",
     "add_profile_flow",
+    "offer_legacy_llm_recovery",
     "update_profile_flow",
 ]
 
@@ -91,6 +92,42 @@ class ProfileUpdateContext:
         if self.new_api_key is not None:
             return self.new_api_key
         return self.profile.api_key
+
+
+# ---------------------------------------------------------------------------
+# Legacy [[llm.providers]] recovery
+# ---------------------------------------------------------------------------
+
+
+async def offer_legacy_llm_recovery(manager: ConfigManager) -> bool:
+    """Detect old ``[[llm.providers]]`` and offer to remove it in place.
+
+    Reads ``manager.config['llm']`` directly (not via profile_store, which
+    would raise on the legacy shape) and, if the old key is present,
+    prompts the user. On consent, removes only the ``providers`` key
+    from the ``[llm]`` table and persists. All other config — SonarCloud
+    auth, project paths, anything outside ``[llm]`` — is left untouched.
+
+    Returns:
+        True if the caller should continue (no legacy detected, or
+        recovery completed). False if the user declined recovery.
+    """
+    llm_section = (manager.config or {}).get("llm") or {}
+    if "providers" not in llm_section:
+        return True
+
+    _console.print(
+        "[yellow]Old [[llm.providers]] schema detected in config.toml. "
+        "The [llm] section needs to be reset; your other settings will "
+        "be preserved.[/yellow]"
+    )
+    if not Confirm.ask("Reset just the [llm] section now?", default=True):
+        return False
+
+    del manager.config["llm"]["providers"]
+    manager.save_config(create_backup=False)
+    _console.print("[green]✓ [llm] section reset.[/green]")
+    return True
 
 
 # ---------------------------------------------------------------------------
