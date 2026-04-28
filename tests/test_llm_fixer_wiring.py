@@ -38,6 +38,8 @@ from devdox_ai_sonar.llm_fixer import (
     _extract_terminal_exit_code,
     _format_fix_at_line_range,
     _handle_agent_event,
+    _is_fix_at_line_action,
+    _make_event_callback,
 )
 from devdox_ai_sonar.openhands_tools.fix_at_line import FixAtLineTool
 
@@ -479,3 +481,239 @@ class TestFormatFixAtLineRange:
 
     def test_fallback_when_both_missing(self):
         assert _format_fix_at_line_range(SimpleNamespace()) == "range"
+
+
+# ============================================================================
+# _is_fix_at_line_action() — narration-detection predicate
+# ============================================================================
+#
+# This predicate is what tells ``_call_llm_list`` whether the agent actually
+# invoked the ``fix_at_line`` tool (vs. narrating the call as text). The
+# downstream fail-fast on narration depends on it being correct.
+
+
+class TestIsFixAtLineAction:
+    """``_is_fix_at_line_action`` returns True only for ``fix_at_line`` actions."""
+
+    def test_action_event_for_fix_at_line_returns_true(self):
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = FixAtLineTool.name
+
+        assert _is_fix_at_line_action(event) is True
+
+    def test_action_event_for_file_editor_returns_false(self):
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = "file_editor"
+
+        assert _is_fix_at_line_action(event) is False
+
+    def test_action_event_for_terminal_returns_false(self):
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = "terminal"
+
+        assert _is_fix_at_line_action(event) is False
+
+    def test_action_event_for_task_tracker_returns_false(self):
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = "task_tracker"
+
+        assert _is_fix_at_line_action(event) is False
+
+    def test_message_event_returns_false_even_if_text_mentions_fix_at_line(self):
+        """An agent that *narrates* fix_at_line in chat must NOT be counted.
+
+        This is the regression we're guarding against: narration arrives as
+        a MessageEvent, not an ActionEvent, so the predicate must say no.
+        """
+        event = MagicMock(spec=MessageEvent)
+        # Even if some attribute happens to be named ``tool_name`` on a
+        # MessageEvent, ``isinstance`` should still gate it out.
+        event.tool_name = FixAtLineTool.name
+
+        assert _is_fix_at_line_action(event) is False
+
+    def test_observation_event_returns_false(self):
+        """Observations come *after* a tool fires; they're not the firing."""
+        event = MagicMock(spec=ObservationEvent)
+        event.tool_name = FixAtLineTool.name
+
+        assert _is_fix_at_line_action(event) is False
+
+    def test_arbitrary_object_returns_false(self):
+        """Defensive: a stray object passed into the callback must not crash."""
+        assert _is_fix_at_line_action(object()) is False
+
+    def test_none_returns_false(self):
+        """Defensive: a None event must not crash."""
+        assert _is_fix_at_line_action(None) is False
+
+    def test_action_event_without_tool_name_attribute_returns_false(self):
+        """``getattr`` default handles a malformed ActionEvent without crashing."""
+
+        class BareAction(ActionEvent):  # pragma: no cover — schema-only
+            pass
+
+        # Skip if ActionEvent can't be subclassed without args; fall back to
+        # MagicMock with the attribute absent.
+        event = MagicMock(spec=ActionEvent)
+        del event.tool_name  # force the attribute to be missing
+
+        assert _is_fix_at_line_action(event) is False
+
+
+# ============================================================================
+# _make_event_callback() — closure factory used by _call_llm_list
+# ============================================================================
+#
+# The factory returns the conversation callback that (a) renders progress
+# (delegating to _handle_agent_event) and (b) flips the
+# ``fix_at_line_called`` flag when the tool actually fires.  Both behaviours
+# must hold simultaneously — neither one alone is sufficient.
+
+
+class TestMakeEventCallback:
+    """``_make_event_callback`` builds the conversation event callback."""
+
+    def test_returns_a_callable(self, capture_console):
+        console, _ = capture_console
+        cb = _make_event_callback(console, Path("/f.py"), [], [False])
+
+        assert callable(cb)
+
+    def test_fix_at_line_action_event_flips_flag(self, capture_console):
+        console, _ = capture_console
+        flag = [False]
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = FixAtLineTool.name
+        event.thought = None
+
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+        cb(event)
+
+        assert flag[0] is True
+
+    def test_file_editor_action_does_not_flip_flag(self, capture_console):
+        console, _ = capture_console
+        flag = [False]
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = "file_editor"
+        event.thought = None
+
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+        cb(event)
+
+        assert flag[0] is False
+
+    def test_terminal_action_does_not_flip_flag(self, capture_console):
+        console, _ = capture_console
+        flag = [False]
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = "terminal"
+        event.thought = None
+
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+        cb(event)
+
+        assert flag[0] is False
+
+    def test_message_event_does_not_flip_flag_even_when_narrating(self, capture_console):
+        """Narration arrives as a MessageEvent — must not flip the flag."""
+        console, _ = capture_console
+        flag = [False]
+        event = MagicMock(spec=MessageEvent)
+        event.source = "agent"
+        event.to_llm_message.return_value = SimpleNamespace(
+            content="I'm now calling fix_at_line(start_line=42, ...)"
+        )
+
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+        cb(event)
+
+        assert flag[0] is False
+
+    def test_observation_event_does_not_flip_flag(self, capture_console):
+        console, _ = capture_console
+        flag = [False]
+        event = MagicMock(spec=ObservationEvent)
+        event.tool_name = FixAtLineTool.name
+        event.observation = SimpleNamespace(
+            text="ok", start_line=1, end_line=1, is_error=False, path="/f.py",
+        )
+
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+        cb(event)
+
+        assert flag[0] is False
+
+    def test_multiple_fix_at_line_actions_keep_flag_true(self, capture_console):
+        """The flag is sticky: once True, subsequent events don't unset it."""
+        console, _ = capture_console
+        flag = [False]
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+
+        first = MagicMock(spec=ActionEvent)
+        first.tool_name = FixAtLineTool.name
+        first.thought = None
+        cb(first)
+
+        second = MagicMock(spec=ActionEvent)
+        second.tool_name = "file_editor"
+        second.thought = None
+        cb(second)
+
+        assert flag[0] is True
+
+    def test_callback_still_renders_to_console(self, capture_console):
+        """The factory must preserve _handle_agent_event's rendering side."""
+        console, buf = capture_console
+        cb = _make_event_callback(console, Path("/f.py"), [], [False])
+
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = FixAtLineTool.name
+        event.thought = None
+        cb(event)
+
+        assert "Calling" in buf.getvalue()
+        assert "fix_at_line" in buf.getvalue()
+
+    def test_callback_still_appends_agent_messages(self, capture_console):
+        """The factory must preserve the message-accumulator side effect."""
+        console, _ = capture_console
+        messages: List[str] = []
+        cb = _make_event_callback(console, Path("/f.py"), messages, [False])
+
+        event = MagicMock(spec=MessageEvent)
+        event.source = "agent"
+        event.to_llm_message.return_value = SimpleNamespace(
+            content="Fix applied on line 7."
+        )
+        cb(event)
+
+        assert messages == ["Fix applied on line 7."]
+
+    def test_callback_does_not_crash_on_arbitrary_object(self, capture_console):
+        """Defensive: a non-Event object must not break the agent loop."""
+        console, _ = capture_console
+        flag = [False]
+        cb = _make_event_callback(console, Path("/f.py"), [], flag)
+
+        # Should not raise
+        cb(object())  # type: ignore[arg-type]
+
+        assert flag[0] is False
+
+    def test_each_factory_call_returns_a_fresh_closure(self, capture_console):
+        """Two callbacks must not share the flag; they own their own state."""
+        console, _ = capture_console
+        flag_a = [False]
+        flag_b = [False]
+        cb_a = _make_event_callback(console, Path("/f.py"), [], flag_a)
+        cb_b = _make_event_callback(console, Path("/f.py"), [], flag_b)
+
+        event = MagicMock(spec=ActionEvent)
+        event.tool_name = FixAtLineTool.name
+        event.thought = None
+        cb_a(event)
+
+        assert flag_a[0] is True
+        assert flag_b[0] is False
