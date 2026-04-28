@@ -1397,56 +1397,215 @@ class TestGlobalTopHelper:
 # ============================================================================
 # TEST: apply_sibling_helper
 # ============================================================================
-@pytest.mark.skip(reason="Need update")
 class TestApplySiblingHelper:
-    """Test sibling helper code application."""
+    """Test sibling helper code insertion."""
 
-    def test_apply_sibling_helper_basic(self):
-        """Test applying sibling helper code."""
-        lines = ["line1\n", "line2\n", "line3\n"]
-        line_range = LineRange(start=1, end=1)
+    # --- Core behavior: insert after line_range.end, preserve all lines ---
 
-        result = apply_sibling_helper(
-            lines=lines,
-            line_range=line_range,
-            helper_code="helper_code",
-        )
-        assert result[0] == "line1\n"
-        assert result[1] == "fixed_code"
-        assert result[2] == "\n"
-        assert result[3] == "\n"
-        assert result[4] == "helper_code"
-        assert result[5] == "\n"
-        assert result[6] == "line3\n"
+    def test_inserts_after_line_range_end(self):
+        """Helper is placed at line_range.end + 1, not replacing anything."""
+        lines = ["line0\n", "line1\n", "line2\n", "line3\n"]
+        line_range = LineRange(start=0, end=1)
 
-    def test_apply_sibling_helper_with_indentation(self):
-        """Test sibling helper with proper indentation."""
-        lines = ["def func():\n", "    x = 1\n", "    y = 2\n"]
-        line_range = LineRange(start=1, end=1)
+        result = apply_sibling_helper(list(lines), line_range, "helper")
 
-        result = apply_sibling_helper(
-            lines=lines,
-            line_range=line_range,
-            helper_code="# comment",
-        )
-        # Fixed code should be indented
-        assert "    x = 2" in result[1]
-        # Helper should also be indented
-        assert "# comment" in result[4]
+        assert result[0] == "line0\n"
+        assert result[1] == "line1\n"
+        assert "helper" in result[2]
+        assert result[3] == "line2\n"
+        assert result[4] == "line3\n"
 
-    def test_apply_sibling_helper_multiline_helper(self):
-        """Test sibling helper with multiline code."""
-        lines = ["line1\n", "line2\n", "line3\n"]
-        line_range = LineRange(start=1, end=1)
+    def test_all_original_lines_preserved(self):
+        """No original line is lost or modified."""
+        lines = ["a\n", "b\n", "c\n", "d\n"]
+        line_range = LineRange(start=1, end=2)
 
-        helper_code = "def helper():\n    pass"
-        result = apply_sibling_helper(
-            lines=lines,
-            line_range=line_range,
-            helper_code=helper_code
-        )
+        result = apply_sibling_helper(list(lines), line_range, "helper")
 
-        assert "helper()" in ''.join(result)
+        original_content = {l.strip() for l in lines}
+        result_content = {l.strip() for l in result}
+        assert original_content.issubset(result_content)
+
+    def test_line_count_increases_by_one(self):
+        """Inserting a helper adds exactly one line to the file."""
+        lines = ["a\n", "b\n", "c\n"]
+        line_range = LineRange(start=0, end=1)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert len(result) == len(lines) + 1
+
+    # --- Realistic production scenarios ---
+
+    def test_sibling_after_method_in_class(self):
+        """Mirrors production: helper placed after a method inside a class."""
+        lines = [
+            "class Svc:\n",
+            "    def get(self):\n",
+            "        return data\n",
+            "\n",
+            "    def delete(self):\n",
+            "        pass\n",
+        ]
+        line_range = LineRange(start=1, end=2)
+        helper = "def _helper(self):\n    pass"
+
+        result = apply_sibling_helper(list(lines), line_range, helper)
+
+        assert result[2] == "        return data\n"
+        assert "_helper" in result[3]
+        assert result[4] == "\n"
+        assert result[5] == "    def delete(self):\n"
+        assert len(result) == len(lines) + 1
+
+    def test_sibling_after_last_method_in_class(self):
+        """Helper placed after the final method in the file."""
+        lines = [
+            "class Svc:\n",
+            "    def only_method(self):\n",
+            "        return 42\n",
+        ]
+        line_range = LineRange(start=1, end=2)
+        helper = "def _helper(self):\n    pass"
+
+        result = apply_sibling_helper(list(lines), line_range, helper)
+
+        assert result[2] == "        return 42\n"
+        assert "_helper" in result[3]
+        assert len(result) == 4
+
+    def test_single_line_function(self):
+        """line_range.start == line_range.end (one-liner)."""
+        lines = [
+            "def foo(): pass\n",
+            "def bar(): pass\n",
+        ]
+        line_range = LineRange(start=0, end=0)
+        helper = "CONST = 1"
+
+        result = apply_sibling_helper(list(lines), line_range, helper)
+
+        assert result[0] == "def foo(): pass\n"
+        assert "CONST" in result[1]
+        assert result[2] == "def bar(): pass\n"
+
+    # --- Edge cases: line_range.end at boundaries ---
+
+    def test_end_is_last_index(self):
+        """line_range.end == len(lines) - 1, helper appends at end."""
+        lines = ["first\n", "last\n"]
+        line_range = LineRange(start=0, end=1)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert result[0] == "first\n"
+        assert result[1] == "last\n"
+        assert "helper" in result[2]
+        assert len(result) == 3
+
+    def test_end_past_file_length(self):
+        """line_range.end beyond file — list.insert clamps to end."""
+        lines = ["def func():\n", "    return 42\n"]
+        line_range = LineRange(start=0, end=5)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert result[0] == "def func():\n"
+        assert result[1] == "    return 42\n"
+        assert "helper" in result[-1]
+        assert len(result) == 3
+
+    def test_end_far_past_file_length(self):
+        """line_range.end way beyond file — still appends safely."""
+        lines = ["only\n"]
+        line_range = LineRange(start=0, end=999)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert result[0] == "only\n"
+        assert "helper" in result[-1]
+        assert len(result) == 2
+
+    def test_start_and_end_at_zero(self):
+        """line_range covers only the first line."""
+        lines = ["first\n", "second\n", "third\n"]
+        line_range = LineRange(start=0, end=0)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert result[0] == "first\n"
+        assert "helper" in result[1]
+        assert result[2] == "second\n"
+        assert result[3] == "third\n"
+
+    # --- Helper code variations ---
+
+    def test_multiline_helper(self):
+        """Helper with real newlines is inserted as a single list element."""
+        lines = ["a\n", "b\n"]
+        line_range = LineRange(start=0, end=0)
+        helper = "def helper():\n    return True"
+
+        result = apply_sibling_helper(list(lines), line_range, helper)
+
+        assert "def helper():" in result[1]
+        assert "return True" in result[1]
+        assert len(result) == 3
+
+    def test_helper_with_literal_backslash_n(self):
+        """Literal \\n sequences in helper_code are converted to real newlines."""
+        lines = ["a\n", "b\n"]
+        line_range = LineRange(start=0, end=0)
+        helper = "def helper():\\n    pass"
+
+        result = apply_sibling_helper(list(lines), line_range, helper)
+
+        inserted = result[1]
+        assert "\\n" not in inserted
+        assert "\n" in inserted
+
+    def test_empty_helper(self):
+        """Empty helper string still inserts a line (just a newline)."""
+        lines = ["a\n", "b\n"]
+        line_range = LineRange(start=0, end=0)
+
+        result = apply_sibling_helper(list(lines), line_range, "")
+
+        assert len(result) == 3
+        assert result[0] == "a\n"
+        assert result[2] == "b\n"
+
+    # --- Mutation safety ---
+
+    def test_does_not_mutate_when_called_with_copy(self):
+        """Caller can protect original by passing a copy."""
+        original = ["a\n", "b\n"]
+        frozen = list(original)
+        line_range = LineRange(start=0, end=0)
+
+        apply_sibling_helper(list(original), line_range, "helper")
+
+        assert original == frozen
+
+    def test_mutates_in_place(self):
+        """The function mutates and returns the same list object."""
+        lines = ["a\n", "b\n"]
+        line_range = LineRange(start=0, end=0)
+
+        result = apply_sibling_helper(lines, line_range, "helper")
+
+        assert result is lines
+
+    # --- Newline handling ---
+
+    def test_helper_gets_trailing_newline(self):
+        """Inserted helper always ends with \\n."""
+        lines = ["a\n"]
+        line_range = LineRange(start=0, end=0)
+
+        result = apply_sibling_helper(list(lines), line_range, "helper")
+
+        assert result[1].endswith("\n")
 
 
 # ============================================================================
