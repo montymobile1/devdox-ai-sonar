@@ -165,51 +165,11 @@ def categorize_response(
     cognitive-complexity refactor path of devdox_sonar.
     """
     if payload is None:
-        if status_code == 204:
-            if attempt > 0:
-                return "empty_success_after_retry"
-            return "empty_success"
-        if status_code == 200:
-            return "empty_ok"
-        return "empty_failure"
+        return _handle_none_payload(status_code, attempt)
     if status_code >= 500:
-        if status_code == 503 and attempt < 3:
-            return "retry_service_unavailable"
-        if status_code == 504 and attempt < 2:
-            return "retry_gateway_timeout"
-        if status_code == 502 or status_code == 500:
-            if attempt > 5:
-                return "give_up_server_error"
-            return "server_error"
-        return "server_error"
+        return _handle_5xx_status(status_code, attempt)
     if status_code >= 400:
-        if status_code == 401:
-            if "X-Refresh-Token" in headers and attempt == 0:
-                return "auth_refresh_needed"
-            return "auth_failed"
-        if status_code == 403:
-            if headers.get("X-Reason") == "quota":
-                return "forbidden_quota"
-            return "forbidden"
-        if status_code == 404:
-            if "not_found" in headers.get("X-Hint", "") or attempt > 0:
-                return "missing"
-            return "client_error"
-        if status_code == 409:
-            if attempt > 0 and headers.get("X-Conflict-Retryable") == "true":
-                return "conflict_retry"
-            return "conflict"
-        if status_code == 429:
-            if attempt >= 5:
-                return "rate_limit_exhausted"
-            if "Retry-After" in headers:
-                return "rate_limit_with_hint"
-            return "rate_limit"
-        return "client_error"
+        return _handle_4xx_status(status_code, headers, attempt)
     if status_code >= 200:
-        if status_code == 201 or status_code == 202:
-            return "accepted"
-        if status_code == 206:
-            return "partial"
-        return "ok"
+        return _handle_2xx_status(status_code)
     return "unknown"
