@@ -1103,6 +1103,13 @@ class LLMFixer:
             ],
         )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
+        # If we got here, OpenHands' agent.init_state ran without raising in
+        # any of our callbacks. Anything that aborts from this point on is
+        # the agent or LLM, not our wiring.
+        logger.info(
+            "[fix_at_line-diagnostic] Agent initialized; first user message "
+            "queued — entering conversation.run() loop"
+        )
         conversation.run()
 
         logger.info(
