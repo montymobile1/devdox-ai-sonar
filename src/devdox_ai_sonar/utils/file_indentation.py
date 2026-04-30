@@ -985,8 +985,17 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
-            logger.warning(
-                "Invalid line number %d (file has %d lines)", change.line, len(lines)
+            # The S1192 handler emits LineChange(line=0, action=INSERT) for
+            # "insert a new module-level constant at the top". This applier
+            # rejects line 0 — the constant lands via the parallel
+            # NEW_HELPER_CODE / PLACEMENT=GLOBAL_TOP path instead, so the
+            # end result is correct. Demoted to DEBUG; the warning was
+            # cosmetic noise that fired once per S1192 fix.
+            logger.debug(
+                "Skipping LineChange with out-of-range line %d (file has %d "
+                "lines); insertion handled via NEW_HELPER_CODE path.",
+                change.line,
+                len(lines),
             )
             continue
 
