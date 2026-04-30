@@ -42,6 +42,20 @@ class FixAtLineExecutor(ToolExecutor):
             len(action.old_block or ""),
             len(action.new_block or ""),
         )
+        observation = self._run(action)
+        logger.info(
+            "[fix_at_line-diagnostic] FixAtLineExecutor RESULT: "
+            "path=%s is_error=%s message=%s",
+            action.path,
+            getattr(observation, "is_error", None),
+            (getattr(observation, "text", "") or "")[:200],
+        )
+        return observation
+
+    def _run(
+        self,
+        action: FixAtLineAction,
+    ) -> FixAtLineObservation:
         target = Path(action.path)
 
         if not target.is_absolute():
