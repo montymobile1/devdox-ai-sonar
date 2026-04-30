@@ -1850,6 +1850,18 @@ class LLMFixer:
                 ),
                 reverse=True,
             )
+            logger.info(
+                "[apply-loop] file=%s applying %d fix(es) bottom-up; lines=%s",
+                file_path.name,
+                len(fixes),
+                [
+                    max(
+                        (cb.start_line for cb in f.fixed_code_blocks),
+                        default=0,
+                    )
+                    for f in fixes
+                ],
+            )
             results = []
             for fix in fixes:
                 result, lines = apply_single_fix(lines, fix)
