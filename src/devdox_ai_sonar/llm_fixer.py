@@ -703,7 +703,20 @@ class LLMFixer:
             )
 
             if not validation.is_valid:
-                logger.error(f"Validation failed: {validation.error}")
+                error_msg = validation.error or ""
+                if "not found in actual file" in error_msg:
+                    # The validator already searched the file (exact, fuzzy,
+                    # single-line heuristics) before giving up. When it bails
+                    # here the content is genuinely gone — typically because
+                    # a prior fix in this run already addressed the issue.
+                    # Treat as a clean skip, not a hard error.
+                    logger.info(
+                        "Skipping issue — content not found in actual file "
+                        "(likely already addressed by a prior fix in this run): %s",
+                        error_msg,
+                    )
+                else:
+                    logger.error("Validation failed: %s", error_msg)
                 return None
 
             if validation.file_path is None or validation.line_range is None:
