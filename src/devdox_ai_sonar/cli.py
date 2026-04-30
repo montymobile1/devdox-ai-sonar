@@ -1608,6 +1608,9 @@ async def _process_issues_for_rule(
         ):
             return False  # User stopped early
 
+    console.print(
+        f"[green]Rule {rule_key} completed: {total_issues} issue(s) processed[/green]"
+    )
     return True  # All issues processed
 
 
