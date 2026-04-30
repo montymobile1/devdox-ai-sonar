@@ -302,6 +302,46 @@ def _is_fix_at_line_action(event: Any) -> bool:
     )
 
 
+def _handle_event_logging(event: Event) -> None:
+    """Emit ``[fix_at_line-diagnostic]`` log lines for each agent event.
+
+    Surfaces per-step ``ActionEvent`` / ``ObservationEvent`` / agent
+    ``MessageEvent`` so that "did the agent actually call fix_at_line?"
+    is answerable from the run log alone.
+    """
+    if isinstance(event, ActionEvent):
+        tool_name = getattr(event, "tool_name", "<unknown>")
+        thought_preview = _extract_first_thought(
+            getattr(event, "thought", None) or []
+        ) or "<none>"
+        logger.info(
+            "[fix_at_line-diagnostic] ActionEvent: tool=%s | thought=%s",
+            tool_name,
+            thought_preview,
+        )
+    elif isinstance(event, ObservationEvent):
+        tool_name = getattr(event, "tool_name", "<unknown>")
+        obs = getattr(event, "observation", None)
+        is_error = getattr(obs, "is_error", None)
+        obs_text = _extract_observation_text(obs) or ""
+        text_preview = (
+            obs_text[:200] + "..." if len(obs_text) > 200 else obs_text
+        )
+        logger.info(
+            "[fix_at_line-diagnostic] ObservationEvent: tool=%s | is_error=%s | text=%s",
+            tool_name,
+            is_error,
+            text_preview,
+        )
+    elif isinstance(event, MessageEvent) and event.source == "agent":
+        text = _extract_agent_message_text(event) or ""
+        text_preview = text[:300] + "..." if len(text) > 300 else text
+        logger.info(
+            "[fix_at_line-diagnostic] Agent MessageEvent: text=%s",
+            text_preview,
+        )
+
+
 def _make_event_callback(
     console: Console,
     file_path: Path,
@@ -317,39 +357,7 @@ def _make_event_callback(
     """
 
     def _on_event(event: Event) -> None:
-        if isinstance(event, ActionEvent):
-            tool_name = getattr(event, "tool_name", "<unknown>")
-            thought = getattr(event, "thought", None) or "<none>"
-            thought_preview = (
-                thought[:200] + "..." if len(thought) > 200 else thought
-            )
-            logger.info(
-                "[fix_at_line-diagnostic] ActionEvent: tool=%s | thought=%s",
-                tool_name,
-                thought_preview,
-            )
-        elif isinstance(event, ObservationEvent):
-            tool_name = getattr(event, "tool_name", "<unknown>")
-            obs = getattr(event, "observation", None)
-            is_error = getattr(obs, "is_error", None)
-            obs_text = _extract_observation_text(event) or ""
-            text_preview = (
-                obs_text[:200] + "..." if len(obs_text) > 200 else obs_text
-            )
-            logger.info(
-                "[fix_at_line-diagnostic] ObservationEvent: tool=%s | is_error=%s | text=%s",
-                tool_name,
-                is_error,
-                text_preview,
-            )
-        elif isinstance(event, MessageEvent) and event.source == "agent":
-            text = _extract_agent_message_text(event) or ""
-            text_preview = text[:300] + "..." if len(text) > 300 else text
-            logger.info(
-                "[fix_at_line-diagnostic] Agent MessageEvent: text=%s",
-                text_preview,
-            )
-
+        _handle_event_logging(event)
         _handle_agent_event(event, console, file_path, messages_accum)
         if _is_fix_at_line_action(event):
             fix_at_line_called[0] = True
@@ -1142,6 +1150,15 @@ class LLMFixer:
 
         prompt_system = system_template.render(**prompt_dic)
 
+        logger.info(
+            "[fix_at_line-diagnostic] Rendered system prompt (first 500 chars): %s",
+            prompt_system[:500].replace("\n", " ⏎ "),
+        )
+        logger.info(
+            "[fix_at_line-diagnostic] Rendered user prompt (first 500 chars): %s",
+            prompt[:500].replace("\n", " ⏎ "),
+        )
+
         try:
             original_content = file_path.read_text(encoding="utf-8")
 
@@ -1217,6 +1234,14 @@ class LLMFixer:
 
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
+
+        logger.info(
+            "[fix_at_line-diagnostic] Returning SonarFixResponse: "
+            "applied_by_agent=True | file=%s | original_lines=%s | new_lines=%s",
+            file_path.name,
+            len(original_content.splitlines()),
+            len(new_content.splitlines()),
+        )
 
         return SonarFixResponse(
             IMPORT_BLOCK="",
@@ -1524,6 +1549,12 @@ class LLMFixer:
                 )
                 system_template = self.jinja_env.get_template(
                     "python/refactoring/system_fix_issues.j2"
+                )
+                logger.info(
+                    "[fix_at_line-diagnostic] S3776 override applied: "
+                    "system_template=%s | user_template=%s",
+                    "python/refactoring/system_fix_issues.j2",
+                    "python/refactoring/user_prompt.j2",
                 )
 
                 context.import_section["has_imports"] = True

@@ -242,6 +242,10 @@ class ConvenationNameHandler(RuleHandler):
     This handler identifies function parameters that violate the naming convention
     and generates fixes to rename them to snake_case across both the function
     definition and all known call sites in the project.
+
+    Pipeline: programmatic (no LLM). Snake-case rename via regex
+    (``ARG_RENAME_PATTERN``, ``FUNC_CALL_RENAME_PATTERN``) and signature
+    parsing.
     """
 
     RULE_ID = ["python:S117", "python:S1172", "python:S1542"]
@@ -791,6 +795,12 @@ class StringLiteralDuplicateHandler(RuleHandler):
     This rule flags string literals that appear 3 or more times in a file.
     The handler extracts each duplicated literal into a module-level constant
     and replaces all occurrences with the constant name.
+
+    Pipeline: programmatic primary, with a direct-LLM fallback for naming
+    only. AST + YAKE keyword extraction (``ConstantNamingService``) generate
+    the constant names; if YAKE fails, ``LLMFixerAdapter.call_for_json`` is
+    invoked as a direct LLM JSON call. Does NOT use the OpenHands agent or
+    ``fix_at_line``.
     """
 
     RULE_ID = "python:S1192"
@@ -1248,6 +1258,9 @@ class AsyncToSyncHandler(RuleHandler):
 
     This rule identifies async functions that don't use await and should be sync.
     The handler analyzes the function and all its call sites to generate appropriate fixes.
+
+    Pipeline: programmatic (no LLM). Uses regex (``AWAIT_REMOVAL_PATTERN``)
+    and ``AsyncConversionAnalyzer`` for AST/call-site analysis.
     """
 
     RULE_ID = "python:S7503"
@@ -1429,6 +1442,11 @@ class CognitiveComplexityHandler(RuleHandler):
     Handler for python:S3776 - cognitive complexity reduction.
 
     This rule requires breaking down complex functions into simpler helper methods.
+
+    Pipeline: LLM via OpenHands agent + ``fix_at_line`` tool. Routes through
+    ``LLMFixer._call_llm_list`` with the rewritten S3776 prompt
+    (``prompts/python/refactoring/system_fix_issues.j2``); the agent is
+    expected to invoke ``fix_at_line`` to apply edits.
     """
 
     RULE_ID = "python:S3776"
@@ -1467,6 +1485,8 @@ class CognitiveComplexityHandler(RuleHandler):
                 file_path,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:
@@ -1480,6 +1500,11 @@ class DefaultRuleHandler(RuleHandler):
 
     Uses the LLM with general-purpose fixing prompts for rules that don't
     require specialized logic.
+
+    Pipeline: LLM via OpenHands agent + ``fix_at_line`` tool. Catch-all for
+    rules without a specialized handler. Routes through
+    ``LLMFixer._call_llm_list`` with the default (un-rewritten) agent prompt
+    (``prompts/python/system_agent_fix_issues.j2``).
     """
 
     MOIDY_LINE_RANGE = False
@@ -1515,6 +1540,8 @@ class DefaultRuleHandler(RuleHandler):
                 file_path,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:
