@@ -9,16 +9,28 @@ Your ONLY job is to refactor the function in place using your tools. Do NOT outp
 
 ## Workflow — follow these exact steps
 
-1. Call `file_editor` with command `view` on `{{ file_path }}` (use `view_range` to focus on the offending function) to read the current content
+1. Call `file_editor` with command `view` on `{{ file_path }}` to read the offending function AND to learn the file's total line count L
 2. Identify the helper function(s) you will extract to bring cognitive complexity below 15
 3. Plan the new code:
    - The simplified original function (signature unchanged), now calling the helpers
-   - The new helper function(s), to be inserted as siblings immediately after the original
-4. Apply the rewrite of the original function with `fix_at_line` (see "Applying the fix" below). Then apply one additional `fix_at_line` call per helper to insert it after the original function
-5. Call `terminal` to verify syntax: `python -m py_compile {{ file_path }} && echo "SYNTAX_OK"`
-6. If `fix_at_line` returns an `old_block` mismatch, re-`view` the file and retry with the actual current content
-7. If syntax fails, re-read the file and apply another `fix_at_line` to correct the regression
-8. Once `SYNTAX_OK` is printed, stop — you are done
+   - The new helper function(s), to be APPENDED to the end of the file (not inserted between existing functions)
+4. Use `fix_at_line` to replace the original function with its simplified version (see "Applying the fix" below)
+5. For each helper, APPEND it to the end of the file via `fix_at_line` (see "Appending a helper" below). Each successful response includes a `Syntax:` line — verify it stays `OK` after every edit
+6. If a `fix_at_line` response says `Syntax: FAILED`, your last edit broke the file. Re-`view`, repair with another `fix_at_line`, and confirm `Syntax: OK` BEFORE issuing the next helper insert. Do NOT stack more edits on broken syntax
+7. If `fix_at_line` returns an `old_block` mismatch, re-`view` the file and retry with the actual current content
+8. Once all helpers are appended and the final response shows `Syntax: OK`, you are done
+
+## Appending a helper
+
+To insert helper code without overwriting any existing function, anchor on the file's CURRENT last line:
+
+- Set `start_line` = `end_line` = L (the file's current last line number)
+- Set `old_block` = the exact current text of line L (use `file_editor view` to read it if unsure)
+- Set `new_block` = `<old_block>` + `\n\n` + `<helper source>`
+
+Each helper insert grows the file by N lines, so update `L = L + N` before the next insert (or just `view` again).
+
+This is the safe pattern. Setting `start_line`/`end_line` to "the line immediately after the original function" overwrites whatever happens to be there and is forbidden — it is what produced structurally-broken files in past runs.
 
 ## Applying the fix
 
@@ -52,13 +64,14 @@ If any is present, discard the message and emit only the tool call.
 Do NOT say or imply any of: "no changes", "cannot be reduced", "cannot be fixed", "would alter logic", "not possible", "0 blocks modified", "unable to refactor". There is always a refactor that meets the target — find it and apply it via `fix_at_line`.
 
 ## Absolute rules
-- Use tools — `fix_at_line`, `file_editor` (for `view` only), and `terminal`
+- Use tools — `fix_at_line`, `file_editor` (for `view` only), and `terminal` if needed
 - Always `view` before `fix_at_line` so `old_block` is accurate
 - Do NOT use `file_editor str_replace` — it fails when lines repeat; use `fix_at_line` instead
 - `fix_at_line` is invoked as a tool call only; never as text in your reply
 - Do NOT write JSON in your reply
 - Do NOT paste the fixed code as text in your message
 - Always use the absolute path: `{{ file_path }}`
+- Append helpers to the end of the file; never overwrite a line that is part of an existing function body
 
 ## When finished
 Write ONE short sentence saying which function you refactored and what helpers you extracted. Nothing else.
