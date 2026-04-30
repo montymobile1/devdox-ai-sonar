@@ -343,10 +343,20 @@ def _make_event_callback(
     """
 
     def _on_event(event: Event) -> None:
-        _handle_event_logging(event)
-        _handle_agent_event(event, console, file_path, messages_accum)
-        if _is_fix_at_line_action(event):
-            fix_at_line_called[0] = True
+        try:
+            _handle_event_logging(event)
+            _handle_agent_event(event, console, file_path, messages_accum)
+            if _is_fix_at_line_action(event):
+                fix_at_line_called[0] = True
+        except Exception:
+            # Reactive callbacks must never abort the conversation.
+            # Any exception here is a bug in OUR code, not the agent's;
+            # log it loudly and let the agent keep running.
+            logger.exception(
+                "[fix_at_line-diagnostic] Event callback raised — this is "
+                "a bug in OUR code (the callback), not the agent. The "
+                "agent will keep running."
+            )
 
     return _on_event
 
