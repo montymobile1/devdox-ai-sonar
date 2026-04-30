@@ -83,6 +83,54 @@ class FixAtLineExecutor(ToolExecutor):
         lines = original_text.splitlines(keepends=True)
         total_lines = len(lines)
 
+        # Append-at-EOF: explicit "insert after end of file" semantic.
+        # Agents commonly compute L from the last line shown by ``file_editor
+        # view``, which can include a trailing-newline indicator (line N+1)
+        # that the executor does not count. When the request is exactly
+        # start==end==total+1 with empty old_block, treat it as a deliberate
+        # append rather than rejecting it as out-of-range.
+        if (
+            action.start_line == total_lines + 1
+            and action.end_line == total_lines + 1
+            and action.old_block == ""
+        ):
+            new_text = original_text
+            if new_text and not new_text.endswith("\n"):
+                new_text += "\n"
+            appended = action.new_block.rstrip("\n") + "\n" if action.new_block else ""
+            new_text += appended
+
+            try:
+                target.write_text(new_text, encoding="utf-8")
+            except OSError as exc:
+                return FixAtLineObservation.from_text(
+                    text=f"Cannot write file '{action.path}': {exc}",
+                    is_error=True,
+                    path=action.path,
+                    start_line=action.start_line,
+                    end_line=action.end_line,
+                )
+
+            new_block_line_count = len(_normalize_block_to_lines(action.new_block))
+            syntax_status = (
+                _run_py_compile(target) if target.suffix == ".py" else ""
+            )
+            message = (
+                f"Appended {new_block_line_count} line(s) to {action.path} "
+                f"(file was {total_lines} line(s))."
+            )
+            if syntax_status:
+                message += f"\nSyntax: {syntax_status}"
+            return FixAtLineObservation.from_text(
+                text=message,
+                is_error=False,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+                old_block="",
+                new_block=_strip_trailing_newline(action.new_block),
+            )
+
         if action.end_line > total_lines:
             return FixAtLineObservation.from_text(
                 text=(

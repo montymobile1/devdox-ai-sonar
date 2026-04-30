@@ -22,15 +22,19 @@ Your ONLY job is to refactor the function in place using your tools. Do NOT outp
 
 ## Appending a helper
 
-To insert helper code without overwriting any existing function, anchor on the file's CURRENT last line:
+The simplest, safest pattern is "append after end of file":
 
-- Set `start_line` = `end_line` = L (the file's current last line number)
-- Set `old_block` = the exact current text of line L (use `file_editor view` to read it if unsure)
-- Set `new_block` = `<old_block>` + `\n\n` + `<helper source>`
+- Run `file_editor view` to see the file. Note the highest line number it shows; call this `L_view`.
+- Call `fix_at_line` with `start_line` = `end_line` = `L_view + 1`, `old_block` = `""`, `new_block` = `<helper source>`.
+- The executor recognises this exact shape (start == end == total_lines + 1, empty `old_block`) as a deliberate "append after EOF" and appends without needing a content anchor.
 
-Each helper insert grows the file by N lines, so update `L = L + N` before the next insert (or just `view` again).
+Why `L_view + 1` and not `L_view`: `file_editor view` may display one trailing line beyond the file's actual content (a UI affordance for "you can append here"). Targeting `L_view + 1` lands cleanly past the file regardless of which convention the view uses.
 
-This is the safe pattern. Setting `start_line`/`end_line` to "the line immediately after the original function" overwrites whatever happens to be there and is forbidden — it is what produced structurally-broken files in past runs.
+After each append the file grows; re-`view` (or just add the helper's line count to your local `L_view`) before the next append.
+
+Setting `start_line`/`end_line` to a line that contains existing function code — e.g. "the line immediately after the original function" or any line within an existing helper — overwrites that line. Don't do that. The append-at-EOF pattern is the safe default.
+
+If for some reason you must anchor on existing content (rare), use `start_line` = `end_line` = the line number of the LAST line that contains real code, set `old_block` = that line's exact text, set `new_block` = `<old_block>` + `\n\n` + `<helper source>`.
 
 ## Applying the fix
 
