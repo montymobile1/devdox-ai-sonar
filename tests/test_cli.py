@@ -5812,12 +5812,20 @@ class TestProcessIssuesForRuleFlow:
     @patch('devdox_ai_sonar.cli._process_single_fix', new_callable=AsyncMock)
     @patch('devdox_ai_sonar.cli.console')
     async def test_stops_on_user_cancel(self, mock_console, mock_fix, mock_continue):
-        """Lines 1458-1459: user cancels → returns False."""
-        issue = Mock()
-        issue.file = "handler.py"
+        """User cancels between issues → returns False after processing only the first.
+
+        Two issues are needed because the loop only consults
+        ``_should_continue_to_next_issue`` when there is a NEXT issue to advance
+        to (idx < total_issues). With one issue the loop completes naturally
+        and returns True, which is the correct "completed successfully" path.
+        """
+        issue1 = Mock()
+        issue1.file = "handler.py"
+        issue2 = Mock()
+        issue2.file = "handler.py"
 
         result = await _process_issues_for_rule(
-            "rule:S1234", [issue],
+            "rule:S1234", [issue1, issue2],
             {"analyzer": Mock(), "ruler": Mock(), "fixer": Mock()},
             AuthConfig(token="t", organization="o", project="p",
                        project_path="/tmp", git_url="https://git.example.com"),

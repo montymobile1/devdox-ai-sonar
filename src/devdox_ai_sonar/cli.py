@@ -1747,7 +1747,7 @@ async def _process_security_issues(
                 rule_info=rule_info,
             )
 
-            if idx < total_files and not await _should_continue_to_next_issue(
+            if not await _should_continue_to_next_issue(
                 idx, total_files, system_ask=system_ask
             ):
                 break
