@@ -1842,6 +1842,14 @@ class LLMFixer:
         logger.debug("Applying %d fix(es) to %s", len(fixes), file_path)
         try:
             lines = await self.file_reader.read_lines(file_path)
+            fixes = sorted(
+                fixes,
+                key=lambda f: max(
+                    (cb.start_line for cb in f.fixed_code_blocks),
+                    default=0,
+                ),
+                reverse=True,
+            )
             results = []
             for fix in fixes:
                 result, lines = apply_single_fix(lines, fix)
