@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 import asyncio
 import functools
+import logging
 import traceback
 
 from rich.console import Console
@@ -65,6 +66,14 @@ from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
+
+# Developer toggle. Flip to True locally to enable DEBUG-level
+# logs from the devdox_ai_sonar logger hierarchy. Leave False on
+# main; do NOT commit set to True.
+DEBUG = False
+
+if DEBUG:
+    logging.getLogger("devdox_ai_sonar").setLevel(logging.DEBUG)
 
 
 console = Console()
