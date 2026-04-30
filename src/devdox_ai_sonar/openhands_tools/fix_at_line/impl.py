@@ -7,6 +7,8 @@ number instead of content match.
 """
 
 import logging
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -212,12 +214,18 @@ class FixAtLineExecutor(ToolExecutor):
             )
 
         original_line_count = action.end_line - action.start_line + 1
+        syntax_status = (
+            _run_py_compile(target) if target.suffix == ".py" else ""
+        )
+        message = (
+            f"Replaced lines {action.start_line}-{action.end_line} in "
+            f"{action.path} ({original_line_count} line(s) → "
+            f"{new_block_line_count} line(s))."
+        )
+        if syntax_status:
+            message += f"\nSyntax: {syntax_status}"
         return FixAtLineObservation.from_text(
-            text=(
-                f"Replaced lines {action.start_line}-{action.end_line} in "
-                f"{action.path} ({original_line_count} line(s) → "
-                f"{new_block_line_count} line(s))."
-            ),
+            text=message,
             is_error=False,
             path=action.path,
             start_line=action.start_line,
@@ -225,6 +233,31 @@ class FixAtLineExecutor(ToolExecutor):
             old_block=returned_old_block,
             new_block=returned_new_block,
         )
+
+
+def _run_py_compile(target: Path) -> str:
+    """Run ``python -m py_compile`` on ``target``; return short status string.
+
+    "OK" on success; "FAILED — <last stderr line>" on syntax failure. Returns
+    a non-empty status even on subprocess errors so the agent always sees
+    feedback. Timeout is short so a single misbehaving compile never blocks
+    the executor.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "py_compile", str(target)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"FAILED — py_compile error: {exc}"
+    if result.returncode == 0:
+        return "OK"
+    err_lines = [
+        line for line in (result.stderr or "").splitlines() if line.strip()
+    ]
+    return f"FAILED — {err_lines[-1] if err_lines else 'unknown error'}"
 
 
 def _strip_trailing_newline(text: str) -> str:
