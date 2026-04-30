@@ -270,6 +270,13 @@ class ConvenationNameHandler(RuleHandler):
         - python:S1542  → Rename non-snake_case function in definition + call sites.
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
         """
+        logger.info(
+            "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         try:
             if len(context.functions) == 0:
                 logger.warning("Could not find functions ")
@@ -819,6 +826,13 @@ class StringLiteralDuplicateHandler(RuleHandler):
         rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes for duplicated string literal issues (python:S1192)."""
+        logger.info(
+            "[handler] %s pipeline=B+C-programmatic-with-llm-fallback rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         parsed = self._read_and_parse_file(file_path)
         if parsed is None:
             return None
@@ -1291,6 +1305,13 @@ class AsyncToSyncHandler(RuleHandler):
         Returns:
             SonarFixResponse with all code blocks for function and call sites
         """
+        logger.info(
+            "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         try:
             code_blocks = []
             response_lst = []
@@ -1469,6 +1490,13 @@ class CognitiveComplexityHandler(RuleHandler):
 
         This delegates to the LLM with specialized refactoring prompts.
         """
+        logger.info(
+            "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         if not llm_caller:
             logger.error("LLM caller required for cognitive complexity fixes")
             return None
@@ -1523,6 +1551,13 @@ class DefaultRuleHandler(RuleHandler):
         rule_info: Optional[Dict[str, Any]] = {},
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes using standard LLM approach."""
+        logger.info(
+            "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         if not llm_caller:
             logger.error("LLM caller required for default rule handling")
             return None
