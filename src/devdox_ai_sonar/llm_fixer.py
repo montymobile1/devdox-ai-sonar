@@ -3036,8 +3036,12 @@ class ContextExtractor:
             containing_func_idx = self._find_containing_function(problem_idx)
 
             if containing_func_idx is None:
-                logger.warning(
-                    f"Problem line {problem_idx + 1} is not inside any function"
+                # Issue is at module scope (e.g. a literal in a top-level dict or
+                # constant). Not a problem — the handler picks it up via other
+                # paths. Logged at DEBUG to keep INFO-level runs quiet.
+                logger.debug(
+                    "Problem line %d is at module scope (not inside any function)",
+                    problem_idx + 1,
                 )
                 continue
 
