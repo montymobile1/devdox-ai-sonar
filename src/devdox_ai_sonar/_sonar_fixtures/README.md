@@ -182,14 +182,13 @@ then 7 with `fix_at_line_called=True`, then 8.
 
 ---
 
-## Pre-existing fixture (not in this directory)
+## Pre-existing combined fixture
 
-`src/devdox_ai_sonar/temp_test_module.py` is the original throwaway
-target. It currently carries the same shape as
-`s3776_cognitive_complexity.py` + `s1192_string_literals.py` rolled
-into one file. Keep or delete at your discretion; it does not
-duplicate the cleaner single-rule fixtures here, but it does have
-broader noise.
+`temp_test_module.py` (in this directory) is the original throwaway
+target. It carries the same shape as `s3776_cognitive_complexity.py`
++ `s1192_string_literals.py` rolled into one file. Keep or delete at
+your discretion; it does not duplicate the cleaner single-rule
+fixtures here, but it does have broader noise.
 
 ---
 
