@@ -284,12 +284,20 @@ class FixAtLineExecutor(ToolExecutor):
 
 
 def _run_py_compile(target: Path) -> str:
-    """Run ``python -m py_compile`` on ``target``; return short status string.
+    """Run ``py_compile`` and (best-effort) ``pyflakes`` on ``target``.
 
-    "OK" on success; "FAILED — <last stderr line>" on syntax failure. Returns
-    a non-empty status even on subprocess errors so the agent always sees
-    feedback. Timeout is short so a single misbehaving compile never blocks
-    the executor.
+    Returns "OK" only when both pass. ``py_compile`` catches structural
+    syntax errors. ``pyflakes`` (when available) additionally catches
+    undefined-name references — the failure mode of an incomplete refactor
+    where the simplified function calls helpers that haven't been appended
+    yet. ``py_compile`` would report SYNTAX_OK on that file, but a real
+    runtime call would raise ``NameError``; the pyflakes pass closes that
+    gap.
+
+    "FAILED — <reason>" on either syntax or undefined-name failure.
+    Returns a non-empty status even on subprocess errors so the agent
+    always sees feedback. Pyflakes is optional: if it's not installed,
+    the undefined-name check is silently skipped.
     """
     try:
         result = subprocess.run(
@@ -300,12 +308,43 @@ def _run_py_compile(target: Path) -> str:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return f"FAILED — py_compile error: {exc}"
-    if result.returncode == 0:
-        return "OK"
-    err_lines = [
-        line for line in (result.stderr or "").splitlines() if line.strip()
-    ]
-    return f"FAILED — {err_lines[-1] if err_lines else 'unknown error'}"
+    if result.returncode != 0:
+        err_lines = [
+            line for line in (result.stderr or "").splitlines() if line.strip()
+        ]
+        return f"FAILED — {err_lines[-1] if err_lines else 'unknown error'}"
+
+    undefined = _run_pyflakes_undefined_names(target)
+    if undefined:
+        return f"FAILED — {undefined}"
+    return "OK"
+
+
+def _run_pyflakes_undefined_names(target: Path) -> str:
+    """Best-effort undefined-name check via ``python -m pyflakes``.
+
+    Returns the first ``undefined name`` finding (one short line) or "" if
+    pyflakes is unavailable, times out, or finds no undefined-name issues.
+    Other pyflakes warnings (unused imports, redefinitions, …) are ignored
+    intentionally — we only want to catch the case where a refactor left
+    a name unresolved.
+    """
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pyflakes", str(target)],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    output_lines = (
+        (result.stdout or "") + (result.stderr or "")
+    ).splitlines()
+    for line in output_lines:
+        if "undefined name" in line.lower():
+            return line.strip()
+    return ""
 
 
 def _strip_trailing_newline(text: str) -> str:
