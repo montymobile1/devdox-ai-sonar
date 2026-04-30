@@ -2,10 +2,10 @@ Fix this {{ language }} SonarQube cognitive complexity (S3776) issue in `{{ file
 Do NOT output JSON. Do NOT paste code in your reply.
 
 To apply the change, use `fix_at_line`:
-- Call `file_editor view` first with a `view_range` covering the function below — you need its current content.
-- Apply ONE `fix_at_line` call to replace the original function with the simplified version (the one that calls helpers). Use the function's exact line range as `start_line`/`end_line`, and `old_block` set to the current content of those lines (exactly as `view` showed them).
-- Then apply ONE additional `fix_at_line` call PER helper to insert it after the original function. For each insertion, set `start_line` and `end_line` to the line immediately after the original function (anchor on its current content via `old_block`, and prepend the helper's source to `new_block`).
-- `fix_at_line` anchors by line number, so duplicated lines elsewhere in the file will not cause failures.
+- Call `file_editor view` first to see the function's current content AND to learn the file's total line count L.
+- Apply ONE `fix_at_line` call to replace the original function with its simplified version (one that calls helpers). Use the function's line range as `start_line`/`end_line`; `old_block` = current content of those lines.
+- Then APPEND each helper to the end of the file: `start_line=L`, `end_line=L`, `old_block` = exact current text of line L, `new_block` = `<old_block>` + `\n\n` + `<helper source>`. After each insert the file grows by N lines — update `L` (or re-`view`) before the next.
+- Every `fix_at_line` response includes a `Syntax:` line. If it says `FAILED`, your last edit broke the file — repair with another `fix_at_line` BEFORE doing more inserts.
 - Do NOT use `file_editor str_replace` — it is unsafe when the file has duplicated lines.
 
 ## Issue
@@ -22,7 +22,7 @@ To apply the change, use `fix_at_line`:
 Current: {{ issues[0].message.split('from ')[1].split(' to')[0] if 'from' in issues[0].message else '?' }} → Target: <15
 
 MANDATORY:
-1. Extract one or more helpers and place them as siblings (immediately after the original function)
+1. Extract one or more helpers and APPEND them to the end of the file (do NOT insert between existing functions)
 2. The original function (with its name and signature unchanged) MUST call ALL helpers
 3. The refactored result MUST reach the target
 
@@ -51,4 +51,4 @@ MANDATORY:
 
 {{ method_instruction }}
 
-Read `{{ file_path }}` with `file_editor view` first, then apply the fixes with `fix_at_line` (one call to replace the original function, one call per helper to insert it as a sibling), then run `python -m py_compile {{ file_path }} && echo "SYNTAX_OK"` to confirm syntax is valid.
+Read `{{ file_path }}` with `file_editor view` first, then apply the fixes with `fix_at_line` (one call to replace the original function, one call per helper appended to the end of the file). Each `fix_at_line` response includes a `Syntax:` line — verify it stays `OK` after every edit.
