@@ -1603,12 +1603,12 @@ async def _process_issues_for_rule(
             rule_info=rule_info,
         )
 
-        if not await _should_continue_to_next_issue(
+        if idx < total_issues and not await _should_continue_to_next_issue(
             idx, total_issues, system_ask=system_ask
         ):
-            return False  # Stop processing
+            return False  # User stopped early
 
-    return True  # Continue to next rule
+    return True  # All issues processed
 
 
 async def _process_single_fix(
@@ -1686,7 +1686,7 @@ async def _process_security_issues(
                 rule_info=rule_info,
             )
 
-            if not await _should_continue_to_next_issue(
+            if idx < total_files and not await _should_continue_to_next_issue(
                 idx, total_files, system_ask=system_ask
             ):
                 break
