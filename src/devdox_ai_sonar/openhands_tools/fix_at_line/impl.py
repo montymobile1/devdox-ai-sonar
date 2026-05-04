@@ -406,6 +406,10 @@ def _run_py_compile(target: Path) -> str:
     if duplicate:
         return f"FAILED — {duplicate}"
 
+    orphan = _check_no_orphan_self_methods(target)
+    if orphan:
+        return f"FAILED — {orphan}"
+
     undefined = _run_pyflakes_undefined_names(target)
     if undefined:
         return f"FAILED — {undefined}"
@@ -456,6 +460,79 @@ def _check_no_duplicate_class_methods(target: Path) -> str:
                     )
                 seen[item.name] = item.lineno
     return ""
+
+
+def _check_no_orphan_self_methods(target: Path) -> str:
+    """Return a non-empty failure description if any function whose
+    first parameter is ``self`` is defined outside a class body.
+
+    Catches the failure mode where an agent extracts class methods
+    (the simplified caller still does ``self._helper(...)``) but
+    appends the helper definitions outside the class — typically via
+    the EOF-append pattern, which lands them at module level. When the
+    appended block carries class-level indentation, Python parses it
+    as a nested function inside whatever top-level function it lands
+    after, which is even more invisible: ``py_compile`` accepts the
+    file because nested defs are syntactically valid, ``pyflakes``
+    doesn't flag method-level references, and the duplicate-method
+    check sees no duplicates. At runtime the call site
+    ``AttributeError``s on the missing class method.
+
+    The check: walk the AST tracking whether each node's immediate
+    parent is a ``ClassDef``. Any ``FunctionDef`` / ``AsyncFunctionDef``
+    with ``self`` as its first parameter must have a ``ClassDef``
+    parent — anything else is an orphan.
+
+    Returns "" when no orphans are found.
+    """
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # py_compile already covers this case; don't double-report.
+        return ""
+
+    orphans: list = []
+
+    def visit(node: ast.AST, in_class: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                visit(child, in_class=True)
+            elif isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                if not in_class:
+                    args = child.args.args
+                    if args and args[0].arg == "self":
+                        orphans.append((child.name, child.lineno))
+                # Recurse into the function body with in_class=False:
+                # nested defs are not class members even if the outer
+                # function is.
+                visit(child, in_class=False)
+            else:
+                visit(child, in_class=in_class)
+
+    visit(tree, in_class=False)
+
+    if not orphans:
+        return ""
+
+    items = ", ".join(
+        f"'{name}' (line {lineno})" for name, lineno in orphans
+    )
+    return (
+        f"function(s) {items} have `self` as first parameter but "
+        f"are defined outside a class body — likely orphaned helpers "
+        f"extracted from a class method. Move them inside the class "
+        f"so callers' `self.<name>(...)` references resolve. For "
+        f"S3776-style refactors of an instance method, replace the "
+        f"original function's line range with [simplified function "
+        f"+ blank line + helpers] in ONE fix_at_line call at the "
+        f"class-member indent — do NOT use the EOF-append pattern."
+    )
 
 
 def _run_pyflakes_undefined_names(target: Path) -> str:
