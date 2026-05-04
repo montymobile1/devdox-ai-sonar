@@ -15,6 +15,7 @@ from devdox_ai_sonar.models.file_structures import (
     LineRange,
     FixApplication,
     ImportState,
+    slot_width,
 )
 from devdox_ai_sonar.models.sonar import (
     FixSuggestion,
@@ -882,14 +883,25 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
         len(new_lines),
     )
 
+    # Compare the block's declared slot width (what the handler said
+    # it was filling) against the actual line count delivered. Mismatch
+    # is a handler bug — log so we notice — but the file already
+    # reflects the actual content from the splice above, so just emit
+    # the warning and update end_idx to point at the real last line of
+    # the replacement (0-indexed: start_idx + N - 1).
     if len(new_lines) > 1:
-        end_idx = len(new_lines) + block.start_line - 1
-
-        logger.warning(
-            "Full code block has %d lines, expected %d",
-            len(new_lines),
-            end_idx - start_idx + 1,
-        )
+        declared_width = slot_width(block.start_line, block.end_line)
+        actual_width = len(new_lines)
+        if actual_width != declared_width:
+            logger.warning(
+                "Full code block has %d line(s) but declared slot "
+                "[start_line=%d, end_line=%d] is %d line(s) wide",
+                actual_width,
+                block.start_line,
+                block.end_line,
+                declared_width,
+            )
+        end_idx = start_idx + actual_width - 1
 
     return lines, end_idx
 
