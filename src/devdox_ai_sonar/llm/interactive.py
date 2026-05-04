@@ -68,6 +68,45 @@ _console = Console()
 # provider name.
 _CUSTOM_LABEL = "🔧 Custom"
 _CUSTOM_SENTINEL = "__custom__"
+_VERIFIED_MARK = "⭐ "
+
+# Mode-picker (Step 0) labels. The wizard's top-level choice is now
+# "curated catalogue" vs "custom endpoint"; before Step 0 existed, the
+# 🔧 Custom option was the last entry of the provider picker and easy
+# to miss.
+_MODE_CURATED_LABEL = "📋 Pick from curated list"
+_MODE_CUSTOM_LABEL = "🔧 Custom endpoint"
+_MODE_CURATED = "curated"
+_MODE_CUSTOM = "custom"
+
+# Selecting ``_BACK_LABEL`` in a menu (or typing ``back`` at a text
+# prompt inside the custom flow) pops one level up the wizard.
+_BACK_LABEL = "← Back"
+_BACK_SENTINEL = "__back__"
+_VERIFIED_LEGEND = (
+    "[dim]⭐ = verified by OpenHands "
+    "(tested and known to work well for code fixes)[/dim]"
+)
+
+# Per-invocation flag: the ⭐ legend is educational, not a repeating
+# status indicator. Show it the first time a picker with stars opens,
+# then stay quiet for the rest of that add/update flow. Reset to False
+# at the top of each top-level wizard entry point so the NEXT
+# invocation explains the symbol to a user who might be new.
+_legend_shown_this_run: bool = False
+
+
+def _show_verified_legend_once(menu_has_stars: bool) -> None:
+    """Print the ⭐ legend at most once per wizard invocation.
+
+    ``menu_has_stars`` short-circuits: no stars on screen means no
+    symbol to explain, so we stay silent regardless of state.
+    """
+    global _legend_shown_this_run
+    if not menu_has_stars or _legend_shown_this_run:
+        return
+    _console.print(_VERIFIED_LEGEND)
+    _legend_shown_this_run = True
 
 # Maximum credential-shaped (auth / unknown / connection) probe failures
 # tolerated in a single API-key prompt loop before the wizard gives up
@@ -173,11 +212,31 @@ async def offer_legacy_llm_recovery(manager: ConfigManager) -> bool:
 
 async def add_profile_flow(manager: ConfigManager) -> None:
     """Run the add-profile wizard, looping on "Add another?"."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     while True:
-        profile = await _collect_and_validate_profile()
-        if profile is None:
+        # Re-read existing names on every iteration -- a just-saved
+        # profile in the previous pass becomes a duplicate for the
+        # next one.
+        existing_names = frozenset(
+            p.name for p in await load_profiles(manager)
+        )
+        attempt = await _collect_and_validate_profile(
+            existing_names=existing_names
+        )
+        if attempt.kind == "cancelled":
             _console.print("[yellow]⚠ Profile configuration cancelled[/yellow]")
             break
+        if attempt.kind == "abandoned":
+            # User explicitly abandoned this attempt (rate-limit "c");
+            # offer "add another?" so they can pick a different
+            # provider without being dumped back to the CLI root.
+            if not _confirm_add_another():
+                break
+            continue
+
+        profile = attempt.profile
+        assert profile is not None  # kind == "created" implies profile
 
         set_default = _confirm_default()
         try:
@@ -192,64 +251,67 @@ async def add_profile_flow(manager: ConfigManager) -> None:
             break
 
 
-async def _collect_and_validate_profile() -> Optional[LLMProfile]:
-    """Walk the add-profile wizard, handling restart-on-bad-model.
+@dataclass(frozen=True)
+class _AttemptResult:
+    """Outcome of one walk through the add-profile wizard.
 
-    The outer ``while True`` exists solely so a model-shaped probe
-    failure (the endpoint doesn't serve the picked model) can send the
-    user back to the provider picker instead of trapping them on the
-    API-key prompt. Normal success or an explicit cancel break out
-    immediately.
+    * ``kind == "created"`` -- a fully-validated :class:`LLMProfile`
+      is in ``profile``; caller persists it.
+    * ``kind == "cancelled"`` -- hard abort (Ctrl+C, empty picker,
+      etc.); caller exits the wizard.
+    * ``kind == "abandoned"`` -- soft abort (rate-limit "c"); caller
+      should skip the save but still offer "add another?".
+    """
+
+    kind: Literal["created", "cancelled", "abandoned"]
+    profile: Optional[LLMProfile] = None
+
+
+async def _collect_and_validate_profile(
+    existing_names: frozenset[str] = frozenset(),
+) -> _AttemptResult:
+    """Walk the add-profile wizard, handling back-nav and restart-on-bad-model.
+
+    The outer ``while True`` exists so a model-shaped probe failure
+    (the endpoint doesn't serve the picked model) can send the user
+    back to the mode/provider/model pickers instead of trapping them
+    on the API-key prompt. Normal success, explicit cancel, and
+    explicit abandon all break out immediately; the caller
+    distinguishes them via :class:`_AttemptResult.kind`.
     """
     while True:
-        picked = await _pick_provider_and_model()
-        if picked is None:
-            return None
-        model, base_url, family_label = picked
+        gathered = await _gather_model_and_base_url()
+        if gathered is None:
+            return _AttemptResult(kind="cancelled")
+        model, base_url, family_label = gathered
 
         validated = _validate_or_report(model, base_url)
         if validated is None:
-            return None
+            return _AttemptResult(kind="cancelled")
 
         result = _prompt_for_api_key_until_valid(family_label, model, base_url)
         if result.kind == "cancelled":
-            return None
+            return _AttemptResult(kind="cancelled")
+        if result.kind == "abandoned":
+            return _AttemptResult(kind="abandoned")
         if result.kind == "restart_model_selection":
             continue
         # result.kind == "validated"
         api_key = result.key or ""
 
-        name = _prompt_profile_name(default=_suggest_profile_name(model))
-        if name is None:
-            return None
-
-        return LLMProfile(
-            name=name, model=model, api_key=api_key, base_url=base_url
+        name = _prompt_profile_name(
+            default=_suggest_profile_name(model),
+            existing_names=existing_names,
         )
+        if name is None:
+            return _AttemptResult(kind="cancelled")
 
-
-async def _pick_provider_and_model() -> Optional[tuple[str, Optional[str], str]]:
-    """Pick provider and model; return (model, base_url, family_label) or None.
-
-    Returns ``None`` if the user cancels at any step. The ``family_label`` is
-    the human-readable bucket used in downstream prompts (the literal provider
-    name for catalog picks, ``"custom endpoint"`` for the Custom path).
-    """
-    picked_provider = await _prompt_for_provider()
-    if picked_provider is None:
-        return None
-
-    if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = _prompt_for_custom_model()
-        if model_and_base is None:
-            return None
-        model, base_url = model_and_base
-        return model, base_url, "custom endpoint"
-
-    model_id = await _prompt_for_model(picked_provider)
-    if model_id is None:
-        return None
-    return f"{picked_provider}/{model_id}", None, picked_provider
+        return _AttemptResult(
+            kind="created",
+            profile=LLMProfile(
+                name=name, model=model, api_key=api_key, base_url=base_url
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +321,8 @@ async def _pick_provider_and_model() -> Optional[tuple[str, Optional[str], str]]
 
 async def update_profile_flow(manager: ConfigManager) -> None:
     """Walk every updatable field in order, probe once, commit atomically."""
+    global _legend_shown_this_run
+    _legend_shown_this_run = False
     profiles = await load_profiles(manager)
     if not profiles:
         _console.print(
@@ -279,7 +343,9 @@ async def update_profile_flow(manager: ConfigManager) -> None:
 
     _sequential_name_prompt(ctx, existing_names={p.name for p in profiles})
     _sequential_api_key_prompt(ctx)
-    await _sequential_model_prompt(ctx)
+    await _sequential_model_prompt(
+        ctx, used_models=frozenset(p.model for p in profiles)
+    )
     _sequential_base_url_prompt(ctx)
     _sequential_default_prompt(ctx, currently_default=is_currently_default)
 
@@ -327,43 +393,165 @@ async def _set_default(manager: ConfigManager, name: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _prompt_for_provider() -> Optional[str]:
-    """Step 1: provider picker.
+async def _gather_model_and_base_url(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, Optional[str], str]]:
+    """Run Step 0 (mode) + Step 1/2 (selection) with single-level back.
 
-    Returns the picked provider name, :data:`_CUSTOM_SENTINEL` when the
-    user chose the 🔧 Custom option, or ``None`` on cancel.
+    Returns ``(full_model_string, base_url, family_label)`` or ``None``
+    if the user cancelled at any point. ``family_label`` is what the
+    subsequent API-key prompt shows the user ("openai", "custom
+    endpoint", etc.).
+
+    ``used_models`` is the set of full ``provider/model-id`` strings
+    already pinned by saved profiles. Matching entries in the model
+    picker are labelled ``(current)`` and cannot be selected. The add
+    flow passes the default empty set (no blocking); the update flow
+    passes every profile's model so the user can't land on a duplicate.
+
+    Back navigation is strictly one level at a time:
+
+    * Back from the provider picker  -> mode picker
+    * Back from the model picker     -> provider picker
+    * Back from the custom-input flow-> mode picker
+
+    Ctrl+C at any screen cancels the whole wizard (returns ``None``).
     """
-    menu = selection.build_provider_menu()
-    names = [entry.name for entry in menu]
-    names.append(_CUSTOM_LABEL)
+    while True:
+        mode = await _prompt_for_mode()
+        if mode is None:
+            return None
 
-    picked = await select_from_list(names, "Select an LLM provider")
+        if mode == _MODE_CUSTOM:
+            custom_result = _prompt_for_custom_model(used_models)
+            if custom_result is None:
+                return None  # cancelled
+            if custom_result == _BACK_SENTINEL:
+                continue  # back to mode picker
+            model, base_url = custom_result
+            return model, base_url, "custom endpoint"
+
+        # mode == _MODE_CURATED
+        curated_result = await _gather_curated_model(used_models)
+        if curated_result is None:
+            return None  # cancelled
+        if curated_result == _BACK_SENTINEL:
+            continue  # back to mode picker
+        provider, model_id = curated_result
+        return f"{provider}/{model_id}", None, provider
+
+
+async def _gather_curated_model(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, str] | str]:
+    """Walk the provider -> model pickers with back-nav between them.
+
+    Returns ``(provider, model_id)`` on a complete selection,
+    :data:`_BACK_SENTINEL` when the user backs out of the provider
+    picker (caller returns to the mode picker), or ``None`` when the
+    user cancels the wizard (Ctrl+C).
+    """
+    while True:
+        picked_provider = await _prompt_for_provider()
+        if picked_provider is None:
+            return None
+        if picked_provider == _BACK_SENTINEL:
+            return _BACK_SENTINEL
+
+        model_id = await _prompt_for_model(picked_provider, used_models)
+        if model_id is None:
+            return None
+        if model_id == _BACK_SENTINEL:
+            # Back from model picker -> re-enter provider picker.
+            continue
+        return picked_provider, model_id
+
+
+async def _prompt_for_mode() -> Optional[str]:
+    """Step 0: pick "curated catalogue" vs "custom endpoint".
+
+    This screen is the wizard's top level; a Ctrl+C cancels the whole
+    wizard. There is no ``← Back`` here -- you can't back out of the
+    root.
+
+    Returns :data:`_MODE_CURATED`, :data:`_MODE_CUSTOM`, or ``None``.
+    """
+    labels_to_value = {
+        _MODE_CURATED_LABEL: _MODE_CURATED,
+        _MODE_CUSTOM_LABEL: _MODE_CUSTOM,
+    }
+    display = [_MODE_CURATED_LABEL, _MODE_CUSTOM_LABEL]
+    picked = await select_from_list(
+        display, "How would you like to configure the model?"
+    )
     if picked is None:
         return None
-    if picked == _CUSTOM_LABEL:
-        return _CUSTOM_SENTINEL
-    return picked
+    return labels_to_value.get(picked)
 
 
-def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
+async def _prompt_for_provider() -> Optional[str]:
+    """Step 1: provider picker inside the curated-list branch.
+
+    A ``← Back`` entry at the end of the list returns to the mode
+    picker without cancelling the wizard. Verified providers get a
+    ⭐ prefix so users can spot the curated ones at a glance.
+
+    Returns the provider name, :data:`_BACK_SENTINEL`, or ``None``.
+    """
+    menu = selection.build_provider_menu()
+    labels_to_value: dict[str, str] = {}
+    display: list[str] = []
+    for entry in menu:
+        label = f"{_VERIFIED_MARK}{entry.name}" if entry.verified else entry.name
+        labels_to_value[label] = entry.name
+        display.append(label)
+    labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
+    display.append(_BACK_LABEL)
+
+    _show_verified_legend_once(any(entry.verified for entry in menu))
+    picked = await select_from_list(display, "Select an LLM provider")
+    if picked is None:
+        return None
+    return labels_to_value.get(picked)
+
+
+def _prompt_for_custom_model(
+    used_models: frozenset[str] = frozenset(),
+) -> Optional[tuple[str, Optional[str]] | str]:
     """Typed-input flow for self-hosted / non-curated endpoints.
 
     Prompts for a fully-qualified model string in ``provider/model-name``
-    form and an optional base URL. Returns ``(model, base_url)`` or
-    ``None`` on cancel / invalid input.
+    form and an optional base URL. Typing ``back`` (case-insensitive)
+    at the model prompt returns :data:`_BACK_SENTINEL` so the wizard
+    pops up to the mode picker. Ctrl+C cancels the wizard entirely.
+
+    If the typed model is already in ``used_models`` (another saved
+    profile pins it), we reject the entry and re-prompt. Mirrors the
+    block enforced in the curated picker.
     """
     _console.print(
         "[cyan]Custom endpoint: enter a model string in "
         "'provider/model-name' form (e.g. 'vllm/my-model', "
-        "'openai/my-finetune').[/cyan]"
+        "'openai/my-finetune'). Type 'back' to return to the mode "
+        "picker.[/cyan]"
     )
-    try:
-        model = Prompt.ask("Model").strip()
-    except KeyboardInterrupt:
-        return None
-    if not model:
-        _console.print("[red]❌ Model cannot be empty[/red]")
-        return None
+    while True:
+        try:
+            model = Prompt.ask("Model").strip()
+        except KeyboardInterrupt:
+            return None
+        if model.lower() == "back":
+            return _BACK_SENTINEL
+        if not model:
+            _console.print("[red]❌ Model cannot be empty[/red]")
+            return _BACK_SENTINEL
+        if model in used_models:
+            _console.print(
+                "[yellow]⚠ That model is already configured by a saved "
+                "profile. Pick a different one.[/yellow]"
+            )
+            continue
+        break
 
     try:
         base_url_raw = Prompt.ask(
@@ -375,37 +563,83 @@ def _prompt_for_custom_model() -> Optional[tuple[str, Optional[str]]]:
     return model, base_url
 
 
-async def _prompt_for_model(provider: str) -> Optional[str]:
-    """Step 2: pick a model id from a known provider's catalog."""
+async def _prompt_for_model(
+    provider: str, used_models: frozenset[str] = frozenset()
+) -> Optional[str]:
+    """Step 2: pick a model id from a known provider's catalog.
+
+    Verified entries are prefixed with ⭐ for the display; the returned
+    value is the bare model id (without the mark). A ``← Back`` entry
+    returns to the provider picker.
+
+    Entries whose full ``provider/model-id`` is in ``used_models`` are
+    rendered with a ``(current)`` suffix and cannot be selected --
+    picking one prints an explanation and re-enters the same picker.
+    The add flow passes an empty set (no blocking); the update flow
+    passes every saved profile's model so the user can't land on a
+    duplicate.
+    """
     menu = selection.build_model_menu(provider)
     if not menu:
         _console.print(
             f"[red]❌ No models available for provider '{provider}'[/red]"
         )
-        return None
+        return _BACK_SENTINEL
 
-    ids = [entry.model_id for entry in menu]
-    picked = await select_from_list(ids, f"Select a {provider} model")
-    return picked
+    labels_to_value: dict[str, str] = {}
+    blocked_labels: set[str] = set()
+    display: list[str] = []
+    for entry in menu:
+        base = (
+            f"{_VERIFIED_MARK}{entry.model_id}"
+            if entry.verified
+            else entry.model_id
+        )
+        full = f"{provider}/{entry.model_id}"
+        label = f"{base} (current)" if full in used_models else base
+        labels_to_value[label] = entry.model_id
+        if full in used_models:
+            blocked_labels.add(label)
+        display.append(label)
+    labels_to_value[_BACK_LABEL] = _BACK_SENTINEL
+    display.append(_BACK_LABEL)
+
+    _show_verified_legend_once(any(entry.verified for entry in menu))
+    while True:
+        picked = await select_from_list(display, f"Select a {provider} model")
+        if picked is None:
+            return None
+        if picked in blocked_labels:
+            _console.print(
+                "[yellow]⚠ That model is already configured by a saved "
+                "profile. Pick a different one.[/yellow]"
+            )
+            continue
+        return labels_to_value.get(picked)
 
 
 @dataclass(frozen=True)
 class _KeyLoopResult:
     """Outcome of the API-key-collection sub-step.
 
-    Three possibilities matter to the wizard's outer loop:
+    Four possibilities matter to the wizard's outer loop:
 
     * ``kind == "validated"`` -- the probe succeeded (or the user saved
       through a rate-limit); ``key`` holds the accepted credential.
-    * ``kind == "cancelled"`` -- the user pressed Ctrl+C / EOF at the
-      prompt; the whole wizard should exit.
+    * ``kind == "cancelled"`` -- hard abort (Ctrl+C / EOF at the key
+      prompt, or at the rate-limit sub-prompt). Wizard exits.
+    * ``kind == "abandoned"`` -- user explicitly picked "c" at the
+      rate-limit sub-prompt. Drop this profile but keep the wizard
+      alive so "add another?" runs.
     * ``kind == "restart_model_selection"`` -- the probe revealed a
       model-shaped failure (bad model ID, deprecated, not in the
       endpoint's catalogue). Looping on the same key-prompt is useless
       here; the outer wizard restarts from provider/model selection.
     """
 
-    kind: Literal["validated", "cancelled", "restart_model_selection"]
+    kind: Literal[
+        "validated", "cancelled", "abandoned", "restart_model_selection"
+    ]
     key: Optional[str] = None
 
 
@@ -437,6 +671,8 @@ def _prompt_for_api_key_until_valid(
             return _KeyLoopResult(kind="validated", key=api_key)
         if outcome == "cancel":
             return _KeyLoopResult(kind="cancelled")
+        if outcome == "abandon":
+            return _KeyLoopResult(kind="abandoned")
         if outcome == "pick_different_model":
             return _KeyLoopResult(kind="restart_model_selection")
         # outcome == "try_new_key"
@@ -488,11 +724,30 @@ def _confirm_add_another() -> bool:
         return False
 
 
-def _prompt_profile_name(default: str) -> Optional[str]:
-    try:
-        return Prompt.ask("Profile name", default=default).strip() or None
-    except KeyboardInterrupt:
-        return None
+def _prompt_profile_name(
+    default: str, *, existing_names: frozenset[str] = frozenset()
+) -> Optional[str]:
+    """Prompt for a profile name, re-asking on duplicates.
+
+    Returns the accepted name, or ``None`` if the user cancels with
+    Ctrl+C / EOF. A duplicate against ``existing_names`` prints a
+    short error and re-enters the prompt instead of letting the user
+    walk further into the wizard only to hit a save-time collision.
+    """
+    while True:
+        try:
+            name = Prompt.ask("Profile name", default=default).strip() or None
+        except KeyboardInterrupt:
+            return None
+        if name is None:
+            return None
+        if name in existing_names:
+            _console.print(
+                f"[red]❌ A profile named '{name}' already exists. "
+                "Pick a different name.[/red]"
+            )
+            continue
+        return name
 
 
 def _suggest_profile_name(model: str) -> str:
@@ -543,27 +798,27 @@ def _sequential_api_key_prompt(ctx: ProfileUpdateContext) -> None:
     ).strip()
 
 
-async def _sequential_model_prompt(ctx: ProfileUpdateContext) -> None:
+async def _sequential_model_prompt(
+    ctx: ProfileUpdateContext,
+    *,
+    used_models: frozenset[str] = frozenset(),
+) -> None:
     if Confirm.ask(
         f"Keep current model '{ctx.profile.model}'?", default=True
     ):
         return
-    picked_provider = await _prompt_for_provider()
-    if picked_provider is None:
+    # Delegate to the same mode-picker + back-nav state machine the
+    # add flow uses. ``used_models`` includes *every* saved profile's
+    # model -- including this profile's own current model -- so the
+    # picker blocks duplicates. The user already declined
+    # "keep current" above, so blocking the current model here is
+    # intentional, not a regression.
+    gathered = await _gather_model_and_base_url(used_models=used_models)
+    if gathered is None:
         return
-    if picked_provider == _CUSTOM_SENTINEL:
-        model_and_base = _prompt_for_custom_model()
-        if model_and_base is None:
-            return
-        new_model, new_base_url = model_and_base
-        ctx.updates["model"] = new_model
-        ctx.updates["base_url"] = new_base_url
-    else:
-        model_id = await _prompt_for_model(picked_provider)
-        if model_id is None:
-            return
-        ctx.updates["model"] = f"{picked_provider}/{model_id}"
-        ctx.updates["base_url"] = None
+    new_model, new_base_url, _family = gathered
+    ctx.updates["model"] = new_model
+    ctx.updates["base_url"] = new_base_url
 
 
 def _sequential_base_url_prompt(ctx: ProfileUpdateContext) -> None:
@@ -613,7 +868,9 @@ def _validate_or_report(
 
 ProbeOutcome = Literal[
     "accepted",
-    "cancel",
+    "cancel",            # hard abort -- wizard exits immediately
+    "abandon",           # soft abort -- drop this profile but keep the
+                         # wizard alive so "add another?" can run
     "try_new_key",
     "pick_different_model",
 ]
@@ -768,7 +1025,10 @@ def _handle_rate_limited(
             )
             return "accepted"
         if choice == "c":
-            return "cancel"
+            # Explicit "abandon this profile". The wizard should still
+            # ask "Add another?" so the user doesn't get kicked out of
+            # the CLI after spending time on picker + key.
+            return "abandon"
 
         # choice == "r": re-run the probe with the same key.
         _console.print("[cyan]Retrying...[/cyan]")
