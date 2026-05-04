@@ -103,11 +103,31 @@ class FixAtLineExecutor(ToolExecutor):
             and action.end_line == total_lines + 1
             and action.old_block == ""
         ):
-            new_text = original_text
-            if new_text and not new_text.endswith("\n"):
-                new_text += "\n"
-            appended = action.new_block.rstrip("\n") + "\n" if action.new_block else ""
-            new_text += appended
+            # Drop trailing whitespace from the existing content before
+            # composing the appended block. Lets us decide separator
+            # newlines deterministically from a known-clean baseline.
+            base_text = original_text.rstrip("\n")
+            if action.new_block:
+                appended_block = action.new_block.rstrip("\n") + "\n"
+            else:
+                appended_block = ""
+            if (
+                appended_block
+                and target.suffix == ".py"
+                and _starts_with_top_level_python_def(action.new_block)
+            ):
+                # PEP 8 wants two blank lines between top-level defs/classes.
+                # The trailing-newline-stripped base + "\n\n\n" yields:
+                # last-content-line\n  +  \n  +  \n  =  two blank lines, then
+                # the appended block.
+                separator = "\n\n\n"
+            elif appended_block:
+                separator = "\n"
+            else:
+                # Empty new_block — preserve a trailing newline so subsequent
+                # appends keep behaving sensibly.
+                separator = "\n" if base_text else ""
+            new_text = base_text + separator + appended_block
 
             try:
                 target.write_text(new_text, encoding="utf-8")
@@ -399,6 +419,25 @@ def _run_pyflakes_undefined_names(target: Path) -> str:
 _PYTHON_STRUCTURE_RE = re.compile(
     r"^\s*(?:async\s+)?(?:def|class|@\w)", re.MULTILINE
 )
+
+_TOP_LEVEL_PYTHON_DEF_RE = re.compile(
+    r"^(?:async\s+)?(?:def|class|@\w)"
+)
+
+
+def _starts_with_top_level_python_def(block: str) -> bool:
+    """True when ``block`` opens with a column-0 ``def`` / ``class`` / ``@dec``.
+
+    Used by the EOF-append path to decide whether to insert PEP 8's
+    canonical two blank lines between the existing content and the
+    appended block. Indented defs (methods inside classes) need only
+    one blank line and are handled by the default single-newline
+    separator already in place.
+    """
+    if not block:
+        return False
+    first_line = block.lstrip("\n").split("\n", 1)[0]
+    return bool(_TOP_LEVEL_PYTHON_DEF_RE.match(first_line))
 
 
 def _revert_if_syntax_cascade(
