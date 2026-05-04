@@ -234,6 +234,32 @@ class RuleHandler(ABC):
         return lst_suggestion
 
 
+# Sonar S117 / S1542 messages identify the violating identifier inside
+# quotes (single, double, or backtick across versions and languages),
+# e.g.:  Rename this local variable "Total" to match the regular
+# expression ^[_a-z][a-z0-9_]*$.
+# We capture the first quoted Python-identifier in the message; the
+# trailing regex (also containing brackets) is not identifier-shaped
+# so it does not collide with this pattern.
+_S117_VIOLATING_NAME_RE = re.compile(
+    r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]"
+)
+
+
+def _extract_s117_violating_name(message: str) -> Optional[str]:
+    """Return the first identifier-shaped token quoted in ``message``.
+
+    Used by ``ConvenationNameHandler`` to learn the specific name
+    Sonar flagged, including local variables (which are not in the
+    function's argument list and would otherwise be missed).
+    Returns ``None`` if the message has no quoted identifier.
+    """
+    if not message:
+        return None
+    match = _S117_VIOLATING_NAME_RE.search(message)
+    return match.group(1) if match else None
+
+
 class ConvenationNameHandler(RuleHandler):
     """
     Handler for python:S117 - Local variable and function parameter names
@@ -296,7 +322,7 @@ class ConvenationNameHandler(RuleHandler):
             for issue in issues:
                 if issue.rule == "python:S117":
                     return self._fix_naming_convention(
-                        function_info, context, file_path
+                        issues, function_info, context, file_path
                     )
                 if issue.rule == "python:S1542":
                     return self._fix_func_naming_convention(
@@ -534,21 +560,47 @@ class ConvenationNameHandler(RuleHandler):
 
     def _fix_naming_convention(
         self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
         function_info: Dict,
         context: FixContext,
         file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         """
-        S117: Rename non-snake_case parameters in the function definition
-        and update all keyword argument call sites accordingly.
+        S117: Rename non-snake_case parameters AND local variables in
+        the function definition, and update all keyword argument call
+        sites accordingly.
 
-        For each definition in this file, all of that function's
-        non-snake_case parameters are renamed inside a single CodeBlock.
-        Emitting one block per identifier was previously generating
-        multiple FULL_CODE replacements that all targeted the same
-        line range — each expecting the original signature — so only
-        the last replacement landed and the other renames were lost.
+        For each definition in this file, all renames are applied
+        inside a single CodeBlock spanning the function. Emitting one
+        block per identifier was previously generating multiple
+        FULL_CODE replacements that all targeted the same line range
+        — each expecting the original signature — so only the last
+        replacement landed and the other renames were lost.
+
+        Local variables (which are not part of ``definition["args"]``)
+        are picked up from each S117 issue's message: Sonar quotes the
+        violating identifier inline, so a regex extraction yields the
+        target name and the existing ``str.replace`` over the function
+        body covers it without an AST scope walk.
         """
+        # Pull violating identifiers out of S117 issue messages so
+        # local variables get renamed alongside parameters. Matching
+        # is by name only, so a name that is already snake_case (rare
+        # but possible if Sonar's regex has changed) is silently
+        # ignored.
+        local_renames: Dict[str, str] = {}
+        for issue in issues:
+            if getattr(issue, "rule", "") != "python:S117":
+                continue
+            name = _extract_s117_violating_name(
+                getattr(issue, "message", "") or ""
+            )
+            if not name:
+                continue
+            snake = to_snake_case(name)
+            if snake != name:
+                local_renames[name] = snake
+
         code_blocks = []
         response_lst = []
         args_to_be_changed = {}
@@ -561,6 +613,12 @@ class ConvenationNameHandler(RuleHandler):
                 new_arg = to_snake_case(arg)
                 if new_arg != arg:
                     renames[arg] = new_arg
+            # Merge in local-variable renames extracted from issue
+            # messages. Param renames take precedence on key collision
+            # (they are the same key/value pair anyway when the message
+            # quotes a parameter name).
+            for old_name, new_name in local_renames.items():
+                renames.setdefault(old_name, new_name)
             if not renames:
                 continue
             args_to_be_changed.update(renames)
@@ -589,8 +647,9 @@ class ConvenationNameHandler(RuleHandler):
             )
 
         explanation = (
-            f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
-            f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
+            f"Renamed non-snake_case identifier(s) {list(args_to_be_changed.keys())} "
+            f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}' "
+            f"(parameters and any local variables flagged by Sonar). "
             f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
             f"This satisfies python:S117, which requires all local variables and function "
             f"parameters to follow the snake_case naming convention."
