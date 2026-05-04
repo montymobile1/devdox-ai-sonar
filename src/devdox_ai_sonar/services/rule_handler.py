@@ -541,22 +541,34 @@ class ConvenationNameHandler(RuleHandler):
         """
         S117: Rename non-snake_case parameters in the function definition
         and update all keyword argument call sites accordingly.
+
+        For each definition in this file, all of that function's
+        non-snake_case parameters are renamed inside a single CodeBlock.
+        Emitting one block per identifier was previously generating
+        multiple FULL_CODE replacements that all targeted the same
+        line range — each expecting the original signature — so only
+        the last replacement landed and the other renames were lost.
         """
         code_blocks = []
         response_lst = []
         args_to_be_changed = {}
 
         for definition in function_info["definitions"]:
-            if Path(definition["file"]) == file_path:
-                for arg in definition["args"]:
-                    new_arg = to_snake_case(arg)
-                    if new_arg != arg:
-                        args_to_be_changed[arg] = new_arg
-                        code_blocks.append(
-                            self._change_function_definition_block(
-                                definition, context, arg, new_arg
-                            )
-                        )
+            if Path(definition["file"]) != file_path:
+                continue
+            renames: Dict[str, str] = {}
+            for arg in definition["args"]:
+                new_arg = to_snake_case(arg)
+                if new_arg != arg:
+                    renames[arg] = new_arg
+            if not renames:
+                continue
+            args_to_be_changed.update(renames)
+            code_blocks.append(
+                self._change_function_definition_block_multi(
+                    definition, context, renames
+                )
+            )
 
         if not code_blocks:
             return None
@@ -666,6 +678,51 @@ class ConvenationNameHandler(RuleHandler):
         )
 
         return response_lst
+
+    def _change_function_definition_block_multi(
+        self,
+        function_info: Dict[str, Any],
+        context: FixContext,
+        renames: Dict[str, str],
+    ) -> CodeBlock:
+        """
+        Build a single CodeBlock that applies multiple parameter renames
+        to a function definition.
+
+        Avoids the conflict that arises when each rename is shipped as
+        its own FULL_CODE block: every block targets the same line
+        range and expects the unmodified signature, so apply-loop
+        last-wins behavior drops all but one rename.
+
+        Args:
+            function_info: Parsed metadata for the function (line number,
+                decorators).
+            context: Fix context providing the raw source of the
+                definition.
+            renames: Mapping ``{old_name: new_name}`` covering every
+                parameter on this function that needs to be renamed.
+
+        Returns:
+            A CodeBlock whose context has every rename applied.
+        """
+        original_def = context.context_dict["new_context"][0]["context"]
+        num_lines = len(original_def.strip().split("\n"))
+        new_def = original_def
+        for old_name, new_name in renames.items():
+            new_def = new_def.replace(old_name, new_name)
+
+        actual_start_line = function_info["line"] - len(function_info["decorators"])
+        end_line = actual_start_line + num_lines
+
+        return CodeBlock(
+            block_name=function_info["function"],
+            start_line=actual_start_line,
+            end_line=end_line,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context=new_def,
+        )
 
     def _change_function_definition_block(
         self,
