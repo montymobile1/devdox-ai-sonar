@@ -24,7 +24,10 @@ from openhands.sdk import (
 )
 import json
 from pydantic import ValidationError
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 import logging
@@ -66,6 +69,93 @@ logger = logging.getLogger(__name__)
 
 
 _console = Console()
+
+
+# ---- per-fix block rendering ------------------------------------------------
+#
+# A "fix block" is one call to ``LLMFixer.generate_fix_by_file`` — i.e. one
+# attempt to fix a single Sonar issue group. The header prints the issue
+# context (rule / severity / location / quoted message) up front so the run
+# log is readable even when fixes go wrong; the footer prints the outcome
+# tag (Applied / Skipped / Failed / No-fix) plus a one-line reason. Both
+# also emit a plain-text logger.info mirror so the same data is grep-able
+# from the file log without re-parsing Rich markup.
+
+
+_FIX_OUTCOME_STYLES = {
+    "applied": ("✓", "bold green"),
+    "skipped": ("⏭", "bold yellow"),
+    "failed": ("✗", "bold red"),
+    "no-fix": ("∅", "dim"),
+}
+
+
+def _print_fix_block_header(
+    issues: "List[Union[SonarIssue, SonarSecurityIssue]]",
+) -> None:
+    """Render the opening of a fix block — Rich rule + issue table.
+
+    Prints to ``_console`` for readability and emits one ``[fix-block]``
+    INFO log line per issue so the same record is grep-able from the
+    plain-text log.
+    """
+    if not issues:
+        return
+    first = issues[0]
+    rule = getattr(first, "rule", "<no-rule>")
+    file = getattr(first, "file", None) or "<no-file>"
+    first_line = getattr(first, "first_line", None) or "?"
+    _console.rule(
+        f"[bold cyan]Fix attempt — {rule} on {file}:{first_line}[/bold cyan]",
+        style="cyan",
+    )
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+    table.add_column("field", style="dim", no_wrap=True)
+    table.add_column("value", overflow="fold")
+    for i, issue in enumerate(issues):
+        prefix = f"[{i + 1}/{len(issues)}] " if len(issues) > 1 else ""
+        ctx_rule = getattr(issue, "rule", "<no-rule>")
+        ctx_severity = getattr(issue, "severity", "?")
+        # Severity may be an enum; render its .value when present.
+        ctx_severity_str = getattr(ctx_severity, "value", str(ctx_severity))
+        ctx_file = getattr(issue, "file", None) or "<no-file>"
+        ctx_first = getattr(issue, "first_line", None) or "?"
+        ctx_last = getattr(issue, "last_line", None) or ctx_first
+        ctx_key = getattr(issue, "key", "<no-key>")
+        ctx_msg = getattr(issue, "message", "") or ""
+        table.add_row(f"{prefix}rule", f"{ctx_rule} ({ctx_severity_str})")
+        table.add_row(f"{prefix}location", f"{ctx_file}:{ctx_first}-{ctx_last}")
+        table.add_row(f"{prefix}key", str(ctx_key))
+        table.add_row(f"{prefix}message", ctx_msg)
+        logger.info(
+            "[fix-block] issue %d/%d: %s (%s) at %s:%s key=%s | %s",
+            i + 1,
+            len(issues),
+            ctx_rule,
+            ctx_severity_str,
+            ctx_file,
+            ctx_first,
+            ctx_key,
+            ctx_msg,
+        )
+    _console.print(table)
+
+
+def _print_fix_block_footer(outcome: str, reason: str = "") -> None:
+    """Render the close of a fix block — colored outcome + dim rule.
+
+    ``outcome`` is one of ``applied`` / ``skipped`` / ``failed`` / ``no-fix``.
+    ``reason`` is a short free-form string (e.g. validator detail, exception
+    message). Both go to console AND to the plain logger.
+    """
+    icon, style = _FIX_OUTCOME_STYLES.get(outcome, ("•", "white"))
+    label = outcome.upper()
+    if reason:
+        _console.print(f"[{style}]{icon} {label}[/{style}] — {reason}")
+    else:
+        _console.print(f"[{style}]{icon} {label}[/{style}]")
+    _console.rule(style="dim")
+    logger.info("[fix-block] outcome=%s reason=%s", outcome, reason)
 
 
 java_extension = ".java"
@@ -583,6 +673,14 @@ class LLMFixer:
             logger.warning("No issues provided for fix generation")
             return None
 
+        # Per-fix block: render the issue context up front and tag the
+        # outcome at the end. ``outcome`` is mutated by each early-return
+        # path so the finally clause prints the right footer regardless of
+        # how the function exits. Default ``no-fix`` covers any path that
+        # returns None without setting an explicit outcome.
+        _print_fix_block_header(issues)
+        outcome: Dict[str, str] = {"label": "no-fix", "reason": ""}
+
         rule_registry = RuleHandlerRegistry()
         extractor = IssueExtractor(self.file_reader)
 
@@ -609,12 +707,18 @@ class LLMFixer:
                         "Skipping — no action needed. (validator detail: %s)",
                         error_msg,
                     )
+                    outcome["label"] = "skipped"
+                    outcome["reason"] = "absorbed by earlier fix in this run"
                 else:
                     logger.error("Validation failed: %s", error_msg)
+                    outcome["label"] = "failed"
+                    outcome["reason"] = f"validation: {error_msg}"
                 return None
 
             if validation.file_path is None or validation.line_range is None:
                 logger.error("Validation passed but file_path or line_range is None")
+                outcome["label"] = "failed"
+                outcome["reason"] = "validator returned no file_path/line_range"
                 return None
 
             # Step 2: Prepare context for fix generation
@@ -626,6 +730,8 @@ class LLMFixer:
 
             if not context:
                 logger.warning("Failed to prepare fix context")
+                outcome["label"] = "failed"
+                outcome["reason"] = "context preparation failed"
                 return None
 
             # Step 3: Get appropriate handler and generate fix response
@@ -642,15 +748,18 @@ class LLMFixer:
 
             if not fix_response_lst or len(fix_response_lst) == 0:
                 logger.warning(f"Handler returned no fix for rule {issues[0].rule}")
+                outcome["label"] = "no-fix"
+                outcome["reason"] = f"handler returned no fix for {issues[0].rule}"
                 return None
 
             agent_applied = any(
                 getattr(r, "applied_by_agent", False) for r in fix_response_lst
             )
+            # Routed through logger.debug so the response payload is still
+            # available in DEBUG runs but doesn't pollute INFO output.
             for r in fix_response_lst:
-                print("response ")
-                print(r)
-            print("agent_applied ", agent_applied)
+                logger.debug("[fix-block] handler response: %s", r)
+            logger.debug("[fix-block] agent_applied=%s", agent_applied)
             if agent_applied:
                 fix_suggestion_lst = []
             else:
@@ -679,14 +788,26 @@ class LLMFixer:
                 )
 
             logger.info(f"Generated fix for {len(issues)} issue(s)")
+            outcome["label"] = "applied"
+            outcome["reason"] = (
+                "agent applied edit directly"
+                if agent_applied
+                else f"{len(fix_suggestion_lst)} suggestion(s) ready"
+            )
             return fix_suggestion_lst
 
         except FileNotFoundError as e:
             logger.warning(f"File not found: {e}")
+            outcome["label"] = "failed"
+            outcome["reason"] = f"file not found: {e}"
             return None
-        except Exception:
+        except Exception as e:
             logger.exception("Error generating fixes")
+            outcome["label"] = "failed"
+            outcome["reason"] = f"unhandled exception: {e}"
             return None
+        finally:
+            _print_fix_block_footer(outcome["label"], outcome["reason"])
 
     def _map_fix_suggestion_to_fix_suggestion_dto(
         self,
@@ -1066,11 +1187,14 @@ class LLMFixer:
 
         prompt_system = system_template.render(**prompt_dic)
 
-        logger.info(
+        # Prompt previews are large; keep them at DEBUG so they stay in
+        # the logfile (and the DEVDOX_DEBUG console run) but don't crowd
+        # the normal-mode terminal. Same data, lower volume by default.
+        logger.debug(
             "[fix_at_line-diagnostic] Rendered system prompt (first 500 chars): %s",
             prompt_system[:500].replace("\n", " ⏎ "),
         )
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] Rendered user prompt (first 500 chars): %s",
             prompt[:500].replace("\n", " ⏎ "),
         )
@@ -1093,11 +1217,26 @@ class LLMFixer:
         )
 
         agent_tools = _build_agent_tools()
+        # One Rich panel up front instead of three loose logger.info lines
+        # (model/file/tools, agent-init, conversation-start). Same data, one
+        # visible chunk on the console; the plain-text logger.info below
+        # keeps it grep-able from the file log.
+        tool_names = [t.name for t in agent_tools]
+        _console.print(
+            Panel(
+                f"[bold]model[/bold]   {self.model}\n"
+                f"[bold]file[/bold]    {file_path.name}\n"
+                f"[bold]tools[/bold]   {', '.join(tool_names)}",
+                title="LLM agent setup",
+                border_style="blue",
+                box=box.ROUNDED,
+            )
+        )
         logger.info(
             "[fix_at_line-diagnostic] Starting fix run: model=%s | file=%s | tools=%s",
             self.model,
             file_path.name,
-            [t.name for t in agent_tools],
+            tool_names,
         )
 
         agent = Agent(
@@ -1119,10 +1258,9 @@ class LLMFixer:
             ],
         )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
-        # If we got here, OpenHands' agent.init_state ran without raising in
-        # any of our callbacks. Anything that aborts from this point on is
-        # the agent or LLM, not our wiring.
-        logger.info(
+        # Demoted to debug — "agent initialised" is implicit when the
+        # subsequent action events start firing, so it's noise at INFO.
+        logger.debug(
             "[fix_at_line-diagnostic] Agent initialized; first user message "
             "queued — entering conversation.run() loop"
         )
