@@ -593,35 +593,38 @@ def _revert_if_syntax_cascade(
     original_text: str,
     action: FixAtLineAction,
 ) -> FixAtLineObservation | None:
-    """Revert this edit if the file remains in ``Syntax: FAILED`` state.
+    """Revert this edit if it left the file in ``Syntax: FAILED`` state.
 
-    When a previous fix_at_line call left the file with broken Python
-    syntax AND the current call did not repair it, the agent is in a
-    cascade of bad edits where each new write piles more wreckage onto
-    a file that doesn't parse. Revert to the pre-edit state and return
-    an error observation directing the agent to repair syntax first.
+    Originally only fired on FAILED→FAILED to avoid disturbing an agent
+    midway through a multi-step recovery. In practice a single OK→FAILED
+    edit is also a bug we want to undo immediately: the agent stacked an
+    edit with stale line numbers and shredded a real line. Leaving the
+    file broken hopes the agent's *next* edit repairs it; reverting puts
+    the file back to a known-good state and forces a re-view, which is
+    almost always what the agent should have done.
 
-    Returns ``None`` when no revert is needed (non-Python target, file
-    was clean before, or the edit fixed the syntax).
+    Returns ``None`` when no revert is needed (non-Python target, or the
+    edit kept syntax valid).
     """
     if target.suffix != ".py":
-        return None
-    if not pre_edit_syntax.startswith("FAILED"):
         return None
     if not post_edit_syntax.startswith("FAILED"):
         return None
     target.write_text(original_text, encoding="utf-8")
+    pre_note = (
+        f"Pre-edit syntax: {pre_edit_syntax}\n"
+        if pre_edit_syntax.startswith("FAILED")
+        else ""
+    )
     return FixAtLineObservation.from_text(
         text=(
-            "File was already in Syntax: FAILED state from a previous edit, "
-            "and this edit did not repair the syntax. Reverting to prevent "
-            "cascading corruption.\n"
-            f"Pre-edit error:  {pre_edit_syntax}\n"
-            f"Post-edit error: {post_edit_syntax}\n"
-            "Re-view the file with `file_editor view`, identify the "
-            "syntactically-broken region, and submit one fix_at_line call "
-            "that restores valid Python syntax. Only then continue with "
-            "further edits."
+            "Your last edit left the file in Syntax: FAILED state. "
+            "Reverting it so the file is back to its pre-edit content. "
+            "Line numbers shift after every successful write — re-view "
+            "the file with `file_editor view` to get fresh numbers, "
+            "then retry.\n"
+            f"{pre_note}"
+            f"Post-edit error: {post_edit_syntax}"
         ),
         is_error=True,
         path=action.path,
