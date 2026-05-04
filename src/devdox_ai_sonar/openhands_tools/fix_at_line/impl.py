@@ -153,9 +153,11 @@ class FixAtLineExecutor(ToolExecutor):
             )
             if cascade_revert is not None:
                 return cascade_revert
+            new_total_lines = len(new_text.splitlines())
             message = (
                 f"Appended {new_block_line_count} line(s) to {action.path} "
-                f"(file was {total_lines} line(s))."
+                f"(file is now {new_total_lines} line(s); "
+                f"next EOF append uses start_line=end_line={new_total_lines + 1})."
             )
             if syntax_status:
                 message += f"\nSyntax: {syntax_status}"
@@ -189,23 +191,30 @@ class FixAtLineExecutor(ToolExecutor):
         new_stripped = _strip_trailing_newline(action.new_block)
         current_stripped = _strip_trailing_newline(current_block_text)
 
-        # An empty ``old_block`` is technically a substring of
-        # everything -- reject it explicitly so the substring branch
-        # below can't be tricked into runaway replacement.
+        # Empty ``old_block`` on a valid in-range slot is the
+        # "trust my line range" signal: the agent has just viewed the
+        # file and is replacing the whole [start_line..end_line] window
+        # without asking the executor to byte-verify the existing
+        # content. Necessary because some LLMs (e.g., Llama 3.3) cannot
+        # reliably reproduce long multi-line strings as tool arguments
+        # — they emit literal "..." stubs or mangle whitespace, which
+        # makes the byte-match path always fail. Skipping the byte
+        # check here is safe because (a) the line range itself is the
+        # anchor, (b) the post-edit syntax check + cascade revert below
+        # catches structurally-broken results.
         if old_stripped == "":
-            return FixAtLineObservation.from_text(
-                text=(
-                    "`old_block` cannot be empty; supply either the exact "
-                    f"current content of lines {action.start_line}-"
-                    f"{action.end_line} or a unique substring of it."
-                ),
-                is_error=True,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
+            new_block_lines = _normalize_block_to_lines(action.new_block)
+            new_file_lines = (
+                lines[:start_idx]
+                + new_block_lines
+                + lines[end_idx_exclusive:]
             )
-
-        # Three acceptable shapes for the safety check:
+            new_text = "".join(new_file_lines)
+            new_block_line_count = len(new_block_lines)
+            returned_old_block = current_stripped
+            returned_new_block = new_stripped
+        # Three acceptable shapes for the safety check when ``old_block``
+        # is non-empty:
         #  (a) ``old_block`` equals the full line(s) -> replace the block.
         #  (b) ``old_block`` is a unique substring of the line(s) -> in-place
         #      find-and-replace inside the anchored range. The line range
@@ -213,7 +222,7 @@ class FixAtLineExecutor(ToolExecutor):
         #      the file is irrelevant.
         #  (c) ``old_block`` appears multiple times inside the range or
         #      isn't there at all -> error.
-        if old_stripped == current_stripped:
+        elif old_stripped == current_stripped:
             # (a) full-block replacement.
             new_block_lines = _normalize_block_to_lines(action.new_block)
             new_file_lines = (
@@ -235,12 +244,18 @@ class FixAtLineExecutor(ToolExecutor):
                         "definitions absent from `old_block`. Substring "
                         "replacement would splice those into the middle of "
                         "existing statements and corrupt the file. Either:\n"
-                        f"  (a) widen `old_block` to the exact full content "
-                        f"of lines {action.start_line}-{action.end_line} for "
-                        "full-block replacement, or\n"
-                        "  (b) use the EOF-append pattern "
-                        "(start_line=end_line=total_lines+1, old_block='') "
-                        "to append new helpers after the end of the file."
+                        "  (a) set `old_block` to the empty string to "
+                        f"replace the full line range "
+                        f"{action.start_line}-{action.end_line} without "
+                        "byte-verifying the existing content (safe when "
+                        "you have just `view`ed the file), or\n"
+                        "  (b) widen `old_block` to the exact full "
+                        "content of those lines for verified full-block "
+                        "replacement, or\n"
+                        "  (c) use the EOF-append pattern "
+                        "(start_line=end_line=total_lines+1, "
+                        "old_block='') to append new helpers after the "
+                        "end of the file."
                     ),
                     is_error=True,
                     path=action.path,
@@ -334,10 +349,13 @@ class FixAtLineExecutor(ToolExecutor):
         )
         if cascade_revert is not None:
             return cascade_revert
+        new_total_lines = len(new_text.splitlines())
         message = (
             f"Replaced lines {action.start_line}-{action.end_line} in "
             f"{action.path} ({original_line_count} line(s) → "
-            f"{new_block_line_count} line(s))."
+            f"{new_block_line_count} line(s); file is now "
+            f"{new_total_lines} line(s); next EOF append uses "
+            f"start_line=end_line={new_total_lines + 1})."
         )
         if syntax_status:
             message += f"\nSyntax: {syntax_status}"

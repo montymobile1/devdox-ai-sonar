@@ -1135,9 +1135,15 @@ class LLMFixer:
             logger.error("Cannot read file after agent run: %s", e)
             return None
 
-        # if new_content == original_content:
-        #     logger.warning("Agent did not modify %s — no fix produced", file_path.name)
-        #     return None
+        if new_content == original_content:
+            logger.warning(
+                "Agent invoked fix_at_line on %s but the file is "
+                "unchanged — every tool call must have errored out. "
+                "Treating as no-fix-produced rather than reporting a "
+                "false success.",
+                file_path.name,
+            )
+            return None
 
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
