@@ -1177,14 +1177,37 @@ def apply_global_top_helper(
     helper_code: str,
     end_import: int,
 ) -> List[str]:
-    """Apply fix with global top helper code."""
+    """Apply fix with global top helper code.
 
-    # Insert helper code
-    helper_with_newline = (
-        helper_code if helper_code.endswith("\n") else helper_code + "\n"
-    )
+    Inserts ``helper_code`` (typically a module-level constant defined by
+    the S1192 handler) between the import block and the rest of the
+    module, with canonical PEP 8 spacing of two blank lines on each
+    side. Existing blank lines surrounding the insertion point are
+    normalized so repeated invocations do not accumulate stray blanks.
+    """
+    helper = helper_code.rstrip("\n")
+    if not helper:
+        return lines
 
-    lines.insert(end_import, helper_with_newline + "\n")
+    # Land on the first non-blank line after the import block. The
+    # insertion point is logically "after the imports", regardless of
+    # how many blank lines the file already has between imports and the
+    # next content.
+    insertion_idx = end_import
+    while insertion_idx < len(lines) and not lines[insertion_idx].strip():
+        insertion_idx += 1
+
+    # Trim any blank lines immediately above the insertion point so we
+    # can place a canonical two-blank-line separator deterministically.
+    while insertion_idx > 0 and not lines[insertion_idx - 1].strip():
+        lines.pop(insertion_idx - 1)
+        insertion_idx -= 1
+
+    # Compose the insertion: two blank lines, the helper, two blank
+    # lines. Idempotent across repeated calls because we trimmed the
+    # surrounding blanks first.
+    inserted = ["\n", "\n", helper + "\n", "\n", "\n"]
+    lines[insertion_idx:insertion_idx] = inserted
     return lines
 
 
