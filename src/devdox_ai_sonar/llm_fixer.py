@@ -5,6 +5,7 @@ import re
 import shutil
 import sys
 import asyncio
+import difflib
 from collections import defaultdict
 
 import subprocess
@@ -1180,6 +1181,42 @@ class LLMFixer:
                     file_path.name,
                     final_status,
                 )
+                # Surface what got rejected so a human can diagnose
+                # without re-deriving it from the agent's chatter.
+                # The agent's own last message often shows what it
+                # *thought* it accomplished — frequently a confident
+                # success summary while the file is structurally
+                # broken. In DEBUG (DEVDOX_DEBUG=1) also dump a
+                # unified diff of the rejected change to the Rich
+                # console so the actual placement is visible.
+                if all_agent_messages:
+                    logger.warning(
+                        "Agent's last message before rejection:\n%s",
+                        all_agent_messages[-1],
+                    )
+                if os.environ.get("DEVDOX_DEBUG") == "1":
+                    rejected_text = file_path.read_text(encoding="utf-8")
+                    diff = "".join(
+                        difflib.unified_diff(
+                            original_content.splitlines(keepends=True),
+                            rejected_text.splitlines(keepends=True),
+                            fromfile=f"a/{file_path.name}",
+                            tofile=f"b/{file_path.name} (REJECTED)",
+                            n=3,
+                        )
+                    )
+                    _console.rule(
+                        "[bold red]REJECTED — agent edit not applied"
+                        "[/bold red]"
+                    )
+                    _console.print(f"[dim]Reason:[/dim] {final_status}")
+                    if diff:
+                        # `markup=False` so accidental Rich-style
+                        # brackets in the diff don't get parsed.
+                        _console.print(diff, markup=False, highlight=False)
+                    else:
+                        _console.print("[dim]<no textual diff>[/dim]")
+                    _console.rule()
                 file_path.write_text(original_content, encoding="utf-8")
                 return None
 
