@@ -84,6 +84,14 @@ class FixAtLineExecutor(ToolExecutor):
         lines = original_text.splitlines(keepends=True)
         total_lines = len(lines)
 
+        # Snapshot pre-edit syntax for Python files. Used after the write
+        # to detect the FAILED -> FAILED cascade, where the agent keeps
+        # piling edits onto an already-broken file. Cheap (~ms) and only
+        # runs once per call.
+        pre_edit_syntax = (
+            _run_py_compile(target) if target.suffix == ".py" else "OK"
+        )
+
         # Append-at-EOF: explicit "insert after end of file" semantic.
         # Agents commonly compute L from the last line shown by ``file_editor
         # view``, which can include a trailing-newline indicator (line N+1)
@@ -116,6 +124,15 @@ class FixAtLineExecutor(ToolExecutor):
             syntax_status = (
                 _run_py_compile(target) if target.suffix == ".py" else ""
             )
+            cascade_revert = _revert_if_syntax_cascade(
+                target,
+                pre_edit_syntax,
+                syntax_status,
+                original_text,
+                action,
+            )
+            if cascade_revert is not None:
+                return cascade_revert
             message = (
                 f"Appended {new_block_line_count} line(s) to {action.path} "
                 f"(file was {total_lines} line(s))."
@@ -288,6 +305,15 @@ class FixAtLineExecutor(ToolExecutor):
         syntax_status = (
             _run_py_compile(target) if target.suffix == ".py" else ""
         )
+        cascade_revert = _revert_if_syntax_cascade(
+            target,
+            pre_edit_syntax,
+            syntax_status,
+            original_text,
+            action,
+        )
+        if cascade_revert is not None:
+            return cascade_revert
         message = (
             f"Replaced lines {action.start_line}-{action.end_line} in "
             f"{action.path} ({original_line_count} line(s) → "
@@ -373,6 +399,50 @@ def _run_pyflakes_undefined_names(target: Path) -> str:
 _PYTHON_STRUCTURE_RE = re.compile(
     r"^\s*(?:async\s+)?(?:def|class|@\w)", re.MULTILINE
 )
+
+
+def _revert_if_syntax_cascade(
+    target: Path,
+    pre_edit_syntax: str,
+    post_edit_syntax: str,
+    original_text: str,
+    action: FixAtLineAction,
+) -> FixAtLineObservation | None:
+    """Revert this edit if the file remains in ``Syntax: FAILED`` state.
+
+    When a previous fix_at_line call left the file with broken Python
+    syntax AND the current call did not repair it, the agent is in a
+    cascade of bad edits where each new write piles more wreckage onto
+    a file that doesn't parse. Revert to the pre-edit state and return
+    an error observation directing the agent to repair syntax first.
+
+    Returns ``None`` when no revert is needed (non-Python target, file
+    was clean before, or the edit fixed the syntax).
+    """
+    if target.suffix != ".py":
+        return None
+    if not pre_edit_syntax.startswith("FAILED"):
+        return None
+    if not post_edit_syntax.startswith("FAILED"):
+        return None
+    target.write_text(original_text, encoding="utf-8")
+    return FixAtLineObservation.from_text(
+        text=(
+            "File was already in Syntax: FAILED state from a previous edit, "
+            "and this edit did not repair the syntax. Reverting to prevent "
+            "cascading corruption.\n"
+            f"Pre-edit error:  {pre_edit_syntax}\n"
+            f"Post-edit error: {post_edit_syntax}\n"
+            "Re-view the file with `file_editor view`, identify the "
+            "syntactically-broken region, and submit one fix_at_line call "
+            "that restores valid Python syntax. Only then continue with "
+            "further edits."
+        ),
+        is_error=True,
+        path=action.path,
+        start_line=action.start_line,
+        end_line=action.end_line,
+    )
 
 
 def _new_block_adds_python_structure(old_block: str, new_block: str) -> bool:
