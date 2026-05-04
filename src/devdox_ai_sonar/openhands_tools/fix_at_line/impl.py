@@ -6,6 +6,7 @@ mirroring the semantics of ``file_editor str_replace`` but anchored by line
 number instead of content match.
 """
 
+import ast
 import logging
 import re
 import subprocess
@@ -401,10 +402,60 @@ def _run_py_compile(target: Path) -> str:
         ]
         return f"FAILED — {err_lines[-1] if err_lines else 'unknown error'}"
 
+    duplicate = _check_no_duplicate_class_methods(target)
+    if duplicate:
+        return f"FAILED — {duplicate}"
+
     undefined = _run_pyflakes_undefined_names(target)
     if undefined:
         return f"FAILED — {undefined}"
     return "OK"
+
+
+def _check_no_duplicate_class_methods(target: Path) -> str:
+    """Return a non-empty failure description if any class in
+    ``target`` defines the same method name twice.
+
+    Catches the failure mode where an agent refactor appends new
+    method definitions whose names collide with existing methods
+    elsewhere in the same class body — typically because the agent
+    only saw a partial view of the file (``file_editor view``
+    truncates large files) and invented helper names without
+    grounding them in the class's actual API. The duplicate
+    silently shadows the original; the agent's call sites land on
+    the new (often broken) body.
+
+    ``py_compile`` cannot catch this because the file is
+    syntactically valid. ``pyflakes`` cannot catch it because the
+    references are method-level (``self.X``), not module-level.
+
+    Returns "" when no duplicates are found.
+    """
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # py_compile already covers this case; don't double-report.
+        return ""
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        seen: dict = {}
+        for item in node.body:
+            if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if item.name in seen:
+                    return (
+                        f"class '{node.name}' defines method "
+                        f"'{item.name}' twice (lines "
+                        f"{seen[item.name]} and {item.lineno}); the "
+                        f"later definition shadows the earlier one. "
+                        f"Remove one of the two definitions."
+                    )
+                seen[item.name] = item.lineno
+    return ""
 
 
 def _run_pyflakes_undefined_names(target: Path) -> str:
