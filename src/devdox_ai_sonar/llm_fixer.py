@@ -586,11 +586,15 @@ class LLMFixer:
                     # The validator already searched the file (exact, fuzzy,
                     # single-line heuristics) before giving up. When it bails
                     # here the content is genuinely gone — typically because
-                    # a prior fix in this run already addressed the issue.
-                    # Treat as a clean skip, not a hard error.
+                    # a prior fix in this run already addressed the issue
+                    # (e.g. a batched rename absorbing sibling issues on
+                    # adjacent lines). Treat as a clean skip, not a hard
+                    # error, and word the log accordingly.
                     logger.info(
-                        "Skipping issue — content not found in actual file "
-                        "(likely already addressed by a prior fix in this run): %s",
+                        "Issue appears to have been resolved by an earlier "
+                        "fix in this same run (e.g. a batched rename "
+                        "absorbing sibling issues on adjacent lines). "
+                        "Skipping — no action needed. (validator detail: %s)",
                         error_msg,
                     )
                 else:
