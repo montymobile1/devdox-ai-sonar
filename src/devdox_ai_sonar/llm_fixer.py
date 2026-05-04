@@ -57,6 +57,7 @@ from devdox_ai_sonar.services.rule_handler import (
 )
 from devdox_ai_sonar.services.extractor import IssueExtractor
 from devdox_ai_sonar.openhands_tools.fix_at_line import FixAtLineTool
+from devdox_ai_sonar.openhands_tools.fix_at_line.impl import _run_py_compile
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 logger = logging.getLogger(__name__)
@@ -1159,6 +1160,28 @@ class LLMFixer:
             )
             return None
 
+        # Final-state safety net: even if the per-edit pipeline
+        # accepted every individual edit, the file as a whole may end
+        # in a broken state — e.g. the agent introduced a duplicate
+        # class method on edit N, the per-edit FAILED was reported,
+        # but subsequent edits never repaired it (because they
+        # cascade-reverted themselves), so the duplicate persists on
+        # disk. Without this check we would ship that broken state
+        # with applied_by_agent=True. Run the same syntax+structure
+        # check the per-edit pipeline runs; if it FAILEDs, revert to
+        # the pre-run content and return no-fix-produced.
+        if file_path.suffix == ".py":
+            final_status = _run_py_compile(file_path)
+            if final_status.startswith("FAILED"):
+                logger.warning(
+                    "Agent finished with file in FAILED state on "
+                    "%s — %s. Reverting to pre-run content and "
+                    "returning no-fix-produced.",
+                    file_path.name,
+                    final_status,
+                )
+                file_path.write_text(original_content, encoding="utf-8")
+                return None
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
 
