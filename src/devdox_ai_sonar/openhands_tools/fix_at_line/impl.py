@@ -7,6 +7,7 @@ number instead of content match.
 """
 
 import ast
+import difflib
 import logging
 import re
 import subprocess
@@ -610,7 +611,45 @@ def _revert_if_syntax_cascade(
         return None
     if not post_edit_syntax.startswith("FAILED"):
         return None
+    # Capture the about-to-be-discarded text so we can show what the
+    # agent actually wrote vs. what we kept. Both go through the logger
+    # (warning for the bare event, debug for the diff) so a future test
+    # run that reproduces the OK→FAILED chaos has a forensic trail
+    # without requiring DEVDOX_DEBUG to be on at the time.
+    try:
+        rejected_text = target.read_text(encoding="utf-8")
+    except OSError:
+        rejected_text = ""
     target.write_text(original_text, encoding="utf-8")
+    transition = (
+        "FAILED→FAILED"
+        if pre_edit_syntax.startswith("FAILED")
+        else "OK→FAILED"
+    )
+    logger.warning(
+        "[fix_at_line-diagnostic] cascade-revert triggered: "
+        "transition=%s | path=%s | range=%s-%s | post_edit_error=%s",
+        transition,
+        action.path,
+        action.start_line,
+        action.end_line,
+        post_edit_syntax,
+    )
+    if logger.isEnabledFor(logging.DEBUG) and rejected_text:
+        diff = "\n".join(
+            difflib.unified_diff(
+                original_text.splitlines(),
+                rejected_text.splitlines(),
+                fromfile="pre-edit (kept)",
+                tofile="post-edit (rejected)",
+                lineterm="",
+                n=3,
+            )
+        )
+        if diff:
+            logger.debug(
+                "[fix_at_line-diagnostic] cascade-revert diff:\n%s", diff
+            )
     pre_note = (
         f"Pre-edit syntax: {pre_edit_syntax}\n"
         if pre_edit_syntax.startswith("FAILED")
