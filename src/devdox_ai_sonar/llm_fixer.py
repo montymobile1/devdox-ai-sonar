@@ -1,5 +1,6 @@
 """LLM-powered code fixer for SonarCloud issues."""
 
+import os
 import re
 import shutil
 import sys
@@ -85,11 +86,20 @@ def _build_openhands_llm(profile: LLMProfile) -> LLM:
     etc.) so no prefix rewriting happens here. An empty ``api_key`` is
     forwarded as ``None`` because some endpoints (local Ollama, self-hosted
     vLLM without auth) accept unauthenticated requests.
+
+    When the ``DEVDOX_DEBUG`` environment variable is set (cli.py exports
+    it whenever the local DEBUG toggle is True), the LLM is configured to
+    dump every request/response payload to ``logs/completions/``. That is
+    how we inspect what the agent literally saw and emitted — useful for
+    diagnosing model-side tool-call serialisation quirks.
     """
+    debug = os.environ.get("DEVDOX_DEBUG") == "1"
     return LLM(
         model=profile.model,
         api_key=profile.api_key or None,
         base_url=profile.base_url,
+        log_completions=debug,
+        log_completions_folder="logs/completions",
     )
 
 def _build_agent_tools() -> List[Tool]:
