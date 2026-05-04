@@ -840,6 +840,27 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     new_lines = [line + "\n" for line in new_lines]
 
+    # Trim trailing blank lines from the replacement. Rule handlers
+    # frequently emit context with trailing ``\n\n\n`` so the function
+    # body is followed by extra newlines; without this trim each
+    # replacement leaks blank lines into the file and back-to-back
+    # invocations on the same handler grow the file by N blanks per
+    # iteration. The blank lines that originally sat between this slot
+    # and the next definition are preserved by the symmetric slot
+    # trim below.
+    while new_lines and not new_lines[-1].strip():
+        new_lines.pop()
+
+    # Symmetric trim on the slot: if end_idx points at trailing blank
+    # lines that were part of the handler's range, exclude them so the
+    # blank-line structure surrounding the original definition stays
+    # untouched. Clamp end_idx into the valid file range first — handlers
+    # sometimes emit end_line one past the actual end-of-function or
+    # end-of-file.
+    end_idx = min(end_idx, len(lines) - 1)
+    while end_idx > start_idx and not lines[end_idx].strip():
+        end_idx -= 1
+
     # Replace the lines
     if start_idx > end_idx:
         lines[start_idx:end_idx] = new_lines
