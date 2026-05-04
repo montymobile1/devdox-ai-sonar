@@ -21,15 +21,19 @@ inputs:
   pull-request:
     description: "Pull request number"
     required: false
-  llm-provider:
-    description: "LLM API key for LLM integration"
+  llm-model:
+    description: >-
+      LLM model in OpenHands 'provider/model-name' form
+      (e.g. 'openai/gpt-4o', 'gemini/gemini-2.5-flash', 'vllm/my-model').
     required: true
   llm-api-key:
-    description: "LLM API key for LLM integration"
-    required: true
-  llm-default-model:
-    description: "Default LLM model to use"
-    required: true
+    description: "API key for the LLM endpoint. May be blank if the endpoint accepts unauthenticated requests."
+    required: false
+    default: ""
+  llm-base-url:
+    description: "Optional custom endpoint URL (for self-hosted or proxied LLMs)."
+    required: false
+    default: ""
   max-fixes:
     description: "Max Issues to fix"
     required: false
@@ -54,12 +58,12 @@ runs:
     - ${{ inputs.project-path }}
     - --pull-request
     - ${{ inputs.pull-request }}
-    - --llm-provider
-    - ${{ inputs.llm-provider }}
+    - --llm-model
+    - ${{ inputs.llm-model }}
     - --llm-api-key
     - ${{ inputs.llm-api-key }}
-    - --llm-default-model
-    - ${{ inputs.llm-default-model }}
+    - --llm-base-url
+    - ${{ inputs.llm-base-url }}
     - --max-fixes
     - ${{ inputs.max-fixes }}
     - --apply

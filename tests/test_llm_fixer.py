@@ -18,6 +18,7 @@ from devdox_ai_sonar.llm_fixer import (LLMFixer, ContextExtractor, _build_fix_su
                                        _extract_problem_lines,
                                        FUNCTION_ALREADY_CALLED,
                                        )
+from devdox_ai_sonar.llm.profile import LLMProfile
 from devdox_ai_sonar.fix_validator import FixValidator, ValidationStatus
 from devdox_ai_sonar.services.extractor import (_validate_and_extract_issue_info,
                                                 IssueExtractor,
@@ -56,10 +57,8 @@ def sample_code_block():
                      context="new_code"
                      )
 
-# Post-OpenHands migration: every provider flows through
-# ``openhands.sdk.LLM`` — so every mock_* fixture below patches the same
-# target.  The fixture names are kept for backwards compatibility with
-# tests that were written against the per-provider client classes.
+# Every LLM call flows through ``openhands.sdk.LLM``; each mock_* fixture
+# below patches that single target and is named for historical clarity.
 
 
 @pytest.fixture
@@ -192,274 +191,59 @@ def rule_info():
     }
 
 class TestLLMFixerInitialization:
-    """Test LLMFixer initialization"""
-    
-    def test_init_openai_with_api_key(self, mock_openai_client):
-        """Test OpenAI initialization with API key"""
-        fixer = LLMFixer(
-            provider="openai",
-            model="gpt-4",
-            api_key="test-key-123"
+    """Test LLMFixer initialisation against the new profile-based signature."""
+
+    def test_init_sets_profile_and_conveniences(self, mock_openai_client):
+        profile = LLMProfile(
+            name="prod", model="openai/gpt-4o", api_key="sk-test"
         )
-        
-        assert fixer.provider == "openai"
-        assert fixer.model == "gpt-4"
-        assert fixer.api_key == "test-key-123"
-        # Post-OpenHands: the LLM client is constructed via openhands.sdk.LLM
-        # with (model, api_key, base_url).  Relaxed to assert the call happened
-        # once; exact kwargs are an implementation detail of the migration.
+        fixer = LLMFixer(profile=profile)
+
+        assert fixer.profile is profile
+        assert fixer.model == "openai/gpt-4o"
+        assert fixer.api_key == "sk-test"
+        assert fixer.profile.family() == "openai"
         mock_openai_client.assert_called_once()
-    
-    def test_init_openai_from_env(self, mock_openai_client, monkeypatch):
-        """Test OpenAI initialization from environment variable"""
-        monkeypatch.setenv("OPENAI_API_KEY", "env-api-key")
-        
-        fixer = LLMFixer(provider="openai")
-        
-        assert fixer.api_key == "env-api-key"
-        mock_openai_client.assert_called_once()
-    
-    def test_init_openai_missing_key(self, mock_openai_client):
-        """Test OpenAI initialization without API key raises error"""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError) as exc_info:
-                LLMFixer(provider="openai")
-            assert "API key not provided" in str(exc_info.value)
-    
-    def test_init_openai_default_model(self, mock_openai_client):
-        """Test OpenAI uses default model when not specified"""
-        fixer = LLMFixer(provider="openai", api_key="test-key")
-        assert fixer.model == "gpt-4o"
-    
-    def test_init_gemini_with_api_key(self, mock_gemini_client):
-        """Test Gemini initialization with API key"""
-        fixer = LLMFixer(
-            provider="gemini",
-            model="claude-3-5-sonnet",
-            api_key="test-gemini-key"
-        )
-        
-        assert fixer.provider == "gemini"
-        assert fixer.model == "claude-3-5-sonnet"
-        assert fixer.api_key == "test-gemini-key"
-    
-    def test_init_gemini_from_env(self, mock_gemini_client, monkeypatch):
-        """Test Gemini initialization from environment"""
-        # Post-OpenHands migration: LLMFixer now uses a unified
-        # ``{PROVIDER}_API_KEY`` env-var convention, so "gemini" reads
-        # ``GEMINI_API_KEY`` (not the pre-migration ``GEMINI_KEY``).
-        monkeypatch.setenv("GEMINI_API_KEY", "env-gemini-key")
 
-        fixer = LLMFixer(provider="gemini")
-
-        assert fixer.api_key == "env-gemini-key"
-
-    def test_init_gemini_missing_key(self, mock_gemini_client):
-        """Test Gemini initialization without API key raises error"""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError) as exc_info:
-                LLMFixer(provider="gemini")
-            # Post-OpenHands migration: the missing-key error message is now
-            # provider-agnostic ("Together API key not provided...") since
-            # key validation was unified.  Per-provider wording would
-            # require a production-code change outside this PR's scope.
-            assert "Together API key not provided" in str(exc_info.value)
-    
-    def test_init_togetherai_with_api_key(self, mock_together_client):
-        """Test TogetherAI initialization with API key"""
-        fixer = LLMFixer(
-            provider="togetherai",
-            model="mixtral-8x7b",
-            api_key="test-together-key"
-        )
-        
-        assert fixer.provider == "togetherai"
-        assert fixer.api_key == "test-together-key"
-    
-    def test_init_togetherai_from_env(self, mock_together_client, monkeypatch):
-        """Test TogetherAI initialization from environment"""
-        # Post-OpenHands migration: the env-var convention is unified to
-        # ``{PROVIDER}_API_KEY``, so "togetherai" reads ``TOGETHERAI_API_KEY``
-        # (not the pre-migration ``TOGETHER_API_KEY``).
-        monkeypatch.setenv("TOGETHERAI_API_KEY", "env-together-key")
-
-        fixer = LLMFixer(provider="togetherai")
-
-        assert fixer.api_key == "env-together-key"
-    
-    def test_init_openrouter_with_api_key(self, mock_openrouter_client):
-        """Test OpenRouter initialization with API key"""
-        fixer = LLMFixer(
-            provider="openrouter",
-            model="anthropic/claude-sonnet-4",
-            api_key="test-openrouter-key"
-        )
-
-        assert fixer.provider == "openrouter"
-        assert fixer.model == "anthropic/claude-sonnet-4"
-        assert fixer.api_key == "test-openrouter-key"
-        # Post-OpenHands: default_headers are no longer wired (OpenHands LLM
-        # owns header plumbing).  api_key and base_url still threaded through.
-        mock_openrouter_client.assert_called_once()
-        call_kwargs = mock_openrouter_client.call_args.kwargs
-        assert call_kwargs.get("api_key") == "test-openrouter-key"
-        assert call_kwargs.get("base_url") == "https://openrouter.ai/api/v1"
-
-    def test_init_openrouter_from_env(self, mock_openrouter_client, monkeypatch):
-        """Test OpenRouter initialization from environment variable"""
-        monkeypatch.setenv("OPENROUTER_API_KEY", "env-openrouter-key")
-
-        fixer = LLMFixer(provider="openrouter")
-
-        assert fixer.api_key == "env-openrouter-key"
-
-    def test_init_openrouter_missing_key(self, mock_openrouter_client):
-        """Test OpenRouter initialization without API key raises error"""
-        with patch.dict(os.environ, {}, clear=True):
-            with pytest.raises(ValueError) as exc_info:
-                LLMFixer(provider="openrouter")
-            # Post-OpenHands migration: unified generic error message.
-            assert "Together API key not provided" in str(exc_info.value)
-
-    def test_init_openrouter_default_model(self, mock_openrouter_client):
-        """Test OpenRouter uses default model when not specified"""
-        fixer = LLMFixer(provider="openrouter", api_key="test-key")
-        # Post-OpenHands migration: default model is now ``gpt-4o`` for every
-        # provider (pre-migration openrouter defaulted to
-        # ``anthropic/claude-sonnet-4``).  Callers that want the old default
-        # must pass ``model="anthropic/claude-sonnet-4"`` explicitly.
-        assert fixer.model == "gpt-4o"
-
-    @pytest.mark.skip(
-        reason=(
-            "Post-OpenHands migration: provider validation is now delegated "
-            "to the LiteLLM routing inside openhands.sdk.LLM.  LLMFixer itself "
-            "no longer raises ValueError for unknown providers — it forwards "
-            "the name to LLM with a best-effort prefix map.  This test needs "
-            "a rewrite against the new routing behaviour."
-        )
-    )
-    def test_init_unsupported_provider(self):
-        """Test initialization with unsupported provider"""
-        with pytest.raises(ValueError) as exc_info:
-            LLMFixer(provider="unsupported", api_key="key")
-        assert "Unsupported provider" in str(exc_info.value)
-    
-    def test_init_context_lines_default(self, mock_openai_client):
-        """Test default context_lines value"""
-        fixer = LLMFixer(provider="openai", api_key="key")
+    def test_init_default_context_lines(self, mock_openai_client):
+        profile = LLMProfile(name="p", model="openai/gpt-4o", api_key="sk")
+        fixer = LLMFixer(profile=profile)
         assert fixer.context_lines == 10
-    
-    def test_init_context_lines_custom(self, mock_openai_client):
-        """Test custom context_lines value"""
-        fixer = LLMFixer(provider="openai", api_key="key", context_lines=20)
-        assert fixer.context_lines == 20
-    
-    def test_init_prompt_dir_setup(self, mock_openai_client):
-        """Test prompt directory is set up correctly"""
-        fixer = LLMFixer(provider="openai", api_key="key")
-        assert fixer.prompt_dir.exists() or fixer.prompt_dir.name == "prompts"
-    
-    def test_init_jinja_env_setup(self, mock_openai_client):
-        """Test Jinja2 environment is set up"""
-        fixer = LLMFixer(provider="openai", api_key="key")
-        assert hasattr(fixer, 'jinja_env')
-        assert fixer.jinja_env is not None
-    
-    def test_init_provider_case_insensitive(self, mock_openai_client):
-        """Test provider name is case-insensitive"""
-        fixer1 = LLMFixer(provider="OpenAI", api_key="key")
-        fixer2 = LLMFixer(provider="OPENAI", api_key="key")
-        fixer3 = LLMFixer(provider="openai", api_key="key")
-        
-        assert fixer1.provider == "openai"
-        assert fixer2.provider == "openai"
-        assert fixer3.provider == "openai"
 
-class TestProviderConfiguration:
-    """Test provider-specific configuration"""
-    
-    @pytest.mark.skip(
-        reason=(
-            "Post-OpenHands migration: HAS_OPENAI / HAS_GEMINI / HAS_TOGETHER "
-            "guards no longer exist.  All providers are routed through a "
-            "single openhands.sdk.LLM client, so there is no per-SDK import "
-            "check to cover."
+    def test_init_custom_context_lines(self, mock_openai_client):
+        profile = LLMProfile(name="p", model="openai/gpt-4o", api_key="sk")
+        fixer = LLMFixer(profile=profile, context_lines=25)
+        assert fixer.context_lines == 25
+
+    def test_init_constructs_openhands_llm_with_profile_fields(
+        self, mock_openai_client
+    ):
+        profile = LLMProfile(
+            name="vllm",
+            model="openai/my-model",
+            api_key="local-key",
+            base_url="https://vllm.example.com",
         )
-    )
-    def test_openai_import_error_handling(self):
-        """Test handling when OpenAI library is not installed"""
-        with patch('devdox_ai_sonar.llm_fixer.HAS_OPENAI', False):
-            with pytest.raises(ImportError) as exc_info:
-                LLMFixer(provider="openai", api_key="key")
-            assert "OpenAI library not installed" in str(exc_info.value)
+        LLMFixer(profile=profile)
 
-    @pytest.mark.skip(reason="Post-OpenHands migration: HAS_GEMINI guard removed.")
-    def test_gemini_import_error_handling(self):
-        """Test handling when Gemini library is not installed"""
-        with patch('devdox_ai_sonar.llm_fixer.HAS_GEMINI', False):
-            with pytest.raises(ImportError) as exc_info:
-                LLMFixer(provider="gemini", api_key="key")
-            assert "Gemini library not installed" in str(exc_info.value)
+        kwargs = mock_openai_client.call_args.kwargs
+        assert kwargs["model"] == "openai/my-model"
+        assert kwargs["api_key"] == "local-key"
+        assert kwargs["base_url"] == "https://vllm.example.com"
 
-    @pytest.mark.skip(reason="Post-OpenHands migration: HAS_TOGETHER guard removed.")
-    def test_together_import_error_handling(self):
-        """Test handling when Together library is not installed"""
-        with patch('devdox_ai_sonar.llm_fixer.HAS_TOGETHER', False):
-            with pytest.raises(ImportError) as exc_info:
-                LLMFixer(provider="togetherai", api_key="key")
-            assert "Together AI library not installed" in str(exc_info.value)
-    
-    def test_configure_openai_client_creation(self, mock_openai_client):
-        """Test OpenAI client is created correctly"""
-        mock_instance = Mock()
-        mock_openai_client.return_value = mock_instance
+    def test_init_empty_api_key_forwarded_as_none(self, mock_openai_client):
+        """Endpoints that accept unauthenticated requests should be
+        reachable; an empty api_key becomes None at the SDK boundary."""
+        profile = LLMProfile(name="ollama", model="ollama/llama3", api_key="")
+        LLMFixer(profile=profile)
+        assert mock_openai_client.call_args.kwargs["api_key"] is None
 
-        fixer = LLMFixer(provider="openai", api_key="test-key")
+    def test_init_sets_up_jinja_env(self, mock_openai_client):
+        profile = LLMProfile(name="p", model="openai/gpt-4o", api_key="sk")
+        fixer = LLMFixer(profile=profile)
+        assert fixer.jinja_env is not None
+        assert fixer.jinja_env_templates is not None
 
-        assert fixer.client == mock_instance
-        mock_openai_client.assert_called_once()
-    
-    def test_configure_gemini_client_creation(self, mock_gemini_client):
-        """Test Gemini client is created correctly"""
-        mock_instance = Mock()
-        mock_gemini_client.return_value = mock_instance
-        
-        fixer = LLMFixer(provider="gemini", api_key="test-key")
-        
-        assert fixer.client == mock_instance
-    
-    def test_configure_together_client_creation(self, mock_together_client):
-        """Test Together client is created correctly"""
-        mock_instance = Mock()
-        mock_together_client.return_value = mock_instance
-
-        fixer = LLMFixer(provider="togetherai", api_key="test-key")
-
-        assert fixer.client == mock_instance
-
-    @pytest.mark.skip(reason="Post-OpenHands migration: HAS_OPENAI guard removed.")
-    def test_openrouter_import_error_handling(self):
-        """Test handling when OpenAI library is not installed (affects OpenRouter)"""
-        with patch('devdox_ai_sonar.llm_fixer.HAS_OPENAI', False):
-            with pytest.raises(ImportError) as exc_info:
-                LLMFixer(provider="openrouter", api_key="key")
-            assert "OpenAI library not installed" in str(exc_info.value)
-
-    def test_configure_openrouter_client_creation(self, mock_openrouter_client):
-        """Test OpenRouter client is created correctly"""
-        mock_instance = Mock()
-        mock_openrouter_client.return_value = mock_instance
-
-        fixer = LLMFixer(provider="openrouter", api_key="test-key")
-
-        assert fixer.client == mock_instance
-        mock_openrouter_client.assert_called_once()
-        # Post-OpenHands: base_url is still threaded through for OpenRouter.
-        # default_headers are no longer set — that was provider-specific
-        # OpenAI-SDK plumbing that OpenHands LLM handles differently.
-        call_kwargs = mock_openrouter_client.call_args.kwargs
-        assert call_kwargs.get("base_url") == "https://openrouter.ai/api/v1"
 
 class TestContextExtraction:
     """Test context extraction from code files"""
@@ -467,7 +251,7 @@ class TestContextExtraction:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
     
     def test_extract_context_simple(self, fixer):
         """Test extracting context from simple code"""
@@ -540,7 +324,7 @@ class TestGenerateFixByFile:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.mark.skip(reason="Need update")
     def test_generate_fix_success(self, fixer, sample_issue, sample_python_file, rule_info, tmp_path):
@@ -756,12 +540,12 @@ class TestLLMAPICalls:
     @pytest.fixture
     def fixer_openai(self, mock_openai_client):
         """Create OpenAI fixer"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.fixture
     def fixer_gemini(self, mock_gemini_client):
         """Create Gemini fixer"""
-        return LLMFixer(provider="gemini", api_key="test-key", model="gemini-pro")
+        return LLMFixer(profile=LLMProfile(name="gemini", model="gemini/gemini-pro", api_key="test-key"))
 
     @pytest.mark.skip(reason="Need update")
     def test_call_llm_openai_success(self, fixer_openai):
@@ -936,7 +720,7 @@ class TestApplyFixes:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.fixture
     def sample_fix(self, tmp_path, sample_code_block):
@@ -1132,7 +916,7 @@ class TestApplyFixesWithValidation:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.mark.skip(reason="Need update")
     def test_apply_fixes_with_validation_success(self, fixer, tmp_path):
@@ -1189,7 +973,7 @@ class TestHelperMethods:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.fixture
     def context_extractor(self):
@@ -1274,7 +1058,7 @@ class TestWriteExplaination:
     @pytest.fixture
     def fixer(self, mock_openai_client):
         """Create fixer instance"""
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.fixture
     def mock_jinja_env(self):
@@ -2124,7 +1908,7 @@ class TestModuleLevelFunctions:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_generate_fix_key_single_line(self):
         """Test generating fix key for single line"""
@@ -2398,7 +2182,7 @@ class TestLLMFixerAdditionalMethods:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_extract_complexity_info_standard_format(self, fixer):
         """Test extracting complexity info from standard message"""
@@ -2814,7 +2598,7 @@ class TestEdgeCasesAndErrors:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_extract_fix_from_response_malformed_json(self, fixer):
         """Test extracting fix from malformed JSON"""
@@ -3827,7 +3611,7 @@ class TestBuildFixSuggestionInstance:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_code_block(self, **overrides):
         defaults = dict(
@@ -3917,7 +3701,7 @@ class TestPrepareFixContext:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_returns_fix_context_from_file(self, fixer, tmp_path):
         """Reads file, extracts imports, builds FixContext."""
@@ -3963,7 +3747,7 @@ class TestPrepareFixContext:
 
 @pytest.mark.skip(
     reason=(
-        "Post-OpenHands migration: _call_llm_list no longer invokes "
+        "_call_llm_list no longer invokes "
         "fixer.client.responses.parse / .models.generate_content / "
         ".chat.completions.create directly.  It builds an Agent + "
         "Conversation and lets the OpenHands runtime handle the loop, so "
@@ -3975,7 +3759,7 @@ class TestCallLlmList:
 
     @pytest.fixture
     def fixer_openai(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     @pytest.fixture
     def basic_context(self, tmp_path):
@@ -4022,7 +3806,7 @@ class TestCallLlmList:
         assert result == mock_parsed
 
     def test_gemini_provider_calls_generate_content(self, mock_gemini_client):
-        fixer = LLMFixer(provider="gemini", api_key="test-key")
+        fixer = LLMFixer(profile=LLMProfile(name="gemini", model="gemini/gemini-2.5-flash", api_key="test-key"))
         mock_parsed = Mock()
         mock_response = Mock()
         mock_response.parsed = mock_parsed
@@ -4047,7 +3831,7 @@ class TestCallLlmList:
         assert result == mock_parsed
 
     def test_togetherai_provider_calls_completions(self, mock_together_client):
-        fixer = LLMFixer(provider="togetherai", api_key="test-key")
+        fixer = LLMFixer(profile=LLMProfile(name="together_ai", model="together_ai/mixtral-8x7b", api_key="test-key"))
         mock_choice = Mock()
         mock_choice.message.content = json.dumps({
             "IMPORT_BLOCK": "",
@@ -4093,7 +3877,7 @@ class TestExtendStrategiesForIssue:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_cognitive_complexity_branch(self, fixer):
         issue = Mock()
@@ -4147,7 +3931,7 @@ class TestParseLlmResponse:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_valid_json_returns_sonar_fix_response(self, fixer):
         data = {
@@ -4182,7 +3966,7 @@ class TestExtractFixFromResponse:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_valid_json_with_code_fence(self, fixer):
         content = '```json\n{"FIXED_SELECTION": "code", "CONFIDENCE": 0.8}\n```'
@@ -4205,7 +3989,7 @@ class TestExtractFieldsFromParsedJson:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_non_numeric_confidence_defaults_to_half(self, fixer):
         data = {"FIXED_SELECTION": "code", "CONFIDENCE": "not-a-number"}
@@ -4222,7 +4006,7 @@ class TestExtractPythonImportSection:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_simple_imports(self, fixer):
         lines = ["import os\n", "import sys\n", "\n", "x = 1\n"]
@@ -4337,7 +4121,7 @@ class TestExtractClassNameFromFile:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_finds_class_containing_target_line(self, fixer):
         lines = [
@@ -4397,7 +4181,7 @@ class TestCheckPythonInterpreter:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_valid_python_file(self, fixer, tmp_path):
         py_file = tmp_path / "valid.py"
@@ -4424,7 +4208,7 @@ class TestApplyFixesToFileDetailed:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_dry_run_returns_true(self, fixer, tmp_path):
         success, results = await fixer._apply_fixes_to_file(
@@ -4485,7 +4269,7 @@ class TestGenerateFixKeyInstance:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_single_problem_line(self, fixer):
         assert fixer._generate_fix_key([42]) == "fix_L42"
@@ -4812,7 +4596,7 @@ class TestGetFileFromFixStrategies:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_all_strategies_fail_returns_none(self, fixer, tmp_path):
         cb = CodeBlock(
@@ -4861,7 +4645,7 @@ class TestApplyFixesWithValidationCoverage:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self, tmp_path, file_name="test.py"):
         cb = CodeBlock(
@@ -4957,90 +4741,12 @@ class TestApplyFixesWithValidationCoverage:
         assert len(result.failed_fixes) == 1
         assert "boom" in result.failed_fixes[0]["error"]
 
-@pytest.mark.skip(
-    reason=(
-        "Post-OpenHands migration: HAS_* flags and _configure_<provider> "
-        "methods were removed when LLMFixer switched to openhands.sdk.LLM. "
-        "These tests target symbols that no longer exist; cleanup via a "
-        "future test-suite adaptation ticket."
-    )
-)
-class TestImportGuards:
-    """Cover the HAS_TOGETHER/HAS_OPENAI/HAS_GEMINI import fallback paths."""
-
-    def test_together_import_missing_raises(self):
-        """When Together is not installed, configuring it should raise ImportError."""
-        with patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", False):
-            with pytest.raises(ImportError, match="Together AI library"):
-                fixer = LLMFixer.__new__(LLMFixer)
-                fixer._configure_togetherai(None, "key")
-
-    def test_openai_import_missing_raises(self):
-        """When openai is not installed, configuring it should raise ImportError."""
-        with patch("devdox_ai_sonar.llm_fixer.HAS_OPENAI", False):
-            with pytest.raises(ImportError, match="OpenAI library"):
-                fixer = LLMFixer.__new__(LLMFixer)
-                fixer._configure_openai(None, "key")
-
-    def test_gemini_import_missing_raises(self):
-        """When google.genai is not installed, configuring it should raise ImportError."""
-        with patch("devdox_ai_sonar.llm_fixer.HAS_GEMINI", False):
-            with pytest.raises(ImportError, match="Gemini library"):
-                fixer = LLMFixer.__new__(LLMFixer)
-                fixer._configure_gemini(None, "key")
-
-    def test_openrouter_import_missing_raises(self):
-        """When openai is not installed, configuring openrouter should raise ImportError."""
-        with patch("devdox_ai_sonar.llm_fixer.HAS_OPENAI", False):
-            with pytest.raises(ImportError, match="OpenAI library"):
-                fixer = LLMFixer.__new__(LLMFixer)
-                fixer._configure_openrouter(None, "key")
-
-@pytest.mark.skip(
-    reason=(
-        "Post-OpenHands migration: _configure_openrouter no longer exists. "
-        "Missing-api-key validation now lives in LLMFixer.final_configure "
-        "and needs its own tests (rewrite pending)."
-    )
-)
-class TestConfigureOpenrouterMissingKey:
-    """Cover missing API key raises ValueError for OpenRouter."""
-
-    def test_openrouter_no_key_raises(self):
-        with patch("devdox_ai_sonar.llm_fixer.HAS_OPENAI", True), \
-             patch("devdox_ai_sonar.llm_fixer.openai.OpenAI"), \
-             patch.dict(os.environ, {}, clear=True):
-            fixer = LLMFixer.__new__(LLMFixer)
-            os.environ.pop("OPENROUTER_API_KEY", None)
-            with pytest.raises(ValueError, match="OpenRouter API key"):
-                fixer._configure_openrouter(None, None)
-
-@pytest.mark.skip(
-    reason=(
-        "Post-OpenHands migration: _configure_togetherai no longer exists. "
-        "Missing-api-key validation now lives in LLMFixer.final_configure "
-        "and needs its own tests (rewrite pending)."
-    )
-)
-class TestConfigureTogetheraiMissingKey:
-    """Cover missing API key raises ValueError."""
-
-    def test_togetherai_no_key_raises(self):
-        with patch("devdox_ai_sonar.llm_fixer.HAS_TOGETHER", True), \
-             patch("devdox_ai_sonar.llm_fixer.Together"), \
-             patch.dict(os.environ, {}, clear=True):
-            fixer = LLMFixer.__new__(LLMFixer)
-            # Remove env var if present
-            os.environ.pop("TOGETHER_API_KEY", None)
-            with pytest.raises(ValueError, match="Together API key"):
-                fixer._configure_togetherai(None, None)
-
 class TestWriteExplaination:
     """Cover the write_explaination method."""
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_writes_markdown_file(self, fixer, tmp_path):
         """Test writing explanation to a markdown file."""
@@ -5614,7 +5320,7 @@ class TestGenerateFixByFile:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_empty_issues_returns_none(self, fixer):
         result = await fixer.generate_fix_by_file([], Path("/proj"), Path("/tmp"))
@@ -5695,7 +5401,7 @@ class TestGenerateFixByFile:
 
         mock_fix_response = Mock()
         mock_fix_response.FIXED_CODE_BLOCKS = []
-        # Post-OpenHands migration: generate_fix_by_file now inspects
+        # generate_fix_by_file now inspects
         # ``applied_by_agent`` on each fix response and skips the
         # suggestion-building branch when any response was already applied
         # by the agent.  Mock()'s auto-generated attributes are truthy, so
@@ -5788,7 +5494,7 @@ class TestApplyFixesFailurePath:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_apply_fixes_failure_marks_failed(self, fixer, tmp_path):
         """When _apply_fixes_to_file returns False, fixes go to failed list."""
@@ -5807,7 +5513,7 @@ class TestApplyFixesFailurePath:
 
 @pytest.mark.skip(
     reason=(
-        "Post-OpenHands migration: unknown-provider handling is now done by "
+        "unknown-provider handling is now done by "
         "LiteLLM inside openhands.sdk.LLM.  _call_llm_list no longer has a "
         "per-provider branch to return None for unknowns."
     )
@@ -5816,7 +5522,7 @@ class TestCallLlmUnknownProvider:
     """Cover the unknown provider else branch in _call_llm_list."""
 
     def test_unknown_provider_returns_none(self, mock_openai_client):
-        fixer = LLMFixer(provider="openai", api_key="test-key")
+        fixer = LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
         fixer.provider = "unknown_provider"
         ctx = FixContext(
             file_path=Path("test.py"), file_path_tmp=Path("test.py"),
@@ -5840,7 +5546,7 @@ class TestCreateFixPromptListBranches:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_context(self, code="def foo(x):\n    return x", class_name=None):
         return FixContext(
@@ -5918,108 +5624,12 @@ class TestCreateFixPromptListBranches:
         prompt, _ = fixer._create_fix_prompt_list([issue], ctx, {}, "python", "")
         assert "self" in prompt
 
-@pytest.mark.skip(
-    reason=(
-        "Post-OpenHands migration: the per-provider response-parsing "
-        "helpers (_parse_openai_response, _parse_gemini_response, etc.) "
-        "were removed.  All response handling now flows through OpenHands' "
-        "event loop."
-    )
-)
-class TestParseProviderResponses:
-    """Cover the individual parse methods and their exception paths."""
-
-    @pytest.fixture
-    def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
-
-    def test_parse_openai_exception(self, fixer):
-        """Line 1191-1193: exception path in _parse_openai_response."""
-        response = Mock()
-        response.output_parsed = Mock(side_effect=AttributeError("boom"))
-        # The property access itself will raise
-        type(response).output_parsed = property(lambda self: (_ for _ in ()).throw(Exception("boom")))
-        result = fixer._parse_openai_response(response)
-        assert result is None
-
-    def test_parse_gemini_response_success(self, fixer):
-        """Lines 1197-1199: successful gemini parse."""
-        response = Mock()
-        response.text = json.dumps({
-            "IMPORT_BLOCK": "", "FIXED_CODE_BLOCKS": [],
-            "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING",
-            "EXPLANATION": "fix", "CONFIDENCE": 0.9
-        })
-        with patch.object(fixer, "_extract_fix_from_response") as mock_extract:
-            mock_extract.return_value = {"result": "ok"}
-            result = fixer._parse_gemini_response(response)
-        assert result == {"result": "ok"}
-
-    def test_parse_gemini_response_exception(self, fixer):
-        """Lines 1200-1202: exception in gemini parse."""
-        response = Mock()
-        type(response).text = property(lambda self: (_ for _ in ()).throw(Exception("fail")))
-        result = fixer._parse_gemini_response(response)
-        assert result is None
-
-    def test_parse_togetherai_response_success(self, fixer):
-        """Lines 1207-1208: successful togetherai parse."""
-        response = Mock()
-        response.choices = [Mock()]
-        response.choices[0].message.content = json.dumps({
-            "IMPORT_BLOCK": "",
-            "FIXED_CODE_BLOCKS": [{"block_name": "f", "start_line": 1,
-                                    "end_line": 2, "has_changes": True,
-                                    "change_type": "FULL_CODE",
-                                    "block_type": "module", "context": "x"}],
-            "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING",
-            "EXPLANATION": "fix", "CONFIDENCE": 0.9
-        })
-        result = fixer._parse_togetherai_response(response)
-        assert result is not None
-
-    def test_parse_togetherai_response_exception(self, fixer):
-        """Lines 1209-1211: exception in togetherai parse."""
-        response = Mock()
-        response.choices = []  # IndexError
-        result = fixer._parse_togetherai_response(response)
-        assert result is None
-
-    def test_parse_openrouter_response_success(self, fixer):
-        """Successful openrouter parse."""
-        response = Mock()
-        response.choices = [Mock()]
-        response.choices[0].message.content = json.dumps({
-            "IMPORT_BLOCK": "",
-            "FIXED_CODE_BLOCKS": [{"block_name": "f", "start_line": 1,
-                                    "end_line": 2, "has_changes": True,
-                                    "change_type": "FULL_CODE",
-                                    "block_type": "module", "context": "x"}],
-            "NEW_HELPER_CODE": "", "PLACEMENT": "SIBLING",
-            "EXPLANATION": "fix", "CONFIDENCE": 0.9
-        })
-        result = fixer._parse_openrouter_response(response)
-        assert result is not None
-
-    def test_parse_openrouter_response_exception(self, fixer):
-        """Exception path in openrouter parse."""
-        response = Mock()
-        response.choices = []  # IndexError
-        result = fixer._parse_openrouter_response(response)
-        assert result is None
-
-    def test_extract_using_regex_fallback_exception(self, fixer):
-        """Lines 1219-1221: exception in regex fallback."""
-        with patch.object(fixer, "_apply_regex_patterns", side_effect=Exception("boom")):
-            result = fixer._extract_using_regex_fallback("some content")
-        assert result is None
-
 class TestApplyIndentationEdgeCases:
     """Cover edge cases in apply_indentation_to_fix."""
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_empty_lines_list(self, fixer):
         """After strip, if split produces no lines, return as-is (line 1496)."""
@@ -6039,7 +5649,7 @@ class TestApplyFixesToFileException:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_exception_returns_false_empty(self, fixer, tmp_path):
         """Lines 1545-1547: exception returns (False, [])."""
@@ -6056,7 +5666,7 @@ class TestCheckBracketBalance:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_unmatched_closing_bracket(self, fixer):
         """Line 1588: closing bracket with empty stack returns False."""
@@ -6074,7 +5684,7 @@ class TestApplyFixesValidatorFallback:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self, tmp_path):
         fix = Mock(spec=FixSuggestion)
@@ -6110,8 +5720,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.successful_fixes) == 1
 
@@ -6144,8 +5753,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.successful_fixes) == 1
 
@@ -6170,8 +5778,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "no improved fix" in result.failed_fixes[0]["error"]
@@ -6197,8 +5804,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "still failed" in result.failed_fixes[0]["error"]
@@ -6224,8 +5830,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "Rejected" in result.failed_fixes[0]["error"]
@@ -6251,8 +5856,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.return_value = mock_val_result
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "manual review" in result.failed_fixes[0]["error"]
@@ -6274,8 +5878,7 @@ class TestApplyFixesValidatorFallback:
             MockValidator.return_value.validate_fix.side_effect = Exception("validator crash")
             result = await fixer.apply_fixes_with_validation(
                 [fix], [issue], tmp_path,
-                create_backup=False, use_validator=True,
-                validator_provider="openai", validator_api_key="key",
+                create_backup=False, use_validator=True
             )
         assert len(result.failed_fixes) == 1
         assert "Validator error" in result.failed_fixes[0]["error"]
@@ -6285,7 +5888,7 @@ class TestFindFilesWithContent:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_finds_matching_files(self, fixer, tmp_path):
         """Test finding files with matching content."""
@@ -6306,7 +5909,7 @@ class TestExtractPythonImportSectionEdgeCases:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_backslash_after_closing_paren(self, fixer):
         """Line 2152-2153: backslash continuation after closing paren."""
@@ -6347,7 +5950,7 @@ class TestIsLineInsideClassEdgeCases:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_another_class_def_returns_false(self, fixer):
         """Lines 2443-2444: another class definition at same indent returns False."""
@@ -6568,7 +6171,7 @@ class TestPrepareFixContextFullPath:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_successful_context_from_file(self, fixer, tmp_path):
         """Full successful path reading from file (lines 434-497)."""
@@ -6603,7 +6206,7 @@ class TestPrepareContext:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     async def test_class_name_detection_logged(self, fixer, tmp_path):
         """Line 2001: class_name detected gets logged."""
@@ -6633,7 +6236,7 @@ class TestCreateBackupIfNeeded:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def test_creates_backup_when_requested_and_not_dry_run(self, fixer, tmp_path):
         result = FixResult(project_path=tmp_path, total_fixes_attempted=1)
@@ -6663,7 +6266,7 @@ class TestGroupFixesByFile:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self, issue_key="k"):
         fix = Mock(spec=FixSuggestion)
@@ -6713,7 +6316,7 @@ class TestProcessSingleFile:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self, tmp_path):
         fix = Mock(spec=FixSuggestion)
@@ -6799,7 +6402,7 @@ class TestHandleFailedFixesWithValidator:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self, tmp_path):
         fix = Mock(spec=FixSuggestion)
@@ -6933,7 +6536,7 @@ class TestProcessValidationResult:
 
     @pytest.fixture
     def fixer(self, mock_openai_client):
-        return LLMFixer(provider="openai", api_key="test-key")
+        return LLMFixer(profile=LLMProfile(name="openai", model="openai/gpt-4o", api_key="test-key"))
 
     def _make_fix(self):
         fix = Mock(spec=FixSuggestion)

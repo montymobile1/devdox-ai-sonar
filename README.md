@@ -73,7 +73,7 @@ devdox_sonar
 | **Vulnerability** | A security issue — SQL injection, XSS, hardcoded credentials. |
 | **Security Hotspot** | Code that *might* be a security issue and needs manual review. |
 | **Severity** | How bad it is: **Blocker** > **Critical** > **Major** > **Minor** > **Info**. |
-| **LLM Provider** | The AI service generating fixes. You bring your own API key. Supported: OpenAI, Google Gemini, TogetherAI, OpenRouter. |
+| **LLM Provider** | The AI service generating fixes. devdox-sonar routes every LLM call through the OpenHands SDK, which speaks to any provider that litellm supports -- so you bring your own API key for whichever provider you pick. See the [Configure your LLM](#configure-your-llm) section for the full list. |
 | **Confidence Score** | 0.0 to 1.0 rating from the LLM indicating how certain it is about the fix. |
 | **Dry Run** | Runs the full pipeline but skips all file writes. Safe to run anytime. |
 
@@ -134,7 +134,7 @@ You will need these from your SonarCloud account:
 - **Organization Key** — visible in your dashboard URL: `sonarcloud.io/organizations/<org-key>/projects`
 - **Project Key** — visible on your project page: `sonarcloud.io/project/overview?id=<project-key>`
 
-**An API key for at least one LLM provider:** [OpenAI](#openai), [Google Gemini](#google-gemini), [TogetherAI](#togetherai), or [OpenRouter](#openrouter).
+**An API key for one LLM provider.** The interactive wizard lists every provider OpenHands / litellm can reach (~70 in total: OpenAI, Anthropic, Gemini, Mistral, DeepSeek, TogetherAI, OpenRouter, Groq, Ollama, vLLM, and more). Eight of those are "⭐ verified" by OpenHands, meaning their model catalogues are hand-curated; the rest are available as "advanced" picks in the same menu. See the [Configure your LLM](#configure-your-llm) section below.
 
 ---
 
@@ -187,14 +187,19 @@ The wizard walks you through three steps.
 
 Saved to `~/devdox/auth.json`.
 
-**Step 2 — LLM Provider**
+**Step 2 — LLM Profile**
 
-1. Pick a provider (OpenAI, Gemini, TogetherAI, or OpenRouter)
-2. Paste your API key — it is validated against the provider's API immediately
-3. Choose a model from the provider's available list
-4. Optionally set it as the default provider
+1. Pick a provider from the menu (⭐ starred verified options at the
+   top, the full unverified catalogue below, and a 🔧 Custom entry for
+   self-hosted endpoints).
+2. Pick a model from that provider's list — or, on the Custom path,
+   type a `provider/model-name` string and optional `base_url`.
+3. Paste your API key. Leave blank for endpoints that don't require one.
+4. The key is live-probed against the endpoint before anything is saved.
+5. Name the profile and optionally mark it as the default.
 
-You can add multiple providers. Saved to `~/devdox/config.toml`.
+The wizard loops on **Add another?** so you can set up multiple
+profiles in one session. Saved to `~/devdox/config.toml`.
 
 **Step 3 — Analysis Parameters**
 
@@ -261,14 +266,23 @@ On Windows, `PROJECT_PATH` uses backslashes or forward slashes:
 
 ```toml
 [llm]
-default_provider = "openai"
-default_model = "gpt-4o"
+default_profile = "my-openai"
 
-[[llm.providers]]
-name = "openai"
+[[llm.profiles]]
+name = "my-openai"
+model = "openai/gpt-4o"
 api_key = "sk-your-key"
-base_url = "https://api.openai.com/v1"
-models = ["gpt-4o", "gpt-4-turbo"]
+
+[[llm.profiles]]
+name = "cheap-gemini"
+model = "gemini/gemini-2.5-flash"
+api_key = "..."
+
+[[llm.profiles]]
+name = "internal-vllm"
+model = "openai/llama-3-70b"
+api_key = ""                               # endpoint takes no auth
+base_url = "https://vllm.company.internal/v1"
 
 [configuration]
 max_fixes = 5
@@ -279,39 +293,80 @@ create_backup = 0
 exclude_rules = ""
 ```
 
+Every entry in the `[[llm.profiles]]` array is a full self-contained LLM
+configuration: a unique `name`, the fully-qualified `model` string in
+OpenHands `provider/model-id` form, an `api_key` (empty is allowed for
+unauthenticated endpoints), and an optional `base_url` for custom or
+self-hosted endpoints. The top-level `[llm].default_profile` names
+whichever profile runs by default.
+
 **Updating configuration**
 
 Use the interactive menu (run `devdox_sonar` with no arguments) and select:
-- **Add Provider** — add another LLM provider
-- **Update Provider** — change an existing provider's API key or model
-- **Change Parameters Configuration** — adjust types, severities, max fixes, apply, backup, and excluded rules
+- **Add Provider** -- add another LLM profile via the 8-step wizard
+- **Update Provider** -- change an existing profile's name, model, API key, or base URL
+- **Change Parameters Configuration** -- adjust types, severities, max fixes, apply, backup, and excluded rules
 
 Or edit `~/devdox/auth.json` and `~/devdox/config.toml` directly.
 
 ---
 
-### LLM Providers
+### Configure your LLM
 
-You need at least one. The setup wizard lets you configure any of these:
+devdox-sonar routes every LLM call through OpenHands SDK. There are three
+ways to tell it which LLM to use, in precedence order (higher wins):
 
-#### OpenAI
-- **Get a key:** [platform.openai.com](https://platform.openai.com) → API Keys → Create new secret key
-- **Recommended models:** `gpt-4o`, `gpt-4-turbo`
+**1. CLI flags (per-invocation override):**
 
-#### Google Gemini
-- **Get a key:** [ai.google.dev](https://ai.google.dev) → Google AI Studio → Get API Key
-- **Recommended models:** `gemini-2.5-flash`, `gemini-pro`
-- Has a **free tier** — useful for trying the tool without spending anything.
+```bash
+devdox_sonar --llm-model openai/gpt-4o --llm-api-key sk-... \
+             -c fix_issues ...
+```
 
-#### TogetherAI
-- **Get a key:** [together.ai](https://www.together.ai) → Dashboard → Settings → API Keys
-- **Recommended models:** `mixtral-8x7b`, `meta-llama/Llama-3-70b`
-- Runs open-source models at lower cost.
+**2. Environment / `.env`:**
 
-#### OpenRouter
-- **Get a key:** [openrouter.ai](https://openrouter.ai) → Dashboard → Keys → Create Key
-- **Example models:** `anthropic/claude-sonnet-4`, `openai/gpt-4o`, `google/gemini-2.5-flash`
-- One API key gives access to 400+ models. Model names use `provider/model-name` format.
+```
+LLM_MODEL=openai/gpt-4o
+LLM_API_KEY=sk-your-key
+# LLM_BASE_URL=https://my-vllm.example.com   # optional
+```
+
+**3. Saved profile in `~/devdox/config.toml`:**
+
+Run `devdox_sonar` with no arguments and pick **Add Provider** to run
+the interactive wizard. You'll see:
+
+1. A menu of every provider OpenHands/litellm knows about. The first
+   eight (openai, anthropic, gemini, mistral, deepseek, moonshot,
+   minimax, and openhands itself) are marked with a star ⭐ as
+   "verified". Below them, ~60 more providers (together_ai, openrouter,
+   groq, ollama, azure, cohere, xai, vllm, ...) are available as
+   unverified picks. A **🔧 Custom** entry at the bottom lets you type
+   a `provider/model-name` string and optional `base_url` for anything
+   self-hosted or exotic.
+2. After picking a provider, you pick a model from that provider's
+   catalogue (⭐ models first, then the rest).
+3. The wizard prompts for an API key. Leave it blank for endpoints
+   that accept unauthenticated requests (a local Ollama, a self-hosted
+   vLLM without auth, etc.).
+4. A **live credential probe** runs against the endpoint with your
+   key. If the probe fails, the profile isn't saved; you re-enter the
+   key or abort.
+5. You name the profile (default: the provider family) and choose
+   whether to make it the default.
+
+Running the wizard again adds another profile alongside the existing
+ones; **Update Provider** walks through the fields of an existing
+profile and re-probes once the changes are combined.
+
+> **Model string format.** Whichever source you use, `LLM_MODEL` /
+> `--llm-model` / saved `model` is the OpenHands/litellm
+> `provider/model-id` convention: e.g. `openai/gpt-4o`,
+> `gemini/gemini-2.5-flash`, `anthropic/claude-sonnet-4-6`,
+> `together_ai/meta-llama/Llama-3-70b-chat`,
+> `ollama/llama3`, `vllm/my-local-model`. The verified model
+> catalogue lives in [OpenHands
+> SDK](https://github.com/All-Hands-AI/OpenHands).
 
 ---
 
@@ -664,4 +719,4 @@ Created and maintained by **Hayat Bourji** (hayat.bourgi@montyholding.com) and *
 
 ## Acknowledgments
 
-Built with [Click](https://github.com/pallets/click), [Rich](https://github.com/Textualize/rich), [Questionary](https://github.com/tmbo/questionary), [Pydantic](https://github.com/pydantic/pydantic), [Jinja2](https://github.com/pallets/jinja), and [aiofiles](https://github.com/Tinche/aiofiles). Powered by [OpenAI](https://openai.com), [Google Gemini](https://ai.google.dev), [TogetherAI](https://together.ai), and [OpenRouter](https://openrouter.ai). Integrates with [SonarCloud](https://sonarcloud.io/).
+Built with [Click](https://github.com/pallets/click), [Rich](https://github.com/Textualize/rich), [Questionary](https://github.com/tmbo/questionary), [Pydantic](https://github.com/pydantic/pydantic), [Jinja2](https://github.com/pallets/jinja), and [aiofiles](https://github.com/Tinche/aiofiles). LLM access is routed through the [OpenHands SDK](https://github.com/All-Hands-AI/OpenHands) on top of [litellm](https://github.com/BerriAI/litellm), so any provider either library supports is available. Integrates with [SonarCloud](https://sonarcloud.io/).
