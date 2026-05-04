@@ -81,3 +81,41 @@ class ImportState(TypedDict):
     last_shebang_encoding_line: int
     in_docstring: bool
     docstring_quote: Optional[str]
+
+
+# ---------------------------------------------------------------------------
+# Slot arithmetic helpers
+#
+# The codebase represents an editable region as an inclusive 1-indexed
+# line range ``[start_line .. end_line]``. The slot width is therefore
+# ``end_line - start_line + 1``, and the end_line for a slot of width N
+# starting at start_line is ``start_line + N - 1``.
+#
+# Both rules used to be re-implemented inline in two places — a rule
+# handler computing ``end_line = start_line + N`` (off by one) and the
+# apply-loop computing ``expected = end_idx - start_idx + 2`` (also off
+# by one in the same direction). The two errors cancelled each other
+# until one was fixed, at which point the warning surfaced. Centralising
+# the arithmetic here makes the off-by-one structurally impossible: any
+# new caller computing slot widths inline gets caught by code review.
+# ---------------------------------------------------------------------------
+
+
+def slot_width(start_line: int, end_line: int) -> int:
+    """Return the number of lines covered by an inclusive slot.
+
+    ``[start_line, end_line]`` is an inclusive 1-indexed range, so the
+    slot covers ``end_line - start_line + 1`` lines. A slot where
+    ``start_line == end_line`` has width 1.
+    """
+    return end_line - start_line + 1
+
+
+def slot_end_for(start_line: int, n_lines: int) -> int:
+    """Return the inclusive end_line for a slot of width ``n_lines``.
+
+    A slot starting at ``start_line`` and spanning ``n_lines`` ends at
+    ``start_line + n_lines - 1`` (inclusive). For example, a 3-line
+    block starting at line 13 ends at line 15.
+    """
+    return start_line + n_lines - 1

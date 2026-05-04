@@ -5,7 +5,7 @@ import ast
 import logging
 import re
 
-from devdox_ai_sonar.models.file_structures import FixContext
+from devdox_ai_sonar.models.file_structures import FixContext, slot_end_for
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     SonarSecurityIssue,
@@ -771,13 +771,7 @@ class ConvenationNameHandler(RuleHandler):
             new_def = new_def.replace(old_name, new_name)
 
         actual_start_line = function_info["line"] - len(function_info["decorators"])
-        # ``end_line`` is the inclusive last line of the slot; an
-        # N-line block starting at ``start_line`` ends at
-        # ``start_line + N - 1``. The previous ``+ num_lines`` made
-        # the slot one line too wide and triggered the apply-loop's
-        # "Full code block has 3 lines, expected 4" warning on every
-        # rename.
-        end_line = actual_start_line + num_lines - 1
+        end_line = slot_end_for(actual_start_line, num_lines)
 
         return CodeBlock(
             block_name=function_info["function"],
@@ -817,7 +811,7 @@ class ConvenationNameHandler(RuleHandler):
         new_def = original_def.replace(arg_name, new_arg_name)
 
         actual_start_line = function_info["line"] - len(function_info["decorators"])
-        end_line = actual_start_line + num_lines - 1
+        end_line = slot_end_for(actual_start_line, num_lines)
 
         return CodeBlock(
             block_name=function_info["function"],
