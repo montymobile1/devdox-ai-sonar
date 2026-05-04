@@ -1,5 +1,6 @@
 from pathlib import Path
 import difflib
+import re
 from typing import Dict, Any, Optional, List, Tuple, Union
 import logging
 
@@ -66,6 +67,29 @@ class IssueExtractor:
 
             # Check for errors in line range
             if line_range_result.get("error", ""):
+                # The content-relocation step couldn't find the issue's
+                # original line content in the actual file. That usually
+                # means an earlier fix in this run already resolved the
+                # issue (e.g. a multi-param rename absorbing siblings on
+                # the same def line) — but it can also be a false
+                # positive: the *line content* shifted because a sibling
+                # fix rewrote a neighbouring line, while the identifier
+                # the current issue is about is still right there waiting
+                # to be renamed (the S117 local-variable case after a
+                # parameter rename). Before declaring "resolved", check
+                # whether the identifier extracted from the issue's
+                # message is still present in the file. If yes, pass the
+                # original tmp line range through; the handler will
+                # locate the identifier inside the function and apply
+                # the rename. If no, the issue genuinely is resolved and
+                # we keep the original skip behaviour.
+                if _identifier_still_present(issues, file_path):
+                    return ValidationResult(
+                        is_valid=True,
+                        file_path=file_path,
+                        file_path_tmp=file_path_tmp,
+                        line_range=line_range_tmp,
+                    )
                 return ValidationResult(
                     is_valid=False, error=line_range_result["error"]
                 )
@@ -189,6 +213,43 @@ class IssueExtractor:
             "match_type": "not_found",
             "error": f"Content from lines {first_line_tmp}-{last_line_tmp} not found in actual file {file_path}",
         }
+
+
+# Match a quoted Python identifier inside an issue message. Sonar puts
+# the violating name in single or double quotes, e.g.:
+#   Rename this local variable "Total" to match the regular expression …
+#   Rename function 'ProcessRecord' to match …
+# Restricted to valid Python identifiers so non-identifier quoted
+# content (literals like "<unknown>" or "application/json" reported by
+# S1192) doesn't accidentally match.
+_QUOTED_IDENT_IN_MESSAGE_RE = re.compile(
+    r"['\"]([A-Za-z_][A-Za-z_0-9]*)['\"]"
+)
+
+
+def _identifier_still_present(
+    issues: List[Union[SonarIssue, SonarSecurityIssue]],
+    file_path: Path,
+) -> bool:
+    """Return True if any quoted identifier from the issues' messages
+    still appears in ``file_path``.
+
+    Used to distinguish "an earlier fix already resolved this" (no
+    identifier left) from "a sibling fix shifted line content but the
+    identifier still needs to be renamed" (identifier still on disk).
+    Word-boundary match avoids substring false positives.
+    """
+    try:
+        text = file_path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    for issue in issues:
+        message = getattr(issue, "message", "") or ""
+        for match in _QUOTED_IDENT_IN_MESSAGE_RE.finditer(message):
+            ident = match.group(1)
+            if re.search(rf"\b{re.escape(ident)}\b", text):
+                return True
+    return False
 
 
 def _validate_and_extract_issue_info(
