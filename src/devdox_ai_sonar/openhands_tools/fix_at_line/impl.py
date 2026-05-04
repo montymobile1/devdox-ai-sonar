@@ -7,6 +7,7 @@ number instead of content match.
 """
 
 import logging
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -188,6 +189,28 @@ class FixAtLineExecutor(ToolExecutor):
             returned_old_block = current_stripped
             returned_new_block = new_stripped
         elif old_stripped in current_stripped:
+            if target.suffix == ".py" and _new_block_adds_python_structure(
+                old_stripped, new_stripped
+            ):
+                return FixAtLineObservation.from_text(
+                    text=(
+                        "`new_block` introduces def/class/@decorator "
+                        "definitions absent from `old_block`. Substring "
+                        "replacement would splice those into the middle of "
+                        "existing statements and corrupt the file. Either:\n"
+                        f"  (a) widen `old_block` to the exact full content "
+                        f"of lines {action.start_line}-{action.end_line} for "
+                        "full-block replacement, or\n"
+                        "  (b) use the EOF-append pattern "
+                        "(start_line=end_line=total_lines+1, old_block='') "
+                        "to append new helpers after the end of the file."
+                    ),
+                    is_error=True,
+                    path=action.path,
+                    start_line=action.start_line,
+                    end_line=action.end_line,
+                    old_block=current_stripped,
+                )
             occurrences = current_stripped.count(old_stripped)
             if occurrences > 1:
                 return FixAtLineObservation.from_text(
@@ -345,6 +368,31 @@ def _run_pyflakes_undefined_names(target: Path) -> str:
         if "undefined name" in line.lower():
             return line.strip()
     return ""
+
+
+_PYTHON_STRUCTURE_RE = re.compile(
+    r"^\s*(?:async\s+)?(?:def|class|@\w)", re.MULTILINE
+)
+
+
+def _new_block_adds_python_structure(old_block: str, new_block: str) -> bool:
+    """True when ``new_block`` introduces def/class/decorator absent from ``old_block``.
+
+    Substring replacement is meant for tiny in-line edits (rename, value
+    swap). When an agent passes a short ``old_block`` like ``return "x"``
+    and a ``new_block`` containing one or more ``def`` lines, the
+    substring match silently inserts those defs in the middle of an
+    existing statement — producing structurally-broken Python.
+
+    This check counts top-level ``def`` / ``class`` / ``@decorator``
+    occurrences in each block and returns True if ``new_block`` adds at
+    least one that ``old_block`` doesn't already have, signalling that
+    the agent should use full-block replacement or the EOF-append
+    pattern instead.
+    """
+    new_count = len(_PYTHON_STRUCTURE_RE.findall(new_block))
+    old_count = len(_PYTHON_STRUCTURE_RE.findall(old_block))
+    return new_count > old_count
 
 
 def _strip_trailing_newline(text: str) -> str:
