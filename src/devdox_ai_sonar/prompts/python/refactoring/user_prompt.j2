@@ -3,8 +3,8 @@ Do NOT output JSON. Do NOT paste code in your reply.
 
 To apply the change, use `fix_at_line`:
 - Call `file_editor view` first to see the function's current content AND to note the highest line number shown — call this `L_view`.
-- Apply ONE `fix_at_line` call to replace the original function with its simplified version (one that calls helpers). Use the function's line range as `start_line`/`end_line`; `old_block` = current content of those lines.
-- Then APPEND each helper to the end of the file using the EOF-append shape: `start_line` = `end_line` = `L_view + 1`, `old_block` = `""` (empty), `new_block` = `<helper source>`. The executor recognises this as a deliberate append. After each append, the file grows; re-`view` before the next.
+- Apply ONE `fix_at_line` call to replace the original function with its simplified version (one that calls helpers). Use the function's line range as `start_line`/`end_line` and **set `old_block = ""`** (empty string). The executor reads empty `old_block` on a valid in-range slot as "trust my line range; replace this whole window without byte-verifying". Do NOT try to copy the original 100+ line function body into `old_block` — long multi-line strings get mangled in tool calls and the byte-match path will fail.
+- Then APPEND each helper to the end of the file using the EOF-append shape: `start_line` = `end_line` = `L_view + 1`, `old_block` = `""` (empty), `new_block` = `<helper source>`. The executor recognises this as a deliberate append. Every successful response tells you the file's new line count and the next safe EOF-append `start_line` — use that, do not recompute from scratch.
 - Every `fix_at_line` response includes a `Syntax:` line. If it says `FAILED`, your last edit broke the file — repair with another `fix_at_line` BEFORE doing more inserts.
 - Do NOT use `file_editor str_replace` — it is unsafe when the file has duplicated lines.
 - Do NOT target a `start_line`/`end_line` that contains existing function code unless you intend to replace it.

@@ -42,6 +42,21 @@ To edit the file, emit exactly one `fix_at_line` tool call per edit. The message
 
 The tool's parameter schema is in its own description; do not quote it in your reply.
 
+### Choosing `old_block`
+
+For a multi-line replacement (anything bigger than one or two lines — e.g. replacing the original function with its simplified version), use the **empty `old_block`** form:
+
+- `start_line` = first line to replace (inclusive, 1-indexed)
+- `end_line`   = last line to replace (inclusive, 1-indexed)
+- `old_block`  = `""`  (empty string — the executor reads "trust my line range; replace this whole window without byte-verifying the existing content")
+- `new_block`  = the new content for those lines
+
+This is the recommended form for refactor edits. Do NOT try to copy the original 100+ line function body into `old_block` as a sanity check — long multi-line strings get mangled in tool calls and the byte-match will fail. The line range itself is the anchor; you have just `view`ed the file and you trust your numbers.
+
+For a small inline edit (renaming a single identifier on one line, swapping a literal value, etc.) you may instead pass `old_block` as a unique substring of the line(s) — the executor will find-and-replace within the anchored range.
+
+### Invalidation rules
+
 Each of the following invalidates the call (the file stays unedited):
 
 - A literal-syntax call written as text, e.g. `fix_at_line(start_line=..., ...)`.
@@ -69,7 +84,8 @@ Do NOT say or imply any of: "no changes", "cannot be reduced", "cannot be fixed"
 
 ## Absolute rules
 - Use tools — `fix_at_line`, `file_editor` (for `view` only), and `terminal` if needed
-- Always `view` before `fix_at_line` so `old_block` is accurate
+- Always `view` before `fix_at_line` so your line numbers are accurate
+- For multi-line refactor replacements, use the empty-`old_block` form (see "Choosing `old_block`" above). Do NOT try to reproduce 100+ lines of source as `old_block` — it will mangle and fail.
 - Do NOT use `file_editor str_replace` — it fails when lines repeat; use `fix_at_line` instead
 - `fix_at_line` is invoked as a tool call only; never as text in your reply
 - Do NOT write JSON in your reply
