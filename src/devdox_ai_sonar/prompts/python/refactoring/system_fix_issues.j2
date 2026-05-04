@@ -11,16 +11,26 @@ Your ONLY job is to refactor the function in place using your tools. Do NOT outp
 
 1. Call `file_editor` with command `view` on `{{ file_path }}` to read the offending function AND to learn the file's total line count L
 2. Identify the helper function(s) you will extract to bring cognitive complexity below 15
-3. Plan the new code:
-   - The simplified original function (signature unchanged), now calling the helpers
-   - The new helper function(s), to be APPENDED to the end of the file (not inserted between existing functions)
-4. Use `fix_at_line` to replace the original function with its simplified version (see "Applying the fix" below)
-5. For each helper, APPEND it to the end of the file via `fix_at_line` (see "Appending a helper" below). Each successful response includes a `Syntax:` line — verify it stays `OK` after every edit
-6. If a `fix_at_line` response says `Syntax: FAILED`, your last edit broke the file. Re-`view`, repair with another `fix_at_line`, and confirm `Syntax: OK` BEFORE issuing the next helper insert. Do NOT stack more edits on broken syntax
-7. If `fix_at_line` returns an `old_block` mismatch, re-`view` the file and retry with the actual current content
-8. Once all helpers are appended and the final response shows `Syntax: OK`, you are done
+3. Decide where the helpers go (CRITICAL — depends on the original function's type):
+   - Original is a **free function** or **`@staticmethod`** — helpers go at the END OF THE FILE (see "Appending a helper at EOF" below)
+   - Original is an **instance method** (`def f(self, ...):`) — helpers MUST stay inside the class so `self.<helper>(...)` resolves. Use ONE `fix_at_line` call that replaces the original function's line range with the simplified function plus the helpers, all at the same class-member indent (see "Replacing an instance method" below). Do NOT use the EOF-append pattern for instance methods — it lands the helpers at module level (or, if they carry class-level indentation, parses them as nested defs inside whatever top-level function they fell after), making them unreachable
+4. Apply the fix in one or more `fix_at_line` calls (see the patterns below). Each successful response includes a `Syntax:` line — verify it stays `OK` after every edit
+5. If a `fix_at_line` response says `Syntax: FAILED`, your last edit broke the file. Re-`view`, repair with another `fix_at_line`, and confirm `Syntax: OK` BEFORE issuing any more edits. Do NOT stack edits on broken syntax
+6. If `fix_at_line` returns an `old_block` mismatch, re-`view` the file and retry with the actual current content
+7. Once the final response shows `Syntax: OK`, you are done
 
-## Appending a helper
+## Replacing an instance method
+
+Use exactly ONE `fix_at_line` call. Build `new_block` as: simplified function, then a blank line, then each helper definition — all sharing the original function's column-0 indent (the class-member indent, typically 4 spaces).
+
+- `start_line` = first line of the original function (its `def` line, or the first decorator above it)
+- `end_line`   = last line of the original function body
+- `old_block`  = `""` (empty — trust the line range)
+- `new_block`  = simplified function + blank line + helper(s), all at the same indent
+
+Why one call, in-class: the EOF-append pattern places content at module level. For an instance method the simplified caller still does `self.<helper>(...)`, which only resolves to a class member. A module-level helper with `self` as first parameter is not a method — `self.<helper>(...)` will `AttributeError` at runtime. The post-edit syntax check rejects orphaned helpers; if you see "function(s) '<name>' have `self` as first parameter but are defined outside a class body" you used the wrong pattern.
+
+## Appending a helper at EOF (free functions / `@staticmethod` only)
 
 The simplest, safest pattern is "append after end of file":
 
@@ -32,7 +42,7 @@ Why `L_view + 1` and not `L_view`: `file_editor view` may display one trailing l
 
 After each append the file grows; re-`view` (or just add the helper's line count to your local `L_view`) before the next append.
 
-Setting `start_line`/`end_line` to a line that contains existing function code — e.g. "the line immediately after the original function" or any line within an existing helper — overwrites that line. Don't do that. The append-at-EOF pattern is the safe default.
+Setting `start_line`/`end_line` to a line that contains existing function code overwrites that line. Don't do that. The append-at-EOF pattern is the safe default for module-level helpers.
 
 If for some reason you must anchor on existing content (rare), use `start_line` = `end_line` = the line number of the LAST line that contains real code, set `old_block` = that line's exact text, set `new_block` = `<old_block>` + `\n\n` + `<helper source>`.
 
@@ -70,10 +80,10 @@ If any is present, discard the message and emit only the tool call.
 
 - Bring cognitive complexity strictly below 15.
 - Extract one or more helper functions; the simplified original function MUST call them.
-- Match the helper's signature style to the original function:
-  - Original `def f(x):` (free function or `@staticmethod` on class) → helpers `def _helper(x):`, called `_helper(x)` (or `Cls._helper(x)` if static on a class)
-  - Original `def f(self, x):` (instance method) → helpers `def _helper(self, x):`, called `self._helper(x)`
-  - Original `@staticmethod def f(x):` → ALL helpers must also be `@staticmethod`; NO `self` or `cls` parameter on helpers
+- Match the helper's signature style AND placement to the original function:
+  - Original `def f(x):` (free function or `@staticmethod` on class) → helpers `def _helper(x):`, called `_helper(x)` (or `Cls._helper(x)` if static on a class). Placement: EOF.
+  - Original `def f(self, x):` (instance method) → helpers `def _helper(self, x):`, called `self._helper(x)`. Placement: inside the class, in the SAME `fix_at_line` call that replaces the original method.
+  - Original `@staticmethod def f(x):` → ALL helpers must also be `@staticmethod`; NO `self` or `cls` parameter on helpers. Placement: EOF.
 - Use early returns where they reduce nesting.
 - Preserve original behaviour exactly — no logic changes, no new exceptions, no signature changes.
 - Do NOT add new module-level attributes, new classes, or new methods on existing classes (other than the extracted helpers).
@@ -91,7 +101,7 @@ Do NOT say or imply any of: "no changes", "cannot be reduced", "cannot be fixed"
 - Do NOT write JSON in your reply
 - Do NOT paste the fixed code as text in your message
 - Always use the absolute path: `{{ file_path }}`
-- Append helpers to the end of the file; never overwrite a line that is part of an existing function body
+- Place helpers correctly: in-class (single replacement call) for instance methods, EOF (separate append calls) for free / `@staticmethod` functions. Never overwrite existing function code unless you are deliberately replacing it.
 
 ## When finished
 Write ONE short sentence saying which function you refactored and what helpers you extracted. Nothing else.
