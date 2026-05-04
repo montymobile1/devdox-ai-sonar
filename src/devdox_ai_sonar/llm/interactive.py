@@ -34,7 +34,7 @@ from typing import Any, Literal, Optional
 from rich.console import Console
 from rich.prompt import Confirm, Prompt
 
-from devdox_ai_sonar.llm import selection, validation
+from devdox_ai_sonar.llm import exclusions, selection, validation
 from devdox_ai_sonar.llm.errors import (
     InvalidModelFormatError,
     KeyProbeError,
@@ -55,7 +55,6 @@ from devdox_ai_sonar.utils.ui_prompts import select_from_list
 __all__ = [
     "ProfileUpdateContext",
     "add_profile_flow",
-    "offer_legacy_llm_recovery",
     "update_profile_flow",
 ]
 
@@ -107,13 +106,6 @@ def _show_verified_legend_once(menu_has_stars: bool) -> None:
         return
     _console.print(_VERIFIED_LEGEND)
     _legend_shown_this_run = True
-
-# Maximum credential-shaped (auth / unknown / connection) probe failures
-# tolerated in a single API-key prompt loop before the wizard gives up
-# and asks the user to verify their credentials. Bounded so a confused
-# user, a misbehaving auth endpoint, or a non-interactive run cannot
-# keep the wizard stuck forever.
-_MAX_API_KEY_ATTEMPTS = 3
 
 # Process-wide toggle set by the CLI entry point via :func:`set_verbose`.
 # When true, probe-failure details (litellm exception class, provider
@@ -167,42 +159,6 @@ class ProfileUpdateContext:
         if self.new_api_key is not None:
             return self.new_api_key
         return self.profile.api_key
-
-
-# ---------------------------------------------------------------------------
-# Legacy [[llm.providers]] recovery
-# ---------------------------------------------------------------------------
-
-
-async def offer_legacy_llm_recovery(manager: ConfigManager) -> bool:
-    """Detect old ``[[llm.providers]]`` and offer to remove it in place.
-
-    Reads ``manager.config['llm']`` directly (not via profile_store, which
-    would raise on the legacy shape) and, if the old key is present,
-    prompts the user. On consent, removes only the ``providers`` key
-    from the ``[llm]`` table and persists. All other config — SonarCloud
-    auth, project paths, anything outside ``[llm]`` — is left untouched.
-
-    Returns:
-        True if the caller should continue (no legacy detected, or
-        recovery completed). False if the user declined recovery.
-    """
-    llm_section = (manager.config or {}).get("llm") or {}
-    if "providers" not in llm_section:
-        return True
-
-    _console.print(
-        "[yellow]Old [[llm.providers]] schema detected in config.toml. "
-        "The [llm] section needs to be reset; your other settings will "
-        "be preserved.[/yellow]"
-    )
-    if not Confirm.ask("Reset just the [llm] section now?", default=True):
-        return False
-
-    del manager.config["llm"]["providers"]
-    manager.save_config(create_backup=False)
-    _console.print("[green]✓ [llm] section reset.[/green]")
-    return True
 
 
 # ---------------------------------------------------------------------------
@@ -498,7 +454,10 @@ async def _prompt_for_provider() -> Optional[str]:
 
     Returns the provider name, :data:`_BACK_SENTINEL`, or ``None``.
     """
-    menu = selection.build_provider_menu()
+    menu = selection.build_provider_menu(
+        excluded_providers=exclusions.EXCLUDED_PROVIDERS,
+        included_providers=exclusions.INCLUDED_PROVIDERS,
+    )
     labels_to_value: dict[str, str] = {}
     display: list[str] = []
     for entry in menu:
@@ -579,7 +538,11 @@ async def _prompt_for_model(
     passes every saved profile's model so the user can't land on a
     duplicate.
     """
-    menu = selection.build_model_menu(provider)
+    menu = selection.build_model_menu(
+        provider,
+        excluded_models=exclusions.EXCLUDED_MODELS,
+        included_models=exclusions.INCLUDED_MODELS,
+    )
     if not menu:
         _console.print(
             f"[red]❌ No models available for provider '{provider}'[/red]"
@@ -652,16 +615,14 @@ def _prompt_for_api_key_until_valid(
     outer wizard needs to take over.
 
     A credentials-shaped failure (auth / unknown / connection) keeps
-    the user on this prompt -- just enter a different key -- but is
-    bounded by :data:`_MAX_API_KEY_ATTEMPTS` so a stuck user or
-    misbehaving auth endpoint cannot keep the wizard running forever.
-    A model-shaped failure (not_found / bad_request) propagates up as
+    the user on this prompt -- just enter a different key. A
+    model-shaped failure (not_found / bad_request) propagates up as
     ``restart_model_selection`` so the wizard re-runs provider and
     model selection; it's pointless to keep typing keys when the
     model itself is the problem. Rate-limit has its own three-way
     ``save / retry / cancel`` sub-prompt.
     """
-    for attempt in range(1, _MAX_API_KEY_ATTEMPTS + 1):
+    while True:
         api_key = _prompt_for_api_key(family_label)
         if api_key is None:
             return _KeyLoopResult(kind="cancelled")
@@ -676,16 +637,9 @@ def _prompt_for_api_key_until_valid(
         if outcome == "pick_different_model":
             return _KeyLoopResult(kind="restart_model_selection")
         # outcome == "try_new_key"
-        if attempt < _MAX_API_KEY_ATTEMPTS:
-            _console.print(
-                "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
-            )
-
-    _console.print(
-        f"[red]❌ {_MAX_API_KEY_ATTEMPTS} keys rejected. "
-        "Please verify your credentials and try again.[/red]"
-    )
-    return _KeyLoopResult(kind="cancelled")
+        _console.print(
+            "[yellow]Enter a different key, or press Ctrl+C to cancel.[/yellow]"
+        )
 
 
 def _prompt_for_api_key(family_label: str) -> Optional[str]:

@@ -216,6 +216,10 @@ class LLMFixerAdapter:
     def call_for_json(
         self, system_prompt: str, user_prompt: str
     ) -> Optional[Dict[str, str]]:
+        # Local import to avoid tightening the module's top-level import
+        # graph; Message / TextContent are only needed on this code path.
+        from openhands.sdk import Message, TextContent
+
         try:
             response = self._fixer.client.completion(
                 messages=[

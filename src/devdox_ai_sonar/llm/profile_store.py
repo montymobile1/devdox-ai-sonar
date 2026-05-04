@@ -36,9 +36,9 @@ _PROFILES_KEY = "profiles"
 _DEFAULT_PROFILE_KEY = "default_profile"
 _LEGACY_PROVIDERS_KEY = "providers"  # Old [[llm.providers]] shape.
 _OLD_SHAPE_MESSAGE = (
-    "config.toml uses the old '[[llm.providers]]' schema and cannot be "
-    "read. Run 'devdox_sonar' to reset only the [llm] section; your "
-    "other settings will be preserved."
+    "config.toml uses the old '[[llm.providers]]' schema which is no "
+    "longer supported. Delete ~/devdox/config.toml and run "
+    "'devdox_sonar' to reconfigure."
 )
 
 
