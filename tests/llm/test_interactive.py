@@ -85,7 +85,13 @@ def _queue_responses(monkeypatch, responses: Iterator):
 
 
 def _patch_prompt(monkeypatch, *, text_answers=None, confirm_answers=None):
-    """Replace Rich's Prompt.ask / Confirm.ask inside interactive module."""
+    """Replace Rich's Prompt.ask / Confirm.ask inside interactive module.
+
+    When the queued-response iterator is exhausted, the fake raises
+    ``KeyboardInterrupt`` -- matching what a real user-initiated abort
+    produces. This keeps retry loops in the code under test from
+    spinning forever on an empty queue.
+    """
     texts = iter(text_answers or [])
     confirms = iter(confirm_answers or [])
 
@@ -95,7 +101,7 @@ def _patch_prompt(monkeypatch, *, text_answers=None, confirm_answers=None):
             try:
                 return next(texts)
             except StopIteration:
-                return kwargs.get("default", "")
+                raise KeyboardInterrupt
 
     class _FakeConfirm:
         @staticmethod
@@ -283,6 +289,37 @@ async def test_add_profile_flow_rejects_unreachable_key(
 
     await interactive.add_profile_flow(manager)
 
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
+async def test_add_profile_flow_bounded_retries_on_repeated_bad_keys(
+    monkeypatch, manager, fake_catalogs
+):
+    """The API-key loop must stop after _MAX_API_KEY_ATTEMPTS auth failures.
+
+    Provide more bad keys than the cap and verify the probe was invoked
+    exactly the configured number of times (i.e. the loop exited via the
+    bound, not via queue exhaustion). The wizard then exits cleanly with
+    no profile saved.
+    """
+    probe_call_count = {"n": 0}
+
+    def counting_probe(**_):
+        probe_call_count["n"] += 1
+        return KeyProbeOutcome(ok=False, failure_kind="auth", detail="bad key")
+
+    monkeypatch.setattr(adapters, "probe", counting_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["bad-1", "bad-2", "bad-3", "bad-4-never-tried"],
+        confirm_answers=[False],  # Add another? -> false
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    assert probe_call_count["n"] == interactive._MAX_API_KEY_ATTEMPTS
     profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
     assert profiles == []
 
@@ -879,7 +916,9 @@ def test_probe_or_report_prints_validating_header(monkeypatch, capsys):
         "probe_api_key",
         lambda model, api_key, base_url: interactive.validation.Ok(None),
     )
-    assert interactive._probe_or_report("openai/gpt-4o", "sk", None) is True
+    assert (
+        interactive._probe_and_handle("openai/gpt-4o", "sk", None) == "accepted"
+    )
     out = capsys.readouterr().out
     assert "Validating credentials" in out
     assert "accepted" in out.lower()
@@ -907,7 +946,373 @@ def test_probe_or_report_failure_messages(
             KeyProbeError(kind=failure_kind, detail="upstream detail")
         ),
     )
-    result = interactive._probe_or_report("openai/gpt-4o", "sk", None)
-    assert result is False
+    monkeypatch.setattr(
+        interactive, "_handle_rate_limited", lambda *a, **kw: "cancel"
+    )
+    result = interactive._probe_and_handle("openai/gpt-4o", "sk", None)
+    assert result != "accepted"
     out = capsys.readouterr().out
     assert expected_phrase in out
+
+
+# ---------------------------------------------------------------------------
+# Rate-limited probe: the three-way save / retry / cancel prompt
+# ---------------------------------------------------------------------------
+
+
+async def test_rate_limited_probe_saves_when_user_picks_s(
+    monkeypatch, manager, fake_catalogs
+):
+    """Defaulting to 's' accepts the key despite the rate limit and
+    persists the profile."""
+    monkeypatch.setattr(
+        adapters,
+        "probe",
+        lambda **_: KeyProbeOutcome(
+            ok=False,
+            failure_kind="rate_limit",
+            detail="quota exceeded",
+            provider="gemini",
+            status_code=429,
+            exception_class="litellm.exceptions.RateLimitError",
+        ),
+    )
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-valid-but-throttled",
+            "s",                    # save anyway
+            "rate-limited-profile", # profile name
+        ],
+        confirm_answers=[
+            True,   # Set as default?
+            False,  # Add another?
+        ],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].api_key == "sk-valid-but-throttled"
+
+
+async def test_rate_limited_probe_retries_successfully(
+    monkeypatch, manager, fake_catalogs
+):
+    """The 'r' choice re-runs the probe. A clear-on-retry accepts
+    the key without re-asking the user."""
+    call_count = {"n": 0}
+
+    def flaky_probe(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="rate_limit",
+                detail="quota",
+                provider="gemini",
+                status_code=429,
+                exception_class="litellm.exceptions.RateLimitError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", flaky_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "sk-key",
+            "r",          # retry
+            "prof-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert call_count["n"] == 2
+
+
+async def test_rate_limited_probe_cancel_aborts_wizard(
+    monkeypatch, manager, fake_catalogs
+):
+    """The 'c' choice stops the wizard without saving."""
+    monkeypatch.setattr(
+        adapters,
+        "probe",
+        lambda **_: KeyProbeOutcome(
+            ok=False,
+            failure_kind="rate_limit",
+            detail="quota",
+            provider="gemini",
+            status_code=429,
+            exception_class="litellm.exceptions.RateLimitError",
+        ),
+    )
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-key", "c"],
+        confirm_answers=[],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert profiles == []
+
+
+# ---------------------------------------------------------------------------
+# Model-shaped probe failures restart the wizard at the provider picker
+# ---------------------------------------------------------------------------
+
+
+async def test_not_found_probe_restarts_wizard_at_provider_picker(
+    monkeypatch, manager, fake_catalogs
+):
+    """When the probe returns ``not_found`` (the endpoint doesn't
+    serve the picked model), the wizard must loop back to the
+    provider/model picker rather than keep asking for a different
+    key. The user picks a different model, the next probe succeeds,
+    and the profile is saved under the second model."""
+    call_count = {"n": 0}
+
+    def probe_by_attempt(**kwargs):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="not_found",
+                detail="deprecated model",
+                provider="gemini",
+                status_code=404,
+                exception_class="litellm.exceptions.NotFoundError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", probe_by_attempt)
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "openai", "gpt-4o",                 # first attempt
+            "openhands", "claude-sonnet-4-6",   # second attempt
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "key-for-first",
+            "key-for-second",
+            "final-profile-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].model == "openhands/claude-sonnet-4-6"
+    assert call_count["n"] == 2
+
+
+async def test_bad_request_probe_also_restarts_wizard(
+    monkeypatch, manager, fake_catalogs
+):
+    """Same restart behaviour for ``bad_request`` -- treated as a
+    model-configuration problem, not a key problem."""
+    call_count = {"n": 0}
+
+    def probe_by_attempt(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False,
+                failure_kind="bad_request",
+                detail="unrecognised model",
+                provider="openai",
+                status_code=400,
+                exception_class="litellm.exceptions.BadRequestError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", probe_by_attempt)
+    _queue_responses(
+        monkeypatch,
+        iter([
+            "openai", "gpt-4o",
+            "openai", "gpt-4o",
+        ]),
+    )
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["sk-first", "sk-second", "profile"],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert call_count["n"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Verbose toggle controls the provenance block
+# ---------------------------------------------------------------------------
+
+
+def test_format_provenance_returns_empty_when_not_verbose(monkeypatch):
+    """The dimmed provenance block only appears when the CLI is
+    invoked with ``--verbose``. Regular users get the one-line
+    headline and nothing more."""
+    monkeypatch.setattr(interactive, "_VERBOSE", False)
+    from devdox_ai_sonar.llm.errors import KeyProbeError
+
+    err = KeyProbeError(
+        kind="auth",
+        detail="bad key",
+        provider="gemini",
+        status_code=401,
+        exception_class="litellm.exceptions.AuthenticationError",
+    )
+    assert interactive._format_provenance(err) == ""
+
+
+def test_format_provenance_renders_all_fields_when_verbose(monkeypatch):
+    """Verbose mode surfaces the litellm exception class, provider
+    identifier, HTTP status, and first line of the upstream detail --
+    enough for a developer to pin the failure to the right layer."""
+    monkeypatch.setattr(interactive, "_VERBOSE", True)
+    from devdox_ai_sonar.llm.errors import KeyProbeError
+
+    err = KeyProbeError(
+        kind="auth",
+        detail="bad key\nmore detail",
+        provider="gemini",
+        status_code=401,
+        exception_class="litellm.exceptions.AuthenticationError",
+    )
+    rendered = interactive._format_provenance(err)
+    assert "litellm.exceptions.AuthenticationError" in rendered
+    assert "gemini" in rendered
+    assert "Google Gemini API" in rendered  # human label applied
+    assert "HTTP 401" in rendered
+    assert "bad key" in rendered
+    # Only the first line of multi-line detail leaks into provenance;
+    # full text is still available on err.detail for programmatic use.
+    assert "more detail" not in rendered
+
+
+async def test_rate_limited_probe_retry_surfacing_auth_error_falls_back(
+    monkeypatch, manager, fake_catalogs
+):
+    """If the retry reveals a *different* failure (e.g. the rate limit
+    cleared and now auth fails), the wizard must leave the rate-limit
+    prompt and drop back to the 'enter a different key' outer loop."""
+    call_count = {"n": 0}
+
+    def flaky_probe(**_):
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return KeyProbeOutcome(
+                ok=False, failure_kind="rate_limit",
+                detail="quota", provider="gemini", status_code=429,
+                exception_class="litellm.exceptions.RateLimitError",
+            )
+        if call_count["n"] == 2:
+            return KeyProbeOutcome(
+                ok=False, failure_kind="auth",
+                detail="bad key", provider="gemini", status_code=401,
+                exception_class="litellm.exceptions.AuthenticationError",
+            )
+        return KeyProbeOutcome(ok=True)
+
+    monkeypatch.setattr(adapters, "probe", flaky_probe)
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=[
+            "throttled-but-bad-key",   # first key
+            "r",                        # retry -> now auth-rejected
+            "actually-valid-key",       # new key via outer loop
+            "prof-name",
+        ],
+        confirm_answers=[True, False],
+    )
+
+    await interactive.add_profile_flow(manager)
+
+    profiles = await load_profiles(ConfigManager(config_path=manager.config_path))
+    assert len(profiles) == 1
+    assert profiles[0].api_key == "actually-valid-key"
+    assert call_count["n"] == 3
+
+
+# ---------------------------------------------------------------------------
+# _pick_provider_and_model — direct unit tests for the extracted helper
+# ---------------------------------------------------------------------------
+
+
+async def test_pick_provider_and_model_provider_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """If the provider picker is cancelled, the helper short-circuits to None."""
+    _queue_responses(monkeypatch, iter([None]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_custom_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """Custom endpoint path: empty model input aborts and returns None."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(monkeypatch, text_answers=[""])  # empty -> None
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_custom_success_returns_custom_label(
+    monkeypatch, fake_catalogs
+):
+    """Custom endpoint success returns model + base_url + 'custom endpoint' label."""
+    _queue_responses(monkeypatch, iter(["🔧 Custom"]))
+    _patch_prompt(
+        monkeypatch,
+        text_answers=["vllm/my-local-model", "https://vllm.local"],
+    )
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result == ("vllm/my-local-model", "https://vllm.local", "custom endpoint")
+
+
+async def test_pick_provider_and_model_catalog_model_cancel_returns_none(
+    monkeypatch, fake_catalogs
+):
+    """Regular catalog path: cancelling at the model picker aborts."""
+    _queue_responses(monkeypatch, iter(["openai", None]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result is None
+
+
+async def test_pick_provider_and_model_catalog_success_returns_provider_label(
+    monkeypatch, fake_catalogs
+):
+    """Regular catalog success returns 'provider/model', None base_url, provider label."""
+    _queue_responses(monkeypatch, iter(["openai", "gpt-4o"]))
+
+    result = await interactive._pick_provider_and_model()
+
+    assert result == ("openai/gpt-4o", None, "openai")

@@ -144,6 +144,9 @@ def probe_api_key(
         KeyProbeError(
             kind=outcome.failure_kind or "unknown",
             detail=outcome.detail,
+            provider=outcome.provider,
+            status_code=outcome.status_code,
+            exception_class=outcome.exception_class,
         )
     )
 

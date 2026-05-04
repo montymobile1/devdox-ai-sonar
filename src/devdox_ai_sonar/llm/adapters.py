@@ -26,6 +26,7 @@ from litellm.exceptions import (
     APIConnectionError,
     AuthenticationError,
     BadRequestError,
+    NotFoundError,
     RateLimitError,
     ServiceUnavailableError,
     Timeout,
@@ -116,7 +117,7 @@ def infer_provider(model: str, api_base: str | None) -> str | None:
 
 
 FailureKind = Literal[
-    "auth", "connection", "bad_request", "rate_limit", "unknown"
+    "auth", "connection", "bad_request", "not_found", "rate_limit", "unknown"
 ]
 
 
@@ -126,15 +127,59 @@ class KeyProbeOutcome:
 
     Attributes:
         ok: ``True`` if the endpoint accepted the probe request.
-        failure_kind: Absent when ``ok`` is ``True``; otherwise a short label
-            classifying the failure so callers can render the right message.
-        detail: Human-readable explanation of the failure (e.g. the str of
-            the underlying exception). Empty when ``ok`` is ``True``.
+        failure_kind: Absent when ``ok`` is ``True``; otherwise a short
+            label classifying the failure so callers can render the right
+            message.
+        detail: Human-readable explanation of the failure (typically the
+            string form of the underlying exception). Empty when ``ok``
+            is ``True``.
+        provider: litellm's identifier for the upstream provider
+            (``"openai"``, ``"gemini"``, ``"together_ai"`` …) when the
+            exception carries one. Populated on failure; ``None`` on
+            success or when the exception didn't expose it. Lets callers
+            see at a glance whether the error came from the provider's
+            own API as opposed to our code or the OpenHands gateway.
+        status_code: HTTP status code from the upstream response when
+            available (401, 429, 500 …). Useful for distinguishing
+            "credentials rejected" from "endpoint down".
+        exception_class: Fully-qualified class name of the underlying
+            exception (e.g. ``"litellm.exceptions.RateLimitError"``).
+            Makes it unambiguous in logs / UI that the failure was
+            raised by litellm rather than our wrapper.
     """
 
     ok: bool
     failure_kind: FailureKind | None = None
     detail: str = ""
+    provider: str | None = None
+    status_code: int | None = None
+    exception_class: str | None = None
+
+
+def _qualified_class_name(exc: BaseException) -> str:
+    cls = type(exc)
+    return f"{cls.__module__}.{cls.__qualname__}"
+
+
+def _failure_from_exception(
+    kind: FailureKind, exc: BaseException
+) -> "KeyProbeOutcome":
+    """Build a :class:`KeyProbeOutcome` populated with whatever provenance
+    the litellm exception exposes.
+
+    Not every exception type carries ``llm_provider`` / ``status_code``
+    (only the ones litellm raises internally do). ``getattr`` with
+    ``None`` default keeps this safe for generic exceptions that fall
+    into the ``"unknown"`` branch.
+    """
+    return KeyProbeOutcome(
+        ok=False,
+        failure_kind=kind,
+        detail=str(exc),
+        provider=getattr(exc, "llm_provider", None),
+        status_code=getattr(exc, "status_code", None),
+        exception_class=_qualified_class_name(exc),
+    )
 
 
 def probe(
@@ -166,24 +211,18 @@ def probe(
             max_tokens=10,
         )
     except AuthenticationError as exc:
-        return KeyProbeOutcome(ok=False, failure_kind="auth", detail=str(exc))
+        return _failure_from_exception("auth", exc)
     except APIConnectionError as exc:
-        return KeyProbeOutcome(
-            ok=False, failure_kind="connection", detail=str(exc)
-        )
+        return _failure_from_exception("connection", exc)
     except (Timeout, ServiceUnavailableError) as exc:
-        return KeyProbeOutcome(
-            ok=False, failure_kind="connection", detail=str(exc)
-        )
+        return _failure_from_exception("connection", exc)
+    except NotFoundError as exc:
+        return _failure_from_exception("not_found", exc)
     except BadRequestError as exc:
-        return KeyProbeOutcome(
-            ok=False, failure_kind="bad_request", detail=str(exc)
-        )
+        return _failure_from_exception("bad_request", exc)
     except RateLimitError as exc:
-        return KeyProbeOutcome(
-            ok=False, failure_kind="rate_limit", detail=str(exc)
-        )
+        return _failure_from_exception("rate_limit", exc)
     except Exception as exc:
-        return KeyProbeOutcome(ok=False, failure_kind="unknown", detail=str(exc))
+        return _failure_from_exception("unknown", exc)
 
     return KeyProbeOutcome(ok=True)

@@ -39,6 +39,7 @@ from devdox_ai_sonar.llm.env_profile import profile_from_env
 from devdox_ai_sonar.llm.interactive import (
     add_profile_flow,
     offer_legacy_llm_recovery,
+    set_verbose as _set_interactive_verbose,
     update_profile_flow,
 )
 from devdox_ai_sonar.llm.profile import LLMProfile
@@ -668,6 +669,9 @@ async def main(  # ← Async main
 
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
+    # Propagate to the interactive provider wizard so probe-failure
+    # provenance is surfaced when the operator asked for it.
+    _set_interactive_verbose(verbose)
     ctx.obj["options"] = {
         "types": types,
         "severity": severity,

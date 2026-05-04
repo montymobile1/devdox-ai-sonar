@@ -118,6 +118,7 @@ KeyProbeFailureKind = Literal[
     "auth",
     "connection",
     "bad_request",
+    "not_found",
     "rate_limit",
     "unknown",
 ]
@@ -128,11 +129,24 @@ class KeyProbeError:
     """The live key-probe request could not be completed successfully.
 
     Attributes:
-        kind: Short label classifying the failure so the UI can render an
-            actionable message (e.g. "Key rejected" vs "Endpoint unreachable").
-        detail: Human-readable detail, typically the underlying exception's
-            ``str()`` representation.
+        kind: Short label classifying the failure so the UI can render
+            an actionable message (e.g. "Key rejected" vs "Endpoint
+            unreachable").
+        detail: Human-readable detail, typically the underlying
+            exception's ``str()`` representation.
+        provider: litellm's identifier for the upstream provider when
+            the exception exposed one (``"gemini"``, ``"openai"``,
+            ``"together_ai"`` …). Lets callers tell whether the error
+            came from the provider's own API or from somewhere else.
+        status_code: Upstream HTTP status code (401, 429, 500 …) when
+            the underlying exception carried it.
+        exception_class: Fully-qualified class name of the underlying
+            exception (e.g. ``"litellm.exceptions.RateLimitError"``).
+            Makes it unambiguous which library raised the failure.
     """
 
     kind: KeyProbeFailureKind
     detail: str
+    provider: str | None = None
+    status_code: int | None = None
+    exception_class: str | None = None
