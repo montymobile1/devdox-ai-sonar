@@ -97,12 +97,16 @@ class FixAtLineExecutor(ToolExecutor):
         # Append-at-EOF: explicit "insert after end of file" semantic.
         # Agents commonly compute L from the last line shown by ``file_editor
         # view``, which can include a trailing-newline indicator (line N+1)
-        # that the executor does not count. When the request is exactly
-        # start==end==total+1 with empty old_block, treat it as a deliberate
-        # append rather than rejecting it as out-of-range.
+        # that the executor does not count. The on-the-nose case is
+        # start==end==total+1 with empty old_block. When the agent's L_view
+        # is overcounted (view added a trailing-blank affordance the file
+        # itself doesn't have), the request comes in as
+        # start==end > total+1 — same intent, off-by-N from a benign
+        # display quirk. Treat both shapes as a deliberate append; the
+        # block lands at true EOF either way.
         if (
-            action.start_line == total_lines + 1
-            and action.end_line == total_lines + 1
+            action.start_line == action.end_line
+            and action.start_line >= total_lines + 1
             and action.old_block == ""
         ):
             # Drop trailing whitespace from the existing content before
