@@ -8,10 +8,12 @@ To apply the change, use `fix_at_line`. Helper PLACEMENT depends on the original
 - Apply a single `fix_at_line` whose `start_line`/`end_line` cover the original function (decorators included), `old_block = ""` (empty — trust the range), and `new_block` = the simplified function + a blank line + each helper, all at the SAME class-member indent.
 - Helpers MUST end up inside the class. Do NOT use the EOF-append pattern for instance methods — it lands the helpers at module level (or, with class-level indentation, parses them as nested defs inside whatever top-level function they fell after), making `self.<helper>(...)` raise `AttributeError` at runtime. The post-edit syntax check will reject orphaned `def X(self, ...)` outside a class body.
 
-**(B) Original is a free function or `@staticmethod`** — replace + EOF-append:
+**(B) Original is a free function or `@staticmethod`** — APPEND helpers first, THEN replace original:
 - Call `file_editor view` first to see the function's current content AND to note the highest line number shown — call this `L_view`.
-- Apply ONE `fix_at_line` call to replace the original function with its simplified version. Use the function's line range as `start_line`/`end_line` and **set `old_block = ""`** (empty string). The executor reads empty `old_block` on a valid in-range slot as "trust my line range; replace this whole window without byte-verifying". Do NOT try to copy the original 100+ line function body into `old_block` — long multi-line strings get mangled in tool calls and the byte-match path will fail.
-- Then APPEND each helper to the end of the file using the EOF-append shape: `start_line` = `end_line` = `L_view + 1`, `old_block` = `""` (empty), `new_block` = `<helper source>`. The executor recognises this as a deliberate append. Every successful response tells you the file's new line count and the next safe EOF-append `start_line` — use that, do not recompute from scratch.
+- **Step 1 — APPEND each helper to the end of the file** using the EOF-append shape: `start_line` = `end_line` = `L_view + 1`, `old_block` = `""` (empty), `new_block` = `<helper source>`. The executor recognises this as a deliberate append and is forgiving if `L_view` is off by a line. Every successful response tells you the file's new line count and the next safe EOF-append `start_line` — use THAT for any subsequent helper appends, do not recompute from scratch.
+- **Step 2 — Only after every helper is on disk**, apply ONE `fix_at_line` call to replace the original function with its simplified (helper-calling) version. Use the function's ORIGINAL line range as `start_line`/`end_line` and **set `old_block = ""`** (empty string). The executor reads empty `old_block` on a valid in-range slot as "trust my line range; replace this whole window without byte-verifying". Do NOT try to copy the original 100+ line function body into `old_block` — long multi-line strings get mangled in tool calls and the byte-match path will fail.
+
+Why this order: a post-edit lint check runs after every write. If you replace the original with a helper-calling version BEFORE the helpers exist on disk, the check sees undefined names (`_helper_x`) and reverts the edit — costing you a retry. Appending helpers first leaves the file syntactically valid at every step.
 
 For both patterns:
 - Every `fix_at_line` response includes a `Syntax:` line. If it says `FAILED`, your last edit broke the file — repair with another `fix_at_line` BEFORE doing more inserts.
@@ -61,4 +63,4 @@ MANDATORY:
 
 {{ method_instruction }}
 
-Read `{{ file_path }}` with `file_editor view` first, then apply the fix with `fix_at_line`. Use pattern (A) — one combined replacement call — when the method has `self`; use pattern (B) — replace + EOF-append — for free / `@staticmethod` functions. Each `fix_at_line` response includes a `Syntax:` line — verify it stays `OK` after every edit.
+Read `{{ file_path }}` with `file_editor view` first, then apply the fix with `fix_at_line`. Use pattern (A) — one combined replacement call — when the method has `self`; use pattern (B) — append helpers first, THEN replace original — for free / `@staticmethod` functions. Each `fix_at_line` response includes a `Syntax:` line — verify it stays `OK` after every edit.
