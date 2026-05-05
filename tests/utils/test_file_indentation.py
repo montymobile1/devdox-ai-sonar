@@ -1326,7 +1326,12 @@ class TestFullChange:
 
 class TestGlobalTopHelper:
     def test_apply_global_top_helper_at_end_of_imports(self):
-        """Test inserting helper at specific import end position"""
+        """Test inserting helper at specific import end position.
+
+        Existing blank lines around the insertion point are normalized
+        and replaced by canonical PEP 8 spacing of two blank lines on
+        each side of the helper.
+        """
         lines = ["import os\n", "import sys\n", "\n", "def func():\n"]
         helper_code = "CONSTANT = 42"
 
@@ -1336,11 +1341,24 @@ class TestGlobalTopHelper:
             end_import=2
         )
 
-        assert "CONSTANT = 42" in ''.join(result)
-        assert result[2] == "CONSTANT = 42\n\n"
+        assert result == [
+            "import os\n",
+            "import sys\n",
+            "\n",
+            "\n",
+            "CONSTANT = 42\n",
+            "\n",
+            "\n",
+            "def func():\n",
+        ]
 
     def test_apply_global_top_helper_with_newline_in_helper(self):
-        """Test helper code that already has newline"""
+        """Test helper code that already has newline.
+
+        Trailing newline on the helper input is rstripped before the
+        canonical PEP 8 envelope (two blanks before, two after) is
+        applied.
+        """
         lines = ["import os\n", "def func():\n"]
         helper_code = "CONSTANT = 42\n"
 
@@ -1350,8 +1368,15 @@ class TestGlobalTopHelper:
             end_import=1
         )
 
-        # Should not add duplicate newline
-        assert result[1] == "CONSTANT = 42\n\n"
+        assert result == [
+            "import os\n",
+            "\n",
+            "\n",
+            "CONSTANT = 42\n",
+            "\n",
+            "\n",
+            "def func():\n",
+        ]
 
     def test_apply_global_top_helper_without_newline(self):
         """Test helper code without trailing newline"""
@@ -1382,7 +1407,11 @@ class TestGlobalTopHelper:
         assert "return True" in ''.join(result)
 
     def test_apply_global_top_helper_end_import_zero(self):
-        """Test with end_import at position 0"""
+        """Test with end_import at position 0.
+
+        Two blank lines lead the inserted helper even when there's no
+        existing import block above it.
+        """
         lines = ["def func():\n"]
         helper_code = "import helper_module"
 
@@ -1392,7 +1421,14 @@ class TestGlobalTopHelper:
             end_import=0
         )
 
-        assert result[0] == "import helper_module\n\n"
+        assert result == [
+            "\n",
+            "\n",
+            "import helper_module\n",
+            "\n",
+            "\n",
+            "def func():\n",
+        ]
 
 # ============================================================================
 # TEST: apply_sibling_helper
