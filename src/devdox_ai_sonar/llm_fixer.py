@@ -417,7 +417,8 @@ class LLMFixer:
                 rule_info=rule_info,
             )
 
-            if not fix_response_lst or len(fix_response_lst) == 0:
+            fix_response_lst = [r for r in (fix_response_lst or []) if r is not None]
+            if not fix_response_lst:
                 logger.warning(f"Handler returned no fix for rule {issues[0].rule}")
                 return None
 
