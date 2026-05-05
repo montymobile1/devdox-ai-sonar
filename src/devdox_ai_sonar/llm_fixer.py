@@ -1740,13 +1740,15 @@ class LLMFixer:
         if original_is_static:
             method_instruction_list = [
                 f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
-                f"- Keep {STATICMETHOD_DECORATOR} decorator in FIXED_SELECTION",
-                f"- ALL helper methods MUST also be {STATICMETHOD_DECORATOR}",
-                "- NO 'self' or 'cls' parameters in ANY helpers",
-                f"- Call ALL helpers as: {class_name or 'ClassName'}._helper_name(args)",
-                "- ALL helpers use PLACEMENT: SIBLING",
+                f"- Keep {STATICMETHOD_DECORATOR} on the simplified ORIGINAL function (it stays inside the class).",
+                "- Append helpers as PLAIN module-level `def` at column 0 — NO decorator, NO leading indent.",
+                "- NO 'self' or 'cls' parameters in any helper.",
+                "- Call helpers from the simplified function as `_helper_name(args)` — NO class prefix.",
                 "",
-                f"✅ CONSISTENCY: Original {STATICMETHOD_DECORATOR} → ALL helpers {STATICMETHOD_DECORATOR}",
+                "✅ RATIONALE: A column-0 @staticmethod is a module-level descriptor, "
+                f"not a class member, so `{class_name or 'ClassName'}._helper(...)` does not "
+                "resolve. A plain module-level def + bare call DOES resolve via Python's "
+                "name-lookup fall-through from inside the class staticmethod.",
                 "",
             ]
 
