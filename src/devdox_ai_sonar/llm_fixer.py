@@ -127,7 +127,7 @@ def _print_fix_block_header(
         table.add_row(f"{prefix}location", f"{ctx_file}:{ctx_first}-{ctx_last}")
         table.add_row(f"{prefix}key", str(ctx_key))
         table.add_row(f"{prefix}message", ctx_msg)
-        logger.info(
+        logger.debug(
             "[fix-block] issue %d/%d: %s (%s) at %s:%s key=%s | %s",
             i + 1,
             len(issues),
@@ -155,7 +155,7 @@ def _print_fix_block_footer(outcome: str, reason: str = "") -> None:
     else:
         _console.print(f"[{style}]{icon} {label}[/{style}]")
     _console.rule(style="dim")
-    logger.info("[fix-block] outcome=%s reason=%s", outcome, reason)
+    logger.debug("[fix-block] outcome=%s reason=%s", outcome, reason)
 
 
 java_extension = ".java"
@@ -418,7 +418,7 @@ def _handle_event_logging(event: Event) -> None:
         thought_preview = _extract_first_thought(
             getattr(event, "thought", None) or []
         ) or "<none>"
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] ActionEvent: tool=%s | thought=%s",
             tool_name,
             thought_preview,
@@ -431,7 +431,7 @@ def _handle_event_logging(event: Event) -> None:
         text_preview = (
             obs_text[:200] + "..." if len(obs_text) > 200 else obs_text
         )
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] ObservationEvent: tool=%s | is_error=%s | text=%s",
             tool_name,
             is_error,
@@ -440,7 +440,7 @@ def _handle_event_logging(event: Event) -> None:
     elif isinstance(event, MessageEvent) and event.source == "agent":
         text = _extract_agent_message_text(event) or ""
         text_preview = text[:300] + "..." if len(text) > 300 else text
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] Agent MessageEvent: text=%s",
             text_preview,
         )
@@ -716,7 +716,7 @@ class LLMFixer:
                     # (e.g. a batched rename absorbing sibling issues on
                     # adjacent lines). Treat as a clean skip, not a hard
                     # error, and word the log accordingly.
-                    logger.info(
+                    logger.debug(
                         "Issue appears to have been resolved by an earlier "
                         "fix in this same run (e.g. a batched rename "
                         "absorbing sibling issues on adjacent lines). "
@@ -1248,7 +1248,7 @@ class LLMFixer:
                 box=box.ROUNDED,
             )
         )
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] Starting fix run: model=%s | file=%s | tools=%s",
             self.model,
             file_path.name,
@@ -1282,7 +1282,7 @@ class LLMFixer:
         )
         conversation.run()
 
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] Conversation finished: "
             "fix_at_line_called=%s | agent_message_count=%s",
             fix_at_line_called[0],
@@ -1376,7 +1376,7 @@ class LLMFixer:
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
 
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] Returning SonarFixResponse: "
             "applied_by_agent=True | file=%s | original_lines=%s | new_lines=%s",
             file_path.name,
@@ -1691,7 +1691,7 @@ class LLMFixer:
                 system_template = self.jinja_env.get_template(
                     "python/refactoring/system_fix_issues.j2"
                 )
-                logger.info(
+                logger.debug(
                     "[fix_at_line-diagnostic] S3776 override applied: "
                     "system_template=%s | user_template=%s",
                     "python/refactoring/system_fix_issues.j2",
@@ -2114,7 +2114,7 @@ class LLMFixer:
                 ),
                 reverse=True,
             )
-            logger.info(
+            logger.debug(
                 "[apply-loop] file=%s applying %d fix(es) bottom-up; lines=%s",
                 file_path.name,
                 len(fixes),
