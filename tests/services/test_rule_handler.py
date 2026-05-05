@@ -845,7 +845,12 @@ class TestConvenationNameHandlerGenerateFixes:
         self.context = _make_context(
             functions=[{"name": "my_func", "start_line": 10}],
         )
-        self.issues = [Mock(rule="python:S117")]
+        # message="" so _extract_s117_violating_name short-circuits
+        # to None and the handler exercises its arg-list snake_case
+        # path (the path these tests are actually about). Without an
+        # explicit empty string the auto-Mock attribute trips the
+        # extractor's regex with TypeError.
+        self.issues = [Mock(rule="python:S117", message="")]
 
     @patch("devdox_ai_sonar.services.rule_handler.to_snake_case")
     @patch("devdox_ai_sonar.services.rule_handler.find_function_implementations")
