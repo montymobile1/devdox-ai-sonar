@@ -415,6 +415,10 @@ def _run_py_compile(target: Path) -> str:
     if orphan:
         return f"FAILED — {orphan}"
 
+    misplaced_decorated = _check_no_misplaced_decorated_helpers(target)
+    if misplaced_decorated:
+        return f"FAILED — {misplaced_decorated}"
+
     undefined = _run_pyflakes_undefined_names(target)
     if undefined:
         return f"FAILED — {undefined}"
@@ -537,6 +541,95 @@ def _check_no_orphan_self_methods(target: Path) -> str:
         f"original function's line range with [simplified function "
         f"+ blank line + helpers] in ONE fix_at_line call at the "
         f"class-member indent — do NOT use the EOF-append pattern."
+    )
+
+
+def _check_no_misplaced_decorated_helpers(target: Path) -> str:
+    """Return a non-empty failure description if any ``FunctionDef``
+    decorated with ``@staticmethod`` or ``@classmethod`` is defined
+    inside another function body (rather than a class body).
+
+    Catches the failure mode where an EOF-append for an extracted
+    ``@staticmethod`` helper lands with leading whitespace and Python
+    parses it as a nested def inside whatever module-level function was
+    open at the append point — typically right after that function's
+    ``return`` statement, so the def is also unreachable. The file
+    parses, ``py_compile`` accepts it, ``pyflakes`` doesn't flag it
+    (the decorator is just a no-op on a nested def), and the orphan-
+    self check ignores it (no ``self`` parameter). At runtime the call
+    site ``Cls._helper(...)`` ``AttributeError``s on the missing class
+    member.
+
+    The check: walk the AST tracking whether each node is inside a
+    ``FunctionDef`` body. Any ``FunctionDef`` / ``AsyncFunctionDef``
+    in that scope whose decorators include ``staticmethod`` /
+    ``classmethod`` is misplaced — those decorators only carry meaning
+    on class methods.
+
+    Returns "" when no misplaced decorated helpers are found.
+    """
+    try:
+        source = target.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        # py_compile already covers this case; don't double-report.
+        return ""
+
+    misplaced: list = []
+
+    def _decorator_name(dec: ast.AST) -> str:
+        if isinstance(dec, ast.Name):
+            return dec.id
+        if isinstance(dec, ast.Attribute):
+            return dec.attr
+        if isinstance(dec, ast.Call):
+            return _decorator_name(dec.func)
+        return ""
+
+    def visit(node: ast.AST, in_function: bool) -> None:
+        for child in ast.iter_child_nodes(node):
+            if isinstance(child, ast.ClassDef):
+                # Class body resets the "inside a function" tracking:
+                # methods inside the class are class members, not nested
+                # defs of the enclosing function.
+                visit(child, in_function=False)
+            elif isinstance(
+                child, (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                if in_function:
+                    for dec in child.decorator_list:
+                        name = _decorator_name(dec)
+                        if name in ("staticmethod", "classmethod"):
+                            misplaced.append(
+                                (child.name, child.lineno, name)
+                            )
+                            break
+                visit(child, in_function=True)
+            else:
+                visit(child, in_function=in_function)
+
+    visit(tree, in_function=False)
+
+    if not misplaced:
+        return ""
+
+    items = ", ".join(
+        f"'{name}' (line {lineno}, @{dec})"
+        for name, lineno, dec in misplaced
+    )
+    return (
+        f"function(s) {items} are decorated with @staticmethod or "
+        f"@classmethod but defined inside another function body — that "
+        f"decoration is meaningless outside a class body and the helper "
+        f"will not be reachable as a class member. Likely an EOF-append "
+        f"landed with leading whitespace and got parsed as a nested def "
+        f"of the preceding module-level function (often right after its "
+        f"`return`, so it's also dead code). Re-emit the helper at "
+        f"column 0 (top-level) without the decorator, OR put it inside "
+        f"the relevant class via the in-class one-call pattern."
     )
 
 
