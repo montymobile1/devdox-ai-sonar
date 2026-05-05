@@ -90,7 +90,10 @@ class TestSlugify:
         assert result.isidentifier() or result == ""
 
     def test_single_token(self):
-        assert _slugify(["hello"]) == "HELLO"
+        # Single-token names are promoted with a "_STRING" suffix so the
+        # validator's MIN_PARTS=2 rule does not push them out to the LLM
+        # / generic fallback layer.
+        assert _slugify(["hello"]) == "HELLO_STRING"
 
 
 # ============================================================================
@@ -147,18 +150,23 @@ class TestGenerateName:
         parts = result.split("_")
         assert len(parts) <= 4
 
-    def test_single_word_returns_single_token(self):
+    def test_single_word_returns_promoted_token(self):
         result = generate_name("hello")
-        # Single word → slugify → "HELLO" (single part)
-        assert result == "HELLO"
+        # Single word → slugify → "HELLO" → promoted to "HELLO_STRING"
+        # so the library produces a 2-part name the validator accepts
+        # without dropping into the LLM layer.
+        assert result == "HELLO_STRING"
 
     def test_empty_string(self):
         assert generate_name("") is None
 
     def test_numeric_string(self):
         result = generate_name("12345")
-        # "12345" → slugify → "12345" (starts with digit, will fail validation later)
-        assert result == "12345" or result is None
+        # "12345" → slugify → "12345" → promoted to "12345_STRING"
+        # (still starts with a digit, so it fails the identifier check
+        # at the validator layer; what we assert here is the raw library
+        # output, before validation).
+        assert result == "12345_STRING" or result is None
 
 
 # ============================================================================
@@ -256,16 +264,21 @@ class TestConstantNamingServiceNoLLM:
         assert resp.names["Content-Type"] == "CONTENT_TYPE"
 
     def test_non_slugifiable_falls_to_string_literal_n(self):
+        # Use a literal with no word characters: _clean() returns [],
+        # generate_name() returns None → falls all the way to the
+        # generic STRING_LITERAL_N fallback. (Single-word ASCII literals
+        # are NOT non-slugifiable anymore: they get the "_STRING"
+        # suffix promotion and stay inside the library layer.)
         service = ConstantNamingService()
         req = NamingRequest(
             file_path="/test.py",
             literals=[
-                LiteralContext(literal="hello", occurrences=[(1, 0, 7)]),
+                LiteralContext(literal="!!!", occurrences=[(1, 0, 5)]),
             ],
             existing_names=set(),
         )
         resp = service.name_literals(req)
-        assert resp.names["hello"] == "STRING_LITERAL_1"
+        assert resp.names["!!!"] == "STRING_LITERAL_1"
 
     def test_collision_resolved_with_suffix(self):
         service = ConstantNamingService()
@@ -294,12 +307,14 @@ class TestConstantNamingServiceNoLLM:
         assert resp.names["1234"] == "STRING_LITERAL_1"
 
     def test_multiple_fallbacks_get_unique_names(self):
+        # Two genuinely non-slugifiable literals — both miss the library
+        # layer and have to be handed unique STRING_LITERAL_N names.
         service = ConstantNamingService()
         req = NamingRequest(
             file_path="/test.py",
             literals=[
-                LiteralContext(literal="a", occurrences=[(1, 0, 3)]),
-                LiteralContext(literal="b", occurrences=[(2, 0, 3)]),
+                LiteralContext(literal="!!!", occurrences=[(1, 0, 5)]),
+                LiteralContext(literal="???", occurrences=[(2, 0, 5)]),
             ],
             existing_names=set(),
         )
@@ -319,19 +334,20 @@ class TestConstantNamingServiceWithLLM:
     """Tests with mocked LLM caller."""
 
     def test_llm_called_for_unresolved_literals(self):
+        # Library can't slugify "!!!" → it's the LLM's turn.
         mock_caller = Mock()
-        mock_caller.call_for_json.return_value = {"hello": "GREETING_DEFAULT"}
+        mock_caller.call_for_json.return_value = {"!!!": "GREETING_DEFAULT"}
 
         service = ConstantNamingService(llm_caller=mock_caller)
         req = NamingRequest(
             file_path="/test.py",
             literals=[
-                LiteralContext(literal="hello", occurrences=[(1, 0, 7)]),
+                LiteralContext(literal="!!!", occurrences=[(1, 0, 5)]),
             ],
             existing_names=set(),
         )
         resp = service.name_literals(req)
-        assert resp.names["hello"] == "GREETING_DEFAULT"
+        assert resp.names["!!!"] == "GREETING_DEFAULT"
         mock_caller.call_for_json.assert_called_once()
 
     def test_llm_not_called_when_all_slugified(self):
@@ -351,18 +367,18 @@ class TestConstantNamingServiceWithLLM:
 
     def test_llm_returns_invalid_name_falls_to_fallback(self):
         mock_caller = Mock()
-        mock_caller.call_for_json.return_value = {"hello": "bad-name"}
+        mock_caller.call_for_json.return_value = {"!!!": "bad-name"}
 
         service = ConstantNamingService(llm_caller=mock_caller)
         req = NamingRequest(
             file_path="/test.py",
             literals=[
-                LiteralContext(literal="hello", occurrences=[(1, 0, 7)]),
+                LiteralContext(literal="!!!", occurrences=[(1, 0, 5)]),
             ],
             existing_names=set(),
         )
         resp = service.name_literals(req)
-        assert resp.names["hello"] == "STRING_LITERAL_1"
+        assert resp.names["!!!"] == "STRING_LITERAL_1"
 
     def test_llm_returns_none_falls_to_fallback(self):
         mock_caller = Mock()
@@ -372,30 +388,32 @@ class TestConstantNamingServiceWithLLM:
         req = NamingRequest(
             file_path="/test.py",
             literals=[
-                LiteralContext(literal="hello", occurrences=[(1, 0, 7)]),
+                LiteralContext(literal="!!!", occurrences=[(1, 0, 5)]),
             ],
             existing_names=set(),
         )
         resp = service.name_literals(req)
-        assert resp.names["hello"] == "STRING_LITERAL_1"
+        assert resp.names["!!!"] == "STRING_LITERAL_1"
 
     def test_llm_receives_only_unresolved(self):
+        # "application/json" is slugifiable; "!!!" is not — only the
+        # latter should reach the LLM.
         mock_caller = Mock()
-        mock_caller.call_for_json.return_value = {"hello": "GREETING_MSG"}
+        mock_caller.call_for_json.return_value = {"!!!": "GREETING_MSG"}
 
         service = ConstantNamingService(llm_caller=mock_caller)
         req = NamingRequest(
             file_path="/test.py",
             literals=[
                 LiteralContext(literal="application/json", occurrences=[(1, 0, 18)]),
-                LiteralContext(literal="hello", occurrences=[(2, 0, 7)]),
+                LiteralContext(literal="!!!", occurrences=[(2, 0, 5)]),
             ],
             existing_names=set(),
         )
         resp = service.name_literals(req)
         assert resp.names["application/json"] == "APPLICATION_JSON"
-        assert resp.names["hello"] == "GREETING_MSG"
-        # LLM should have been called once, only for "hello"
+        assert resp.names["!!!"] == "GREETING_MSG"
+        # LLM should have been called once, only for "!!!"
         mock_caller.call_for_json.assert_called_once()
 
 
@@ -445,16 +463,18 @@ class TestNameViaPipeline:
         assert remaining == []
 
     def test_non_slugifiable_returned_as_remaining(self):
+        # "!!!" has no word characters → _clean returns []
+        # → generate_name returns None → kicked back as "remaining".
         names = {}
         used = set()
         remaining = self.service._name_via_pipeline(
-            [LiteralContext(literal="hello", occurrences=[(1, 0, 7)])],
+            [LiteralContext(literal="!!!", occurrences=[(1, 0, 5)])],
             names,
             used,
         )
-        assert "hello" not in names
+        assert "!!!" not in names
         assert len(remaining) == 1
-        assert remaining[0].literal == "hello"
+        assert remaining[0].literal == "!!!"
 
     def test_deduplicates_same_literal(self):
         names = {}
