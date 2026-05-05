@@ -417,7 +417,8 @@ class LLMFixer:
                 rule_info=rule_info,
             )
 
-            if not fix_response_lst or len(fix_response_lst) == 0:
+            fix_response_lst = [r for r in (fix_response_lst or []) if r is not None]
+            if not fix_response_lst:
                 logger.warning(f"Handler returned no fix for rule {issues[0].rule}")
                 return None
 
@@ -859,14 +860,8 @@ class LLMFixer:
                     ],
                     max_tokens=8000,
                     temperature=0.08,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "sonar_fix_response",
-                            "schema": SonarFixResponse.model_json_schema(),
-                            "strict": True,
-                        },
-                    },
+                    # Response shape and constraints validated by SonarFixResponse in parse_llm_response.
+                    response_format={"type": "json_object"},
                 )
                 input_tokens = response.usage.prompt_tokens
                 output_tokens = response.usage.completion_tokens

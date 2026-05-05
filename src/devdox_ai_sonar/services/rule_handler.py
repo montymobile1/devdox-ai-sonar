@@ -1465,6 +1465,8 @@ class CognitiveComplexityHandler(RuleHandler):
                 rule_info,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:
@@ -1511,6 +1513,8 @@ class DefaultRuleHandler(RuleHandler):
                 rule_info,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:
