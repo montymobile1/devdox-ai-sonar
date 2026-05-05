@@ -860,14 +860,7 @@ class LLMFixer:
                     ],
                     max_tokens=8000,
                     temperature=0.08,
-                    response_format={
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "sonar_fix_response",
-                            "schema": SonarFixResponse.model_json_schema(),
-                            "strict": True,
-                        },
-                    },
+                    response_format={"type": "json_object"},
                 )
                 input_tokens = response.usage.prompt_tokens
                 output_tokens = response.usage.completion_tokens
