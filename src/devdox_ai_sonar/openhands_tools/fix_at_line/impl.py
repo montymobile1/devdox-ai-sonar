@@ -38,7 +38,7 @@ class FixAtLineExecutor(ToolExecutor):
         action: FixAtLineAction,
         conversation: "BaseConversation | None" = None,
     ) -> FixAtLineObservation:
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] FixAtLineExecutor INVOKED: "
             "path=%s start_line=%s end_line=%s old_block_len=%s new_block_len=%s",
             action.path,
@@ -48,7 +48,7 @@ class FixAtLineExecutor(ToolExecutor):
             len(action.new_block or ""),
         )
         observation = self._run(action)
-        logger.info(
+        logger.debug(
             "[fix_at_line-diagnostic] FixAtLineExecutor RESULT: "
             "path=%s is_error=%s message=%s",
             action.path,
