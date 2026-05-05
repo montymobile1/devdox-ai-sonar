@@ -316,8 +316,24 @@ def _handle_agent_observation_event(
 
 
 def _extract_observation_text(obs: Any) -> str:
-    """Best-effort text extraction from an observation payload."""
-    return getattr(obs, "text", "") or getattr(obs, "content", "") or ""
+    """Best-effort text extraction from an observation payload.
+
+    Some observations expose ``.text`` / ``.content`` as a list of
+    ``TextContent`` blocks (same shape as agent messages). Flatten those
+    into a single string here so every caller can slice and ``.strip()``
+    safely — the symptom we hit in ``_render_terminal_observation`` when
+    a terminal observation's text came back as a list rather than a str
+    and the renderer crashed with ``AttributeError: 'list' object has no
+    attribute 'strip'``.
+    """
+    raw: Any = getattr(obs, "text", None) or getattr(obs, "content", None)
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        return "".join(_block_to_text(block) for block in raw)
+    return str(raw)
 
 
 def _extract_terminal_exit_code(obs: Any) -> Optional[int]:
