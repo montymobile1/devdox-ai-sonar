@@ -39,7 +39,13 @@ MANDATORY:
 3. The refactored result MUST reach the target
 
 ## CODE
-{% for func in context.context_dict['new_context']%}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
+
+The Sonar issue is at line {{ issues[0].first_line }}. **Refactor ONLY the function marked TARGET below — the others are shown for context (class neighbors, related helpers) and must NOT be modified.**
+
+{% for func in context.context_dict['new_context'] %}
+{% set is_target = func['start_line'] <= issues[0].first_line and issues[0].first_line <= func['end_line'] %}
+### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }}){% if is_target %} 👈 **TARGET — refactor THIS function**{% else %} — context only, do NOT modify{% endif %}
+
 `````{{ language }}
 {% for line in func['context'].split('\n') %}{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
 {% endfor %}```
