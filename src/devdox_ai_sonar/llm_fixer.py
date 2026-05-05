@@ -860,6 +860,7 @@ class LLMFixer:
                     ],
                     max_tokens=8000,
                     temperature=0.08,
+                    # Response shape and constraints validated by SonarFixResponse in parse_llm_response.
                     response_format={"type": "json_object"},
                 )
                 input_tokens = response.usage.prompt_tokens
