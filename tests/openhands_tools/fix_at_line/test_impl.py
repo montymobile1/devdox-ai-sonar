@@ -217,8 +217,17 @@ class TestFixAtLineExecutorDuplicateLines:
 
     @pytest.fixture
     def triplicate_file(self, tmp_path):
+        # Define get/url/APP_JSON at the top so the file passes the
+        # post-edit pyflakes check baked into _run_py_compile — otherwise
+        # the cascade-revert in FixAtLineExecutor undoes every edit
+        # because the file was already FAILED for unrelated reasons.
         path = tmp_path / "triplicate.py"
         path.write_text(
+            'def get(*a, **kw):\n'
+            '    return None\n'
+            'url = ""\n'
+            'APP_JSON = ""\n'
+            '\n'
             'response = get(url, headers={"Content-Type": "application/json"})\n'
             'response = get(url, headers={"Content-Type": "application/json"})\n'
             'response = get(url, headers={"Content-Type": "application/json"})\n'
@@ -226,9 +235,9 @@ class TestFixAtLineExecutorDuplicateLines:
         return path
 
     def test_edits_only_the_requested_line(self, executor, triplicate_file):
-        """Replace line 2 only; lines 1 and 3 remain byte-for-byte identical."""
+        """Replace the middle duplicate only; the other two stay byte-identical."""
         action = _action(
-            triplicate_file, 2, 2,
+            triplicate_file, 7, 7,
             old='response = get(url, headers={"Content-Type": "application/json"})',
             new='response = get(url, headers={"Content-Type": APP_JSON})',
         )
@@ -237,32 +246,37 @@ class TestFixAtLineExecutorDuplicateLines:
 
         assert obs.is_error is False
         lines = triplicate_file.read_text().splitlines()
-        assert lines[0] == 'response = get(url, headers={"Content-Type": "application/json"})'
-        assert lines[1] == 'response = get(url, headers={"Content-Type": APP_JSON})'
-        assert lines[2] == 'response = get(url, headers={"Content-Type": "application/json"})'
+        assert lines[5] == 'response = get(url, headers={"Content-Type": "application/json"})'
+        assert lines[6] == 'response = get(url, headers={"Content-Type": APP_JSON})'
+        assert lines[7] == 'response = get(url, headers={"Content-Type": "application/json"})'
 
     def test_can_edit_any_of_the_duplicates_in_sequence(self, executor, triplicate_file):
         """Three separate edits, one per duplicate, all succeed."""
         executor(_action(
-            triplicate_file, 3, 3,
+            triplicate_file, 8, 8,
             old='response = get(url, headers={"Content-Type": "application/json"})',
-            new='response = C',
+            new='response = "C"',
         ))
         executor(_action(
-            triplicate_file, 2, 2,
+            triplicate_file, 7, 7,
             old='response = get(url, headers={"Content-Type": "application/json"})',
-            new='response = B',
+            new='response = "B"',
         ))
         executor(_action(
-            triplicate_file, 1, 1,
+            triplicate_file, 6, 6,
             old='response = get(url, headers={"Content-Type": "application/json"})',
-            new='response = A',
+            new='response = "A"',
         ))
 
         assert triplicate_file.read_text() == (
-            "response = A\n"
-            "response = B\n"
-            "response = C\n"
+            'def get(*a, **kw):\n'
+            '    return None\n'
+            'url = ""\n'
+            'APP_JSON = ""\n'
+            '\n'
+            'response = "A"\n'
+            'response = "B"\n'
+            'response = "C"\n'
         )
 
 
@@ -283,17 +297,36 @@ class TestFixAtLineExecutorSubstring:
     def test_substring_unique_within_line_is_replaced(
         self, executor, tmp_path
     ):
+        # Wrap the indented edit target in a class so the fixture is
+        # syntactically valid Python; bare leading whitespace at module
+        # level fails py_compile and trips the cascade-revert.
         path = tmp_path / "sub.py"
-        path.write_text('    value = greet("hello")\n')
+        path.write_text(
+            'def greet(x):\n'
+            '    return x\n'
+            '\n'
+            'GREETING = "hi"\n'
+            '\n'
+            'class C:\n'
+            '    value = greet("hello")\n'
+        )
 
         obs = executor(_action(
-            path, 1, 1,
+            path, 7, 7,
             old='"hello"',
             new="GREETING",
         ))
 
         assert obs.is_error is False
-        assert path.read_text() == '    value = greet(GREETING)\n'
+        assert path.read_text() == (
+            'def greet(x):\n'
+            '    return x\n'
+            '\n'
+            'GREETING = "hi"\n'
+            '\n'
+            'class C:\n'
+            '    value = greet(GREETING)\n'
+        )
 
     def test_substring_ambiguous_within_line_is_rejected(
         self, executor, tmp_path
@@ -321,13 +354,24 @@ class TestFixAtLineExecutorSubstring:
     ):
         """A substring edit must leave the file's trailing newline byte
         untouched -- regressions here corrupt diffs on every fix."""
+        # Same fixture-validity reasoning as the test above: wrap the
+        # indented target in a class and define greet/GREETING so
+        # pyflakes/py_compile stay green.
         path = tmp_path / "nl.py"
-        path.write_text('    x = greet("hello")\n')
+        path.write_text(
+            'def greet(x):\n'
+            '    return x\n'
+            '\n'
+            'GREETING = "hi"\n'
+            '\n'
+            'class C:\n'
+            '    x = greet("hello")\n'
+        )
         original_ends_with_newline = path.read_bytes().endswith(b"\n")
         assert original_ends_with_newline  # fixture sanity
 
         obs = executor(_action(
-            path, 1, 1,
+            path, 7, 7,
             old='"hello"',
             new='GREETING',
         ))
