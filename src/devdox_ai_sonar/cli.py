@@ -1,6 +1,7 @@
 """Command-line interface for SonarCloud Analyzer"""
 
 from datetime import timezone, datetime
+import os
 import sys
 from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
@@ -67,23 +68,19 @@ from devdox_ai_sonar.config import settings
 
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
 
-# Developer toggle. Flip to True locally to enable DEBUG-level
-# logs from the devdox_ai_sonar logger hierarchy AND capture every
-# OpenHands/litellm tool-call request/response under
-# ``logs/completions/``. The latter is what lets us inspect what the
-# agent literally saw and emitted (e.g. for diagnosing tool-call
-# serialisation quirks). Leave False on main; do NOT commit set to
-# True.
-DEBUG = False
+# Developer toggle. Set ``DEVDOX_DEBUG=1`` in the environment to
+# enable DEBUG-level logs from the devdox_ai_sonar logger hierarchy
+# AND capture every OpenHands/litellm tool-call request/response
+# under ``logs/completions/``. The latter is what lets us inspect
+# what the agent literally saw and emitted (e.g. for diagnosing
+# tool-call serialisation quirks).
+DEBUG = os.environ.get("DEVDOX_DEBUG") == "1"
 
 if DEBUG:
-    import os
     logging.getLogger("devdox_ai_sonar").setLevel(logging.DEBUG)
-    # Single source of truth that other subsystems can pick up
-    # without importing cli (which would cycle). ``_build_openhands_llm``
-    # in llm_fixer.py reads this and toggles ``log_completions``
-    # on the OpenHands LLM.
-    os.environ["DEVDOX_DEBUG"] = "1"
+    # ``_build_openhands_llm`` in llm_fixer.py reads the same env
+    # var and toggles ``log_completions`` on the OpenHands LLM —
+    # no need to re-set it here.
 
 
 console = Console()
