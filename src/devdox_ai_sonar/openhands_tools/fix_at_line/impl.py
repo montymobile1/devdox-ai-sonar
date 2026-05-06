@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import List, Tuple, TYPE_CHECKING
 
 from openhands.sdk.tool import ToolExecutor
 
@@ -460,6 +460,35 @@ def _check_no_duplicate_class_methods(target: Path) -> str:
     return ""
 
 
+def _collect_orphan_self_methods(
+    node: ast.AST, in_class: bool, orphans: List[Tuple[str, int]]
+) -> None:
+    """Walk ``node`` collecting (name, lineno) of orphan self-methods.
+
+    Lifted out of ``_check_no_orphan_self_methods`` so the public
+    checker stays under Sonar's S3776 cognitive complexity threshold.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef):
+            _collect_orphan_self_methods(
+                child, in_class=True, orphans=orphans
+            )
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not in_class:
+                args = child.args.args
+                if args and args[0].arg == "self":
+                    orphans.append((child.name, child.lineno))
+            # Recurse with in_class=False: nested defs are not class
+            # members even if the outer function is.
+            _collect_orphan_self_methods(
+                child, in_class=False, orphans=orphans
+            )
+        else:
+            _collect_orphan_self_methods(
+                child, in_class=in_class, orphans=orphans
+            )
+
+
 def _check_no_orphan_self_methods(target: Path) -> str:
     """Return a non-empty failure description if any function whose
     first parameter is ``self`` is defined outside a class body.
@@ -494,26 +523,7 @@ def _check_no_orphan_self_methods(target: Path) -> str:
         return ""
 
     orphans: list = []
-
-    def visit(node: ast.AST, in_class: bool) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                visit(child, in_class=True)
-            elif isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
-                if not in_class:
-                    args = child.args.args
-                    if args and args[0].arg == "self":
-                        orphans.append((child.name, child.lineno))
-                # Recurse into the function body with in_class=False:
-                # nested defs are not class members even if the outer
-                # function is.
-                visit(child, in_class=False)
-            else:
-                visit(child, in_class=in_class)
-
-    visit(tree, in_class=False)
+    _collect_orphan_self_methods(tree, in_class=False, orphans=orphans)
 
     if not orphans:
         return ""
@@ -531,6 +541,57 @@ def _check_no_orphan_self_methods(target: Path) -> str:
         f"+ blank line + helpers] in ONE fix_at_line call at the "
         f"class-member indent — do NOT use the EOF-append pattern."
     )
+
+
+def _decorator_name(dec: ast.AST) -> str:
+    """Best-effort extraction of a decorator's surface name.
+
+    Handles ``@name``, ``@module.name``, and ``@name(...)`` shapes.
+    Returns "" for anything else (e.g. computed decorators), since the
+    caller compares against a small allowlist of literal names.
+    """
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    if isinstance(dec, ast.Call):
+        return _decorator_name(dec.func)
+    return ""
+
+
+def _collect_misplaced_decorated_helpers(
+    node: ast.AST,
+    in_function: bool,
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Walk ``node`` collecting nested defs decorated @staticmethod/@classmethod.
+
+    Lifted out of ``_check_no_misplaced_decorated_helpers`` so the
+    public checker stays under Sonar's S3776 cognitive complexity
+    threshold.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef):
+            # Class body resets the "inside a function" tracking:
+            # methods inside the class are class members, not nested
+            # defs of the enclosing function.
+            _collect_misplaced_decorated_helpers(
+                child, in_function=False, misplaced=misplaced
+            )
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if in_function:
+                for dec in child.decorator_list:
+                    name = _decorator_name(dec)
+                    if name in ("staticmethod", "classmethod"):
+                        misplaced.append((child.name, child.lineno, name))
+                        break
+            _collect_misplaced_decorated_helpers(
+                child, in_function=True, misplaced=misplaced
+            )
+        else:
+            _collect_misplaced_decorated_helpers(
+                child, in_function=in_function, misplaced=misplaced
+            )
 
 
 def _check_no_misplaced_decorated_helpers(target: Path) -> str:
@@ -568,39 +629,9 @@ def _check_no_misplaced_decorated_helpers(target: Path) -> str:
         return ""
 
     misplaced: list = []
-
-    def _decorator_name(dec: ast.AST) -> str:
-        if isinstance(dec, ast.Name):
-            return dec.id
-        if isinstance(dec, ast.Attribute):
-            return dec.attr
-        if isinstance(dec, ast.Call):
-            return _decorator_name(dec.func)
-        return ""
-
-    def visit(node: ast.AST, in_function: bool) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                # Class body resets the "inside a function" tracking:
-                # methods inside the class are class members, not nested
-                # defs of the enclosing function.
-                visit(child, in_function=False)
-            elif isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
-                if in_function:
-                    for dec in child.decorator_list:
-                        name = _decorator_name(dec)
-                        if name in ("staticmethod", "classmethod"):
-                            misplaced.append(
-                                (child.name, child.lineno, name)
-                            )
-                            break
-                visit(child, in_function=True)
-            else:
-                visit(child, in_function=in_function)
-
-    visit(tree, in_function=False)
+    _collect_misplaced_decorated_helpers(
+        tree, in_function=False, misplaced=misplaced
+    )
 
     if not misplaced:
         return ""
