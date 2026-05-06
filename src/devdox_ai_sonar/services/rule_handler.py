@@ -234,6 +234,16 @@ class RuleHandler(ABC):
         return lst_suggestion
 
 
+# Sonar rule keys we reference repeatedly. Centralised so a future
+# rename (or a new dialect prefix) is a one-line change.
+S117_RULE = "python:S117"
+
+# Placeholder used in log messages when an issue or file path is
+# unavailable. Module-level so all log call sites stay in sync and
+# avoid the S1192 "duplicate literal" finding.
+UNKNOWN_STRING = "<unknown>"
+
+
 # Sonar S117 / S1542 messages identify the violating identifier inside
 # quotes (single, double, or backtick across versions and languages),
 # e.g.:  Rename this local variable "Total" to match the regular
@@ -274,7 +284,7 @@ class ConvenationNameHandler(RuleHandler):
     parsing.
     """
 
-    RULE_ID = ["python:S117", "python:S1172", "python:S1542"]
+    RULE_ID = [S117_RULE, "python:S1172", "python:S1542"]
     MOIDY_LINE_RANGE = True
 
     def can_handle(self, rule: str) -> bool:
@@ -299,8 +309,8 @@ class ConvenationNameHandler(RuleHandler):
         logger.info(
             "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
             self.__class__.__name__,
-            issues[0].rule if issues else "<unknown>",
-            file_path.name if file_path else "<unknown>",
+            issues[0].rule if issues else UNKNOWN_STRING,
+            file_path.name if file_path else UNKNOWN_STRING,
             len(issues),
         )
         try:
@@ -320,7 +330,7 @@ class ConvenationNameHandler(RuleHandler):
                 return None
 
             for issue in issues:
-                if issue.rule == "python:S117":
+                if issue.rule == S117_RULE:
                     return self._fix_naming_convention(
                         issues, function_info, context, file_path
                     )
@@ -590,7 +600,7 @@ class ConvenationNameHandler(RuleHandler):
         # ignored.
         local_renames: Dict[str, str] = {}
         for issue in issues:
-            if getattr(issue, "rule", "") != "python:S117":
+            if getattr(issue, "rule", "") != S117_RULE:
                 continue
             name = _extract_s117_violating_name(
                 getattr(issue, "message", "") or ""
@@ -945,8 +955,8 @@ class StringLiteralDuplicateHandler(RuleHandler):
         logger.info(
             "[handler] %s pipeline=B+C-programmatic-with-llm-fallback rule=%s file=%s issues=%d",
             self.__class__.__name__,
-            issues[0].rule if issues else "<unknown>",
-            file_path.name if file_path else "<unknown>",
+            issues[0].rule if issues else UNKNOWN_STRING,
+            file_path.name if file_path else UNKNOWN_STRING,
             len(issues),
         )
         parsed = self._read_and_parse_file(file_path)
@@ -1424,8 +1434,8 @@ class AsyncToSyncHandler(RuleHandler):
         logger.info(
             "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
             self.__class__.__name__,
-            issues[0].rule if issues else "<unknown>",
-            file_path.name if file_path else "<unknown>",
+            issues[0].rule if issues else UNKNOWN_STRING,
+            file_path.name if file_path else UNKNOWN_STRING,
             len(issues),
         )
         try:
@@ -1609,8 +1619,8 @@ class CognitiveComplexityHandler(RuleHandler):
         logger.info(
             "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
             self.__class__.__name__,
-            issues[0].rule if issues else "<unknown>",
-            file_path.name if file_path else "<unknown>",
+            issues[0].rule if issues else UNKNOWN_STRING,
+            file_path.name if file_path else UNKNOWN_STRING,
             len(issues),
         )
         if not llm_caller:
@@ -1670,8 +1680,8 @@ class DefaultRuleHandler(RuleHandler):
         logger.info(
             "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
             self.__class__.__name__,
-            issues[0].rule if issues else "<unknown>",
-            file_path.name if file_path else "<unknown>",
+            issues[0].rule if issues else UNKNOWN_STRING,
+            file_path.name if file_path else UNKNOWN_STRING,
             len(issues),
         )
         if not llm_caller:
