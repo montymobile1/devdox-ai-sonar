@@ -166,7 +166,7 @@ class FixAtLineExecutor(ToolExecutor):
             )
 
         try:
-            target.write_text(new_text, encoding="utf-8")  # NOSONAR(python:S2083): see class docstring re: path-injection trust model
+            target.write_text(new_text, encoding="utf-8")  # NOSONAR
         except OSError as exc:
             return FixAtLineObservation.from_text(
                 text=f"Cannot write file '{action.path}': {exc}",
@@ -253,7 +253,7 @@ class FixAtLineExecutor(ToolExecutor):
         new_text = base_text + separator + appended_block
 
         try:
-            target.write_text(new_text, encoding="utf-8")  # NOSONAR(python:S2083): see class docstring re: path-injection trust model
+            target.write_text(new_text, encoding="utf-8")  # NOSONAR
         except OSError as exc:
             return FixAtLineObservation.from_text(
                 text=f"Cannot write file '{action.path}': {exc}",
@@ -628,30 +628,50 @@ def _collect_misplaced_decorated_helpers(
 
     Lifted out of ``_check_no_misplaced_decorated_helpers`` so the
     public checker stays under Sonar's S3776 cognitive complexity
-    threshold.
+    threshold; the per-child decision and the per-decorator scan are
+    further split into ``_visit_misplaced_decoration_child`` and
+    ``_record_misplaced_decoration`` for the same reason.
     """
     for child in ast.iter_child_nodes(node):
-        if isinstance(child, ast.ClassDef):
-            # Class body resets the "inside a function" tracking:
-            # methods inside the class are class members, not nested
-            # defs of the enclosing function.
-            _collect_misplaced_decorated_helpers(
-                child, in_function=False, misplaced=misplaced
-            )
-        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if in_function:
-                for dec in child.decorator_list:
-                    name = _decorator_name(dec)
-                    if name in ("staticmethod", "classmethod"):
-                        misplaced.append((child.name, child.lineno, name))
-                        break
-            _collect_misplaced_decorated_helpers(
-                child, in_function=True, misplaced=misplaced
-            )
-        else:
-            _collect_misplaced_decorated_helpers(
-                child, in_function=in_function, misplaced=misplaced
-            )
+        _visit_misplaced_decoration_child(child, in_function, misplaced)
+
+
+def _visit_misplaced_decoration_child(
+    child: ast.AST,
+    in_function: bool,
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Dispatch one AST child for the misplaced-decoration walk."""
+    if isinstance(child, ast.ClassDef):
+        # Class body resets the "inside a function" tracking:
+        # methods inside the class are class members, not nested
+        # defs of the enclosing function.
+        _collect_misplaced_decorated_helpers(
+            child, in_function=False, misplaced=misplaced
+        )
+        return
+    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if in_function:
+            _record_misplaced_decoration(child, misplaced)
+        _collect_misplaced_decorated_helpers(
+            child, in_function=True, misplaced=misplaced
+        )
+        return
+    _collect_misplaced_decorated_helpers(
+        child, in_function=in_function, misplaced=misplaced
+    )
+
+
+def _record_misplaced_decoration(
+    child: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Record ``child`` if its decorator list includes @staticmethod/@classmethod."""
+    for dec in child.decorator_list:
+        name = _decorator_name(dec)
+        if name in ("staticmethod", "classmethod"):
+            misplaced.append((child.name, child.lineno, name))
+            return
 
 
 def _check_no_misplaced_decorated_helpers(target: Path) -> str:
@@ -797,7 +817,7 @@ def _revert_if_syntax_cascade(
         rejected_text = target.read_text(encoding="utf-8")
     except OSError:
         rejected_text = ""
-    target.write_text(original_text, encoding="utf-8")
+    target.write_text(original_text, encoding="utf-8")  # NOSONAR
     transition = (
         "FAILED→FAILED"
         if pre_edit_syntax.startswith("FAILED")
