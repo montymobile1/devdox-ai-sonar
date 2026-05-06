@@ -223,7 +223,7 @@ class IssueExtractor:
 # content (literals like "<unknown>" or "application/json" reported by
 # S1192) doesn't accidentally match.
 _QUOTED_IDENT_IN_MESSAGE_RE = re.compile(
-    r"['\"]([A-Za-z_][A-Za-z_0-9]*)['\"]"
+    r"['\"]([A-Za-z_]\w*)['\"]"
 )
 
 
