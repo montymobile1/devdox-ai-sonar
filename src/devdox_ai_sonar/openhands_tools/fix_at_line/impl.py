@@ -197,39 +197,28 @@ class FixAtLineExecutor(ToolExecutor):
         new_stripped = _strip_trailing_newline(action.new_block)
         current_stripped = _strip_trailing_newline(current_block_text)
 
-        # Empty ``old_block`` on a valid in-range slot is the
-        # "trust my line range" signal: the agent has just viewed the
-        # file and is replacing the whole [start_line..end_line] window
-        # without asking the executor to byte-verify the existing
-        # content. Necessary because some LLMs (e.g., Llama 3.3) cannot
-        # reliably reproduce long multi-line strings as tool arguments
-        # — they emit literal "..." stubs or mangle whitespace, which
-        # makes the byte-match path always fail. Skipping the byte
-        # check here is safe because (a) the line range itself is the
-        # anchor, (b) the post-edit syntax check + cascade revert below
-        # catches structurally-broken results.
-        if old_stripped == "":
-            new_block_lines = _normalize_block_to_lines(action.new_block)
-            new_file_lines = (
-                lines[:start_idx]
-                + new_block_lines
-                + lines[end_idx_exclusive:]
-            )
-            new_text = "".join(new_file_lines)
-            new_block_line_count = len(new_block_lines)
-            returned_old_block = current_stripped
-            returned_new_block = new_stripped
-        # Three acceptable shapes for the safety check when ``old_block``
-        # is non-empty:
-        #  (a) ``old_block`` equals the full line(s) -> replace the block.
-        #  (b) ``old_block`` is a unique substring of the line(s) -> in-place
-        #      find-and-replace inside the anchored range. The line range
-        #      still bounds the search, so duplicated content elsewhere in
-        #      the file is irrelevant.
-        #  (c) ``old_block`` appears multiple times inside the range or
-        #      isn't there at all -> error.
-        elif old_stripped == current_stripped:
-            # (a) full-block replacement.
+        # Two paths converge on a full-window replace:
+        #
+        #  * ``old_stripped == ""`` — the "trust my line range" signal.
+        #    The agent has just viewed the file and is replacing the
+        #    whole [start_line..end_line] window without asking the
+        #    executor to byte-verify the existing content. Necessary
+        #    because some LLMs (e.g., Llama 3.3) cannot reliably
+        #    reproduce long multi-line strings as tool arguments —
+        #    they emit literal "..." stubs or mangle whitespace, which
+        #    makes the byte-match path always fail. Skipping the byte
+        #    check is safe because (a) the line range itself is the
+        #    anchor, (b) the post-edit syntax check + cascade revert
+        #    below catches structurally-broken results.
+        #
+        #  * ``old_stripped == current_stripped`` — explicit byte-
+        #    verified full-block match. The agent supplied the exact
+        #    current content as ``old_block`` and we have a clean
+        #    swap.
+        #
+        # The non-empty / non-matching shapes are handled by the
+        # elif chain below (substring replace, or hard error).
+        if old_stripped == "" or old_stripped == current_stripped:
             new_block_lines = _normalize_block_to_lines(action.new_block)
             new_file_lines = (
                 lines[:start_idx]
