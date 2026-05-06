@@ -863,17 +863,7 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
         end_idx -= 1
 
     # Replace the lines
-    if start_idx > end_idx:
-        lines[start_idx:end_idx] = new_lines
-    else:
-        lines[start_idx : end_idx + 1] = new_lines
-        if end_idx + 1 < len(lines) and (
-            lines[end_idx + 1].startswith("@")
-            or lines[end_idx + 1].startswith("def ")
-            or lines[end_idx + 1].startswith("class ")
-        ):
-            lines[start_idx : end_idx + 1] = new_lines
-            end_idx = start_idx + len(new_lines) - 1
+    end_idx = _splice_full_code_block(lines, start_idx, end_idx, new_lines)
 
     logger.debug(
         "[FULL_CODE] Replaced lines %d-%d (%d lines) with %d lines",
@@ -904,6 +894,33 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
         end_idx = start_idx + actual_width - 1
 
     return lines, end_idx
+
+
+def _splice_full_code_block(
+    lines: List[str],
+    start_idx: int,
+    end_idx: int,
+    new_lines: List[str],
+) -> int:
+    """Splice ``new_lines`` into ``lines`` at [start_idx..end_idx].
+
+    If a top-level ``@decorator`` / ``def`` / ``class`` immediately
+    follows the slot, re-apply the splice and update ``end_idx`` to the
+    real last replaced line. Extracted from ``apply_full_code_change``
+    so its cognitive complexity stays under Sonar's S3776 threshold.
+    """
+    if start_idx > end_idx:
+        lines[start_idx:end_idx] = new_lines
+        return end_idx
+    lines[start_idx : end_idx + 1] = new_lines
+    if end_idx + 1 < len(lines) and (
+        lines[end_idx + 1].startswith("@")
+        or lines[end_idx + 1].startswith("def ")
+        or lines[end_idx + 1].startswith("class ")
+    ):
+        lines[start_idx : end_idx + 1] = new_lines
+        end_idx = start_idx + len(new_lines) - 1
+    return end_idx
 
 
 def _has_own_indentation(text: str) -> bool:
