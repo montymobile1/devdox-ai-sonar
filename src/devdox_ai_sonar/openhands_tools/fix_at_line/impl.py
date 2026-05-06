@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import List, Tuple, TYPE_CHECKING
+from typing import List, Tuple, Union, TYPE_CHECKING
 
 from openhands.sdk.tool import ToolExecutor
 
@@ -109,72 +109,8 @@ class FixAtLineExecutor(ToolExecutor):
             and action.start_line >= total_lines + 1
             and action.old_block == ""
         ):
-            # Drop trailing whitespace from the existing content before
-            # composing the appended block. Lets us decide separator
-            # newlines deterministically from a known-clean baseline.
-            base_text = original_text.rstrip("\n")
-            if action.new_block:
-                appended_block = action.new_block.rstrip("\n") + "\n"
-            else:
-                appended_block = ""
-            if (
-                appended_block
-                and target.suffix == ".py"
-                and _starts_with_top_level_python_def(action.new_block)
-            ):
-                # PEP 8 wants two blank lines between top-level defs/classes.
-                # The trailing-newline-stripped base + "\n\n\n" yields:
-                # last-content-line\n  +  \n  +  \n  =  two blank lines, then
-                # the appended block.
-                separator = "\n\n\n"
-            elif appended_block:
-                separator = "\n"
-            else:
-                # Empty new_block — preserve a trailing newline so subsequent
-                # appends keep behaving sensibly.
-                separator = "\n" if base_text else ""
-            new_text = base_text + separator + appended_block
-
-            try:
-                target.write_text(new_text, encoding="utf-8")
-            except OSError as exc:
-                return FixAtLineObservation.from_text(
-                    text=f"Cannot write file '{action.path}': {exc}",
-                    is_error=True,
-                    path=action.path,
-                    start_line=action.start_line,
-                    end_line=action.end_line,
-                )
-
-            new_block_line_count = len(_normalize_block_to_lines(action.new_block))
-            syntax_status = (
-                _run_py_compile(target) if target.suffix == ".py" else ""
-            )
-            cascade_revert = _revert_if_syntax_cascade(
-                target,
-                pre_edit_syntax,
-                syntax_status,
-                original_text,
-                action,
-            )
-            if cascade_revert is not None:
-                return cascade_revert
-            new_total_lines = len(new_text.splitlines())
-            message = (
-                f"Appended {new_block_line_count} line(s) to {action.path} "
-                f"(file is now {new_total_lines} line(s); "
-                f"next EOF append uses start_line=end_line={new_total_lines + 1})."
-            )
-            if syntax_status:
-                message += f"\nSyntax: {syntax_status}"
-            return FixAtLineObservation.from_text(
-                text=message,
-                is_error=False,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-                old_block="",
-                new_block=_strip_trailing_newline(action.new_block),
+            return self._eof_append(
+                action, target, original_text, pre_edit_syntax
             )
 
         if action.end_line > total_lines:
@@ -193,119 +129,17 @@ class FixAtLineExecutor(ToolExecutor):
         end_idx_exclusive = action.end_line  # Python slice upper bound.
         current_block_text = "".join(lines[start_idx:end_idx_exclusive])
 
-        old_stripped = _strip_trailing_newline(action.old_block)
-        new_stripped = _strip_trailing_newline(action.new_block)
-        current_stripped = _strip_trailing_newline(current_block_text)
-
-        # Two paths converge on a full-window replace:
-        #
-        #  * ``old_stripped == ""`` — the "trust my line range" signal.
-        #    The agent has just viewed the file and is replacing the
-        #    whole [start_line..end_line] window without asking the
-        #    executor to byte-verify the existing content. Necessary
-        #    because some LLMs (e.g., Llama 3.3) cannot reliably
-        #    reproduce long multi-line strings as tool arguments —
-        #    they emit literal "..." stubs or mangle whitespace, which
-        #    makes the byte-match path always fail. Skipping the byte
-        #    check is safe because (a) the line range itself is the
-        #    anchor, (b) the post-edit syntax check + cascade revert
-        #    below catches structurally-broken results.
-        #
-        #  * ``old_stripped == current_stripped`` — explicit byte-
-        #    verified full-block match. The agent supplied the exact
-        #    current content as ``old_block`` and we have a clean
-        #    swap.
-        #
-        # The non-empty / non-matching shapes are handled by the
-        # elif chain below (substring replace, or hard error).
-        if old_stripped == "" or old_stripped == current_stripped:
-            new_block_lines = _normalize_block_to_lines(action.new_block)
-            new_file_lines = (
-                lines[:start_idx]
-                + new_block_lines
-                + lines[end_idx_exclusive:]
-            )
-            new_text = "".join(new_file_lines)
-            new_block_line_count = len(new_block_lines)
-            returned_old_block = current_stripped
-            returned_new_block = new_stripped
-        elif old_stripped in current_stripped:
-            if target.suffix == ".py" and _new_block_adds_python_structure(
-                old_stripped, new_stripped
-            ):
-                return FixAtLineObservation.from_text(
-                    text=(
-                        "`new_block` introduces def/class/@decorator "
-                        "definitions absent from `old_block`. Substring "
-                        "replacement would splice those into the middle of "
-                        "existing statements and corrupt the file. Either:\n"
-                        "  (a) set `old_block` to the empty string to "
-                        f"replace the full line range "
-                        f"{action.start_line}-{action.end_line} without "
-                        "byte-verifying the existing content (safe when "
-                        "you have just `view`ed the file), or\n"
-                        "  (b) widen `old_block` to the exact full "
-                        "content of those lines for verified full-block "
-                        "replacement, or\n"
-                        "  (c) use the EOF-append pattern "
-                        "(start_line=end_line=total_lines+1, "
-                        "old_block='') to append new helpers after the "
-                        "end of the file."
-                    ),
-                    is_error=True,
-                    path=action.path,
-                    start_line=action.start_line,
-                    end_line=action.end_line,
-                    old_block=current_stripped,
-                )
-            occurrences = current_stripped.count(old_stripped)
-            if occurrences > 1:
-                return FixAtLineObservation.from_text(
-                    text=(
-                        f"`old_block` appears {occurrences} times within "
-                        f"lines {action.start_line}-{action.end_line}; "
-                        f"cannot decide which occurrence to replace. Widen "
-                        f"`old_block` to include enough surrounding context "
-                        f"to be unique, or narrow the line range."
-                    ),
-                    is_error=True,
-                    path=action.path,
-                    start_line=action.start_line,
-                    end_line=action.end_line,
-                    old_block=current_stripped,
-                )
-            # (b) substring match, unique within the range.
-            new_block_text = current_stripped.replace(
-                old_stripped, new_stripped, 1
-            )
-            if current_block_text.endswith("\n"):
-                new_block_text += "\n"
-            prefix = "".join(lines[:start_idx])
-            suffix = "".join(lines[end_idx_exclusive:])
-            new_text = prefix + new_block_text + suffix
-            new_block_line_count = len(
-                _normalize_block_to_lines(new_block_text)
-            )
-            returned_old_block = current_stripped
-            returned_new_block = _strip_trailing_newline(new_block_text)
-        else:
-            # (c) no match at all.
-            return FixAtLineObservation.from_text(
-                text=(
-                    f"`old_block` does not match the current content of lines "
-                    f"{action.start_line}-{action.end_line}.  Re-read the file "
-                    f"with `file_editor view` and retry.\n"
-                    f"--- old_block (provided) ---\n"
-                    f"{old_stripped}\n"
-                    f"--- actual lines {action.start_line}-{action.end_line} ---\n"
-                    f"{current_stripped}"
-                ),
-                is_error=True,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-                old_block=current_stripped,
-            )
+        result = self._compute_inrange_replacement(
+            action,
+            target,
+            lines,
+            start_idx,
+            end_idx_exclusive,
+            current_block_text,
+        )
+        if isinstance(result, FixAtLineObservation):
+            return result
+        new_text, new_block_line_count, returned_old_block, returned_new_block = result
 
         if new_text == original_text:
             return FixAtLineObservation.from_text(
@@ -362,6 +196,221 @@ class FixAtLineExecutor(ToolExecutor):
             end_line=action.end_line,
             old_block=returned_old_block,
             new_block=returned_new_block,
+        )
+
+    def _eof_append(
+        self,
+        action: FixAtLineAction,
+        target: Path,
+        original_text: str,
+        pre_edit_syntax: str,
+    ) -> FixAtLineObservation:
+        """Append ``action.new_block`` after the end of ``target``.
+
+        Extracted from ``_run`` so the orchestrator's cognitive
+        complexity stays under Sonar's S3776 threshold. Behaviour
+        identical: handles separator selection (PEP 8 two-blanks for
+        top-level Python defs, single blank otherwise, empty new_block
+        as a no-op trailing-newline preserver), runs the post-edit
+        syntax check + cascade revert, and returns the success or
+        revert observation.
+        """
+        # Drop trailing whitespace from the existing content before
+        # composing the appended block. Lets us decide separator
+        # newlines deterministically from a known-clean baseline.
+        base_text = original_text.rstrip("\n")
+        if action.new_block:
+            appended_block = action.new_block.rstrip("\n") + "\n"
+        else:
+            appended_block = ""
+        if (
+            appended_block
+            and target.suffix == ".py"
+            and _starts_with_top_level_python_def(action.new_block)
+        ):
+            # PEP 8 wants two blank lines between top-level defs/classes.
+            # The trailing-newline-stripped base + "\n\n\n" yields:
+            # last-content-line\n  +  \n  +  \n  =  two blank lines, then
+            # the appended block.
+            separator = "\n\n\n"
+        elif appended_block:
+            separator = "\n"
+        else:
+            # Empty new_block — preserve a trailing newline so subsequent
+            # appends keep behaving sensibly.
+            separator = "\n" if base_text else ""
+        new_text = base_text + separator + appended_block
+
+        try:
+            target.write_text(new_text, encoding="utf-8")
+        except OSError as exc:
+            return FixAtLineObservation.from_text(
+                text=f"Cannot write file '{action.path}': {exc}",
+                is_error=True,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+            )
+
+        new_block_line_count = len(_normalize_block_to_lines(action.new_block))
+        syntax_status = (
+            _run_py_compile(target) if target.suffix == ".py" else ""
+        )
+        cascade_revert = _revert_if_syntax_cascade(
+            target,
+            pre_edit_syntax,
+            syntax_status,
+            original_text,
+            action,
+        )
+        if cascade_revert is not None:
+            return cascade_revert
+        new_total_lines = len(new_text.splitlines())
+        message = (
+            f"Appended {new_block_line_count} line(s) to {action.path} "
+            f"(file is now {new_total_lines} line(s); "
+            f"next EOF append uses start_line=end_line={new_total_lines + 1})."
+        )
+        if syntax_status:
+            message += f"\nSyntax: {syntax_status}"
+        return FixAtLineObservation.from_text(
+            text=message,
+            is_error=False,
+            path=action.path,
+            start_line=action.start_line,
+            end_line=action.end_line,
+            old_block="",
+            new_block=_strip_trailing_newline(action.new_block),
+        )
+
+    def _compute_inrange_replacement(
+        self,
+        action: FixAtLineAction,
+        target: Path,
+        lines: List[str],
+        start_idx: int,
+        end_idx_exclusive: int,
+        current_block_text: str,
+    ) -> Union[FixAtLineObservation, Tuple[str, int, str, str]]:
+        """Decide the new file text for an in-range edit.
+
+        Returns either a ``FixAtLineObservation`` (early-return error,
+        e.g. would-corrupt-file / ambiguous-substring / no-match) or a
+        tuple ``(new_text, new_block_line_count, returned_old_block,
+        returned_new_block)`` on success. Extracted from ``_run`` so
+        the orchestrator's cognitive complexity stays under Sonar's
+        S3776 threshold; behaviour identical.
+        """
+        old_stripped = _strip_trailing_newline(action.old_block)
+        new_stripped = _strip_trailing_newline(action.new_block)
+        current_stripped = _strip_trailing_newline(current_block_text)
+
+        # Two paths converge on a full-window replace:
+        #
+        #  * ``old_stripped == ""`` — the "trust my line range" signal.
+        #    The agent has just viewed the file and is replacing the
+        #    whole [start_line..end_line] window without asking the
+        #    executor to byte-verify the existing content. Necessary
+        #    because some LLMs (e.g., Llama 3.3) cannot reliably
+        #    reproduce long multi-line strings as tool arguments —
+        #    they emit literal "..." stubs or mangle whitespace, which
+        #    makes the byte-match path always fail. Skipping the byte
+        #    check is safe because (a) the line range itself is the
+        #    anchor, (b) the post-edit syntax check + cascade revert
+        #    catches structurally-broken results.
+        #
+        #  * ``old_stripped == current_stripped`` — explicit byte-
+        #    verified full-block match.
+        if old_stripped == "" or old_stripped == current_stripped:
+            new_block_lines = _normalize_block_to_lines(action.new_block)
+            new_file_lines = (
+                lines[:start_idx]
+                + new_block_lines
+                + lines[end_idx_exclusive:]
+            )
+            return (
+                "".join(new_file_lines),
+                len(new_block_lines),
+                current_stripped,
+                new_stripped,
+            )
+
+        if old_stripped in current_stripped:
+            if target.suffix == ".py" and _new_block_adds_python_structure(
+                old_stripped, new_stripped
+            ):
+                return FixAtLineObservation.from_text(
+                    text=(
+                        "`new_block` introduces def/class/@decorator "
+                        "definitions absent from `old_block`. Substring "
+                        "replacement would splice those into the middle of "
+                        "existing statements and corrupt the file. Either:\n"
+                        "  (a) set `old_block` to the empty string to "
+                        f"replace the full line range "
+                        f"{action.start_line}-{action.end_line} without "
+                        "byte-verifying the existing content (safe when "
+                        "you have just `view`ed the file), or\n"
+                        "  (b) widen `old_block` to the exact full "
+                        "content of those lines for verified full-block "
+                        "replacement, or\n"
+                        "  (c) use the EOF-append pattern "
+                        "(start_line=end_line=total_lines+1, "
+                        "old_block='') to append new helpers after the "
+                        "end of the file."
+                    ),
+                    is_error=True,
+                    path=action.path,
+                    start_line=action.start_line,
+                    end_line=action.end_line,
+                    old_block=current_stripped,
+                )
+            occurrences = current_stripped.count(old_stripped)
+            if occurrences > 1:
+                return FixAtLineObservation.from_text(
+                    text=(
+                        f"`old_block` appears {occurrences} times within "
+                        f"lines {action.start_line}-{action.end_line}; "
+                        f"cannot decide which occurrence to replace. Widen "
+                        f"`old_block` to include enough surrounding context "
+                        f"to be unique, or narrow the line range."
+                    ),
+                    is_error=True,
+                    path=action.path,
+                    start_line=action.start_line,
+                    end_line=action.end_line,
+                    old_block=current_stripped,
+                )
+            # Substring match, unique within the range.
+            new_block_text = current_stripped.replace(
+                old_stripped, new_stripped, 1
+            )
+            if current_block_text.endswith("\n"):
+                new_block_text += "\n"
+            prefix = "".join(lines[:start_idx])
+            suffix = "".join(lines[end_idx_exclusive:])
+            return (
+                prefix + new_block_text + suffix,
+                len(_normalize_block_to_lines(new_block_text)),
+                current_stripped,
+                _strip_trailing_newline(new_block_text),
+            )
+
+        # No match at all.
+        return FixAtLineObservation.from_text(
+            text=(
+                f"`old_block` does not match the current content of lines "
+                f"{action.start_line}-{action.end_line}.  Re-read the file "
+                f"with `file_editor view` and retry.\n"
+                f"--- old_block (provided) ---\n"
+                f"{old_stripped}\n"
+                f"--- actual lines {action.start_line}-{action.end_line} ---\n"
+                f"{current_stripped}"
+            ),
+            is_error=True,
+            path=action.path,
+            start_line=action.start_line,
+            end_line=action.end_line,
+            old_block=current_stripped,
         )
 
 
