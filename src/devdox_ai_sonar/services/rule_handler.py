@@ -593,23 +593,7 @@ class ConvenationNameHandler(RuleHandler):
         target name and the existing ``str.replace`` over the function
         body covers it without an AST scope walk.
         """
-        # Pull violating identifiers out of S117 issue messages so
-        # local variables get renamed alongside parameters. Matching
-        # is by name only, so a name that is already snake_case (rare
-        # but possible if Sonar's regex has changed) is silently
-        # ignored.
-        local_renames: Dict[str, str] = {}
-        for issue in issues:
-            if getattr(issue, "rule", "") != S117_RULE:
-                continue
-            name = _extract_s117_violating_name(
-                getattr(issue, "message", "") or ""
-            )
-            if not name:
-                continue
-            snake = to_snake_case(name)
-            if snake != name:
-                local_renames[name] = snake
+        local_renames = self._collect_local_renames_from_issues(issues)
 
         code_blocks = []
         response_lst = []
@@ -618,17 +602,7 @@ class ConvenationNameHandler(RuleHandler):
         for definition in function_info["definitions"]:
             if Path(definition["file"]) != file_path:
                 continue
-            renames: Dict[str, str] = {}
-            for arg in definition["args"]:
-                new_arg = to_snake_case(arg)
-                if new_arg != arg:
-                    renames[arg] = new_arg
-            # Merge in local-variable renames extracted from issue
-            # messages. Param renames take precedence on key collision
-            # (they are the same key/value pair anyway when the message
-            # quotes a parameter name).
-            for old_name, new_name in local_renames.items():
-                renames.setdefault(old_name, new_name)
+            renames = self._collect_definition_renames(definition, local_renames)
             if not renames:
                 continue
             args_to_be_changed.update(renames)
@@ -747,6 +721,54 @@ class ConvenationNameHandler(RuleHandler):
         )
 
         return response_lst
+
+    def _collect_local_renames_from_issues(
+        self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
+    ) -> Dict[str, str]:
+        """Pull violating identifiers out of S117 issue messages.
+
+        Sonar quotes the violating identifier inline; matching is by
+        name only, so a name that is already snake_case (rare but
+        possible if Sonar's regex has changed) is silently ignored.
+        Extracted from ``_fix_naming_convention`` so the orchestrator's
+        cognitive complexity stays under Sonar's S3776 threshold.
+        """
+        local_renames: Dict[str, str] = {}
+        for issue in issues:
+            if getattr(issue, "rule", "") != S117_RULE:
+                continue
+            name = _extract_s117_violating_name(
+                getattr(issue, "message", "") or ""
+            )
+            if not name:
+                continue
+            snake = to_snake_case(name)
+            if snake != name:
+                local_renames[name] = snake
+        return local_renames
+
+    def _collect_definition_renames(
+        self,
+        definition: Dict[str, Any],
+        local_renames: Dict[str, str],
+    ) -> Dict[str, str]:
+        """Combine arg-list snake_case renames with message-extracted local renames.
+
+        Param renames take precedence on key collision (the values
+        coincide anyway when the issue message quotes a parameter
+        name). Extracted from ``_fix_naming_convention`` so the
+        orchestrator's cognitive complexity stays under Sonar's S3776
+        threshold.
+        """
+        renames: Dict[str, str] = {}
+        for arg in definition["args"]:
+            new_arg = to_snake_case(arg)
+            if new_arg != arg:
+                renames[arg] = new_arg
+        for old_name, new_name in local_renames.items():
+            renames.setdefault(old_name, new_name)
+        return renames
 
     def _change_function_definition_block_multi(
         self,
