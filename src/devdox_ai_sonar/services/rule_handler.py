@@ -242,7 +242,7 @@ class RuleHandler(ABC):
 # trailing regex (also containing brackets) is not identifier-shaped
 # so it does not collide with this pattern.
 _S117_VIOLATING_NAME_RE = re.compile(
-    r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]"
+    r"['\"`]([A-Za-z_]\w*)['\"`]"
 )
 
 
