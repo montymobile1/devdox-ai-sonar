@@ -46,7 +46,8 @@ from devdox_ai_sonar.models.sonar import (
     ChangeAction,
         LineChange,
     BlockType,
-    PlacementType
+    PlacementType,
+    ValidationResult,
 )
 from devdox_ai_sonar.utils.file_indentation import (
     apply_single_fix,
@@ -706,35 +707,7 @@ class LLMFixer:
                 issues, tmp_path, project_path, check_tmp_path
             )
 
-            if not validation.is_valid:
-                error_msg = validation.error or ""
-                if "not found in actual file" in error_msg:
-                    # The validator already searched the file (exact, fuzzy,
-                    # single-line heuristics) before giving up. When it bails
-                    # here the content is genuinely gone — typically because
-                    # a prior fix in this run already addressed the issue
-                    # (e.g. a batched rename absorbing sibling issues on
-                    # adjacent lines). Treat as a clean skip, not a hard
-                    # error, and word the log accordingly.
-                    logger.debug(
-                        "Issue appears to have been resolved by an earlier "
-                        "fix in this same run (e.g. a batched rename "
-                        "absorbing sibling issues on adjacent lines). "
-                        "Skipping — no action needed. (validator detail: %s)",
-                        error_msg,
-                    )
-                    outcome["label"] = "skipped"
-                    outcome["reason"] = "absorbed by earlier fix in this run"
-                else:
-                    logger.error("Validation failed: %s", error_msg)
-                    outcome["label"] = "failed"
-                    outcome["reason"] = f"validation: {error_msg}"
-                return None
-
-            if validation.file_path is None or validation.line_range is None:
-                logger.error("Validation passed but file_path or line_range is None")
-                outcome["label"] = "failed"
-                outcome["reason"] = "validator returned no file_path/line_range"
+            if self._handle_validation_outcome(validation, outcome):
                 return None
 
             # Step 2: Prepare context for fix generation
@@ -824,6 +797,53 @@ class LLMFixer:
             return None
         finally:
             _print_fix_block_footer(outcome["label"], outcome["reason"])
+
+    def _handle_validation_outcome(
+        self,
+        validation: ValidationResult,
+        outcome: Dict[str, str],
+    ) -> bool:
+        """Stamp ``outcome`` and return True when the caller should bail.
+
+        Folds the not-valid branch (absorbed-by-earlier-fix vs real
+        failure) and the post-valid file_path/line_range None-check into
+        one helper. Extracted from ``generate_fix_by_file`` so its
+        cognitive complexity stays under Sonar's S3776 threshold; the
+        nested if/else inside the not-valid path was the bulk of the
+        score.
+        """
+        if not validation.is_valid:
+            error_msg = validation.error or ""
+            if "not found in actual file" in error_msg:
+                # The validator already searched the file (exact, fuzzy,
+                # single-line heuristics) before giving up. When it bails
+                # here the content is genuinely gone — typically because
+                # a prior fix in this run already addressed the issue
+                # (e.g. a batched rename absorbing sibling issues on
+                # adjacent lines). Treat as a clean skip, not a hard
+                # error, and word the log accordingly.
+                logger.debug(
+                    "Issue appears to have been resolved by an earlier "
+                    "fix in this same run (e.g. a batched rename "
+                    "absorbing sibling issues on adjacent lines). "
+                    "Skipping — no action needed. (validator detail: %s)",
+                    error_msg,
+                )
+                outcome["label"] = "skipped"
+                outcome["reason"] = "absorbed by earlier fix in this run"
+            else:
+                logger.error("Validation failed: %s", error_msg)
+                outcome["label"] = "failed"
+                outcome["reason"] = f"validation: {error_msg}"
+            return True
+
+        if validation.file_path is None or validation.line_range is None:
+            logger.error("Validation passed but file_path or line_range is None")
+            outcome["label"] = "failed"
+            outcome["reason"] = "validator returned no file_path/line_range"
+            return True
+
+        return False
 
     def _map_fix_suggestion_to_fix_suggestion_dto(
         self,
@@ -1328,50 +1348,12 @@ class LLMFixer:
         if file_path.suffix == ".py":
             final_status = _run_py_compile(file_path)
             if final_status.startswith("FAILED"):
-                logger.warning(
-                    "Agent finished with file in FAILED state on "
-                    "%s — %s. Reverting to pre-run content and "
-                    "returning no-fix-produced.",
-                    file_path.name,
+                self._handle_failed_final_state(
+                    file_path,
+                    original_content,
+                    all_agent_messages,
                     final_status,
                 )
-                # Surface what got rejected so a human can diagnose
-                # without re-deriving it from the agent's chatter.
-                # The agent's own last message often shows what it
-                # *thought* it accomplished — frequently a confident
-                # success summary while the file is structurally
-                # broken. In DEBUG (DEVDOX_DEBUG=1) also dump a
-                # unified diff of the rejected change to the Rich
-                # console so the actual placement is visible.
-                if all_agent_messages:
-                    logger.warning(
-                        "Agent's last message before rejection:\n%s",
-                        all_agent_messages[-1],
-                    )
-                if os.environ.get("DEVDOX_DEBUG") == "1":
-                    rejected_text = file_path.read_text(encoding="utf-8")
-                    diff = "".join(
-                        difflib.unified_diff(
-                            original_content.splitlines(keepends=True),
-                            rejected_text.splitlines(keepends=True),
-                            fromfile=f"a/{file_path.name}",
-                            tofile=f"b/{file_path.name} (REJECTED)",
-                            n=3,
-                        )
-                    )
-                    _console.rule(
-                        "[bold red]REJECTED — agent edit not applied"
-                        "[/bold red]"
-                    )
-                    _console.print(f"[dim]Reason:[/dim] {final_status}")
-                    if diff:
-                        # `markup=False` so accidental Rich-style
-                        # brackets in the diff don't get parsed.
-                        _console.print(diff, markup=False, highlight=False)
-                    else:
-                        _console.print("[dim]<no textual diff>[/dim]")
-                    _console.rule()
-                file_path.write_text(original_content, encoding="utf-8")
                 return None
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
@@ -1412,6 +1394,62 @@ class LLMFixer:
             applied_by_agent=True,
         )
 
+    def _handle_failed_final_state(
+        self,
+        file_path: Path,
+        original_content: str,
+        all_agent_messages: List[str],
+        final_status: str,
+    ) -> None:
+        """Log the final-state failure, dump a diff in DEBUG, and revert.
+
+        Extracted from ``_call_llm_list`` so its cognitive complexity
+        stays under Sonar's S3776 threshold; the deeply-nested
+        warning / DEBUG-diff / revert sequence was the bulk of the
+        score.
+        """
+        logger.warning(
+            "Agent finished with file in FAILED state on "
+            "%s — %s. Reverting to pre-run content and "
+            "returning no-fix-produced.",
+            file_path.name,
+            final_status,
+        )
+        # Surface what got rejected so a human can diagnose without
+        # re-deriving it from the agent's chatter. The agent's own
+        # last message often shows what it *thought* it accomplished
+        # — frequently a confident success summary while the file is
+        # structurally broken. In DEBUG (DEVDOX_DEBUG=1) also dump a
+        # unified diff of the rejected change to the Rich console so
+        # the actual placement is visible.
+        if all_agent_messages:
+            logger.warning(
+                "Agent's last message before rejection:\n%s",
+                all_agent_messages[-1],
+            )
+        if os.environ.get("DEVDOX_DEBUG") == "1":
+            rejected_text = file_path.read_text(encoding="utf-8")
+            diff = "".join(
+                difflib.unified_diff(
+                    original_content.splitlines(keepends=True),
+                    rejected_text.splitlines(keepends=True),
+                    fromfile=f"a/{file_path.name}",
+                    tofile=f"b/{file_path.name} (REJECTED)",
+                    n=3,
+                )
+            )
+            _console.rule(
+                "[bold red]REJECTED — agent edit not applied[/bold red]"
+            )
+            _console.print(f"[dim]Reason:[/dim] {final_status}")
+            if diff:
+                # `markup=False` so accidental Rich-style brackets
+                # in the diff don't get parsed.
+                _console.print(diff, markup=False, highlight=False)
+            else:
+                _console.print("[dim]<no textual diff>[/dim]")
+            _console.rule()
+        file_path.write_text(original_content, encoding="utf-8")
 
     def _is_init_method(self, context: str) -> bool:
         """

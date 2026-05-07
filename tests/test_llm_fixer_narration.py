@@ -31,6 +31,7 @@ import pytest
 
 from openhands.sdk.event import ActionEvent, MessageEvent
 
+from devdox_ai_sonar.llm.profile import LLMProfile
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.file_structures import FixContext
 from devdox_ai_sonar.models.sonar import SonarIssue
@@ -52,15 +53,19 @@ def mock_llm_client():
 
 @pytest.fixture
 def fixer(mock_llm_client) -> LLMFixer:
-    """An LLMFixer with provider=gemini and a mocked client.
+    """An LLMFixer built from a LLMProfile with a mocked LLM client.
 
     Provider choice is arbitrary — every provider goes through the same
-    ``LLM`` patch above. ``model`` is set so the early ``if not self.model``
-    guard does not return ``None`` before our code path runs.
+    ``LLM`` patch above. ``model`` is set on the profile so the early
+    ``if not self.model`` guard does not return ``None`` before our code
+    path runs.
     """
-    fx = LLMFixer(provider="gemini", api_key="test-key")
-    fx.model = "gemini/gemini-1.5-flash"
-    return fx
+    profile = LLMProfile(
+        name="gemini",
+        model="gemini/gemini-1.5-flash",
+        api_key="test-key",
+    )
+    return LLMFixer(profile=profile)
 
 
 @pytest.fixture

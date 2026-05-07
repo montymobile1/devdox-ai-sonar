@@ -6618,3 +6618,225 @@ class TestProcessValidationResult:
         assert len(result.failed_fixes) == 1
         assert "no improved fix" in result.failed_fixes[0]["error"]
 
+
+# ============================================================================
+# Coverage for the two slice-6 helpers extracted from generate_fix_by_file
+# and _call_llm_list. Each helper has multiple branches that the
+# happy-path orchestrator tests don't exercise.
+# ============================================================================
+
+
+class TestHandleValidationOutcome:
+    """Cover every branch of LLMFixer._handle_validation_outcome.
+
+    The helper folds three distinct outcomes — absorbed-skip, hard
+    failure, missing-file_path/line_range — into one function the
+    orchestrator can call. None of those branches are reached by the
+    happy-path tests above.
+    """
+
+    def _make_fixer(self, mock_client):
+        profile = LLMProfile(
+            name="test", model="openai/gpt-4o", api_key="sk-test"
+        )
+        return LLMFixer(profile=profile)
+
+    def test_returns_true_skipped_when_not_found_in_actual_file(
+        self, mock_openai_client
+    ):
+        from devdox_ai_sonar.models.sonar import ValidationResult
+        fixer = self._make_fixer(mock_openai_client)
+        validation = ValidationResult(
+            is_valid=False,
+            error="Issue 'x' not found in actual file",
+        )
+        outcome = {"label": "no-fix", "reason": ""}
+
+        bail = fixer._handle_validation_outcome(validation, outcome)
+
+        assert bail is True
+        assert outcome["label"] == "skipped"
+        assert "absorbed by earlier fix" in outcome["reason"]
+
+    def test_returns_true_failed_on_other_validation_error(
+        self, mock_openai_client
+    ):
+        from devdox_ai_sonar.models.sonar import ValidationResult
+        fixer = self._make_fixer(mock_openai_client)
+        validation = ValidationResult(
+            is_valid=False,
+            error="some unrelated validator failure",
+        )
+        outcome = {"label": "no-fix", "reason": ""}
+
+        bail = fixer._handle_validation_outcome(validation, outcome)
+
+        assert bail is True
+        assert outcome["label"] == "failed"
+        assert "some unrelated validator failure" in outcome["reason"]
+
+    def test_returns_true_failed_when_file_path_is_none(
+        self, mock_openai_client
+    ):
+        from devdox_ai_sonar.models.sonar import ValidationResult
+        fixer = self._make_fixer(mock_openai_client)
+        validation = ValidationResult(
+            is_valid=True,
+            file_path=None,
+            line_range={"first_line": 1, "last_line": 1},
+        )
+        outcome = {"label": "no-fix", "reason": ""}
+
+        bail = fixer._handle_validation_outcome(validation, outcome)
+
+        assert bail is True
+        assert outcome["label"] == "failed"
+        assert "no file_path/line_range" in outcome["reason"]
+
+    def test_returns_true_failed_when_line_range_is_none(
+        self, mock_openai_client, tmp_path
+    ):
+        from devdox_ai_sonar.models.sonar import ValidationResult
+        fixer = self._make_fixer(mock_openai_client)
+        validation = ValidationResult(
+            is_valid=True,
+            file_path=tmp_path / "file.py",
+            line_range=None,
+        )
+        outcome = {"label": "no-fix", "reason": ""}
+
+        bail = fixer._handle_validation_outcome(validation, outcome)
+
+        assert bail is True
+        assert outcome["label"] == "failed"
+
+    def test_returns_false_when_validation_succeeds(
+        self, mock_openai_client, tmp_path
+    ):
+        from devdox_ai_sonar.models.sonar import ValidationResult
+        fixer = self._make_fixer(mock_openai_client)
+        validation = ValidationResult(
+            is_valid=True,
+            file_path=tmp_path / "file.py",
+            line_range={"first_line": 1, "last_line": 1},
+        )
+        outcome = {"label": "no-fix", "reason": ""}
+
+        bail = fixer._handle_validation_outcome(validation, outcome)
+
+        assert bail is False
+        # outcome unchanged on success
+        assert outcome == {"label": "no-fix", "reason": ""}
+
+
+class TestHandleFailedFinalState:
+    """Cover every branch of LLMFixer._handle_failed_final_state.
+
+    The helper handles the rare-but-real case where the agent completed
+    its run but the file ended in py_compile / pyflakes / AST FAILED
+    state. Tests cover the revert, the agent-message log, and the
+    DEVDOX_DEBUG=1 diff dump.
+    """
+
+    def _make_fixer(self, mock_client):
+        profile = LLMProfile(
+            name="test", model="openai/gpt-4o", api_key="sk-test"
+        )
+        return LLMFixer(profile=profile)
+
+    def test_reverts_file_to_original_content(
+        self, mock_openai_client, tmp_path
+    ):
+        fixer = self._make_fixer(mock_openai_client)
+        path = tmp_path / "broken.py"
+        original = "def hello():\n    return 1\n"
+        rejected = "def hello(\n    return 1\n"  # syntactically broken
+        path.write_text(rejected, encoding="utf-8")
+
+        fixer._handle_failed_final_state(
+            file_path=path,
+            original_content=original,
+            all_agent_messages=[],
+            final_status="FAILED — SyntaxError",
+        )
+
+        assert path.read_text(encoding="utf-8") == original
+
+    def test_logs_last_agent_message_when_present(
+        self, mock_openai_client, tmp_path, caplog
+    ):
+        import logging
+        fixer = self._make_fixer(mock_openai_client)
+        path = tmp_path / "broken.py"
+        path.write_text("rejected", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="devdox_ai_sonar.llm_fixer"):
+            fixer._handle_failed_final_state(
+                file_path=path,
+                original_content="original\n",
+                all_agent_messages=["first msg", "i think i fixed it"],
+                final_status="FAILED — orphan self-method",
+            )
+
+        # The "last agent message" warning fires with the LAST element.
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "i think i fixed it" in joined
+
+    def test_skips_message_log_when_no_messages(
+        self, mock_openai_client, tmp_path, caplog
+    ):
+        import logging
+        fixer = self._make_fixer(mock_openai_client)
+        path = tmp_path / "broken.py"
+        path.write_text("rejected", encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="devdox_ai_sonar.llm_fixer"):
+            fixer._handle_failed_final_state(
+                file_path=path,
+                original_content="original\n",
+                all_agent_messages=[],  # empty
+                final_status="FAILED — duplicate class method",
+            )
+
+        joined = "\n".join(record.getMessage() for record in caplog.records)
+        assert "Agent's last message" not in joined
+
+    def test_dumps_diff_to_console_when_devdox_debug_set(
+        self, mock_openai_client, tmp_path, monkeypatch
+    ):
+        fixer = self._make_fixer(mock_openai_client)
+        path = tmp_path / "broken.py"
+        rejected = "def hello(\n    return 1\n"
+        path.write_text(rejected, encoding="utf-8")
+        monkeypatch.setenv("DEVDOX_DEBUG", "1")
+
+        # Should not raise; the diff path includes file.read_text + Rich
+        # console output. We just verify the function completes and the
+        # file is reverted.
+        fixer._handle_failed_final_state(
+            file_path=path,
+            original_content="original\n",
+            all_agent_messages=["agent said something"],
+            final_status="FAILED — SyntaxError",
+        )
+
+        assert path.read_text(encoding="utf-8") == "original\n"
+
+    def test_skips_diff_dump_when_devdox_debug_not_set(
+        self, mock_openai_client, tmp_path, monkeypatch
+    ):
+        fixer = self._make_fixer(mock_openai_client)
+        path = tmp_path / "broken.py"
+        path.write_text("rejected\n", encoding="utf-8")
+        monkeypatch.delenv("DEVDOX_DEBUG", raising=False)
+
+        fixer._handle_failed_final_state(
+            file_path=path,
+            original_content="original\n",
+            all_agent_messages=[],
+            final_status="FAILED — pyflakes undefined name 'x'",
+        )
+
+        # File still reverted regardless of DEBUG flag.
+        assert path.read_text(encoding="utf-8") == "original\n"
+

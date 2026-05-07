@@ -13,7 +13,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import List, Tuple, Union, TYPE_CHECKING
 
 from openhands.sdk.tool import ToolExecutor
 
@@ -31,7 +31,18 @@ if TYPE_CHECKING:
 
 
 class FixAtLineExecutor(ToolExecutor):
-    """Splice an inclusive 1-indexed line range in a file."""
+    """Splice an inclusive 1-indexed line range in a file.
+
+    SonarCloud's ``python:S2083`` (path-injection) on the read/write
+    sites is suppressed at each call site below. Threat model: the
+    executor runs as a tool inside the OpenHands ``Conversation``
+    sandbox, with a ``workspace`` set by the CLI to the project under
+    fix and a tmp working directory provisioned by ``devdox_sonar``.
+    The realistic exploit path requires both prompt-injection through
+    scanned content AND the user choosing to scan a hostile repo,
+    which is a class of risk the user accepts as part of running an
+    auto-fix tool against arbitrary projects.
+    """
 
     def __call__(
         self,
@@ -109,72 +120,8 @@ class FixAtLineExecutor(ToolExecutor):
             and action.start_line >= total_lines + 1
             and action.old_block == ""
         ):
-            # Drop trailing whitespace from the existing content before
-            # composing the appended block. Lets us decide separator
-            # newlines deterministically from a known-clean baseline.
-            base_text = original_text.rstrip("\n")
-            if action.new_block:
-                appended_block = action.new_block.rstrip("\n") + "\n"
-            else:
-                appended_block = ""
-            if (
-                appended_block
-                and target.suffix == ".py"
-                and _starts_with_top_level_python_def(action.new_block)
-            ):
-                # PEP 8 wants two blank lines between top-level defs/classes.
-                # The trailing-newline-stripped base + "\n\n\n" yields:
-                # last-content-line\n  +  \n  +  \n  =  two blank lines, then
-                # the appended block.
-                separator = "\n\n\n"
-            elif appended_block:
-                separator = "\n"
-            else:
-                # Empty new_block — preserve a trailing newline so subsequent
-                # appends keep behaving sensibly.
-                separator = "\n" if base_text else ""
-            new_text = base_text + separator + appended_block
-
-            try:
-                target.write_text(new_text, encoding="utf-8")
-            except OSError as exc:
-                return FixAtLineObservation.from_text(
-                    text=f"Cannot write file '{action.path}': {exc}",
-                    is_error=True,
-                    path=action.path,
-                    start_line=action.start_line,
-                    end_line=action.end_line,
-                )
-
-            new_block_line_count = len(_normalize_block_to_lines(action.new_block))
-            syntax_status = (
-                _run_py_compile(target) if target.suffix == ".py" else ""
-            )
-            cascade_revert = _revert_if_syntax_cascade(
-                target,
-                pre_edit_syntax,
-                syntax_status,
-                original_text,
-                action,
-            )
-            if cascade_revert is not None:
-                return cascade_revert
-            new_total_lines = len(new_text.splitlines())
-            message = (
-                f"Appended {new_block_line_count} line(s) to {action.path} "
-                f"(file is now {new_total_lines} line(s); "
-                f"next EOF append uses start_line=end_line={new_total_lines + 1})."
-            )
-            if syntax_status:
-                message += f"\nSyntax: {syntax_status}"
-            return FixAtLineObservation.from_text(
-                text=message,
-                is_error=False,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-                old_block="",
-                new_block=_strip_trailing_newline(action.new_block),
+            return self._eof_append(
+                action, target, original_text, pre_edit_syntax
             )
 
         if action.end_line > total_lines:
@@ -193,54 +140,213 @@ class FixAtLineExecutor(ToolExecutor):
         end_idx_exclusive = action.end_line  # Python slice upper bound.
         current_block_text = "".join(lines[start_idx:end_idx_exclusive])
 
+        result = self._compute_inrange_replacement(
+            action,
+            target,
+            lines,
+            start_idx,
+            end_idx_exclusive,
+            current_block_text,
+        )
+        if isinstance(result, FixAtLineObservation):
+            return result
+        new_text, new_block_line_count, returned_old_block, returned_new_block = result
+
+        if new_text == original_text:
+            return FixAtLineObservation.from_text(
+                text=(
+                    f"No change applied — `new_block` is identical to the "
+                    f"current content of lines {action.start_line}-"
+                    f"{action.end_line}."
+                ),
+                is_error=True,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+            )
+
+        try:
+            target.write_text(new_text, encoding="utf-8")  # NOSONAR
+        except OSError as exc:
+            return FixAtLineObservation.from_text(
+                text=f"Cannot write file '{action.path}': {exc}",
+                is_error=True,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+            )
+
+        original_line_count = action.end_line - action.start_line + 1
+        syntax_status = (
+            _run_py_compile(target) if target.suffix == ".py" else ""
+        )
+        cascade_revert = _revert_if_syntax_cascade(
+            target,
+            pre_edit_syntax,
+            syntax_status,
+            original_text,
+            action,
+        )
+        if cascade_revert is not None:
+            return cascade_revert
+        new_total_lines = len(new_text.splitlines())
+        message = (
+            f"Replaced lines {action.start_line}-{action.end_line} in "
+            f"{action.path} ({original_line_count} line(s) → "
+            f"{new_block_line_count} line(s); file is now "
+            f"{new_total_lines} line(s); next EOF append uses "
+            f"start_line=end_line={new_total_lines + 1})."
+        )
+        if syntax_status:
+            message += f"\nSyntax: {syntax_status}"
+        return FixAtLineObservation.from_text(
+            text=message,
+            is_error=False,
+            path=action.path,
+            start_line=action.start_line,
+            end_line=action.end_line,
+            old_block=returned_old_block,
+            new_block=returned_new_block,
+        )
+
+    def _eof_append(
+        self,
+        action: FixAtLineAction,
+        target: Path,
+        original_text: str,
+        pre_edit_syntax: str,
+    ) -> FixAtLineObservation:
+        """Append ``action.new_block`` after the end of ``target``.
+
+        Extracted from ``_run`` so the orchestrator's cognitive
+        complexity stays under Sonar's S3776 threshold. Behaviour
+        identical: handles separator selection (PEP 8 two-blanks for
+        top-level Python defs, single blank otherwise, empty new_block
+        as a no-op trailing-newline preserver), runs the post-edit
+        syntax check + cascade revert, and returns the success or
+        revert observation.
+        """
+        # Drop trailing whitespace from the existing content before
+        # composing the appended block. Lets us decide separator
+        # newlines deterministically from a known-clean baseline.
+        base_text = original_text.rstrip("\n")
+        if action.new_block:
+            appended_block = action.new_block.rstrip("\n") + "\n"
+        else:
+            appended_block = ""
+        if (
+            appended_block
+            and target.suffix == ".py"
+            and _starts_with_top_level_python_def(action.new_block)
+        ):
+            # PEP 8 wants two blank lines between top-level defs/classes.
+            # The trailing-newline-stripped base + "\n\n\n" yields:
+            # last-content-line\n  +  \n  +  \n  =  two blank lines, then
+            # the appended block.
+            separator = "\n\n\n"
+        elif appended_block:
+            separator = "\n"
+        else:
+            # Empty new_block — preserve a trailing newline so subsequent
+            # appends keep behaving sensibly.
+            separator = "\n" if base_text else ""
+        new_text = base_text + separator + appended_block
+
+        try:
+            target.write_text(new_text, encoding="utf-8")  # NOSONAR
+        except OSError as exc:
+            return FixAtLineObservation.from_text(
+                text=f"Cannot write file '{action.path}': {exc}",
+                is_error=True,
+                path=action.path,
+                start_line=action.start_line,
+                end_line=action.end_line,
+            )
+
+        new_block_line_count = len(_normalize_block_to_lines(action.new_block))
+        syntax_status = (
+            _run_py_compile(target) if target.suffix == ".py" else ""
+        )
+        cascade_revert = _revert_if_syntax_cascade(
+            target,
+            pre_edit_syntax,
+            syntax_status,
+            original_text,
+            action,
+        )
+        if cascade_revert is not None:
+            return cascade_revert
+        new_total_lines = len(new_text.splitlines())
+        message = (
+            f"Appended {new_block_line_count} line(s) to {action.path} "
+            f"(file is now {new_total_lines} line(s); "
+            f"next EOF append uses start_line=end_line={new_total_lines + 1})."
+        )
+        if syntax_status:
+            message += f"\nSyntax: {syntax_status}"
+        return FixAtLineObservation.from_text(
+            text=message,
+            is_error=False,
+            path=action.path,
+            start_line=action.start_line,
+            end_line=action.end_line,
+            old_block="",
+            new_block=_strip_trailing_newline(action.new_block),
+        )
+
+    def _compute_inrange_replacement(
+        self,
+        action: FixAtLineAction,
+        target: Path,
+        lines: List[str],
+        start_idx: int,
+        end_idx_exclusive: int,
+        current_block_text: str,
+    ) -> Union[FixAtLineObservation, Tuple[str, int, str, str]]:
+        """Decide the new file text for an in-range edit.
+
+        Returns either a ``FixAtLineObservation`` (early-return error,
+        e.g. would-corrupt-file / ambiguous-substring / no-match) or a
+        tuple ``(new_text, new_block_line_count, returned_old_block,
+        returned_new_block)`` on success. Extracted from ``_run`` so
+        the orchestrator's cognitive complexity stays under Sonar's
+        S3776 threshold; behaviour identical.
+        """
         old_stripped = _strip_trailing_newline(action.old_block)
         new_stripped = _strip_trailing_newline(action.new_block)
         current_stripped = _strip_trailing_newline(current_block_text)
 
-        # Empty ``old_block`` on a valid in-range slot is the
-        # "trust my line range" signal: the agent has just viewed the
-        # file and is replacing the whole [start_line..end_line] window
-        # without asking the executor to byte-verify the existing
-        # content. Necessary because some LLMs (e.g., Llama 3.3) cannot
-        # reliably reproduce long multi-line strings as tool arguments
-        # — they emit literal "..." stubs or mangle whitespace, which
-        # makes the byte-match path always fail. Skipping the byte
-        # check here is safe because (a) the line range itself is the
-        # anchor, (b) the post-edit syntax check + cascade revert below
-        # catches structurally-broken results.
-        if old_stripped == "":
+        # Two paths converge on a full-window replace:
+        #
+        #  * ``old_stripped == ""`` — the "trust my line range" signal.
+        #    The agent has just viewed the file and is replacing the
+        #    whole [start_line..end_line] window without asking the
+        #    executor to byte-verify the existing content. Necessary
+        #    because some LLMs (e.g., Llama 3.3) cannot reliably
+        #    reproduce long multi-line strings as tool arguments —
+        #    they emit literal "..." stubs or mangle whitespace, which
+        #    makes the byte-match path always fail. Skipping the byte
+        #    check is safe because (a) the line range itself is the
+        #    anchor, (b) the post-edit syntax check + cascade revert
+        #    catches structurally-broken results.
+        #
+        #  * ``old_stripped == current_stripped`` — explicit byte-
+        #    verified full-block match.
+        if old_stripped == "" or old_stripped == current_stripped:
             new_block_lines = _normalize_block_to_lines(action.new_block)
             new_file_lines = (
                 lines[:start_idx]
                 + new_block_lines
                 + lines[end_idx_exclusive:]
             )
-            new_text = "".join(new_file_lines)
-            new_block_line_count = len(new_block_lines)
-            returned_old_block = current_stripped
-            returned_new_block = new_stripped
-        # Three acceptable shapes for the safety check when ``old_block``
-        # is non-empty:
-        #  (a) ``old_block`` equals the full line(s) -> replace the block.
-        #  (b) ``old_block`` is a unique substring of the line(s) -> in-place
-        #      find-and-replace inside the anchored range. The line range
-        #      still bounds the search, so duplicated content elsewhere in
-        #      the file is irrelevant.
-        #  (c) ``old_block`` appears multiple times inside the range or
-        #      isn't there at all -> error.
-        elif old_stripped == current_stripped:
-            # (a) full-block replacement.
-            new_block_lines = _normalize_block_to_lines(action.new_block)
-            new_file_lines = (
-                lines[:start_idx]
-                + new_block_lines
-                + lines[end_idx_exclusive:]
+            return (
+                "".join(new_file_lines),
+                len(new_block_lines),
+                current_stripped,
+                new_stripped,
             )
-            new_text = "".join(new_file_lines)
-            new_block_line_count = len(new_block_lines)
-            returned_old_block = current_stripped
-            returned_new_block = new_stripped
-        elif old_stripped in current_stripped:
+
+        if old_stripped in current_stripped:
             if target.suffix == ".py" and _new_block_adds_python_structure(
                 old_stripped, new_stripped
             ):
@@ -285,7 +391,7 @@ class FixAtLineExecutor(ToolExecutor):
                     end_line=action.end_line,
                     old_block=current_stripped,
                 )
-            # (b) substring match, unique within the range.
+            # Substring match, unique within the range.
             new_block_text = current_stripped.replace(
                 old_stripped, new_stripped, 1
             )
@@ -293,86 +399,29 @@ class FixAtLineExecutor(ToolExecutor):
                 new_block_text += "\n"
             prefix = "".join(lines[:start_idx])
             suffix = "".join(lines[end_idx_exclusive:])
-            new_text = prefix + new_block_text + suffix
-            new_block_line_count = len(
-                _normalize_block_to_lines(new_block_text)
-            )
-            returned_old_block = current_stripped
-            returned_new_block = _strip_trailing_newline(new_block_text)
-        else:
-            # (c) no match at all.
-            return FixAtLineObservation.from_text(
-                text=(
-                    f"`old_block` does not match the current content of lines "
-                    f"{action.start_line}-{action.end_line}.  Re-read the file "
-                    f"with `file_editor view` and retry.\n"
-                    f"--- old_block (provided) ---\n"
-                    f"{old_stripped}\n"
-                    f"--- actual lines {action.start_line}-{action.end_line} ---\n"
-                    f"{current_stripped}"
-                ),
-                is_error=True,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-                old_block=current_stripped,
+            return (
+                prefix + new_block_text + suffix,
+                len(_normalize_block_to_lines(new_block_text)),
+                current_stripped,
+                _strip_trailing_newline(new_block_text),
             )
 
-        if new_text == original_text:
-            return FixAtLineObservation.from_text(
-                text=(
-                    f"No change applied — `new_block` is identical to the "
-                    f"current content of lines {action.start_line}-"
-                    f"{action.end_line}."
-                ),
-                is_error=True,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-            )
-
-        try:
-            target.write_text(new_text, encoding="utf-8")
-        except OSError as exc:
-            return FixAtLineObservation.from_text(
-                text=f"Cannot write file '{action.path}': {exc}",
-                is_error=True,
-                path=action.path,
-                start_line=action.start_line,
-                end_line=action.end_line,
-            )
-
-        original_line_count = action.end_line - action.start_line + 1
-        syntax_status = (
-            _run_py_compile(target) if target.suffix == ".py" else ""
-        )
-        cascade_revert = _revert_if_syntax_cascade(
-            target,
-            pre_edit_syntax,
-            syntax_status,
-            original_text,
-            action,
-        )
-        if cascade_revert is not None:
-            return cascade_revert
-        new_total_lines = len(new_text.splitlines())
-        message = (
-            f"Replaced lines {action.start_line}-{action.end_line} in "
-            f"{action.path} ({original_line_count} line(s) → "
-            f"{new_block_line_count} line(s); file is now "
-            f"{new_total_lines} line(s); next EOF append uses "
-            f"start_line=end_line={new_total_lines + 1})."
-        )
-        if syntax_status:
-            message += f"\nSyntax: {syntax_status}"
+        # No match at all.
         return FixAtLineObservation.from_text(
-            text=message,
-            is_error=False,
+            text=(
+                f"`old_block` does not match the current content of lines "
+                f"{action.start_line}-{action.end_line}.  Re-read the file "
+                f"with `file_editor view` and retry.\n"
+                f"--- old_block (provided) ---\n"
+                f"{old_stripped}\n"
+                f"--- actual lines {action.start_line}-{action.end_line} ---\n"
+                f"{current_stripped}"
+            ),
+            is_error=True,
             path=action.path,
             start_line=action.start_line,
             end_line=action.end_line,
-            old_block=returned_old_block,
-            new_block=returned_new_block,
+            old_block=current_stripped,
         )
 
 
@@ -471,6 +520,35 @@ def _check_no_duplicate_class_methods(target: Path) -> str:
     return ""
 
 
+def _collect_orphan_self_methods(
+    node: ast.AST, in_class: bool, orphans: List[Tuple[str, int]]
+) -> None:
+    """Walk ``node`` collecting (name, lineno) of orphan self-methods.
+
+    Lifted out of ``_check_no_orphan_self_methods`` so the public
+    checker stays under Sonar's S3776 cognitive complexity threshold.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, ast.ClassDef):
+            _collect_orphan_self_methods(
+                child, in_class=True, orphans=orphans
+            )
+        elif isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not in_class:
+                args = child.args.args
+                if args and args[0].arg == "self":
+                    orphans.append((child.name, child.lineno))
+            # Recurse with in_class=False: nested defs are not class
+            # members even if the outer function is.
+            _collect_orphan_self_methods(
+                child, in_class=False, orphans=orphans
+            )
+        else:
+            _collect_orphan_self_methods(
+                child, in_class=in_class, orphans=orphans
+            )
+
+
 def _check_no_orphan_self_methods(target: Path) -> str:
     """Return a non-empty failure description if any function whose
     first parameter is ``self`` is defined outside a class body.
@@ -505,26 +583,7 @@ def _check_no_orphan_self_methods(target: Path) -> str:
         return ""
 
     orphans: list = []
-
-    def visit(node: ast.AST, in_class: bool) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                visit(child, in_class=True)
-            elif isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
-                if not in_class:
-                    args = child.args.args
-                    if args and args[0].arg == "self":
-                        orphans.append((child.name, child.lineno))
-                # Recurse into the function body with in_class=False:
-                # nested defs are not class members even if the outer
-                # function is.
-                visit(child, in_class=False)
-            else:
-                visit(child, in_class=in_class)
-
-    visit(tree, in_class=False)
+    _collect_orphan_self_methods(tree, in_class=False, orphans=orphans)
 
     if not orphans:
         return ""
@@ -542,6 +601,77 @@ def _check_no_orphan_self_methods(target: Path) -> str:
         f"+ blank line + helpers] in ONE fix_at_line call at the "
         f"class-member indent — do NOT use the EOF-append pattern."
     )
+
+
+def _decorator_name(dec: ast.AST) -> str:
+    """Best-effort extraction of a decorator's surface name.
+
+    Handles ``@name``, ``@module.name``, and ``@name(...)`` shapes.
+    Returns "" for anything else (e.g. computed decorators), since the
+    caller compares against a small allowlist of literal names.
+    """
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    if isinstance(dec, ast.Call):
+        return _decorator_name(dec.func)
+    return ""
+
+
+def _collect_misplaced_decorated_helpers(
+    node: ast.AST,
+    in_function: bool,
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Walk ``node`` collecting nested defs decorated @staticmethod/@classmethod.
+
+    Lifted out of ``_check_no_misplaced_decorated_helpers`` so the
+    public checker stays under Sonar's S3776 cognitive complexity
+    threshold; the per-child decision and the per-decorator scan are
+    further split into ``_visit_misplaced_decoration_child`` and
+    ``_record_misplaced_decoration`` for the same reason.
+    """
+    for child in ast.iter_child_nodes(node):
+        _visit_misplaced_decoration_child(child, in_function, misplaced)
+
+
+def _visit_misplaced_decoration_child(
+    child: ast.AST,
+    in_function: bool,
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Dispatch one AST child for the misplaced-decoration walk."""
+    if isinstance(child, ast.ClassDef):
+        # Class body resets the "inside a function" tracking:
+        # methods inside the class are class members, not nested
+        # defs of the enclosing function.
+        _collect_misplaced_decorated_helpers(
+            child, in_function=False, misplaced=misplaced
+        )
+        return
+    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if in_function:
+            _record_misplaced_decoration(child, misplaced)
+        _collect_misplaced_decorated_helpers(
+            child, in_function=True, misplaced=misplaced
+        )
+        return
+    _collect_misplaced_decorated_helpers(
+        child, in_function=in_function, misplaced=misplaced
+    )
+
+
+def _record_misplaced_decoration(
+    child: Union[ast.FunctionDef, ast.AsyncFunctionDef],
+    misplaced: List[Tuple[str, int, str]],
+) -> None:
+    """Record ``child`` if its decorator list includes @staticmethod/@classmethod."""
+    for dec in child.decorator_list:
+        name = _decorator_name(dec)
+        if name in ("staticmethod", "classmethod"):
+            misplaced.append((child.name, child.lineno, name))
+            return
 
 
 def _check_no_misplaced_decorated_helpers(target: Path) -> str:
@@ -579,39 +709,9 @@ def _check_no_misplaced_decorated_helpers(target: Path) -> str:
         return ""
 
     misplaced: list = []
-
-    def _decorator_name(dec: ast.AST) -> str:
-        if isinstance(dec, ast.Name):
-            return dec.id
-        if isinstance(dec, ast.Attribute):
-            return dec.attr
-        if isinstance(dec, ast.Call):
-            return _decorator_name(dec.func)
-        return ""
-
-    def visit(node: ast.AST, in_function: bool) -> None:
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, ast.ClassDef):
-                # Class body resets the "inside a function" tracking:
-                # methods inside the class are class members, not nested
-                # defs of the enclosing function.
-                visit(child, in_function=False)
-            elif isinstance(
-                child, (ast.FunctionDef, ast.AsyncFunctionDef)
-            ):
-                if in_function:
-                    for dec in child.decorator_list:
-                        name = _decorator_name(dec)
-                        if name in ("staticmethod", "classmethod"):
-                            misplaced.append(
-                                (child.name, child.lineno, name)
-                            )
-                            break
-                visit(child, in_function=True)
-            else:
-                visit(child, in_function=in_function)
-
-    visit(tree, in_function=False)
+    _collect_misplaced_decorated_helpers(
+        tree, in_function=False, misplaced=misplaced
+    )
 
     if not misplaced:
         return ""
@@ -717,7 +817,7 @@ def _revert_if_syntax_cascade(
         rejected_text = target.read_text(encoding="utf-8")
     except OSError:
         rejected_text = ""
-    target.write_text(original_text, encoding="utf-8")
+    target.write_text(original_text, encoding="utf-8")  # NOSONAR
     transition = (
         "FAILED→FAILED"
         if pre_edit_syntax.startswith("FAILED")
