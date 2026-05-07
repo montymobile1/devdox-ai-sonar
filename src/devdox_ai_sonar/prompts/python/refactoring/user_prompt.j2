@@ -1,23 +1,51 @@
-Fix {{ language }} SonarQube issue. Preserve original logic.
+Fix this {{ language }} SonarQube cognitive complexity (S3776) issue in `{{ file_path }}` by editing the file directly using your tools.
+Do NOT output JSON. Do NOT paste code in your reply.
 
-## ISSUE
-{% for issue in issues %}**{{ issue.rule }}** ({{ issue.severity }}): {{ issue.message }}
-{% set root = rule_info.get(issue.rule, {}).get('root_cause', '') %}{% if root %}
-↳ {{ root }}{% endif %}{% endfor %}
+To apply the change, use `fix_at_line`. Helper PLACEMENT depends on the original function's type — see the "RULES" / `method_instruction` block below for which case applies, and follow the matching pattern:
+
+**(A) Original is an instance method (`def f(self, ...):`)** — ONE `fix_at_line` call:
+- Call `file_editor view` first to confirm the function's exact line range.
+- Apply a single `fix_at_line` whose `start_line`/`end_line` cover the original function (decorators included), `old_block = ""` (empty — trust the range), and `new_block` = the simplified function + a blank line + each helper, all at the SAME class-member indent.
+- Helpers MUST end up inside the class. Do NOT use the EOF-append pattern for instance methods — it lands the helpers at module level (or, with class-level indentation, parses them as nested defs inside whatever top-level function they fell after), making `self.<helper>(...)` raise `AttributeError` at runtime. The post-edit syntax check will reject orphaned `def X(self, ...)` outside a class body.
+
+**(B) Original is a free function or `@staticmethod`** — APPEND helpers first, THEN replace original:
+- Call `file_editor view` first to see the function's current content AND to note the highest line number shown — call this `L_view`.
+- **Step 1 — APPEND each helper to the end of the file** using the EOF-append shape: `start_line` = `end_line` = `L_view + 1`, `old_block` = `""` (empty), `new_block` = `<helper source>`. The executor recognises this as a deliberate append and is forgiving if `L_view` is off by a line. Every successful response tells you the file's new line count and the next safe EOF-append `start_line` — use THAT for any subsequent helper appends, do not recompute from scratch.
+- **Step 2 — Only after every helper is on disk**, apply ONE `fix_at_line` call to replace the original function with its simplified (helper-calling) version. Use the function's ORIGINAL line range as `start_line`/`end_line` and **set `old_block = ""`** (empty string). The executor reads empty `old_block` on a valid in-range slot as "trust my line range; replace this whole window without byte-verifying". Do NOT try to copy the original 100+ line function body into `old_block` — long multi-line strings get mangled in tool calls and the byte-match path will fail.
+
+Why this order: a post-edit lint check runs after every write. If you replace the original with a helper-calling version BEFORE the helpers exist on disk, the check sees undefined names (`_helper_x`) and reverts the edit — costing you a retry. Appending helpers first leaves the file syntactically valid at every step.
+
+For both patterns:
+- Every `fix_at_line` response includes a `Syntax:` line. If it says `FAILED`, your last edit broke the file — repair with another `fix_at_line` BEFORE doing more inserts.
+- Do NOT use `file_editor str_replace` — it is unsafe when the file has duplicated lines.
+- Do NOT target a `start_line`/`end_line` that contains existing function code unless you intend to replace it.
+
+## Issue
+{% for issue in issues %}
+- **Rule**: {{ issue.rule }}{% if issue.severity %} ({{ issue.severity }}){% endif %}
+- **Message**: {{ issue.message }}
+{% set root = rule_info.get(issue.rule, {}).get('root_cause', '') %}
+{% if root %}- **Root cause**: {{ root }}{% endif %}
+{% endfor %}
 
 
-## 🚨 COMPLEXITY REFACTORING
+## 🚨 COMPLEXITY TARGET
 
 Current: {{ issues[0].message.split('from ')[1].split(' to')[0] if 'from' in issues[0].message else '?' }} → Target: <15
 
 MANDATORY:
-1. Create helpers in NEW_HELPER_CODE
-2. Original function MUST call ALL helpers
-3. Set has_changes: true
-
+1. Extract one or more helpers; place them according to the rule for the original function's type — in-class (one combined replacement call) for instance methods, EOF-append (separate calls) for free / `@staticmethod` functions. Never insert between unrelated existing functions.
+2. The original function (with its name and signature unchanged) MUST call ALL helpers
+3. The refactored result MUST reach the target
 
 ## CODE
-{% for func in context.context_dict['new_context']%}### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }})
+
+The Sonar issue is at line {{ issues[0].first_line }}. **Refactor ONLY the function marked TARGET below — the others are shown for context (class neighbors, related helpers) and must NOT be modified.**
+
+{% for func in context.context_dict['new_context'] %}
+{% set is_target = func['start_line'] <= issues[0].first_line and issues[0].first_line <= func['end_line'] %}
+### `{{ func['function_name'] }}` (L{{ func['start_line'] }}-{{ func['end_line'] }}){% if is_target %} 👈 **TARGET — refactor THIS function**{% else %} — context only, do NOT modify{% endif %}
+
 `````{{ language }}
 {% for line in func['context'].split('\n') %}{{ '%04d' | format(func['start_line'] + loop.index0) }}| {{ line }}
 {% endfor %}```
@@ -29,39 +57,16 @@ MANDATORY:
 {{ context.context_dict['import_section']['content'] }}```
 {% endif %}
 
-{% if error_message %}## ⚠️ RETRY as ERROR MESSAGE: {{ error_message }}
+{% if error_message %}## ⚠️ Previous attempt failed — also fix this
+{{ error_message }}
 {% endif %}
 
 ## RULES
 - Keep exact function name and signature
 - Extract helpers, use early returns
-- NO new attributes/methods/exceptions
-- Scan NEW_HELPER_CODE for imports → add to IMPORT_BLOCK
+- NO new attributes/methods/classes/exceptions (other than the extracted helpers)
 - NO imports inside functions
 
-## OUTPUT FORMAT
-```json
-{
-  "IMPORT_BLOCK": "",
-  "FIXED_CODE_BLOCKS": [{
-    "block_name": "name",
-    "start_line": N,
-    "end_line": N,
-    "has_changes": true,
-    "change_type": "FULL_CODE",
-    "context": "simplified function with \\n"
-  }],
-  "NEW_HELPER_CODE": "helper definitions",
-  "PLACEMENT": "SIBLING",
-  "EXPLANATION": "### Issue: X\\n### Fix: Y\\n### Validation: Z",
-  "CONFIDENCE": 0.95
-}
-```
-
-VALIDATION:
-- [ ] NEW_HELPER_CODE has helpers?
-- [ ] All helper names appear in FIXED_CODE_BLOCKS.context?
-- [ ] has_changes: true?
-- [ ] Line numbers match NNNN| format?
-
 {{ method_instruction }}
+
+Read `{{ file_path }}` with `file_editor view` first, then apply the fix with `fix_at_line`. Use pattern (A) — one combined replacement call — when the method has `self`; use pattern (B) — append helpers first, THEN replace original — for free / `@staticmethod` functions. Each `fix_at_line` response includes a `Syntax:` line — verify it stays `OK` after every edit.

@@ -15,6 +15,7 @@ from devdox_ai_sonar.models.file_structures import (
     LineRange,
     FixApplication,
     ImportState,
+    slot_width,
 )
 from devdox_ai_sonar.models.sonar import (
     FixSuggestion,
@@ -840,6 +841,27 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
 
     new_lines = [line + "\n" for line in new_lines]
 
+    # Trim trailing blank lines from the replacement. Rule handlers
+    # frequently emit context with trailing ``\n\n\n`` so the function
+    # body is followed by extra newlines; without this trim each
+    # replacement leaks blank lines into the file and back-to-back
+    # invocations on the same handler grow the file by N blanks per
+    # iteration. The blank lines that originally sat between this slot
+    # and the next definition are preserved by the symmetric slot
+    # trim below.
+    while new_lines and not new_lines[-1].strip():
+        new_lines.pop()
+
+    # Symmetric trim on the slot: if end_idx points at trailing blank
+    # lines that were part of the handler's range, exclude them so the
+    # blank-line structure surrounding the original definition stays
+    # untouched. Clamp end_idx into the valid file range first — handlers
+    # sometimes emit end_line one past the actual end-of-function or
+    # end-of-file.
+    end_idx = min(end_idx, len(lines) - 1)
+    while end_idx > start_idx and not lines[end_idx].strip():
+        end_idx -= 1
+
     # Replace the lines
     if start_idx > end_idx:
         lines[start_idx:end_idx] = new_lines
@@ -861,14 +883,25 @@ def apply_full_code_change(lines: List[str], block: CodeBlock) -> Tuple[List[str
         len(new_lines),
     )
 
+    # Compare the block's declared slot width (what the handler said
+    # it was filling) against the actual line count delivered. Mismatch
+    # is a handler bug — log so we notice — but the file already
+    # reflects the actual content from the splice above, so just emit
+    # the warning and update end_idx to point at the real last line of
+    # the replacement (0-indexed: start_idx + N - 1).
     if len(new_lines) > 1:
-        end_idx = len(new_lines) + block.start_line - 1
-
-        logger.warning(
-            "Full code block has %d lines, expected %d",
-            len(new_lines),
-            end_idx - start_idx + 1,
-        )
+        declared_width = slot_width(block.start_line, block.end_line)
+        actual_width = len(new_lines)
+        if actual_width != declared_width:
+            logger.warning(
+                "Full code block has %d line(s) but declared slot "
+                "[start_line=%d, end_line=%d] is %d line(s) wide",
+                actual_width,
+                block.start_line,
+                block.end_line,
+                declared_width,
+            )
+        end_idx = start_idx + actual_width - 1
 
     return lines, end_idx
 
@@ -985,8 +1018,17 @@ def apply_diff_change(lines: List[str], block: CodeBlock) -> List[str]:
         line_idx = change.line - 1
 
         if line_idx < 0 or line_idx >= len(lines):
-            logger.warning(
-                "Invalid line number %d (file has %d lines)", change.line, len(lines)
+            # The S1192 handler emits LineChange(line=0, action=INSERT) for
+            # "insert a new module-level constant at the top". This applier
+            # rejects line 0 — the constant lands via the parallel
+            # NEW_HELPER_CODE / PLACEMENT=GLOBAL_TOP path instead, so the
+            # end result is correct. Demoted to DEBUG; the warning was
+            # cosmetic noise that fired once per S1192 fix.
+            logger.debug(
+                "Skipping LineChange with out-of-range line %d (file has %d "
+                "lines); insertion handled via NEW_HELPER_CODE path.",
+                change.line,
+                len(lines),
             )
             continue
 
@@ -1147,14 +1189,37 @@ def apply_global_top_helper(
     helper_code: str,
     end_import: int,
 ) -> List[str]:
-    """Apply fix with global top helper code."""
+    """Apply fix with global top helper code.
 
-    # Insert helper code
-    helper_with_newline = (
-        helper_code if helper_code.endswith("\n") else helper_code + "\n"
-    )
+    Inserts ``helper_code`` (typically a module-level constant defined by
+    the S1192 handler) between the import block and the rest of the
+    module, with canonical PEP 8 spacing of two blank lines on each
+    side. Existing blank lines surrounding the insertion point are
+    normalized so repeated invocations do not accumulate stray blanks.
+    """
+    helper = helper_code.rstrip("\n")
+    if not helper:
+        return lines
 
-    lines.insert(end_import, helper_with_newline + "\n")
+    # Land on the first non-blank line after the import block. The
+    # insertion point is logically "after the imports", regardless of
+    # how many blank lines the file already has between imports and the
+    # next content.
+    insertion_idx = end_import
+    while insertion_idx < len(lines) and not lines[insertion_idx].strip():
+        insertion_idx += 1
+
+    # Trim any blank lines immediately above the insertion point so we
+    # can place a canonical two-blank-line separator deterministically.
+    while insertion_idx > 0 and not lines[insertion_idx - 1].strip():
+        lines.pop(insertion_idx - 1)
+        insertion_idx -= 1
+
+    # Compose the insertion: two blank lines, the helper, two blank
+    # lines. Idempotent across repeated calls because we trimmed the
+    # surrounding blanks first.
+    inserted = ["\n", "\n", helper + "\n", "\n", "\n"]
+    lines[insertion_idx:insertion_idx] = inserted
     return lines
 
 

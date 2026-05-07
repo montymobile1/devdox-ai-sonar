@@ -5,7 +5,7 @@ import ast
 import logging
 import re
 
-from devdox_ai_sonar.models.file_structures import FixContext
+from devdox_ai_sonar.models.file_structures import FixContext, slot_end_for
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
     SonarSecurityIssue,
@@ -234,6 +234,32 @@ class RuleHandler(ABC):
         return lst_suggestion
 
 
+# Sonar S117 / S1542 messages identify the violating identifier inside
+# quotes (single, double, or backtick across versions and languages),
+# e.g.:  Rename this local variable "Total" to match the regular
+# expression ^[_a-z][a-z0-9_]*$.
+# We capture the first quoted Python-identifier in the message; the
+# trailing regex (also containing brackets) is not identifier-shaped
+# so it does not collide with this pattern.
+_S117_VIOLATING_NAME_RE = re.compile(
+    r"['\"`]([A-Za-z_][A-Za-z0-9_]*)['\"`]"
+)
+
+
+def _extract_s117_violating_name(message: str) -> Optional[str]:
+    """Return the first identifier-shaped token quoted in ``message``.
+
+    Used by ``ConvenationNameHandler`` to learn the specific name
+    Sonar flagged, including local variables (which are not in the
+    function's argument list and would otherwise be missed).
+    Returns ``None`` if the message has no quoted identifier.
+    """
+    if not message:
+        return None
+    match = _S117_VIOLATING_NAME_RE.search(message)
+    return match.group(1) if match else None
+
+
 class ConvenationNameHandler(RuleHandler):
     """
     Handler for python:S117 - Local variable and function parameter names
@@ -242,6 +268,10 @@ class ConvenationNameHandler(RuleHandler):
     This handler identifies function parameters that violate the naming convention
     and generates fixes to rename them to snake_case across both the function
     definition and all known call sites in the project.
+
+    Pipeline: programmatic (no LLM). Snake-case rename via regex
+    (``ARG_RENAME_PATTERN``, ``FUNC_CALL_RENAME_PATTERN``) and signature
+    parsing.
     """
 
     RULE_ID = ["python:S117", "python:S1172", "python:S1542"]
@@ -266,6 +296,13 @@ class ConvenationNameHandler(RuleHandler):
         - python:S1542  → Rename non-snake_case function in definition + call sites.
         - python:S1172 → Remove unused parameters not referenced anywhere in the codebase.
         """
+        logger.info(
+            "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         try:
             if len(context.functions) == 0:
                 logger.warning("Could not find functions ")
@@ -285,7 +322,7 @@ class ConvenationNameHandler(RuleHandler):
             for issue in issues:
                 if issue.rule == "python:S117":
                     return self._fix_naming_convention(
-                        function_info, context, file_path
+                        issues, function_info, context, file_path
                     )
                 if issue.rule == "python:S1542":
                     return self._fix_func_naming_convention(
@@ -523,29 +560,73 @@ class ConvenationNameHandler(RuleHandler):
 
     def _fix_naming_convention(
         self,
+        issues: List[Union[SonarIssue, SonarSecurityIssue]],
         function_info: Dict,
         context: FixContext,
         file_path: Path,
     ) -> Optional[List[SonarFixResponse]]:
         """
-        S117: Rename non-snake_case parameters in the function definition
-        and update all keyword argument call sites accordingly.
+        S117: Rename non-snake_case parameters AND local variables in
+        the function definition, and update all keyword argument call
+        sites accordingly.
+
+        For each definition in this file, all renames are applied
+        inside a single CodeBlock spanning the function. Emitting one
+        block per identifier was previously generating multiple
+        FULL_CODE replacements that all targeted the same line range
+        — each expecting the original signature — so only the last
+        replacement landed and the other renames were lost.
+
+        Local variables (which are not part of ``definition["args"]``)
+        are picked up from each S117 issue's message: Sonar quotes the
+        violating identifier inline, so a regex extraction yields the
+        target name and the existing ``str.replace`` over the function
+        body covers it without an AST scope walk.
         """
+        # Pull violating identifiers out of S117 issue messages so
+        # local variables get renamed alongside parameters. Matching
+        # is by name only, so a name that is already snake_case (rare
+        # but possible if Sonar's regex has changed) is silently
+        # ignored.
+        local_renames: Dict[str, str] = {}
+        for issue in issues:
+            if getattr(issue, "rule", "") != "python:S117":
+                continue
+            name = _extract_s117_violating_name(
+                getattr(issue, "message", "") or ""
+            )
+            if not name:
+                continue
+            snake = to_snake_case(name)
+            if snake != name:
+                local_renames[name] = snake
+
         code_blocks = []
         response_lst = []
         args_to_be_changed = {}
 
         for definition in function_info["definitions"]:
-            if Path(definition["file"]) == file_path:
-                for arg in definition["args"]:
-                    new_arg = to_snake_case(arg)
-                    if new_arg != arg:
-                        args_to_be_changed[arg] = new_arg
-                        code_blocks.append(
-                            self._change_function_definition_block(
-                                definition, context, arg, new_arg
-                            )
-                        )
+            if Path(definition["file"]) != file_path:
+                continue
+            renames: Dict[str, str] = {}
+            for arg in definition["args"]:
+                new_arg = to_snake_case(arg)
+                if new_arg != arg:
+                    renames[arg] = new_arg
+            # Merge in local-variable renames extracted from issue
+            # messages. Param renames take precedence on key collision
+            # (they are the same key/value pair anyway when the message
+            # quotes a parameter name).
+            for old_name, new_name in local_renames.items():
+                renames.setdefault(old_name, new_name)
+            if not renames:
+                continue
+            args_to_be_changed.update(renames)
+            code_blocks.append(
+                self._change_function_definition_block_multi(
+                    definition, context, renames
+                )
+            )
 
         if not code_blocks:
             return None
@@ -566,8 +647,9 @@ class ConvenationNameHandler(RuleHandler):
             )
 
         explanation = (
-            f"Renamed non-snake_case parameter(s) {list(args_to_be_changed.keys())} "
-            f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}'. "
+            f"Renamed non-snake_case identifier(s) {list(args_to_be_changed.keys())} "
+            f"to {list(args_to_be_changed.values())} in '{context.functions[0]['name']}' "
+            f"(parameters and any local variables flagged by Sonar). "
             f"Updated {len(caller_blocks)} call site(s) to use the new keyword argument name(s). "
             f"This satisfies python:S117, which requires all local variables and function "
             f"parameters to follow the snake_case naming convention."
@@ -656,6 +738,51 @@ class ConvenationNameHandler(RuleHandler):
 
         return response_lst
 
+    def _change_function_definition_block_multi(
+        self,
+        function_info: Dict[str, Any],
+        context: FixContext,
+        renames: Dict[str, str],
+    ) -> CodeBlock:
+        """
+        Build a single CodeBlock that applies multiple parameter renames
+        to a function definition.
+
+        Avoids the conflict that arises when each rename is shipped as
+        its own FULL_CODE block: every block targets the same line
+        range and expects the unmodified signature, so apply-loop
+        last-wins behavior drops all but one rename.
+
+        Args:
+            function_info: Parsed metadata for the function (line number,
+                decorators).
+            context: Fix context providing the raw source of the
+                definition.
+            renames: Mapping ``{old_name: new_name}`` covering every
+                parameter on this function that needs to be renamed.
+
+        Returns:
+            A CodeBlock whose context has every rename applied.
+        """
+        original_def = context.context_dict["new_context"][0]["context"]
+        num_lines = len(original_def.strip().split("\n"))
+        new_def = original_def
+        for old_name, new_name in renames.items():
+            new_def = new_def.replace(old_name, new_name)
+
+        actual_start_line = function_info["line"] - len(function_info["decorators"])
+        end_line = slot_end_for(actual_start_line, num_lines)
+
+        return CodeBlock(
+            block_name=function_info["function"],
+            start_line=actual_start_line,
+            end_line=end_line,
+            has_changes=True,
+            change_type=ChangeType.FULL_CODE,
+            block_type=BlockType.FUNCTION,
+            context=new_def,
+        )
+
     def _change_function_definition_block(
         self,
         function_info: Dict[str, Any],
@@ -684,7 +811,7 @@ class ConvenationNameHandler(RuleHandler):
         new_def = original_def.replace(arg_name, new_arg_name)
 
         actual_start_line = function_info["line"] - len(function_info["decorators"])
-        end_line = actual_start_line + num_lines
+        end_line = slot_end_for(actual_start_line, num_lines)
 
         return CodeBlock(
             block_name=function_info["function"],
@@ -791,6 +918,12 @@ class StringLiteralDuplicateHandler(RuleHandler):
     This rule flags string literals that appear 3 or more times in a file.
     The handler extracts each duplicated literal into a module-level constant
     and replaces all occurrences with the constant name.
+
+    Pipeline: programmatic primary, with a direct-LLM fallback for naming
+    only. AST + YAKE keyword extraction (``ConstantNamingService``) generate
+    the constant names; if YAKE fails, ``LLMFixerAdapter.call_for_json`` is
+    invoked as a direct LLM JSON call. Does NOT use the OpenHands agent or
+    ``fix_at_line``.
     """
 
     RULE_ID = "python:S1192"
@@ -809,6 +942,13 @@ class StringLiteralDuplicateHandler(RuleHandler):
         rule_info: Optional[Dict[str, Any]] = None,
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes for duplicated string literal issues (python:S1192)."""
+        logger.info(
+            "[handler] %s pipeline=B+C-programmatic-with-llm-fallback rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         parsed = self._read_and_parse_file(file_path)
         if parsed is None:
             return None
@@ -1248,6 +1388,9 @@ class AsyncToSyncHandler(RuleHandler):
 
     This rule identifies async functions that don't use await and should be sync.
     The handler analyzes the function and all its call sites to generate appropriate fixes.
+
+    Pipeline: programmatic (no LLM). Uses regex (``AWAIT_REMOVAL_PATTERN``)
+    and ``AsyncConversionAnalyzer`` for AST/call-site analysis.
     """
 
     RULE_ID = "python:S7503"
@@ -1278,6 +1421,13 @@ class AsyncToSyncHandler(RuleHandler):
         Returns:
             SonarFixResponse with all code blocks for function and call sites
         """
+        logger.info(
+            "[handler] %s pipeline=C-programmatic rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         try:
             code_blocks = []
             response_lst = []
@@ -1429,6 +1579,11 @@ class CognitiveComplexityHandler(RuleHandler):
     Handler for python:S3776 - cognitive complexity reduction.
 
     This rule requires breaking down complex functions into simpler helper methods.
+
+    Pipeline: LLM via OpenHands agent + ``fix_at_line`` tool. Routes through
+    ``LLMFixer._call_llm_list`` with the rewritten S3776 prompt
+    (``prompts/python/refactoring/system_fix_issues.j2``); the agent is
+    expected to invoke ``fix_at_line`` to apply edits.
     """
 
     RULE_ID = "python:S3776"
@@ -1451,6 +1606,13 @@ class CognitiveComplexityHandler(RuleHandler):
 
         This delegates to the LLM with specialized refactoring prompts.
         """
+        logger.info(
+            "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         if not llm_caller:
             logger.error("LLM caller required for cognitive complexity fixes")
             return None
@@ -1467,6 +1629,8 @@ class CognitiveComplexityHandler(RuleHandler):
                 file_path,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:
@@ -1480,6 +1644,11 @@ class DefaultRuleHandler(RuleHandler):
 
     Uses the LLM with general-purpose fixing prompts for rules that don't
     require specialized logic.
+
+    Pipeline: LLM via OpenHands agent + ``fix_at_line`` tool. Catch-all for
+    rules without a specialized handler. Routes through
+    ``LLMFixer._call_llm_list`` with the default (un-rewritten) agent prompt
+    (``prompts/python/system_agent_fix_issues.j2``).
     """
 
     MOIDY_LINE_RANGE = False
@@ -1498,6 +1667,13 @@ class DefaultRuleHandler(RuleHandler):
         rule_info: Optional[Dict[str, Any]] = {},
     ) -> Optional[List[SonarFixResponse]]:
         """Generate fixes using standard LLM approach."""
+        logger.info(
+            "[handler] %s pipeline=A-openhands-agent rule=%s file=%s issues=%d",
+            self.__class__.__name__,
+            issues[0].rule if issues else "<unknown>",
+            file_path.name if file_path else "<unknown>",
+            len(issues),
+        )
         if not llm_caller:
             logger.error("LLM caller required for default rule handling")
             return None
@@ -1515,6 +1691,8 @@ class DefaultRuleHandler(RuleHandler):
                 file_path,
                 error_message="",
             )
+            if fix_response is None:
+                return None
             return [fix_response]
 
         except Exception:

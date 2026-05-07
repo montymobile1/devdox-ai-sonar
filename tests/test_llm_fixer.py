@@ -4234,6 +4234,10 @@ class TestApplyFixesToFileDetailed:
 
             fix = Mock()
             fix.issue_key = "test-fix"
+            # _apply_fixes_to_file sorts fixes by their fixed_code_blocks'
+            # max start_line (bottom-up apply); the sort iterates this list,
+            # so a Mock auto-attribute is not enough — provide an empty list.
+            fix.fixed_code_blocks = []
             success, results = await fixer._apply_fixes_to_file(py_file, [fix], dry_run=False)
 
         assert success is True

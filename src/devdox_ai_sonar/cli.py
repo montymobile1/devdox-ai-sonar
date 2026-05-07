@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Optional, List, Any, Sequence, Dict, Tuple, Union, Iterator
 import asyncio
 import functools
+import logging
 import traceback
 
 from rich.console import Console
@@ -65,6 +66,24 @@ from devdox_ai_sonar.utils import constant
 from devdox_ai_sonar.config import settings
 
 EXCLUDE_RULE_CONFIG_FIELD = "configuration.exclude_rules"
+
+# Developer toggle. Flip to True locally to enable DEBUG-level
+# logs from the devdox_ai_sonar logger hierarchy AND capture every
+# OpenHands/litellm tool-call request/response under
+# ``logs/completions/``. The latter is what lets us inspect what the
+# agent literally saw and emitted (e.g. for diagnosing tool-call
+# serialisation quirks). Leave False on main; do NOT commit set to
+# True.
+DEBUG = False
+
+if DEBUG:
+    import os
+    logging.getLogger("devdox_ai_sonar").setLevel(logging.DEBUG)
+    # Single source of truth that other subsystems can pick up
+    # without importing cli (which would cycle). ``_build_openhands_llm``
+    # in llm_fixer.py reads this and toggles ``log_completions``
+    # on the OpenHands LLM.
+    os.environ["DEVDOX_DEBUG"] = "1"
 
 
 console = Console()
@@ -1603,12 +1622,15 @@ async def _process_issues_for_rule(
             rule_info=rule_info,
         )
 
-        if not await _should_continue_to_next_issue(
+        if idx < total_issues and not await _should_continue_to_next_issue(
             idx, total_issues, system_ask=system_ask
         ):
-            return False  # Stop processing
+            return False  # User stopped early
 
-    return True  # Continue to next rule
+    console.print(
+        f"[green]Rule {rule_key} completed: {total_issues} issue(s) processed[/green]"
+    )
+    return True  # All issues processed
 
 
 async def _process_single_fix(

@@ -1,9 +1,11 @@
 """LLM-powered code fixer for SonarCloud issues."""
 
+import os
 import re
 import shutil
 import sys
 import asyncio
+import difflib
 from collections import defaultdict
 
 import subprocess
@@ -22,7 +24,10 @@ from openhands.sdk import (
 )
 import json
 from pydantic import ValidationError
+from rich import box
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from typing import List, Optional, Dict, Any, Tuple, Union, Sequence
 from datetime import datetime
 import logging
@@ -56,6 +61,7 @@ from devdox_ai_sonar.services.rule_handler import (
 )
 from devdox_ai_sonar.services.extractor import IssueExtractor
 from devdox_ai_sonar.openhands_tools.fix_at_line import FixAtLineTool
+from devdox_ai_sonar.openhands_tools.fix_at_line.impl import _run_py_compile
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 logger = logging.getLogger(__name__)
@@ -63,6 +69,93 @@ logger = logging.getLogger(__name__)
 
 
 _console = Console()
+
+
+# ---- per-fix block rendering ------------------------------------------------
+#
+# A "fix block" is one call to ``LLMFixer.generate_fix_by_file`` — i.e. one
+# attempt to fix a single Sonar issue group. The header prints the issue
+# context (rule / severity / location / quoted message) up front so the run
+# log is readable even when fixes go wrong; the footer prints the outcome
+# tag (Applied / Skipped / Failed / No-fix) plus a one-line reason. Both
+# also emit a plain-text logger.info mirror so the same data is grep-able
+# from the file log without re-parsing Rich markup.
+
+
+_FIX_OUTCOME_STYLES = {
+    "applied": ("✓", "bold green"),
+    "skipped": ("⏭", "bold yellow"),
+    "failed": ("✗", "bold red"),
+    "no-fix": ("∅", "dim"),
+}
+
+
+def _print_fix_block_header(
+    issues: "List[Union[SonarIssue, SonarSecurityIssue]]",
+) -> None:
+    """Render the opening of a fix block — Rich rule + issue table.
+
+    Prints to ``_console`` for readability and emits one ``[fix-block]``
+    INFO log line per issue so the same record is grep-able from the
+    plain-text log.
+    """
+    if not issues:
+        return
+    first = issues[0]
+    rule = getattr(first, "rule", "<no-rule>")
+    file = getattr(first, "file", None) or "<no-file>"
+    first_line = getattr(first, "first_line", None) or "?"
+    _console.rule(
+        f"[bold cyan]Fix attempt — {rule} on {file}:{first_line}[/bold cyan]",
+        style="cyan",
+    )
+    table = Table(box=box.SIMPLE, show_header=False, padding=(0, 1))
+    table.add_column("field", style="dim", no_wrap=True)
+    table.add_column("value", overflow="fold")
+    for i, issue in enumerate(issues):
+        prefix = f"[{i + 1}/{len(issues)}] " if len(issues) > 1 else ""
+        ctx_rule = getattr(issue, "rule", "<no-rule>")
+        ctx_severity = getattr(issue, "severity", "?")
+        # Severity may be an enum; render its .value when present.
+        ctx_severity_str = getattr(ctx_severity, "value", str(ctx_severity))
+        ctx_file = getattr(issue, "file", None) or "<no-file>"
+        ctx_first = getattr(issue, "first_line", None) or "?"
+        ctx_last = getattr(issue, "last_line", None) or ctx_first
+        ctx_key = getattr(issue, "key", "<no-key>")
+        ctx_msg = getattr(issue, "message", "") or ""
+        table.add_row(f"{prefix}rule", f"{ctx_rule} ({ctx_severity_str})")
+        table.add_row(f"{prefix}location", f"{ctx_file}:{ctx_first}-{ctx_last}")
+        table.add_row(f"{prefix}key", str(ctx_key))
+        table.add_row(f"{prefix}message", ctx_msg)
+        logger.debug(
+            "[fix-block] issue %d/%d: %s (%s) at %s:%s key=%s | %s",
+            i + 1,
+            len(issues),
+            ctx_rule,
+            ctx_severity_str,
+            ctx_file,
+            ctx_first,
+            ctx_key,
+            ctx_msg,
+        )
+    _console.print(table)
+
+
+def _print_fix_block_footer(outcome: str, reason: str = "") -> None:
+    """Render the close of a fix block — colored outcome + dim rule.
+
+    ``outcome`` is one of ``applied`` / ``skipped`` / ``failed`` / ``no-fix``.
+    ``reason`` is a short free-form string (e.g. validator detail, exception
+    message). Both go to console AND to the plain logger.
+    """
+    icon, style = _FIX_OUTCOME_STYLES.get(outcome, ("•", "white"))
+    label = outcome.upper()
+    if reason:
+        _console.print(f"[{style}]{icon} {label}[/{style}] — {reason}")
+    else:
+        _console.print(f"[{style}]{icon} {label}[/{style}]")
+    _console.rule(style="dim")
+    logger.debug("[fix-block] outcome=%s reason=%s", outcome, reason)
 
 
 java_extension = ".java"
@@ -85,13 +178,21 @@ def _build_openhands_llm(profile: LLMProfile) -> LLM:
     etc.) so no prefix rewriting happens here. An empty ``api_key`` is
     forwarded as ``None`` because some endpoints (local Ollama, self-hosted
     vLLM without auth) accept unauthenticated requests.
+
+    When the ``DEVDOX_DEBUG`` environment variable is set (cli.py exports
+    it whenever the local DEBUG toggle is True), the LLM is configured to
+    dump every request/response payload to ``logs/completions/``. That is
+    how we inspect what the agent literally saw and emitted — useful for
+    diagnosing model-side tool-call serialisation quirks.
     """
+    debug = os.environ.get("DEVDOX_DEBUG") == "1"
     return LLM(
         model=profile.model,
         api_key=profile.api_key or None,
         base_url=profile.base_url,
+        log_completions=debug,
+        log_completions_folder="logs/completions",
     )
-
 
 def _build_agent_tools() -> List[Tool]:
     """Return the ordered tool list the SonarCloud fix-agent runs with.
@@ -115,77 +216,267 @@ def _handle_agent_event(
 ) -> None:
     """Render an OpenHands agent event to ``console``.
 
-    Extracted from ``LLMFixer._call_llm_list`` so it can be unit-tested in
-    isolation by feeding it synthetic events and capturing the console.
+    Thin dispatcher over per-event-type handlers below.  Extracted from
+    ``LLMFixer._call_llm_list`` so it can be unit-tested in isolation by
+    feeding it synthetic events and capturing the console.
     """
     if isinstance(event, MessageEvent) and event.source == "agent":
-        msg = event.to_llm_message()
-        text = ""
-        if isinstance(msg.content, str):
-            text = msg.content
-        elif isinstance(msg.content, list):
-            for block in msg.content:
-                if hasattr(block, "text") and block.text:
-                    text += block.text
-                elif isinstance(block, dict) and block.get("type") == "text":
-                    text += block.get("text", "")
-        if text.strip():
-            messages_accum.append(text)
-            console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+        _handle_agent_message_event(event, console, messages_accum)
+    elif isinstance(event, ActionEvent):
+        _handle_agent_action_event(event, console)
+    elif isinstance(event, ObservationEvent):
+        _handle_agent_observation_event(event, console, file_path)
+
+
+# ---- MessageEvent -----------------------------------------------------------
+
+
+def _handle_agent_message_event(
+    event: Event,
+    console: Console,
+    messages_accum: List[str],
+) -> None:
+    """Accumulate and preview a non-empty agent chat message."""
+    text = _extract_agent_message_text(event)
+    if not text.strip():
+        return
+    messages_accum.append(text)
+    console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+
+
+def _extract_agent_message_text(event: Event) -> str:
+    """Return the agent message text regardless of whether ``content`` is a
+    plain string or a list of text/content blocks."""
+    msg = event.to_llm_message()
+    content = msg.content
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(_block_to_text(block) for block in content)
+    return ""
+
+
+def _block_to_text(block: Any) -> str:
+    """Extract text from a single content block (object-with-.text or dict-with-type)."""
+    text_attr = getattr(block, "text", None)
+    if text_attr:
+        return text_attr
+    if isinstance(block, dict) and block.get("type") == "text":
+        return block.get("text", "")
+    return ""
+
+
+# ---- ActionEvent ------------------------------------------------------------
+
+
+def _handle_agent_action_event(event: Event, console: Console) -> None:
+    """Print the tool call and, if present, the agent's first thought."""
+    tool = getattr(event, "tool_name", "tool")
+    thought = _extract_first_thought(getattr(event, "thought", None) or [])
+    if thought:
+        console.print(f"  🤔 [dim]{thought}[/dim]")
+    console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
+
+
+def _extract_first_thought(blocks: Any) -> str:
+    """Return up to 120 chars of the first text-bearing block."""
+    for block in blocks:
+        text_attr = getattr(block, "text", None)
+        if text_attr is not None:
+            return text_attr[:120].strip()
+    return ""
+
+
+# ---- ObservationEvent -------------------------------------------------------
+
+
+def _handle_agent_observation_event(
+    event: Event,
+    console: Console,
+    file_path: Path,
+) -> None:
+    """Route an observation to the right renderer: terminal, fix_at_line,
+    or generic file_editor."""
+    tool = getattr(event, "tool_name", "")
+    obs = event.observation
+    obs_text = _extract_observation_text(obs)
+    exit_code = _extract_terminal_exit_code(obs)
+
+    if exit_code is not None:
+        _render_terminal_observation(console, exit_code, obs_text)
         return
 
+    path_used = getattr(obs, "path", "") or str(file_path)
+    if tool == FixAtLineTool.name:
+        _render_fix_at_line_observation(console, obs, path_used, obs_text)
+        return
+
+    command = getattr(obs, "command", "")
+    _render_file_editor_observation(console, tool, command, path_used, obs_text)
+
+
+def _extract_observation_text(obs: Any) -> str:
+    """Best-effort text extraction from an observation payload.
+
+    Some observations expose ``.text`` / ``.content`` as a list of
+    ``TextContent`` blocks (same shape as agent messages). Flatten those
+    into a single string here so every caller can slice and ``.strip()``
+    safely — the symptom we hit in ``_render_terminal_observation`` when
+    a terminal observation's text came back as a list rather than a str
+    and the renderer crashed with ``AttributeError: 'list' object has no
+    attribute 'strip'``.
+    """
+    raw: Any = getattr(obs, "text", None) or getattr(obs, "content", None)
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, list):
+        return "".join(_block_to_text(block) for block in raw)
+    return str(raw)
+
+
+def _extract_terminal_exit_code(obs: Any) -> Optional[int]:
+    """Return a terminal observation's exit code, or ``None`` if absent."""
+    metadata = getattr(obs, "metadata", None)
+    return getattr(metadata, "exit_code", None)
+
+
+def _render_terminal_observation(
+    console: Console, exit_code: int, obs_text: str
+) -> None:
+    status = "✅" if exit_code == 0 else "❌"
+    console.print(
+        f"  {status} [dim]Terminal[/dim] (exit {exit_code}): "
+        f"{obs_text[:200].strip()}"
+    )
+
+
+def _render_fix_at_line_observation(
+    console: Console, obs: Any, path_used: str, obs_text: str
+) -> None:
+    if getattr(obs, "is_error", False):
+        console.print(
+            f"  ❌ [bold red]fix_at_line failed:[/bold red] "
+            f"{obs_text[:200].strip()}"
+        )
+        return
+    range_label = _format_fix_at_line_range(obs)
+    console.print(
+        f"  ✏️  [bold green]Edited {range_label}:[/bold green] {path_used}"
+    )
+
+
+def _format_fix_at_line_range(obs: Any) -> str:
+    """Render a fix_at_line edit range as ``"line N"`` / ``"lines N-M"`` /
+    ``"range"`` when line numbers are missing."""
+    start_ln = getattr(obs, "start_line", None)
+    end_ln = getattr(obs, "end_line", None)
+    if start_ln is None or end_ln is None:
+        return "range"
+    if start_ln == end_ln:
+        return f"line {start_ln}"
+    return f"lines {start_ln}-{end_ln}"
+
+
+def _render_file_editor_observation(
+    console: Console,
+    tool: str,
+    command: str,
+    path_used: str,
+    obs_text: str,
+) -> None:
+    if command == "str_replace":
+        console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
+    elif command:
+        console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
+    else:
+        console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
+
+
+def _is_fix_at_line_action(event: Any) -> bool:
+    """Return True if ``event`` is an ``ActionEvent`` invoking ``fix_at_line``.
+
+    Used to detect whether the agent actually invoked the tool (vs. narrating
+    the call as text). Defensive against missing ``tool_name`` attribute.
+    """
+    return (
+        isinstance(event, ActionEvent)
+        and getattr(event, "tool_name", "") == FixAtLineTool.name
+    )
+
+
+def _handle_event_logging(event: Event) -> None:
+    """Emit ``[fix_at_line-diagnostic]`` log lines for each agent event.
+
+    Surfaces per-step ``ActionEvent`` / ``ObservationEvent`` / agent
+    ``MessageEvent`` so that "did the agent actually call fix_at_line?"
+    is answerable from the run log alone.
+    """
     if isinstance(event, ActionEvent):
-        tool = getattr(event, "tool_name", "tool")
-        thought = ""
-        for block in (event.thought or []):
-            if hasattr(block, "text"):
-                thought = block.text[:120].strip()
-                break
-        if thought:
-            console.print(f"  🤔 [dim]{thought}[/dim]")
-        console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
-        return
+        tool_name = getattr(event, "tool_name", "<unknown>")
+        thought_preview = _extract_first_thought(
+            getattr(event, "thought", None) or []
+        ) or "<none>"
+        logger.debug(
+            "[fix_at_line-diagnostic] ActionEvent: tool=%s | thought=%s",
+            tool_name,
+            thought_preview,
+        )
+    elif isinstance(event, ObservationEvent):
+        tool_name = getattr(event, "tool_name", "<unknown>")
+        obs = getattr(event, "observation", None)
+        is_error = getattr(obs, "is_error", None)
+        obs_text = _extract_observation_text(obs) or ""
+        text_preview = (
+            obs_text[:200] + "..." if len(obs_text) > 200 else obs_text
+        )
+        logger.debug(
+            "[fix_at_line-diagnostic] ObservationEvent: tool=%s | is_error=%s | text=%s",
+            tool_name,
+            is_error,
+            text_preview,
+        )
+    elif isinstance(event, MessageEvent) and event.source == "agent":
+        text = _extract_agent_message_text(event) or ""
+        text_preview = text[:300] + "..." if len(text) > 300 else text
+        logger.debug(
+            "[fix_at_line-diagnostic] Agent MessageEvent: text=%s",
+            text_preview,
+        )
 
-    if isinstance(event, ObservationEvent):
-        tool = getattr(event, "tool_name", "")
-        obs = event.observation
-        obs_text = getattr(obs, "text", "") or getattr(obs, "content", "") or ""
-        exit_code = getattr(getattr(obs, "metadata", None), "exit_code", None)
-        if exit_code is not None:
-            status = "✅" if exit_code == 0 else "❌"
-            console.print(
-                f"  {status} [dim]Terminal[/dim] (exit {exit_code}): "
-                f"{obs_text[:200].strip()}"
+
+def _make_event_callback(
+    console: Console,
+    file_path: Path,
+    messages_accum: List[str],
+    fix_at_line_called: List[bool],
+) -> Any:
+    """Build the conversation callback used by ``LLMFixer._call_llm_list``.
+
+    Renders the event via :func:`_handle_agent_event` and flips
+    ``fix_at_line_called[0]`` when the agent invokes the ``fix_at_line``
+    tool. Extracted from the closure so the wiring is unit-testable
+    without constructing a real ``Conversation``.
+    """
+
+    def _on_event(event: Event) -> None:
+        try:
+            _handle_event_logging(event)
+            _handle_agent_event(event, console, file_path, messages_accum)
+            if _is_fix_at_line_action(event):
+                fix_at_line_called[0] = True
+        except Exception:
+            # Reactive callbacks must never abort the conversation.
+            # Any exception here is a bug in OUR code, not the agent's;
+            # log it loudly and let the agent keep running.
+            logger.exception(
+                "[fix_at_line-diagnostic] Event callback raised — this is "
+                "a bug in OUR code (the callback), not the agent. The "
+                "agent will keep running."
             )
-            return
 
-        command = getattr(obs, "command", "")
-        path_used = getattr(obs, "path", "") or str(file_path)
-        if tool == FixAtLineTool.name:
-            start_ln = getattr(obs, "start_line", None)
-            end_ln = getattr(obs, "end_line", None)
-            if start_ln is not None and end_ln is not None and start_ln == end_ln:
-                range_label = f"line {start_ln}"
-            elif start_ln is not None and end_ln is not None:
-                range_label = f"lines {start_ln}-{end_ln}"
-            else:
-                range_label = "range"
-            if getattr(obs, "is_error", False):
-                console.print(
-                    f"  ❌ [bold red]fix_at_line failed:[/bold red] "
-                    f"{obs_text[:200].strip()}"
-                )
-            else:
-                console.print(
-                    f"  ✏️  [bold green]Edited {range_label}:[/bold green] "
-                    f"{path_used}"
-                )
-        elif command == "str_replace":
-            console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
-        elif command:
-            console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
-        else:
-            console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
+    return _on_event
 
 
 class LLMFixer:
@@ -398,6 +689,14 @@ class LLMFixer:
             logger.warning("No issues provided for fix generation")
             return None
 
+        # Per-fix block: render the issue context up front and tag the
+        # outcome at the end. ``outcome`` is mutated by each early-return
+        # path so the finally clause prints the right footer regardless of
+        # how the function exits. Default ``no-fix`` covers any path that
+        # returns None without setting an explicit outcome.
+        _print_fix_block_header(issues)
+        outcome: Dict[str, str] = {"label": "no-fix", "reason": ""}
+
         rule_registry = RuleHandlerRegistry()
         extractor = IssueExtractor(self.file_reader)
 
@@ -408,11 +707,34 @@ class LLMFixer:
             )
 
             if not validation.is_valid:
-                logger.error(f"Validation failed: {validation.error}")
+                error_msg = validation.error or ""
+                if "not found in actual file" in error_msg:
+                    # The validator already searched the file (exact, fuzzy,
+                    # single-line heuristics) before giving up. When it bails
+                    # here the content is genuinely gone — typically because
+                    # a prior fix in this run already addressed the issue
+                    # (e.g. a batched rename absorbing sibling issues on
+                    # adjacent lines). Treat as a clean skip, not a hard
+                    # error, and word the log accordingly.
+                    logger.debug(
+                        "Issue appears to have been resolved by an earlier "
+                        "fix in this same run (e.g. a batched rename "
+                        "absorbing sibling issues on adjacent lines). "
+                        "Skipping — no action needed. (validator detail: %s)",
+                        error_msg,
+                    )
+                    outcome["label"] = "skipped"
+                    outcome["reason"] = "absorbed by earlier fix in this run"
+                else:
+                    logger.error("Validation failed: %s", error_msg)
+                    outcome["label"] = "failed"
+                    outcome["reason"] = f"validation: {error_msg}"
                 return None
 
             if validation.file_path is None or validation.line_range is None:
                 logger.error("Validation passed but file_path or line_range is None")
+                outcome["label"] = "failed"
+                outcome["reason"] = "validator returned no file_path/line_range"
                 return None
 
             # Step 2: Prepare context for fix generation
@@ -424,6 +746,8 @@ class LLMFixer:
 
             if not context:
                 logger.warning("Failed to prepare fix context")
+                outcome["label"] = "failed"
+                outcome["reason"] = "context preparation failed"
                 return None
 
             # Step 3: Get appropriate handler and generate fix response
@@ -440,15 +764,18 @@ class LLMFixer:
 
             if not fix_response_lst or len(fix_response_lst) == 0:
                 logger.warning(f"Handler returned no fix for rule {issues[0].rule}")
+                outcome["label"] = "no-fix"
+                outcome["reason"] = f"handler returned no fix for {issues[0].rule}"
                 return None
 
             agent_applied = any(
                 getattr(r, "applied_by_agent", False) for r in fix_response_lst
             )
+            # Routed through logger.debug so the response payload is still
+            # available in DEBUG runs but doesn't pollute INFO output.
             for r in fix_response_lst:
-                print("response ")
-                print(r)
-            print("agent_applied ", agent_applied)
+                logger.debug("[fix-block] handler response: %s", r)
+            logger.debug("[fix-block] agent_applied=%s", agent_applied)
             if agent_applied:
                 fix_suggestion_lst = []
             else:
@@ -477,14 +804,26 @@ class LLMFixer:
                 )
 
             logger.info(f"Generated fix for {len(issues)} issue(s)")
+            outcome["label"] = "applied"
+            outcome["reason"] = (
+                "agent applied edit directly"
+                if agent_applied
+                else f"{len(fix_suggestion_lst)} suggestion(s) ready"
+            )
             return fix_suggestion_lst
 
         except FileNotFoundError as e:
             logger.warning(f"File not found: {e}")
+            outcome["label"] = "failed"
+            outcome["reason"] = f"file not found: {e}"
             return None
-        except Exception:
+        except Exception as e:
             logger.exception("Error generating fixes")
+            outcome["label"] = "failed"
+            outcome["reason"] = f"unhandled exception: {e}"
             return None
+        finally:
+            _print_fix_block_footer(outcome["label"], outcome["reason"])
 
     def _map_fix_suggestion_to_fix_suggestion_dto(
         self,
@@ -864,6 +1203,18 @@ class LLMFixer:
 
         prompt_system = system_template.render(**prompt_dic)
 
+        # Prompt previews are large; keep them at DEBUG so they stay in
+        # the logfile (and the DEVDOX_DEBUG console run) but don't crowd
+        # the normal-mode terminal. Same data, lower volume by default.
+        logger.debug(
+            "[fix_at_line-diagnostic] Rendered system prompt (first 500 chars): %s",
+            prompt_system[:500].replace("\n", " ⏎ "),
+        )
+        logger.debug(
+            "[fix_at_line-diagnostic] Rendered user prompt (first 500 chars): %s",
+            prompt[:500].replace("\n", " ⏎ "),
+        )
+
         try:
             original_content = file_path.read_text(encoding="utf-8")
 
@@ -881,25 +1232,70 @@ class LLMFixer:
             ],
         )
 
+        agent_tools = _build_agent_tools()
+        # One Rich panel up front instead of three loose logger.info lines
+        # (model/file/tools, agent-init, conversation-start). Same data, one
+        # visible chunk on the console; the plain-text logger.info below
+        # keeps it grep-able from the file log.
+        tool_names = [t.name for t in agent_tools]
+        _console.print(
+            Panel(
+                f"[bold]model[/bold]   {self.model}\n"
+                f"[bold]file[/bold]    {file_path.name}\n"
+                f"[bold]tools[/bold]   {', '.join(tool_names)}",
+                title="LLM agent setup",
+                border_style="blue",
+                box=box.ROUNDED,
+            )
+        )
+        logger.debug(
+            "[fix_at_line-diagnostic] Starting fix run: model=%s | file=%s | tools=%s",
+            self.model,
+            file_path.name,
+            tool_names,
+        )
+
         agent = Agent(
             llm=self.client,
-            tools=_build_agent_tools(),
+            tools=agent_tools,
             agent_context=agent_context,
         )
 
         all_agent_messages: List[str] = []
+        fix_at_line_called: List[bool] = [False]
 
         conversation = Conversation(
             agent=agent,
             workspace=str(project_path),
             callbacks=[
-                lambda event: _handle_agent_event(
-                    event, _console, file_path, all_agent_messages
+                _make_event_callback(
+                    _console, file_path, all_agent_messages, fix_at_line_called,
                 )
             ],
         )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
+        # Demoted to debug — "agent initialised" is implicit when the
+        # subsequent action events start firing, so it's noise at INFO.
+        logger.debug(
+            "[fix_at_line-diagnostic] Agent initialized; first user message "
+            "queued — entering conversation.run() loop"
+        )
         conversation.run()
+
+        logger.debug(
+            "[fix_at_line-diagnostic] Conversation finished: "
+            "fix_at_line_called=%s | agent_message_count=%s",
+            fix_at_line_called[0],
+            len(all_agent_messages),
+        )
+
+        if not fix_at_line_called[0]:
+            logger.warning(
+                "Agent finished without invoking fix_at_line on %s — "
+                "narration suspected; no fix applied.",
+                file_path.name,
+            )
+            return None
 
         try:
 
@@ -909,12 +1305,84 @@ class LLMFixer:
             logger.error("Cannot read file after agent run: %s", e)
             return None
 
-        # if new_content == original_content:
-        #     logger.warning("Agent did not modify %s — no fix produced", file_path.name)
-        #     return None
+        if new_content == original_content:
+            logger.warning(
+                "Agent invoked fix_at_line on %s but the file is "
+                "unchanged — every tool call must have errored out. "
+                "Treating as no-fix-produced rather than reporting a "
+                "false success.",
+                file_path.name,
+            )
+            return None
 
+        # Final-state safety net: even if the per-edit pipeline
+        # accepted every individual edit, the file as a whole may end
+        # in a broken state — e.g. the agent introduced a duplicate
+        # class method on edit N, the per-edit FAILED was reported,
+        # but subsequent edits never repaired it (because they
+        # cascade-reverted themselves), so the duplicate persists on
+        # disk. Without this check we would ship that broken state
+        # with applied_by_agent=True. Run the same syntax+structure
+        # check the per-edit pipeline runs; if it FAILEDs, revert to
+        # the pre-run content and return no-fix-produced.
+        if file_path.suffix == ".py":
+            final_status = _run_py_compile(file_path)
+            if final_status.startswith("FAILED"):
+                logger.warning(
+                    "Agent finished with file in FAILED state on "
+                    "%s — %s. Reverting to pre-run content and "
+                    "returning no-fix-produced.",
+                    file_path.name,
+                    final_status,
+                )
+                # Surface what got rejected so a human can diagnose
+                # without re-deriving it from the agent's chatter.
+                # The agent's own last message often shows what it
+                # *thought* it accomplished — frequently a confident
+                # success summary while the file is structurally
+                # broken. In DEBUG (DEVDOX_DEBUG=1) also dump a
+                # unified diff of the rejected change to the Rich
+                # console so the actual placement is visible.
+                if all_agent_messages:
+                    logger.warning(
+                        "Agent's last message before rejection:\n%s",
+                        all_agent_messages[-1],
+                    )
+                if os.environ.get("DEVDOX_DEBUG") == "1":
+                    rejected_text = file_path.read_text(encoding="utf-8")
+                    diff = "".join(
+                        difflib.unified_diff(
+                            original_content.splitlines(keepends=True),
+                            rejected_text.splitlines(keepends=True),
+                            fromfile=f"a/{file_path.name}",
+                            tofile=f"b/{file_path.name} (REJECTED)",
+                            n=3,
+                        )
+                    )
+                    _console.rule(
+                        "[bold red]REJECTED — agent edit not applied"
+                        "[/bold red]"
+                    )
+                    _console.print(f"[dim]Reason:[/dim] {final_status}")
+                    if diff:
+                        # `markup=False` so accidental Rich-style
+                        # brackets in the diff don't get parsed.
+                        _console.print(diff, markup=False, highlight=False)
+                    else:
+                        _console.print("[dim]<no textual diff>[/dim]")
+                    _console.rule()
+                file_path.write_text(original_content, encoding="utf-8")
+                return None
 
         explanation = all_agent_messages[-1] if all_agent_messages else "Fix applied by OpenHands agent."
+
+        logger.debug(
+            "[fix_at_line-diagnostic] Returning SonarFixResponse: "
+            "applied_by_agent=True | file=%s | original_lines=%s | new_lines=%s",
+            file_path.name,
+            len(original_content.splitlines()),
+            len(new_content.splitlines()),
+        )
 
         return SonarFixResponse(
             IMPORT_BLOCK="",
@@ -1223,6 +1691,12 @@ class LLMFixer:
                 system_template = self.jinja_env.get_template(
                     "python/refactoring/system_fix_issues.j2"
                 )
+                logger.debug(
+                    "[fix_at_line-diagnostic] S3776 override applied: "
+                    "system_template=%s | user_template=%s",
+                    "python/refactoring/system_fix_issues.j2",
+                    "python/refactoring/user_prompt.j2",
+                )
 
                 context.import_section["has_imports"] = True
 
@@ -1266,13 +1740,15 @@ class LLMFixer:
         if original_is_static:
             method_instruction_list = [
                 f"🚨 ORIGINAL METHOD IS {STATICMETHOD_DECORATOR}:",
-                f"- Keep {STATICMETHOD_DECORATOR} decorator in FIXED_SELECTION",
-                f"- ALL helper methods MUST also be {STATICMETHOD_DECORATOR}",
-                "- NO 'self' or 'cls' parameters in ANY helpers",
-                f"- Call ALL helpers as: {class_name or 'ClassName'}._helper_name(args)",
-                "- ALL helpers use PLACEMENT: SIBLING",
+                f"- Keep {STATICMETHOD_DECORATOR} on the simplified ORIGINAL function (it stays inside the class).",
+                "- Append helpers as PLAIN module-level `def` at column 0 — NO decorator, NO leading indent.",
+                "- NO 'self' or 'cls' parameters in any helper.",
+                "- Call helpers from the simplified function as `_helper_name(args)` — NO class prefix.",
                 "",
-                f"✅ CONSISTENCY: Original {STATICMETHOD_DECORATOR} → ALL helpers {STATICMETHOD_DECORATOR}",
+                "✅ RATIONALE: A column-0 @staticmethod is a module-level descriptor, "
+                f"not a class member, so `{class_name or 'ClassName'}._helper(...)` does not "
+                "resolve. A plain module-level def + bare call DOES resolve via Python's "
+                "name-lookup fall-through from inside the class staticmethod.",
                 "",
             ]
 
@@ -1632,6 +2108,26 @@ class LLMFixer:
         logger.debug("Applying %d fix(es) to %s", len(fixes), file_path)
         try:
             lines = await self.file_reader.read_lines(file_path)
+            fixes = sorted(
+                fixes,
+                key=lambda f: max(
+                    (cb.start_line for cb in f.fixed_code_blocks),
+                    default=0,
+                ),
+                reverse=True,
+            )
+            logger.debug(
+                "[apply-loop] file=%s applying %d fix(es) bottom-up; lines=%s",
+                file_path.name,
+                len(fixes),
+                [
+                    max(
+                        (cb.start_line for cb in f.fixed_code_blocks),
+                        default=0,
+                    )
+                    for f in fixes
+                ],
+            )
             results = []
             for fix in fixes:
                 result, lines = apply_single_fix(lines, fix)
@@ -2614,8 +3110,12 @@ class ContextExtractor:
             containing_func_idx = self._find_containing_function(problem_idx)
 
             if containing_func_idx is None:
-                logger.warning(
-                    f"Problem line {problem_idx + 1} is not inside any function"
+                # Issue is at module scope (e.g. a literal in a top-level dict or
+                # constant). Not a problem — the handler picks it up via other
+                # paths. Logged at DEBUG to keep INFO-level runs quiet.
+                logger.debug(
+                    "Problem line %d is at module scope (not inside any function)",
+                    problem_idx + 1,
                 )
                 continue
 

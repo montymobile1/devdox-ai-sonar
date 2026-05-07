@@ -12,7 +12,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        # windows-latest disabled: OpenHands SDK does not currently support Windows
+        # (no compatible terminal/file_editor backend), so the fix path can't run there.
+        # Re-enable once upstream adds Windows support.
+        os: [ubuntu-latest]  # , windows-latest
     steps:
       - uses: actions/checkout@v4
         with:

@@ -69,7 +69,17 @@ def _format_screaming_snake(tokens: List[str]) -> Optional[str]:
     name = "_".join(tokens).upper()
     name = re.sub(r"[^A-Z0-9_]", "", name)
     name = re.sub(r"_+", "_", name).strip("_")
-    return name if name else None
+    if not name:
+        return None
+    # Single-token literals (e.g. '<unknown>' → 'UNKNOWN') would otherwise
+    # be rejected by NameValidator's MIN_PARTS=2 stylistic rule and fall
+    # through to the LLM layer. Promote single-token names to a 2-part
+    # form with a type-honest '_STRING' suffix so the library can produce
+    # them directly — type-honest because S1192 is specifically about
+    # duplicate string literals.
+    if "_" not in name:
+        name = f"{name}_STRING"
+    return name
 
 
 # ---------------------------------------------------------------------------
