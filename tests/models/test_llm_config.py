@@ -56,11 +56,12 @@ class TestConfigManagerInit:
         assert manager.config_path == custom_path
 
     def test_config_manager_default_config_structure(self):
-        """Test DEFAULT_CONFIG structure"""
+        """DEFAULT_CONFIG must seed both the sonar and llm sections."""
         assert "sonar" in ConfigManager.DEFAULT_CONFIG
         assert "llm" in ConfigManager.DEFAULT_CONFIG
         assert "default_branch" in ConfigManager.DEFAULT_CONFIG["sonar"]
-        assert "providers" in ConfigManager.DEFAULT_CONFIG["llm"]
+        assert "profiles" in ConfigManager.DEFAULT_CONFIG["llm"]
+        assert "default_profile" in ConfigManager.DEFAULT_CONFIG["llm"]
 
 
 # ============================================================================
@@ -368,15 +369,16 @@ class TestConfigManagerSetValue:
         assert value == "openai"
 
     async def test_set_value_validation_reverts_on_failure(self, manager_with_config):
-        """Test failed validation reverts change"""
-        original = await manager_with_config.get_value("llm.default_provider")
+        """Failed validation must revert the change rather than leaving
+        the config in a partial state."""
+        original = await manager_with_config.get_value("sonar.sonar_options.clone_type")
 
         with pytest.raises(ValueError):
-            # Try to set invalid provider
-            await manager_with_config.set_value("llm.default_provider", "nonexistent", validate=True)
+            await manager_with_config.set_value(
+                "sonar.sonar_options.clone_type", "invalid_type", validate=True
+            )
 
-        # Value should be unchanged
-        current = await manager_with_config.get_value("llm.default_provider")
+        current = await manager_with_config.get_value("sonar.sonar_options.clone_type")
         assert current == original
 
     async def test_set_value_validation_deletes_new_key_on_failure(self, manager_with_config):
@@ -522,14 +524,6 @@ class TestConfigManagerValidateChange:
         assert is_valid is True
         assert len(issues) == 0
 
-    def test_validate_change_invalid_provider(self, manager_with_providers):
-        """Test validating invalid provider change"""
-        is_valid, issues = manager_with_providers.validate_change("llm.default_provider", "nonexistent")
-
-        assert is_valid is False
-        assert len(issues) > 0
-        assert "not found" in issues[0].lower()
-        assert "nonexistent" in issues[0]
 
     def test_validate_change_valid_model(self, manager_with_providers):
         """Test validating valid model change"""
@@ -538,13 +532,6 @@ class TestConfigManagerValidateChange:
         assert is_valid is True
         assert len(issues) == 0
 
-    def test_validate_change_invalid_model(self, manager_with_providers):
-        """Test validating invalid model for current provider"""
-        is_valid, issues = manager_with_providers.validate_change("llm.default_model", "invalid-model")
-
-        assert is_valid is False
-        assert len(issues) > 0
-        assert "not available" in issues[0].lower()
 
     def test_validate_change_valid_clone_type(self, manager_with_providers):
         """Test validating valid clone_type"""
@@ -577,304 +564,6 @@ class TestConfigManagerValidateChange:
 
 # ============================================================================
 # TEST CLASS: ConfigManager - Update Provider
-# ============================================================================
-
-class TestConfigManagerUpdateProvider:
-    """Test provider update operations"""
-
-    @pytest.fixture
-    async def manager_with_providers(self, tmp_path):
-        """Create manager with provider config"""
-        config_file = tmp_path / "config.toml"
-        config_data = {
-            "llm": {
-                "default_provider": "openai",
-                "default_model": "gpt-4",
-                "providers": [
-                    {
-                        "name": "openai",
-                        "api_key": "old_key",
-                        "models": ["gpt-4"],
-                        "default_model": "gpt-4"
-                    }
-                ]
-            }
-        }
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-        return manager
-
-    async def test_update_provider_api_key(self, manager_with_providers):
-        """Test updating provider API key"""
-        await manager_with_providers.update_provider("openai", {"api_key": "new_key"})
-
-        providers = await manager_with_providers.get_value("llm.providers")
-        assert providers[0]["api_key"] == "new_key"
-
-    async def test_update_provider_models(self, manager_with_providers):
-        """Test updating provider models"""
-        await manager_with_providers.update_provider("openai", {"models": ["gpt-4", "gpt-3.5"]})
-
-        providers = await manager_with_providers.get_value("llm.providers")
-        assert "gpt-3.5" in providers[0]["models"]
-
-    async def test_update_provider_set_as_default(self, manager_with_providers):
-        """Test setting provider as default during update"""
-        # Add another provider first
-        await manager_with_providers.add_provider({
-            "name": "anthropic",
-            "api_key": "key",
-            "models": ["claude-3"],
-            "default_model": "claude-3"
-        })
-
-        # Update and set as default
-        await manager_with_providers.update_provider("anthropic", {"api_key": "new_key"}, set_as_default=True)
-
-        assert await manager_with_providers.get_value("llm.default_provider") == "anthropic"
-        assert await manager_with_providers.get_value("llm.default_model") == "claude-3"
-
-    async def test_update_provider_nonexistent_raises(self, manager_with_providers):
-        """Test updating nonexistent provider raises error"""
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_providers.update_provider("nonexistent", {"api_key": "key"})
-
-        assert "not found" in str(exc_info.value).lower()
-
-    async def test_update_provider_multiple_fields(self, manager_with_providers):
-        """Test updating multiple provider fields"""
-        updates = {
-            "api_key": "new_key",
-            "models": ["gpt-4", "gpt-3.5"],
-            "default_model": "gpt-3.5"
-        }
-        await manager_with_providers.update_provider("openai", updates)
-
-        providers = await manager_with_providers.get_value("llm.providers")
-        provider = providers[0]
-        assert provider["api_key"] == "new_key"
-        assert provider["default_model"] == "gpt-3.5"
-        assert len(provider["models"]) == 2
-
-
-# ============================================================================
-# TEST CLASS: ConfigManager - Add Provider
-# ============================================================================
-
-class TestConfigManagerAddProvider:
-    """Test adding providers"""
-
-    @pytest.fixture
-    async def manager_with_config(self, tmp_path):
-        """Create manager with basic config"""
-        config_file = tmp_path / "config.toml"
-        config_data = {
-            "llm": {
-                "default_provider": "openai",
-                "providers": [{"name": "openai", "api_key": "key1", "models": ["gpt-4"]}]
-            }
-        }
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-        return manager
-
-    async def test_add_provider_success(self, manager_with_config):
-        """Test adding new provider successfully"""
-        new_provider = {
-            "name": "anthropic",
-            "api_key": "key2",
-            "models": ["claude-3"],
-            "default_model": "claude-3"
-        }
-        await manager_with_config.add_provider(new_provider)
-
-        providers = await manager_with_config.get_value("llm.providers")
-        assert len(providers) == 2
-        assert providers[1]["name"] == "anthropic"
-
-    async def test_add_provider_set_as_default(self, manager_with_config):
-        """Test adding provider and setting as default"""
-        new_provider = {
-            "name": "anthropic",
-            "api_key": "key2",
-            "models": ["claude-3"],
-            "default_model": "claude-3"
-        }
-        await manager_with_config.add_provider(new_provider, set_as_default=True)
-
-        assert await manager_with_config.get_value("llm.default_provider") == "anthropic"
-        assert await manager_with_config.get_value("llm.default_model") == "claude-3"
-
-    async def test_add_provider_duplicate_name_raises(self, manager_with_config):
-        """Test adding provider with duplicate name raises error"""
-        duplicate_provider = {
-            "name": "openai",
-            "api_key": "key2",
-            "models": ["gpt-4"]
-        }
-
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_config.add_provider(duplicate_provider)
-
-        assert "already exists" in str(exc_info.value).lower()
-
-    async def test_add_provider_missing_name_raises(self, manager_with_config):
-        """Test adding provider without name raises error"""
-        invalid_provider = {
-            "api_key": "key2",
-            "models": ["claude-3"]
-        }
-
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_config.add_provider(invalid_provider)
-
-        assert "name" in str(exc_info.value).lower()
-
-    async def test_add_provider_missing_required_fields_raises(self, manager_with_config):
-        """Test adding provider without required fields raises error"""
-        invalid_provider = {
-            "name": "anthropic",
-            "api_key": "key2"
-            # Missing 'models'
-        }
-
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_config.add_provider(invalid_provider)
-
-        assert "missing required fields" in str(exc_info.value).lower()
-        assert "models" in str(exc_info.value).lower()
-
-    async def test_add_provider_to_empty_config(self, tmp_path):
-        """Test adding provider to config without llm section"""
-        config_file = tmp_path / "config.toml"
-        config_data = {"sonar": {"default_branch": "main"}}
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-
-        new_provider = {
-            "name": "openai",
-            "api_key": "key1",
-            "models": ["gpt-4"]
-        }
-        await manager.add_provider(new_provider)
-
-        assert "llm" in manager.config
-        assert "providers" in manager.config["llm"]
-        assert len(manager.config["llm"]["providers"]) == 1
-
-
-# ============================================================================
-# TEST CLASS: ConfigManager - Remove Provider
-# ============================================================================
-
-class TestConfigManagerRemoveProvider:
-    """Test removing providers"""
-
-    @pytest.fixture
-    async def manager_with_providers(self, tmp_path):
-        """Create manager with multiple providers"""
-        config_file = tmp_path / "config.toml"
-        config_data = {
-            "llm": {
-                "default_provider": "openai",
-                "providers": [
-                    {"name": "openai", "api_key": "key1", "models": ["gpt-4"]},
-                    {"name": "anthropic", "api_key": "key2", "models": ["claude-3"]}
-                ]
-            }
-        }
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-        return manager
-
-    async def test_remove_provider_success(self, manager_with_providers):
-        """Test removing non-default provider"""
-        await manager_with_providers.remove_provider("anthropic")
-
-        providers = await manager_with_providers.get_value("llm.providers")
-        assert len(providers) == 1
-        assert providers[0]["name"] == "openai"
-
-    async def test_remove_provider_default_raises(self, manager_with_providers):
-        """Test removing default provider raises error"""
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_providers.remove_provider("openai")
-
-        assert "cannot remove default" in str(exc_info.value).lower()
-
-    async def test_remove_provider_nonexistent_raises(self, manager_with_providers):
-        """Test removing nonexistent provider raises error"""
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_providers.remove_provider("nonexistent")
-
-        assert "not found" in str(exc_info.value).lower()
-
-
-# ============================================================================
-# TEST CLASS: ConfigManager - List and Show Providers
-# ============================================================================
-
-class TestConfigManagerListShowProviders:
-    """Test listing and showing providers"""
-
-    @pytest.fixture
-    async def manager_with_providers(self, tmp_path):
-        """Create manager with providers"""
-        config_file = tmp_path / "config.toml"
-        config_data = {
-            "llm": {
-                "default_provider": "openai",
-                "providers": [
-                    {"name": "openai", "api_key": "key1", "models": ["gpt-4"]},
-                    {"name": "anthropic", "api_key": "key2", "models": ["claude-3"]}
-                ]
-            }
-        }
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-        return manager
-
-    async def test_list_providers(self, manager_with_providers):
-        """Test listing all providers"""
-        providers = await manager_with_providers.list_providers()
-
-        assert len(providers) == 2
-        assert providers[0]["name"] == "openai"
-        assert providers[1]["name"] == "anthropic"
-
-    async def test_show_provider_success(self, manager_with_providers):
-        """Test showing specific provider"""
-        provider = await manager_with_providers.show_provider("openai")
-
-        assert provider["name"] == "openai"
-        assert provider["api_key"] == "key1"
-        assert "models" in provider
-
-    async def test_show_provider_nonexistent_raises(self, manager_with_providers):
-        """Test showing nonexistent provider raises error"""
-        with pytest.raises(ValueError) as exc_info:
-            await manager_with_providers.show_provider("nonexistent")
-
-        assert "not found" in str(exc_info.value).lower()
-
-
-# ============================================================================
-# TEST CLASS: ConfigManager - Save Config
 # ============================================================================
 
 class TestConfigManagerSaveConfig:
@@ -1060,100 +749,3 @@ class TestConfigManagerPrivateMethods:
 # TEST CLASS: Integration Tests
 # ============================================================================
 
-class TestConfigManagerIntegration:
-    """Integration tests for complete workflows"""
-
-    async def test_full_provider_management_workflow(self, tmp_path):
-        """Test complete provider management workflow"""
-        config_file = tmp_path / "config.toml"
-        manager = ConfigManager(config_path=config_file)
-
-        # Create default config
-        manager.create_default_config()
-        await manager.load_config()
-
-        # Add first provider
-        await manager.add_provider({
-            "name": "openai",
-            "api_key": "key1",
-            "models": ["gpt-4"],
-            "default_model": "gpt-4"
-        }, set_as_default=True)
-
-        # Add second provider
-        await manager.add_provider({
-            "name": "anthropic",
-            "api_key": "key2",
-            "models": ["claude-3"],
-            "default_model": "claude-3"
-        })
-
-        # Update provider
-        await manager.update_provider("openai", {"api_key": "updated_key"})
-
-        # Save
-        manager.save_config()
-
-        # Reload and verify
-        manager2 = ConfigManager(config_path=config_file)
-        await manager2.load_config()
-
-        providers = await manager2.list_providers()
-        assert len(providers) == 2
-        assert providers[0]["api_key"] == "updated_key"
-
-    async def test_config_validation_workflow(self, tmp_path):
-        """Test validation during config changes"""
-        config_file = tmp_path / "config.toml"
-        config_data = {
-            "sonar": {"default_branch": "main"},
-            "llm": {
-                "default_provider": "openai",
-                "providers": [{"name": "openai", "models": ["gpt-4"], "default_model": "gpt-4"}]
-            }
-        }
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-
-        # Valid change
-        await manager.set_value("llm.default_provider", "openai", validate=True)
-
-        # Invalid change should fail
-        with pytest.raises(ValueError):
-            await manager.set_value("llm.default_provider", "invalid", validate=True)
-
-        # Config should be unchanged
-        assert await manager.get_value("llm.default_provider") == "openai"
-
-    async def test_backup_and_restore_workflow(self, tmp_path):
-        """Test backup creation and restoration"""
-        config_file = tmp_path / "config.toml"
-        config_data = {"sonar": {"default_branch": "main"}}
-        with open(config_file, "wb") as f:
-            tomli_w.dump(config_data, f)
-
-        manager = ConfigManager(config_path=config_file)
-        await manager.load_config()
-
-        # Create backup
-        backup_path = manager.create_backup()
-        assert backup_path is not None
-
-        # Modify config
-        await manager.set_value("sonar.default_branch", "develop", validate=False)
-        manager.save_config()
-
-        # Verify change
-        assert await manager.get_value("sonar.default_branch") == "develop"
-
-        # Restore from backup
-        import shutil
-        shutil.copy2(backup_path, config_file)
-
-        # Reload and verify restoration
-        manager2 = ConfigManager(config_path=config_file)
-        await manager2.load_config()
-        assert await manager2.get_value("sonar.default_branch") == "main"

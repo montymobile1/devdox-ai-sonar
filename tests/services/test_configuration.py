@@ -10,7 +10,6 @@ import json
 from dataclasses import asdict
 from devdox_ai_sonar.services.configuration import (
     AuthConfig,
-    LLMConfig,
     ConfigService,
     validate_token_format
 )
@@ -186,40 +185,6 @@ class TestAuthConfig:
 
 
 # ============================================================================
-# LLM CONFIG TESTS
-# ============================================================================
-
-
-class TestLLMConfig:
-    """Tests for LLMConfig dataclass."""
-
-    def test_llm_config_initialization(self):
-        """Test LLMConfig initialization."""
-        config = LLMConfig(
-            provider="openai",
-            model="gpt-4",
-            api_key="test-api-key",
-            models=["gpt-4", "gpt-3.5-turbo"]
-        )
-
-        assert config.provider == "openai"
-        assert config.model == "gpt-4"
-        assert config.api_key == "test-api-key"
-        assert len(config.models) == 2
-
-    def test_llm_config_empty_models_list(self):
-        """Test LLMConfig with empty models list."""
-        config = LLMConfig(
-            provider="openai",
-            model="gpt-4",
-            api_key="test-api-key",
-            models=[]
-        )
-
-        assert config.models == []
-
-
-# ============================================================================
 # CONFIG SERVICE INITIALIZATION TESTS
 # ============================================================================
 
@@ -310,108 +275,6 @@ class TestLoadAuthConfig:
         assert result['token'] is None
         assert result['organization'] is None
         assert result['project'] is None
-
-
-# ============================================================================
-# LOAD LLM CONFIG TESTS
-# ============================================================================
-
-
-class TestLoadLLMConfig:
-    """Tests for load_llm_config method."""
-
-    async def test_load_llm_config_success(self, mock_config_manager):
-        """Test successful loading of LLM config."""
-        providers = [
-            {
-                "name": "openai",
-                "api_key": "test-key",
-                "models": ["gpt-4", "gpt-3.5-turbo"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "openai",
-                "llm.default_model": "gpt-4"
-            }.get(key)
-
-        mock_config_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_config_manager)
-
-        assert result is not None
-        assert result.provider == "openai"
-        assert result.model == "gpt-4"
-        assert result.api_key == "test-key"
-        assert len(result.models) == 2
-
-    async def test_load_llm_config_no_providers(self, mock_config_manager):
-        """Test loading when no providers configured."""
-        mock_config_manager.get_value = AsyncMock(return_value=None)
-
-        result = await ConfigService.load_llm_config(mock_config_manager)
-
-        assert result is None
-
-    async def test_load_llm_config_empty_providers_list(self, mock_config_manager):
-        """Test loading with empty providers list."""
-        async def side_effect(key):
-            return {
-                "llm.providers": [],
-                "llm.default_provider": "openai",
-                "llm.default_model": "gpt-4"
-            }.get(key)
-
-        mock_config_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_config_manager)
-
-        assert result is None
-
-    async def test_load_llm_config_provider_not_found(self, mock_config_manager):
-        """Test when default provider doesn't exist in list."""
-        providers = [
-            {"name": "anthropic", "api_key": "key1", "models": ["claude-3"]}
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "openai",  # Not in list
-                "llm.default_model": "gpt-4"
-            }.get(key)
-
-        mock_config_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_config_manager)
-
-        assert result is None
-
-    async def test_load_llm_config_missing_models(self, mock_config_manager):
-        """Test loading config with missing models field."""
-        providers = [
-            {
-                "name": "openai",
-                "api_key": "test-key"
-                # No models field
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "openai",
-                "llm.default_model": "gpt-4"
-            }.get(key)
-
-        mock_config_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_config_manager)
-
-        assert result is not None
-        assert result.models == []
 
 
 # ============================================================================
@@ -790,51 +653,6 @@ class TestEdgeCases:
         is_valid, error = config.validate()
         assert is_valid is True
 
-    def test_llm_config_with_empty_api_key(self):
-        """Test LLMConfig with empty API key."""
-        config = LLMConfig(
-            provider="openai",
-            model="gpt-4",
-            api_key="",
-            models=["gpt-4"]
-        )
-
-        assert config.api_key == ""
-
-    async def test_load_auth_config_with_extra_fields(self, config_service, mock_console):
-        """Test loading config with extra unexpected fields."""
-        config_with_extra = {
-            "SONAR_TOKEN": "token",
-            "SONAR_ORG": "org",
-            "SONAR_PROJ": "project",
-            "PROJECT_PATH": "/path",
-            "GIT_URL": "https://github.com/test-org/test-project.git",
-            "EXTRA_FIELD": "extra_value"
-        }
-
-        config_service.file_reader.read_json_file = AsyncMock(return_value=config_with_extra)
-        with patch.object(Path, 'exists', return_value=True):
-            result = await config_service.load_auth_config()
-
-        # Should load successfully, ignoring extra fields
-        assert result['token'] == "token"
-
-    async def test_save_complete_config_with_very_long_values(self, config_service, mock_console):
-        """Test saving with very long values."""
-        long_token = "squ_" + "a" * 1000
-        long_path = "/very/" * 100 + "long/path"
-
-        with patch.object(config_service.file_reader, 'write_text', new_callable=AsyncMock):
-            with patch.object(Path, 'exists', return_value=False):
-                with patch.object(Path, 'chmod'):
-                    result = await config_service.save_complete_config(
-                        long_token,
-                        "org",
-                        "project",
-                        long_path
-                    )
-
-        assert result is True
 
     def test_validate_auth_config_with_whitespace_only_values(self):
         """Test validation with whitespace-only values."""
@@ -910,39 +728,6 @@ class TestIntegration:
         assert loaded_config['token'] == "new_token"
         assert loaded_config['organization'] == "old_org"  # Should be preserved
 
-    async def test_load_llm_config_with_real_manager(self):
-        """Test loading LLM config with realistic ConfigManager."""
-        mock_manager = Mock()
-
-        providers = [
-            {
-                "name": "openai",
-                "api_key": "sk-test-key",
-                "models": ["gpt-4", "gpt-3.5-turbo"]
-            },
-            {
-                "name": "anthropic",
-                "api_key": "sk-ant-test",
-                "models": ["claude-3-opus", "claude-3-sonnet"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "anthropic",
-                "llm.default_model": "claude-3-opus"
-            }.get(key)
-
-        mock_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_manager)
-
-        assert result is not None
-        assert result.provider == "anthropic"
-        assert result.model == "claude-3-opus"
-        assert result.api_key == "sk-ant-test"
-        assert "claude-3-opus" in result.models
 
 
 
@@ -1369,131 +1154,6 @@ class TestJSONSerializationEdgeCases:
 # ============================================================================
 
 
-class TestLoadLLMConfigEdgeCases:
-    """Test load_llm_config edge cases - PARTIAL COVERAGE"""
-
-    async def test_load_llm_config_with_multiple_providers_different_models(self):
-        """Test with multiple providers with different model lists."""
-        mock_manager = Mock()
-
-        providers = [
-            {
-                "name": "openai",
-                "api_key": "key1",
-                "models": ["gpt-4", "gpt-3.5-turbo"]
-            },
-            {
-                "name": "anthropic",
-                "api_key": "key2",
-                "models": ["claude-3-opus", "claude-3-sonnet", "claude-3-haiku"]
-            },
-            {
-                "name": "cohere",
-                "api_key": "key3",
-                "models": ["command", "command-light"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "cohere",
-                "llm.default_model": "command"
-            }.get(key)
-
-        mock_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_manager)
-
-        assert result is not None
-        assert result.provider == "cohere"
-        assert result.model == "command"
-        assert len(result.models) == 2
-
-    async def test_load_llm_config_provider_with_empty_name(self):
-        """Test with provider having empty name."""
-        mock_manager = Mock()
-
-        providers = [
-            {
-                "name": "",
-                "api_key": "key1",
-                "models": ["model1"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "",
-                "llm.default_model": "model1"
-            }.get(key)
-
-        mock_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_manager)
-
-        # Should handle empty provider name
-        assert result is not None or result is None  # Depends on implementation
-
-    async def test_load_llm_config_missing_api_key_in_provider(self):
-        """Test with provider missing api_key field."""
-        mock_manager = Mock()
-
-        providers = [
-            {
-                "name": "openai",
-                # No api_key
-                "models": ["gpt-4"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "openai",
-                "llm.default_model": "gpt-4"
-            }.get(key)
-
-        mock_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_manager)
-
-        assert result is not None
-        assert result.api_key is None  # Should handle missing api_key
-
-    async def test_load_llm_config_none_default_model(self):
-        """Test with None default_model."""
-        mock_manager = Mock()
-
-        providers = [
-            {
-                "name": "openai",
-                "api_key": "key1",
-                "models": ["gpt-4"]
-            }
-        ]
-
-        async def side_effect(key):
-            return {
-                "llm.providers": providers,
-                "llm.default_provider": "openai",
-                "llm.default_model": None
-            }.get(key)
-
-        mock_manager.get_value = AsyncMock(side_effect=side_effect)
-
-        result = await ConfigService.load_llm_config(mock_manager)
-
-        assert result is not None
-        assert result.model is None
-
-
-# ============================================================================
-# MISSING: VALIDATE_AUTH_CONFIG EDGE CASES
-# ============================================================================
-
-
 class TestValidateAuthConfigEdgeCases:
     """Additional validation edge cases - PARTIAL COVERAGE"""
 
@@ -1735,29 +1395,3 @@ class TestAuthConfigDataclass:
 # ============================================================================
 
 
-class TestLLMConfigDataclass:
-    """Additional LLMConfig dataclass tests - PARTIAL COVERAGE"""
-
-    def test_llm_config_equality(self):
-        """Test LLMConfig equality."""
-        config1 = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
-        config2 = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
-
-        assert config1 == config2
-
-    def test_llm_config_repr(self):
-        """Test LLMConfig string representation."""
-        config = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
-
-        repr_str = repr(config)
-
-        assert "LLMConfig" in repr_str
-        assert "openai" in repr_str
-
-    def test_llm_config_models_immutability(self):
-        """Test that models list can be modified."""
-        config = LLMConfig("openai", "gpt-4", "key", ["gpt-4"])
-
-        config.models.append("gpt-3.5-turbo")
-
-        assert len(config.models) == 2

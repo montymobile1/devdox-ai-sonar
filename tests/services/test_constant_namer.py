@@ -565,68 +565,58 @@ class TestAssignName:
 # ============================================================================
 
 
-class TestLLMFixerAdapterCallOpenaiCompatible:
-    """Tests for _call_openai_compatible micro-method."""
+class TestLLMFixerAdapterCallForJson:
+    """Tests for the single-path OpenHands-based call_for_json.
 
-    def test_successful_call(self):
+    The adapter now runs one ``self._fixer.client.completion(...)`` call
+    regardless of provider. Tests mock that method directly.
+    """
+
+    def test_successful_call_returns_parsed_json(self):
         mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
+        mock_fixer.client.completion.return_value = Mock(
             choices=[Mock(message=Mock(content='{"hello": "GREETING"}'))]
         )
         adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter._call_openai_compatible("system", "user")
+        result = adapter.call_for_json("system", "user")
         assert result == {"hello": "GREETING"}
 
     def test_none_content_returns_none(self):
         mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
+        mock_fixer.client.completion.return_value = Mock(
             choices=[Mock(message=Mock(content=None))]
         )
         adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter._call_openai_compatible("system", "user")
-        assert result is None
+        assert adapter.call_for_json("system", "user") is None
 
-
-class TestLLMFixerAdapterCallForJson:
-    """Tests for call_for_json dispatch."""
-
-    def test_dispatches_to_openai(self):
+    def test_completion_exception_returns_none(self):
         mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.model = "gpt-4"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content='{"k": "V"}'))]
+        mock_fixer.client.completion.side_effect = RuntimeError("fail")
+        adapter = LLMFixerAdapter(mock_fixer)
+        assert adapter.call_for_json("system", "user") is None
+
+    def test_malformed_json_returns_none(self):
+        """Responses that aren't a dict of str -> str get logged and
+        reported as None rather than raising; the service can then
+        fall back to heuristic naming."""
+        mock_fixer = Mock()
+        mock_fixer.client.completion.return_value = Mock(
+            choices=[Mock(message=Mock(content='{"not a": [1,2,3]}'))]
+        )
+        adapter = LLMFixerAdapter(mock_fixer)
+        assert adapter.call_for_json("system", "user") is None
+
+    def test_supports_openhands_llm_response_shape(self):
+        """When the client returns an OpenHands ``LLMResponse`` (with
+        ``.message.content`` as a list of content blocks), the adapter
+        extracts the text correctly without the legacy choices shape."""
+        mock_block = Mock(text='{"literal": "VALUE"}')
+        mock_fixer = Mock()
+        # choices must not resolve when the message/content path hits.
+        mock_fixer.client.completion.return_value = Mock(
+            message=Mock(content=[mock_block]),
+            spec=["message"],
         )
         adapter = LLMFixerAdapter(mock_fixer)
         result = adapter.call_for_json("system", "user")
-        assert result == {"k": "V"}
-
-    def test_dispatches_togetherai(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "togetherai"
-        mock_fixer.model = "model"
-        mock_fixer.client.chat.completions.create.return_value = Mock(
-            choices=[Mock(message=Mock(content='{"k": "V"}'))]
-        )
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter.call_for_json("system", "user")
-        assert result == {"k": "V"}
-
-    def test_unknown_provider_returns_none(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "unknown_provider"
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter.call_for_json("system", "user")
-        assert result is None
-
-    def test_exception_returns_none(self):
-        mock_fixer = Mock()
-        mock_fixer.provider = "openai"
-        mock_fixer.client.chat.completions.create.side_effect = RuntimeError("fail")
-        adapter = LLMFixerAdapter(mock_fixer)
-        result = adapter.call_for_json("system", "user")
-        assert result is None
+        assert result == {"literal": "VALUE"}

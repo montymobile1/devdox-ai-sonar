@@ -1,48 +1,35 @@
-"""Fix validation agent for reviewing and improving LLM-generated fixes."""
+"""Fix validation agent for reviewing and improving LLM-generated fixes.
 
-import os
-from pathlib import Path
-from typing import List, Optional, Dict, Any, Tuple, Union, cast
-from enum import Enum
+The validator is a thin wrapper around ``openhands.sdk.LLM``: it renders
+the validator Jinja prompt, sends a single JSON-mode completion request
+to whichever provider the user's :class:`LLMProfile` points at, and
+parses the response into a :class:`SonarFixResponse`. All routing --
+provider, model, base_url, auth -- is handled by OpenHands/litellm; this
+module never imports any provider SDK directly.
+"""
+
 import json
-from jinja2 import Environment, FileSystemLoader, select_autoescape
 import logging
+from enum import Enum
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple, Union
+
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from openhands.sdk import LLM, Message, TextContent
 from pydantic import ValidationError
+
+from devdox_ai_sonar.llm.profile import LLMProfile
 from devdox_ai_sonar.models.sonar import (
+    ChangeAction,
+    ChangeType,
+    CodeBlock,
+    FixSuggestion,
+    SonarFixResponse,
     SonarIssue,
     SonarSecurityIssue,
-    FixSuggestion,
-    CodeBlock,
-    ChangeType,
-    ChangeAction,
-    SonarFixResponse,
 )
 
 logger = logging.getLogger(__name__)
-
-
-try:
-    from together import Together
-
-    HAS_TOGETHER = True
-except ImportError:
-    HAS_TOGETHER = False
-
-try:
-    import openai
-
-    HAS_OPENAI = True
-except ImportError:
-    HAS_OPENAI = False
-
-try:
-    from google import genai
-    from google.genai import types
-
-    HAS_GEMINI = True
-except ImportError as e:
-    logger.warning(f"Failed to import Gemini library: {e}")
-    HAS_GEMINI = False
 
 
 class ValidationStatus(str, Enum):
@@ -150,98 +137,34 @@ class FixValidator:
 
     def __init__(
         self,
-        provider: str = "openai",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
+        profile: LLMProfile,
         min_confidence_threshold: float = 0.7,
     ):
-        self.provider = provider.lower()
+        """Initialise the validator from an :class:`LLMProfile`.
+
+        Args:
+            profile: The LLM configuration to use for validation requests.
+                Typically passed down from the same profile the parent
+                ``LLMFixer`` was constructed with, so fixer and validator
+                share a provider.
+            min_confidence_threshold: Validated fixes below this threshold
+                are marked :attr:`ValidationStatus.NEEDS_REVIEW`.
+        """
+        self.profile = profile
+        self.model = profile.model
+        self.api_key = profile.api_key
         self.min_confidence_threshold = min_confidence_threshold
-        self.model: str = ""
-
-        self.api_key: Optional[str] = None
-
-        self.client: Any = None
+        self.client: LLM = LLM(
+            model=profile.model,
+            api_key=profile.api_key or None,
+            base_url=profile.base_url,
+        )
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(Path(__file__).parent / "prompts")),
             trim_blocks=True,
             lstrip_blocks=True,
             keep_trailing_newline=True,
             autoescape=select_autoescape(["html", "xml"]),
-        )
-        self._setup_provider(model, api_key)
-
-    def _setup_provider(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if self.provider == "togetherai":
-            self._setup_together_ai(model, api_key)
-        elif self.provider == "openai":
-            self._setup_open_ai(model, api_key)
-        elif self.provider == "gemini":
-            self._setup_gemini(model, api_key)
-        elif self.provider == "openrouter":
-            self._setup_openrouter(model, api_key)
-        else:
-            raise ValueError(
-                f"Unsupported provider: {self.provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'."
-            )
-
-    def _setup_together_ai(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_TOGETHER:
-            raise ImportError(
-                "Together AI library not installed. Install with: pip install together"
-            )
-        self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "Together API key not provided. Set TOGETHER_API_KEY environment variable."
-            )
-        self.client = Together(api_key=self.api_key)
-
-    def _setup_open_ai(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-        self.model = model or "gpt-4o"
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenAI API key not provided. Set OPENAI_API_KEY environment variable."
-            )
-        self.client = openai.OpenAI(api_key=self.api_key)
-
-    def _setup_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_GEMINI:
-            raise ImportError(
-                "Gemini library not installed. Install with: pip install google-genai"
-            )
-        self.model = model or "gemini-1.5-flash"
-        self.api_key = api_key
-        if not self.api_key:
-            raise ValueError(
-                "Gemini API key not provided. Set GEMINI_API_KEY environment variable."
-            )
-        self.client = genai.Client(api_key=self.api_key)
-
-    def _setup_openrouter(self, model: Optional[str], api_key: Optional[str]) -> None:
-        if not HAS_OPENAI:
-            raise ImportError(
-                "OpenAI library not installed. Install with: pip install openai"
-            )
-        self.model = model or "anthropic/claude-sonnet-4"
-        self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
-            )
-        self.client = openai.OpenAI(
-            api_key=self.api_key,
-            base_url="https://openrouter.ai/api/v1",
-            default_headers={
-                "HTTP-Referer": "https://devdox.ai",
-                "X-Title": "DevDox AI Sonar",
-            },
         )
 
     def validate_fix(
@@ -466,130 +389,48 @@ class FixValidator:
 
         return prompt.strip()
 
+    _VALIDATOR_SYSTEM_PROMPT = (
+        "You are a senior software engineer and security expert "
+        "specializing in code review. Your reviews are thorough, "
+        "critical, and focused on preventing bugs and security issues."
+    )
+
     def _call_llm_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        """Call LLM for validation."""
-        try:
-            if not self.client:
-                logger.error(f"{self.provider} client not properly initialized")
-                return None
+        """Send the validator prompt through OpenHands and parse the response.
 
-            if self.provider == "openai":
-                return self._call_openai_validator(prompt)
-
-            if self.provider == "gemini":
-                return self._call_gemini_validator(prompt)
-
-            if self.provider in ("togetherai", "openrouter"):
-                return self._call_openai_compatible_validator(prompt)
-
+        Uses a JSON-mode completion so litellm asks the downstream provider
+        to emit structured output. The response content is then parsed
+        against :class:`SonarFixResponse`; malformed JSON and schema
+        mismatches are logged and re-raised as ``ValueError`` so the
+        caller can fall back to regex extraction or mark the fix as
+        needing manual review.
+        """
+        if not self.client:
+            logger.error("Validator client not initialised")
             return None
 
+        try:
+            response = self.client.completion(
+                messages=[
+                    Message(
+                        role="system",
+                        content=[TextContent(text=self._VALIDATOR_SYSTEM_PROMPT)],
+                    ),
+                    Message(role="user", content=[TextContent(text=prompt)]),
+                ],
+                temperature=0.1,
+                response_format={"type": "json_object"},
+            )
         except Exception:
-            logger.exception("Validator LLM call failed for %s", self.provider)
+            logger.exception("Validator LLM call failed for model=%s", self.model)
             return None
 
-    def _call_gemini_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        response = self.client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=SonarFixResponse,
-            ),
-        )
-        return cast(Optional[SonarFixResponse], response.parsed)
+        content = _extract_completion_content(response)
+        if content is None:
+            logger.warning("Validator response had no parseable content")
+            return None
 
-    def _call_openai_validator(self, prompt: str) -> Optional[SonarFixResponse]:
-        response = self.client.responses.parse(
-            model=self.model,
-            input=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software engineer and security expert "
-                        "specializing in code review. Your reviews are thorough, "
-                        "critical, and focused on preventing bugs and security issues."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            text_format=SonarFixResponse,
-        )
-
-        return cast(Optional[SonarFixResponse], response.output_parsed)
-
-    def _call_openai_compatible_validator(
-        self, prompt: str
-    ) -> Optional[SonarFixResponse]:
-        """Call an OpenAI-compatible validator (used by TogetherAI and OpenRouter)."""
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a senior software engineer and security expert "
-                        "specializing in code review."
-                    ),
-                },
-                {"role": "user", "content": prompt},
-            ],
-            temperature=0.1,
-            response_format={
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "sonar_fix_response",
-                    "schema": SonarFixResponse.model_json_schema(),
-                    "strict": True,
-                },
-            },
-        )
-        response_json = response.choices[0].message.content
-
-        try:
-            data = json.loads(response_json)
-            return SonarFixResponse(**data)
-
-        except json.JSONDecodeError as e:
-            cleaned = self._try_extract_json(response_json)
-            if cleaned and cleaned != response_json:
-                try:
-                    data = json.loads(cleaned)
-                    return SonarFixResponse(**data)
-                except (json.JSONDecodeError, ValidationError):
-                    pass
-
-            response_len = len(response_json) if response_json else 0
-            starts_with_fence = (
-                response_json.startswith("```") if response_json else False
-            )
-            is_truncated = (
-                not response_json.rstrip().endswith("}") if response_json else False
-            )
-
-            logger.warning(
-                "Malformed JSON response from %s at position %d of %d chars "
-                "(truncated=%s, markdown_wrapped=%s): %s",
-                self.provider,
-                e.pos,
-                response_len,
-                is_truncated,
-                starts_with_fence,
-                e.msg,
-            )
-            logger.debug("Raw validator response: %s", response_json)
-            raise ValueError("LLM returned malformed JSON response") from e
-
-        except ValidationError as e:
-            logger.warning(
-                "Schema validation failed for %s response: %d error(s)",
-                self.provider,
-                e.error_count(),
-            )
-            logger.debug("Validation errors: %s", e.errors())
-            raise ValueError(
-                "LLM response did not match expected schema"
-            ) from e
+        return _parse_validator_response(content, model=self.model)
 
     @staticmethod
     def _try_extract_json(text: str) -> Optional[str]:
@@ -606,6 +447,91 @@ class FixValidator:
             return cleaned.strip()
         return cleaned
 
-    # Aliases for backward compatibility and test clarity
-    _call_togetherai_validator = _call_openai_compatible_validator
-    _call_openrouter_validator = _call_openai_compatible_validator
+
+def _extract_completion_content(response: Any) -> Optional[str]:
+    """Pull the text content out of an LLM completion response.
+
+    Handles two shapes:
+
+    - ``openhands.sdk.LLMResponse``: ``.message.content`` is a sequence
+      of ``TextContent``/``ImageContent`` blocks; we concatenate the
+      text from any ``TextContent`` entries.
+    - Raw litellm ``ModelResponse``: ``.choices[0].message.content`` is
+      a plain string. Supported so that tests that mock the raw
+      response shape keep working without needing OpenHands' own types.
+    """
+    # Try OpenHands LLMResponse first: .message.content is a list of blocks.
+    message = getattr(response, "message", None)
+    content = getattr(message, "content", None)
+    if isinstance(content, (list, tuple)):
+        parts: list[str] = []
+        for block in content:
+            text = getattr(block, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+        if parts:
+            return "".join(parts)
+
+    # Fallback: litellm/OpenAI-compatible ModelResponse shape.
+    try:
+        choices = response.choices
+        if not choices:
+            return None
+        litellm_message = choices[0].message
+        litellm_content = getattr(litellm_message, "content", None)
+        return litellm_content if isinstance(litellm_content, str) else None
+    except (AttributeError, IndexError, TypeError):
+        logger.exception("Could not extract content from validator response")
+        return None
+
+
+def _parse_validator_response(
+    response_json: str, *, model: str
+) -> Optional[SonarFixResponse]:
+    """Parse a JSON-mode validator response into a :class:`SonarFixResponse`.
+
+    Raises:
+        ValueError: On malformed JSON or schema mismatch. Callers are
+            expected to catch this and fall back to regex extraction or
+            mark the fix as needing review.
+    """
+    try:
+        data = json.loads(response_json)
+        return SonarFixResponse(**data)
+    except json.JSONDecodeError as exc:
+        cleaned = FixValidator._try_extract_json(response_json)
+        if cleaned and cleaned != response_json:
+            try:
+                data = json.loads(cleaned)
+                return SonarFixResponse(**data)
+            except (json.JSONDecodeError, ValidationError):
+                pass
+
+        response_len = len(response_json) if response_json else 0
+        starts_with_fence = (
+            response_json.startswith("```") if response_json else False
+        )
+        is_truncated = (
+            not response_json.rstrip().endswith("}") if response_json else False
+        )
+        logger.warning(
+            "Malformed JSON from validator (model=%s) at position %d of %d "
+            "chars (truncated=%s, markdown_wrapped=%s): %s",
+            model,
+            exc.pos,
+            response_len,
+            is_truncated,
+            starts_with_fence,
+            exc.msg,
+        )
+        logger.debug("Raw validator response: %s", response_json)
+        raise ValueError("LLM returned malformed JSON response") from exc
+    except ValidationError as exc:
+        logger.warning(
+            "Schema validation failed for validator response (model=%s): "
+            "%d error(s)",
+            model,
+            exc.error_count(),
+        )
+        logger.debug("Validation errors: %s", exc.errors())
+        raise ValueError("LLM response did not match expected schema") from exc

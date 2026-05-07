@@ -25,25 +25,27 @@ from devdox_ai_sonar.sonar_analyzer import SonarCloudAnalyzer
 from devdox_ai_sonar.services.rule_analyzer import RuleAnalyzer, _load_rules_cache
 from devdox_ai_sonar.llm_fixer import LLMFixer
 from devdox_ai_sonar.models.llm_config import ConfigManager
-from devdox_ai_sonar.models.llm import ProviderType
 from devdox_ai_sonar.utils.file_indentation import (
     download_latest_version,
     TmpCloneManager,
     sweep_orphaned_tmp_dirs,
 )
+from devdox_ai_sonar.utils.branch_prompts import branch_or_pr, branch_or_pr_prompt
 from devdox_ai_sonar.utils.validator import InputValidator, IssueType
 from devdox_ai_sonar.utils.sonar_config import SonarCloudConfigUI
-from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig, LLMConfig
+from devdox_ai_sonar.services.configuration import ConfigService, AuthConfig
+from devdox_ai_sonar.llm.env_profile import profile_from_env
+from devdox_ai_sonar.llm.interactive import add_profile_flow, update_profile_flow
+from devdox_ai_sonar.llm.profile import LLMProfile
+from devdox_ai_sonar.llm.profile_store import (
+    get_default_profile,
+    load_profiles,
+)
 
 from devdox_ai_sonar.models.sonar import (
     AnalysisResult,
     FixSuggestion,
     FixResult,
-)
-from devdox_ai_sonar.utils.provider_config import (
-    ProviderConfigUI,
-    ProviderValidator,
-    ProviderConfigManager,
 )
 
 from devdox_ai_sonar.utils.exceptions import SwitchCommandException
@@ -284,27 +286,50 @@ async def _select_existing_ui(message: str, existing_providers: list) -> str:
 
 def _initialize_managers() -> Tuple[
     ConfigManager,
-    ProviderConfigUI,
-    ProviderValidator,
-    ProviderConfigManager,
     SonarCloudConfigUI,
     ConfigService,
 ]:
-    """Initialize all required manager instances.
+    """Initialize the managers every CLI command needs.
 
     Returns:
-        tuple: (ConfigManager, ProviderConfigUI, ProviderValidator,
-                ProviderConfigManager, SonarCloudConfigUI, ConfigService)
+        tuple: (ConfigManager, SonarCloudConfigUI, ConfigService).
     """
     manager = ConfigManager(config_path=settings.config_file_path)
-    ui = ProviderConfigUI()
-    validator = ProviderValidator()
-    provider_manager = ProviderConfigManager(manager, ui, validator)
     sonar_ui = SonarCloudConfigUI()
-
     config_service = ConfigService(sonar_path=Path(settings.auth_file_path))
+    return manager, sonar_ui, config_service
 
-    return manager, ui, validator, provider_manager, sonar_ui, config_service
+
+async def _resolve_llm_profile(
+    manager: ConfigManager,
+    *,
+    cli_model: Optional[str] = None,
+    cli_api_key: Optional[str] = None,
+    cli_base_url: Optional[str] = None,
+) -> Optional[LLMProfile]:
+    """Return the active :class:`LLMProfile` following the precedence chain.
+
+    Precedence (highest wins):
+      1. CLI flags (``--llm-model`` + ``--llm-api-key`` + ``--llm-base-url``).
+      2. Environment / ``.env`` via :func:`llm.env_profile.profile_from_env`.
+      3. The default profile in ``~/devdox/config.toml``.
+
+    Returns ``None`` when none of the three layers has enough information
+    to build a profile; callers surface this as a configuration error.
+    """
+    if cli_model:
+        return LLMProfile(
+            name="__cli__",
+            model=cli_model,
+            api_key=cli_api_key or "",
+            base_url=cli_base_url or None,
+        )
+
+    env_profile = profile_from_env(settings)
+    if env_profile is not None:
+        return env_profile
+
+    return await get_default_profile(manager)
 
 
 async def _configure_sonarcloud(
@@ -350,77 +375,6 @@ async def _configure_sonarcloud(
     return True
 
 
-async def _configure_providers_loop(
-    provider_manager: ProviderConfigManager,
-    manager: ConfigManager,
-    ui: ProviderConfigUI,
-    available_providers: list,
-) -> None:
-    """Configure providers in a loop until done or cancelled.
-
-    Args:
-        provider_manager: Provider configuration manager
-        manager: Config manager instance
-        ui: Provider UI handler
-        available_providers: List of available provider names
-    """
-    while available_providers:
-        console.print(
-            f"[cyan]Available providers: {', '.join(available_providers)}[/cyan]\n"
-        )
-
-        provider_name = await ui.select_provider_from_list(
-            available_providers, "Select a provider to configure"
-        )
-
-        if not provider_name:
-            break
-
-        success = await _handle_provider_configuration(
-            provider_manager, manager, provider_name, available_providers
-        )
-
-        if not success:
-            console.print(
-                f"[yellow]⚠ Configuration of {provider_name} failed or was cancelled[/yellow]\n"
-            )
-
-        if _should_stop_configuring(available_providers):
-            break
-
-
-async def _handle_provider_configuration(
-    provider_manager: ProviderConfigManager,
-    manager: ConfigManager,
-    provider_name: str,
-    available_providers: list,
-) -> bool:
-    """Handle configuration of a single provider.
-
-    Args:
-        provider_manager: Provider configuration manager
-        manager: Config manager instance
-        provider_name: Name of provider to configure
-        available_providers: List to remove provider from on success
-
-    Returns:
-        bool: True if configuration successful
-    """
-    result = await provider_manager.configure_new_provider(provider_name)
-
-    if not result:
-        return False
-
-    await manager.add_provider(
-        result["config"], set_as_default=result["set_as_default"]
-    )
-    available_providers.remove(provider_name)
-    console.print(
-        f"\n[green]✓ {provider_name.upper()} configured successfully[/green]\n"
-    )
-    return True
-
-
 async def change_max_fix(
     manager: ConfigManager, message: str, max_fixes: int, default_max_fixes: int
 ) -> None:
@@ -459,22 +413,6 @@ async def change_max_fix(
         )
 
     await manager.set_value("configuration.max_fixes", new_max_fixes)
-
-
-def _should_stop_configuring(available_providers: list) -> bool:
-    """Determine if provider configuration loop should stop.
-
-    Args:
-        available_providers: List of remaining providers
-
-    Returns:
-        bool: True if should stop configuring
-    """
-    if not available_providers:
-        console.print("[green]✅ All providers have been configured[/green]")
-        return True
-
-    return not Confirm.ask("Add another provider?", default=False)
 
 
 def _check_reconfiguration_consent(providers: list) -> bool:
@@ -542,40 +480,33 @@ async def init_config(
     apply: bool = False,
     dry_run: bool = False,
 ) -> None:
-    """CLI for config management"""
+    """Top-level configuration wizard: SonarCloud auth + first LLM profile."""
     try:
-        # Initialize all managers
-        manager, ui, _, provider_manager, sonar_ui, config_service = (
-            _initialize_managers()
-        )
+        manager, sonar_ui, config_service = _initialize_managers()
         manager.create_default_config()
         await manager.load_config()
 
-        # Check if reconfiguration is needed
-        providers = await manager.get_value("llm.providers")
-        if not _check_reconfiguration_consent(providers):
+        existing_profiles = await load_profiles(manager)
+        if not _check_reconfiguration_consent(existing_profiles):
             return
 
-        # Configure SonarCloud
         if not await _configure_sonarcloud(sonar_ui, config_service):
             raise click.Abort()
 
-        # Skip provider configuration if already exists
-        if providers and len(providers) > 0:
+        # Skip LLM configuration if at least one profile is already present.
+        if existing_profiles:
             return
 
-        # Configure providers
-        available_providers = await provider_manager.get_available_providers()
-        if not available_providers:
+        await add_profile_flow(manager)
+
+        # If the user cancelled every step of add_profile_flow, there is
+        # still no profile on disk and the tool is unusable. Surface that.
+        if not await load_profiles(manager):
             console.print(
-                "\n[red]❌ No providers configured. Configuration incomplete.[/red]"
+                "\n[red]❌ No LLM profiles configured. Configuration incomplete.[/red]"
             )
             raise click.Abort()
 
-        await _configure_providers_loop(
-            provider_manager, manager, ui, available_providers
-        )
-        manager.save_config(create_backup=False)
         apply_value = 1 if apply else 0
         dry_run_value = 1 if dry_run else 0
         await change_parameters(
@@ -591,58 +522,25 @@ async def init_config(
 
 
 async def add_provider() -> None:
-    """CLI command for managing provider configuration"""
+    """CLI command to add a new LLM profile."""
     try:
-        # Initialize components
-        manager, ui, _, provider_manager, _, _ = _initialize_managers()
+        manager, _, _ = _initialize_managers()
         await manager.load_config()
-        available_providers = await provider_manager.get_available_providers()
-        if not available_providers:
-            console.print(
-                "[yellow]⚠ All supported providers are already configured[/yellow]"
-            )
-            raise click.Abort()
-
-        _display_operation_header("🚀 ADD NEW PROVIDER")
-        await _configure_providers_loop(
-            provider_manager, manager, ui, available_providers
-        )
-        manager.save_config(create_backup=False)
+        _display_operation_header("🚀 ADD NEW LLM PROFILE")
+        await add_profile_flow(manager)
         _display_completion_message()
-
     except Exception as e:
         _handle_cli_error(e)
 
 
 async def update_provider() -> None:
-    """CLI command for managing provider configuration"""
+    """CLI command to update an existing LLM profile."""
     try:
-        # Initialize components
-        manager, _, _, provider_manager, _, _ = _initialize_managers()
+        manager, _, _ = _initialize_managers()
         await manager.load_config()
-
-        existing_providers = await provider_manager.get_existing_providers()
-        if not existing_providers:
-            console.print(
-                "\n[red]❌ No providers configured. Please add at least one provider first.[/red]"
-            )
-            raise click.Abort()
-        _display_operation_header("🔧 UPDATE EXISTING PROVIDER")
-        chosen_provider = await _select_existing_ui(
-            "Select the provider to update", existing_providers
-        )
-        if not chosen_provider:
-            raise click.Abort()
-
-        if await provider_manager.update_existing_provider(chosen_provider):
-            manager.save_config(create_backup=False)
-            console.print(
-                f"\n[green]✓ {chosen_provider.upper()} updated successfully[/green]\n"
-            )
-        else:
-            console.print("\n[yellow]⚠ Update cancelled or failed[/yellow]\n")
+        _display_operation_header("🔧 UPDATE EXISTING LLM PROFILE")
+        await update_profile_flow(manager)
         _display_completion_message()
-
     except Exception as e:
         _handle_cli_error(e)
 
@@ -668,12 +566,23 @@ async def update_provider() -> None:
 @click.option("--sonar-project", type=str, help="Sonar Cloud project")
 @click.option("--project-path", type=str, help="Project path to analyze")
 @click.option(
-    "--llm-provider",
-    type=click.Choice(ProviderType.choices(), case_sensitive=True),
-    help="LLM provider to use",
+    "--llm-model",
+    type=str,
+    help=(
+        "LLM model in OpenHands 'provider/model-name' form, e.g. "
+        "'openai/gpt-4o', 'gemini/gemini-2.5-flash', 'vllm/my-model'."
+    ),
 )
-@click.option("--llm-api-key", type=str, help="LLM API key")
-@click.option("--llm-default-model", type=str, help="LLM model to use")
+@click.option(
+    "--llm-api-key",
+    type=str,
+    help="LLM API key (leave unset if the endpoint accepts unauthenticated requests).",
+)
+@click.option(
+    "--llm-base-url",
+    type=str,
+    help="Optional custom endpoint URL (for self-hosted or proxied LLMs).",
+)
 @click.option("--branch", type=str, help="Branch to fix issues on", default="main")
 @click.option(
     "--pull-request", type=int, help="Pull request number to fix issues on", default=0
@@ -709,9 +618,9 @@ async def main(  # ← Async main
     sonar_org: Optional[str],
     sonar_project: Optional[str],
     project_path: Optional[str],
-    llm_provider: Optional[str],
+    llm_model: Optional[str],
     llm_api_key: Optional[str],
-    llm_default_model: Optional[str],
+    llm_base_url: Optional[str],
     branch: Optional[str],
     pull_request: Optional[int],
     types: Optional[str],
@@ -749,9 +658,9 @@ async def main(  # ← Async main
         "sonar_org": sonar_org,
         "sonar_project": sonar_project,
         "project_path": project_path,
-        "llm_provider": llm_provider,
+        "llm_model": llm_model,
         "llm_api_key": llm_api_key,
-        "llm_default_model": llm_default_model,
+        "llm_base_url": llm_base_url,
         "branch": branch,
         "pull_request": pull_request,
         "excluded_rules": excluded_rules,
@@ -908,9 +817,9 @@ async def change_parameters(
 ) -> None:
     """CLI for config management"""
     try:
-        # Initialize all managers
-        manager, _, _, provider_manager, _, _ = _initialize_managers()
-        branch, pull_request = await provider_manager.branch_or_pr_prompt()
+        manager, _, _ = _initialize_managers()
+        await manager.load_config()
+        branch, pull_request = await branch_or_pr_prompt(manager)
 
         if not branch and not pull_request:
             console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
@@ -1032,13 +941,13 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
 
     try:
         if command == "fix_issues":
-            await _run_fix_issues(**options)
+            await _run_fix_issues(ctx, **options)
         elif command == "fix_security_issues":
-            await _run_fix_security_issues(**options)
+            await _run_fix_security_issues(ctx, **options)
         elif command == "analyze":
-            await _run_analyze()
+            await _run_analyze(ctx)
         elif command == "inspect":
-            await _run_inspect()
+            await _run_inspect(ctx)
         elif command == "add_provider":
             await add_provider()  # Sync command
         elif command == "update_provider":
@@ -1067,7 +976,7 @@ async def _execute_command_async(ctx: click.Context, command: str) -> None:
 # ============================================================================
 
 
-async def _run_fix_issues(**kwargs: Any) -> None:
+async def _run_fix_issues(ctx: click.Context, **kwargs: Any) -> None:
     """Run the fix_issues command with command switching support."""
     console.print("\n[bold cyan]🔧 Fix Issues - LLM-Powered Code Fixes[/bold cyan]\n")
 
@@ -1076,8 +985,8 @@ async def _run_fix_issues(**kwargs: Any) -> None:
         dry_run_value = 1 if kwargs.get("dry_run", False) else 0
 
         # Load and validate configuration
-        auth_config, llm_config, parameters = await _load_and_validate_config(
-            use_predefined=True
+        auth_config, profile, parameters = await _load_and_validate_config(
+            use_predefined=True, ctx=ctx,
         )
 
         fix_params = display_configuration(parameters, dry_run_value, apply_value)
@@ -1090,7 +999,7 @@ async def _run_fix_issues(**kwargs: Any) -> None:
         # Process issues
         await _process_and_fix_issues(
             auth_config,
-            llm_config,
+            profile,
             fix_params.get("branch", ""),
             pull_request=str(parameters.get("pull_request", 0)),
             fix_params=fix_params,
@@ -1106,13 +1015,13 @@ async def _run_fix_issues(**kwargs: Any) -> None:
         raise  # Re-raise to be caught by interactive mode loop
 
 
-async def _run_fix_security_issues(**kwargs: Any) -> None:
+async def _run_fix_security_issues(ctx: click.Context, **kwargs: Any) -> None:
     """Run the fix_security_issues command with command switching support."""
     console.print("\n[bold cyan]🔒 Fix Security Issues[/bold cyan]\n")
 
     try:
-        auth_config, llm_config, parameters = await _load_and_validate_config(
-            use_predefined=True
+        auth_config, profile, parameters = await _load_and_validate_config(
+            use_predefined=True, ctx=ctx,
         )
 
         apply_value = kwargs.get("apply", None)
@@ -1133,7 +1042,7 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
 
         await _process_and_fix_issues(
             auth_config,
-            llm_config,
+            profile,
             fix_params.get("branch", ""),
             str(fix_params.get("pull_request", 0)),
             fix_params,
@@ -1148,14 +1057,14 @@ async def _run_fix_security_issues(**kwargs: Any) -> None:
         raise
 
 
-async def _run_analyze() -> None:
+async def _run_analyze(ctx: click.Context) -> None:
     """Run the analyze command with command switching support."""
     console.print("\n[bold cyan]📊 Analyze SonarCloud Project[/bold cyan]\n")
 
     try:
         # Load and validate configuration
         auth_config, _, parameters = await _load_and_validate_config(
-            use_predefined=True
+            use_predefined=True, ctx=ctx,
         )
         console.print(f"  Project: [cyan]{auth_config.project}[/cyan]")
         console.print(f"  Organization: [cyan]{auth_config.organization}[/cyan]\n")
@@ -1208,7 +1117,7 @@ async def _run_analyze() -> None:
         raise
 
 
-async def _run_inspect() -> None:
+async def _run_inspect(_ctx: click.Context) -> None:
     """Run the inspect command."""
     console.print("\n[bold cyan]🔍 Inspect Local Project[/bold cyan]\n")
 
@@ -1254,9 +1163,9 @@ async def fix_multiple(**kwargs: Any) -> None:
         sonar_org = kwargs.get("sonar_org", None)
         sonar_project = kwargs.get("sonar_project", None)
         project_path = kwargs.get("project_path", None)
-        llm_provider = kwargs.get("llm_provider", None)
+        llm_model = kwargs.get("llm_model", None)
         llm_api_key = kwargs.get("llm_api_key", None)
-        llm_default_model = kwargs.get("llm_default_model", None)
+        llm_base_url = kwargs.get("llm_base_url", None)
         branch = kwargs.get("branch", "main")
         pull_request = kwargs.get("pull_request", 0)
 
@@ -1264,8 +1173,17 @@ async def fix_multiple(**kwargs: Any) -> None:
             sonar_token, sonar_org, sonar_project, project_path, ""
         )
 
-        llm_config = LLMConfig(
-            llm_provider, llm_default_model, llm_api_key, [llm_default_model]
+        if not llm_model:
+            console.print(
+                "[red]❌ --llm-model is required for fix_multiple "
+                "(e.g. 'openai/gpt-4o')[/red]"
+            )
+            raise click.Abort()
+        profile = LLMProfile(
+            name="__cli__",
+            model=llm_model,
+            api_key=llm_api_key or "",
+            base_url=llm_base_url or None,
         )
 
         max_fixes = kwargs.get("max_fixes", settings.MAX_FIXES_LIMIT)
@@ -1296,7 +1214,7 @@ async def fix_multiple(**kwargs: Any) -> None:
         # Process issues
         await _process_and_fix_issues(
             auth_config,
-            llm_config,
+            profile,
             branch,
             pull_request=str(pull_request),
             fix_params=fix_params,
@@ -1308,7 +1226,7 @@ async def fix_multiple(**kwargs: Any) -> None:
         # security issues
         await _process_and_fix_issues(
             auth_config,
-            llm_config,
+            profile,
             branch,
             pull_request=str(pull_request),
             fix_params=fix_params,
@@ -1331,10 +1249,19 @@ async def fix_multiple(**kwargs: Any) -> None:
 
 async def _load_and_validate_config(
     use_predefined: bool = False,
-) -> Tuple[AuthConfig, LLMConfig, Dict[str, Any]]:
-    """Load and validate configuration with command switching support."""
+    *,
+    ctx: Optional[click.Context] = None,
+) -> Tuple[AuthConfig, LLMProfile, Dict[str, Any]]:
+    """Load and validate configuration with command switching support.
+
+    Resolves the active :class:`LLMProfile` via the precedence chain
+    (CLI flags > env > config.toml default profile). If ``ctx`` is
+    supplied, its ``options`` dict is consulted for ``llm_model`` /
+    ``llm_api_key`` / ``llm_base_url`` before env / config.toml.
+    """
     console.print("[dim]Loading configuration...[/dim]")
-    manager, _, _, provider_manager, _, config_service = _initialize_managers()
+    manager, _, config_service = _initialize_managers()
+    await manager.load_config()
 
     auth_config_dict = await config_service.load_auth_config()
 
@@ -1352,15 +1279,22 @@ async def _load_and_validate_config(
     if not is_valid:
         console.print(f"[red]❌ Configuration error: {error_msg}[/red]")
         raise click.Abort()
-    # Load LLM config
-    llm_config = await config_service.load_llm_config(manager)
-    if not llm_config:
-        console.print("[red]❌ No LLM providers configured[/red]")
+
+    cli_options = ctx.obj.get("options", {}) if ctx is not None else {}
+    profile = await _resolve_llm_profile(
+        manager,
+        cli_model=cli_options.get("llm_model"),
+        cli_api_key=cli_options.get("llm_api_key"),
+        cli_base_url=cli_options.get("llm_base_url"),
+    )
+    if profile is None:
+        console.print("[red]❌ No LLM profile configured[/red]")
         raise click.Abort()
+
     if use_predefined:
-        branch, pull_request = await provider_manager.branch_or_pr()
+        branch, pull_request = await branch_or_pr(manager)
     else:
-        branch, pull_request = await provider_manager.branch_or_pr_prompt()
+        branch, pull_request = await branch_or_pr_prompt(manager)
 
     if not branch and not pull_request:
         console.print(constant.NO_BRANCH_OR_PR_SPECIFIED)
@@ -1376,7 +1310,7 @@ async def _load_and_validate_config(
     params["pull_request"] = pull_request
 
     console.print("[green]✓[/green] Configuration loaded\n")
-    return auth_config, llm_config, params
+    return auth_config, profile, params
 
 
 def _validate_issue_types(types_str: Optional[str]) -> Optional[List[str]]:
@@ -1425,7 +1359,7 @@ def display_configuration(
 
 async def _process_and_fix_issues(
     auth_config: AuthConfig,
-    llm_config: LLMConfig,
+    profile: LLMProfile,
     branch: Optional[str],
     pull_request: Optional[str],
     fix_params: Dict[str, Any],
@@ -1435,7 +1369,7 @@ async def _process_and_fix_issues(
     check_tmp_path: bool = True,
 ) -> None:
     """Process and fix issues - Refactored."""
-    services = _initialize_fix_services(auth_config, llm_config)
+    services = _initialize_fix_services(auth_config, profile)
 
     branch_downloaded = branch
     if download_latest:
@@ -1499,19 +1433,14 @@ async def _process_and_fix_issues(
 
 
 def _initialize_fix_services(
-    auth_config: AuthConfig, llm_config: LLMConfig
+    auth_config: AuthConfig, profile: LLMProfile
 ) -> Dict[str, Any]:
     """Initialize services for fixing issues."""
     console.print("[dim]Initializing services...[/dim]")
-
     return {
         "analyzer": SonarCloudAnalyzer(auth_config.token, auth_config.organization),
         "ruler": RuleAnalyzer(auth_config.token, auth_config.organization),
-        "fixer": LLMFixer(
-            provider=llm_config.provider,
-            model=llm_config.model,
-            api_key=llm_config.api_key,
-        ),
+        "fixer": LLMFixer(profile=profile),
     }
 
 
@@ -1755,6 +1684,8 @@ async def handle_fix(
     _display_fix_preview(fix, issues)
 
     if fix_params["apply"]:
+        # The validator shares the fixer's profile; explicit
+        # validator_* overrides are no longer needed.
         result = await fixer.apply_fixes_with_validation(
             fixes=[fix],
             issues=issues,
@@ -1762,9 +1693,6 @@ async def handle_fix(
             create_backup=fix_params.get("create_backup", False),
             dry_run=fix_params["dry_run"],
             use_validator=True,
-            validator_provider=fixer.provider,
-            validator_model=fixer.model,
-            validator_api_key=fixer.api_key,
         )
         _display_fix_results(result)
     else:

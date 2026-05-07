@@ -1,6 +1,5 @@
 """LLM-powered code fixer for SonarCloud issues."""
 
-import os
 import re
 import shutil
 import sys
@@ -29,6 +28,7 @@ from datetime import datetime
 import logging
 
 from .fix_validator import FixValidator, ValidationStatus
+from devdox_ai_sonar.llm.profile import LLMProfile
 from devdox_ai_sonar.models.file_structures import FixApplication, FixContext
 from devdox_ai_sonar.models.sonar import (
     SonarIssue,
@@ -65,29 +65,6 @@ logger = logging.getLogger(__name__)
 _console = Console()
 
 
-# try:
-#     from together import Together
-#
-#     HAS_TOGETHER = True
-# except ImportError:
-#     HAS_TOGETHER = False
-#
-# try:
-#     import openai
-#
-#     HAS_OPENAI = True
-# except ImportError:
-#     HAS_OPENAI = False
-#
-# try:
-#     from google import genai
-#     from google.genai import types
-#
-#     HAS_GEMINI = True
-# except ImportError as e:
-#     logger.warning(f"Failed to import Gemini library: {e}")
-#     HAS_GEMINI = False
-
 java_extension = ".java"
 scala_extension = ".scala"
 
@@ -99,12 +76,21 @@ STATICMETHOD_DECORATOR = "@staticmethod"
 PYTHON_CODE_BLOCK = "```python"
 CODE_BLOCK_END = "```"
 
-_LITELLM_PREFIX_MAP = {
-    "togetherai": "together_ai",
-    "openrouter": "openrouter",
-    "openai": "openai",
-    "gemini": "gemini",
-}
+
+def _build_openhands_llm(profile: LLMProfile) -> LLM:
+    """Construct the OpenHands ``LLM`` client for a given profile.
+
+    The model string is passed through unchanged -- OpenHands / litellm
+    infer the provider from its prefix (``"openai/..."``, ``"gemini/..."``,
+    etc.) so no prefix rewriting happens here. An empty ``api_key`` is
+    forwarded as ``None`` because some endpoints (local Ollama, self-hosted
+    vLLM without auth) accept unauthenticated requests.
+    """
+    return LLM(
+        model=profile.model,
+        api_key=profile.api_key or None,
+        base_url=profile.base_url,
+    )
 
 
 def _build_agent_tools() -> List[Tool]:
@@ -207,29 +193,32 @@ class LLMFixer:
 
     def __init__(
         self,
-        provider: Optional[str] = "openai",
-        model: Optional[str] = None,
-        api_key: Optional[str] = None,
+        profile: LLMProfile,
         context_lines: int = 10,
     ):
-        """
-        Initialize the LLM fixer.
+        """Initialise the LLM fixer from a profile.
 
         Args:
-            provider: LLM provider ("openai" or "gemini")
-            model: Model name (defaults to provider's default)
-            api_key: API key (uses environment variables if not provided)
-            context_lines: Number of lines to include around the issue for context
+            profile: The LLM configuration to use. ``profile.model`` must
+                already be in the OpenHands-canonical ``provider/model-id``
+                form; no rewriting happens here.
+            context_lines: Number of source lines to include around each
+                issue when composing the prompt.
         """
-        self.provider = str(provider).lower()
+        self.profile = profile
+        self.model = profile.model
+        self.api_key = profile.api_key
         self.context_lines = context_lines
         self.file_reader = AsyncFileReader()
-        self.model = model
         self.prompt_dir = Path(__file__).parent / "prompts"
         self.template_dir = Path(__file__).parent / "templates"
-        self.client: Any = None
-        self._validate_and_configure_provider(provider, model, api_key)
+        self.client: LLM = _build_openhands_llm(profile)
         self._setup_jinja_env()
+        logger.debug(
+            "LLM client initialised: model=%s base_url=%s",
+            profile.model,
+            profile.base_url,
+        )
 
     def _setup_jinja_env(self) -> None:
         """Setup Jinja2 environment with custom filters"""
@@ -255,117 +244,6 @@ class LLMFixer:
     def read_file(self, file_path: str | Path) -> str:
         """Sync version (backwards compatible)."""
         return asyncio.run(self.read_file_async(file_path))
-
-    def _validate_and_configure_provider(
-        self, provider: Optional[str], model: Optional[str], api_key: Optional[str]
-    ) -> None:
-        provider = str(provider).lower()
-
-        self.final_configure(model, api_key, provider)
-        # if provider == "togetherai":
-        #     self._configure_togetherai(model, api_key)
-        # elif provider == "openai":
-        #     self._configure_openai(model, api_key)
-        # elif provider == "gemini":
-        #     self._configure_gemini(model, api_key)
-        # elif provider == "openrouter":
-        #     self._configure_openrouter(model, api_key)
-        # else:
-        #     raise ValueError(
-        #         f"Unsupported provider: {provider}. Use 'openai', 'gemini', 'togetherai', or 'openrouter'"
-        #     )
-
-    def final_configure(self, model: Optional[str], api_key: Optional[str], provider: str):
-        self.api_key = api_key or os.getenv(f"{provider.upper()}_API_KEY")
-        if not self.api_key:
-            raise ValueError(
-                "Together API key not provided. Set TOGETHER_API_KEY environment variable."
-            )
-        self.model = model or "gpt-4o"
-        prefix = _LITELLM_PREFIX_MAP.get(self.provider, "")
-        litellm_model = f"{prefix}/{self.model}" if prefix and not self.model.startswith(f"{prefix}/") else self.model
-
-        base_url_map = {
-            "openrouter": "https://openrouter.ai/api/v1",
-        }
-
-        self.client = LLM(
-            model=litellm_model,
-            api_key=self.api_key,
-            base_url=base_url_map.get(self.provider),
-        )
-        logger.debug("LLM client initialized: provider=%s model=%s", self.provider, litellm_model)
-
-    # def _configure_togetherai(
-    #     self, model: Optional[str], api_key: Optional[str]
-    # ) -> None:
-    #     if not HAS_TOGETHER:
-    #         raise ImportError(
-    #             "Together AI library not installed. Install with: pip install together"
-    #         )
-    #     self.model = model or "gpt-4o"
-    #     self.api_key = api_key or os.getenv("TOGETHER_API_KEY")
-    #
-    #     if not self.api_key:
-    #         raise ValueError(
-    #             "Together API key not provided. Set TOGETHER_API_KEY environment variable."
-    #         )
-    #
-    #     self.client = Together(api_key=self.api_key)
-
-    # def _configure_openai(self, model: Optional[str], api_key: Optional[str]) -> None:
-    #     if not HAS_OPENAI:
-    #         raise ImportError(
-    #             "OpenAI library not installed. Install with: pip install openai"
-    #         )
-    #
-    #     self.model = model or "gpt-4o"
-    #     self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-    #     if not self.api_key:
-    #         raise ValueError(
-    #             "OpenAI API key not provided. Set OPENAI_API_KEY environment variable."
-    #         )
-    #
-    #     self.client = openai.OpenAI(api_key=self.api_key)
-
-    # def _configure_gemini(self, model: Optional[str], api_key: Optional[str]) -> None:
-    #     if not HAS_GEMINI:
-    #         raise ImportError(
-    #             "Gemini library not installed. Install with: pip install google-genai"
-    #         )
-    #
-    #     self.model = model or "claude-3-5-sonnet-20241022"
-    #     self.api_key = api_key or os.getenv("GEMINI_KEY")
-    #     if not self.api_key:
-    #         raise ValueError(
-    #             "Gemini API key not provided. Set GEMINI_KEY environment variable."
-    #         )
-    #
-    #     self.client = genai.Client(api_key=self.api_key)
-
-    # def _configure_openrouter(
-    #     self, model: Optional[str], api_key: Optional[str]
-    # ) -> None:
-    #     if not HAS_OPENAI:
-    #         raise ImportError(
-    #             "OpenAI library not installed. Install with: pip install openai"
-    #         )
-    #
-    #     self.model = model or "anthropic/claude-sonnet-4"
-    #     self.api_key = api_key or os.getenv("OPENROUTER_API_KEY")
-    #     if not self.api_key:
-    #         raise ValueError(
-    #             "OpenRouter API key not provided. Set OPENROUTER_API_KEY environment variable."
-    #         )
-    #
-    #     self.client = openai.OpenAI(
-    #         api_key=self.api_key,
-    #         base_url="https://openrouter.ai/api/v1",
-    #         default_headers={
-    #             "HTTP-Referer": "https://devdox.ai",
-    #             "X-Title": "DevDox AI Sonar",
-    #         },
-    #     )
 
     @staticmethod
     def _convert_regex_to_diff(
@@ -971,8 +849,7 @@ class LLMFixer:
         language = self._get_language_from_extension(file_extension)
 
         logger.debug(
-            "LLM call — provider=%s, model=%s, language=%s, issues=%d",
-            self.provider,
+            "LLM call — model=%s, language=%s, issues=%d",
             self.model,
             language,
             len(issues),
@@ -1444,39 +1321,6 @@ class LLMFixer:
         prompt = template.render(**context_dic)
 
         return prompt.strip(), system_template
-
-    def _parse_openai_response(self, response: Any) -> Optional[SonarFixResponse]:
-        """Parse OpenAI API response."""
-        try:
-            return response.output_parsed  # type: ignore[no-any-return]
-
-        except Exception:
-            logger.exception("Error parsing OpenAI response")
-            return None
-
-    def _parse_gemini_response(self, response: Any) -> Optional[Dict[str, Any]]:
-        """Parse Gemini API response."""
-        try:
-            content = response.text
-            return self._extract_fix_from_response(content)
-        except Exception:
-            logger.exception("Error parsing Gemini response")
-            return None
-
-    def _parse_chat_completion_response(
-        self, response: Any
-    ) -> Optional[SonarFixResponse]:
-        """Parse an OpenAI-compatible chat completion response (used by TogetherAI and OpenRouter)."""
-        try:
-            content = response.choices[0].message.content
-            return self.parse_llm_response(content)
-        except Exception:
-            logger.exception("Error parsing %s response", self.provider)
-            return None
-
-    # Aliases for backward compatibility and test clarity
-    _parse_togetherai_response = _parse_chat_completion_response
-    _parse_openrouter_response = _parse_chat_completion_response
 
     def _extract_using_regex_fallback(self, content: str) -> Optional[Dict[str, Any]]:
         """Fallback extraction using regex for malformed JSON."""
@@ -2118,9 +1962,6 @@ class LLMFixer:
         create_backup: bool = True,
         dry_run: bool = False,
         use_validator: bool = True,
-        validator_provider: str = "openai",
-        validator_model: Optional[str] = None,
-        validator_api_key: Optional[str] = None,
         min_confidence: float = 0.7,
     ) -> FixResult:
         """
@@ -2139,10 +1980,9 @@ class LLMFixer:
             create_backup: Whether to create a backup before applying
             dry_run: If True, don't actually modify files
             use_validator: If True, use AI validator as fallback when validation fails
-            validator_provider: LLM provider for validation
-            validator_model: LLM model for validation
-            validator_api_key: API key for validator
-            min_confidence: Minimum confidence threshold for approval
+            min_confidence: Minimum confidence threshold for approval.
+                When the validator uses this fixer's own profile, so no
+                separate credentials are needed.
 
         Returns:
             FixResult with detailed application results
@@ -2154,9 +1994,7 @@ class LLMFixer:
         validator = None
         if use_validator:
             validator = FixValidator(
-                provider=validator_provider,
-                model=validator_model,
-                api_key=validator_api_key,
+                profile=self.profile,
                 min_confidence_threshold=min_confidence,
             )
 
