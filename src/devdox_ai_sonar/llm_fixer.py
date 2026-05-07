@@ -55,6 +55,7 @@ from devdox_ai_sonar.services.rule_handler import (
     _resolve_relative_path,
 )
 from devdox_ai_sonar.services.extractor import IssueExtractor
+from devdox_ai_sonar.openhands_tools.fix_at_line import FixAtLineTool
 from devdox_ai_sonar.utils.async_file_io import AsyncFileReader
 
 logger = logging.getLogger(__name__)
@@ -104,6 +105,101 @@ _LITELLM_PREFIX_MAP = {
     "openai": "openai",
     "gemini": "gemini",
 }
+
+
+def _build_agent_tools() -> List[Tool]:
+    """Return the ordered tool list the SonarCloud fix-agent runs with.
+
+    Extracted as a module-level helper so the tool wiring can be asserted on
+    in unit tests without constructing a full Agent.
+    """
+    return [
+        Tool(name=TerminalTool.name),
+        Tool(name=FileEditorTool.name),
+        Tool(name=FixAtLineTool.name),
+        Tool(name=TaskTrackerTool.name),
+    ]
+
+
+def _handle_agent_event(
+    event: Event,
+    console: Console,
+    file_path: Path,
+    messages_accum: List[str],
+) -> None:
+    """Render an OpenHands agent event to ``console``.
+
+    Extracted from ``LLMFixer._call_llm_list`` so it can be unit-tested in
+    isolation by feeding it synthetic events and capturing the console.
+    """
+    if isinstance(event, MessageEvent) and event.source == "agent":
+        msg = event.to_llm_message()
+        text = ""
+        if isinstance(msg.content, str):
+            text = msg.content
+        elif isinstance(msg.content, list):
+            for block in msg.content:
+                if hasattr(block, "text") and block.text:
+                    text += block.text
+                elif isinstance(block, dict) and block.get("type") == "text":
+                    text += block.get("text", "")
+        if text.strip():
+            messages_accum.append(text)
+            console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
+        return
+
+    if isinstance(event, ActionEvent):
+        tool = getattr(event, "tool_name", "tool")
+        thought = ""
+        for block in (event.thought or []):
+            if hasattr(block, "text"):
+                thought = block.text[:120].strip()
+                break
+        if thought:
+            console.print(f"  🤔 [dim]{thought}[/dim]")
+        console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
+        return
+
+    if isinstance(event, ObservationEvent):
+        tool = getattr(event, "tool_name", "")
+        obs = event.observation
+        obs_text = getattr(obs, "text", "") or getattr(obs, "content", "") or ""
+        exit_code = getattr(getattr(obs, "metadata", None), "exit_code", None)
+        if exit_code is not None:
+            status = "✅" if exit_code == 0 else "❌"
+            console.print(
+                f"  {status} [dim]Terminal[/dim] (exit {exit_code}): "
+                f"{obs_text[:200].strip()}"
+            )
+            return
+
+        command = getattr(obs, "command", "")
+        path_used = getattr(obs, "path", "") or str(file_path)
+        if tool == FixAtLineTool.name:
+            start_ln = getattr(obs, "start_line", None)
+            end_ln = getattr(obs, "end_line", None)
+            if start_ln is not None and end_ln is not None and start_ln == end_ln:
+                range_label = f"line {start_ln}"
+            elif start_ln is not None and end_ln is not None:
+                range_label = f"lines {start_ln}-{end_ln}"
+            else:
+                range_label = "range"
+            if getattr(obs, "is_error", False):
+                console.print(
+                    f"  ❌ [bold red]fix_at_line failed:[/bold red] "
+                    f"{obs_text[:200].strip()}"
+                )
+            else:
+                console.print(
+                    f"  ✏️  [bold green]Edited {range_label}:[/bold green] "
+                    f"{path_used}"
+                )
+        elif command == "str_replace":
+            console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
+        elif command:
+            console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
+        else:
+            console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
 
 
 class LLMFixer:
@@ -910,60 +1006,21 @@ class LLMFixer:
 
         agent = Agent(
             llm=self.client,
-            tools=[
-                Tool(name=TerminalTool.name),
-                Tool(name=FileEditorTool.name),
-                Tool(name=TaskTrackerTool.name),
-            ],
+            tools=_build_agent_tools(),
             agent_context=agent_context,
         )
 
-        all_agent_messages: list[str] = []
+        all_agent_messages: List[str] = []
 
-        def on_event(event: Event) -> None:
-            if isinstance(event, MessageEvent) and event.source == "agent":
-                msg = event.to_llm_message()
-                text = ""
-                if isinstance(msg.content, str):
-                    text = msg.content
-                elif isinstance(msg.content, list):
-                    for block in msg.content:
-                        if hasattr(block, "text") and block.text:
-                            text += block.text
-                        elif isinstance(block, dict) and block.get("type") == "text":
-                            text += block.get("text", "")
-                if text.strip():
-                    all_agent_messages.append(text)
-                    _console.print(f"  💬 [bold cyan]Agent:[/bold cyan] {text[:160].strip()}")
-            elif isinstance(event, ActionEvent):
-                tool = getattr(event, "tool_name", "tool")
-                thought = ""
-                for block in (event.thought or []):
-                    if hasattr(block, "text"):
-                        thought = block.text[:120].strip()
-                        break
-                if thought:
-                    _console.print(f"  🤔 [dim]{thought}[/dim]")
-                _console.print(f"  🔧 [yellow]Calling:[/yellow] {tool}")
-            elif isinstance(event, ObservationEvent):
-                tool = getattr(event, "tool_name", "")
-                obs = event.observation
-                obs_text = getattr(obs, "text", "") or getattr(obs, "content", "") or ""
-                exit_code = getattr(getattr(obs, "metadata", None), "exit_code", None)
-                if exit_code is not None:
-                    status = "✅" if exit_code == 0 else "❌"
-                    _console.print(f"  {status} [dim]Terminal[/dim] (exit {exit_code}): {obs_text[:200].strip()}")
-                else:
-                    command = getattr(obs, "command", "")
-                    path_used = getattr(obs, "path", "") or str(file_path)
-                    if command == "str_replace":
-                        _console.print(f"  ✏️  [bold green]Edited:[/bold green] {path_used}")
-                    elif command:
-                        _console.print(f"  👁  [dim]{command}:[/dim] {path_used}")
-                    else:
-                        _console.print(f"  📋 [dim]{tool}:[/dim] {obs_text[:120].strip()}")
-
-        conversation = Conversation(agent=agent, workspace=str(project_path), callbacks=[on_event])
+        conversation = Conversation(
+            agent=agent,
+            workspace=str(project_path),
+            callbacks=[
+                lambda event: _handle_agent_event(
+                    event, _console, file_path, all_agent_messages
+                )
+            ],
+        )
         conversation.send_message(Message(role="user", content=[TextContent(text=prompt)]))
         conversation.run()
 
