@@ -1,0 +1,49 @@
+Fix this SonarQube {{ language }} issue in `{{ file_path }}` by editing the file directly using your tools.
+Do NOT output JSON. Do NOT paste code in your reply. Use `file_editor str_replace` to make the change.
+
+## Issue
+{% for issue in issues %}
+- **Rule**: {{ issue.rule }}{% if issue.severity %} ({{ issue.severity }}){% endif %}
+- **Message**: {{ issue.message }}
+{% set root = rule_info.get(issue.rule, {}).get('root_cause', '') %}
+{% if root %}- **Root cause**: {{ root }}{% endif %}
+{% endfor %}
+
+## How to fix
+{% for issue in issues %}
+{% set steps = rule_info.get(issue.rule, {}).get('how_to_fix', {}).get('steps', []) %}
+{% if steps %}{% for step in steps %}- {{ step }}
+{% endfor %}{% endif %}
+{% endfor %}
+
+## Problem lines
+{% for line_no, content in context.context_dict["problem_line_content"].items() %}
+- Line {{ line_no }}: `{{ content.strip() }}`
+{% endfor %}
+
+## Code context (for reference only — edit the actual file, not this)
+```{{ language }}
+{% for func in context.context_dict['new_context'] %}
+### {{ func.get('function_name', 'code') }} (L{{ func['start_line'] }}-{{ func['end_line'] }})
+{{ func['context'] }}
+{% endfor %}
+```
+
+{% if context.import_section and context.import_section.has_imports %}
+## Existing imports
+```{{ language }}
+{{ context.import_section.content }}
+```
+{% endif %}
+
+{% if strategy_text %}
+## Additional constraints
+{{ strategy_text }}
+{% endif %}
+
+{% if error_message %}
+## Previous attempt failed — also fix this
+{{ error_message }}
+{% endif %}
+
+Read `{{ file_path }}` first, then apply the fix with `str_replace`, then run `python -m py_compile {{ file_path }}` to confirm syntax is valid.

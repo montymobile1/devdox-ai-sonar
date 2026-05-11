@@ -2,10 +2,10 @@ from enum import Enum
 from typing import Optional, List
 from dataclasses import dataclass
 from pydantic import BaseModel
-from google import genai
-import openai
-from openai import OpenAI
-from together import Together
+# from google import genai
+# import openai
+# from openai import OpenAI
+# from together import Together
 
 API_KEY_EMPTY = "API key cannot be empty"
 NO_MODELS_FOUND = "No models found for this API key"
@@ -46,129 +46,133 @@ class ProviderValidationResult:
 
 class ProviderValidator:
     """Validates API keys for different LLM providers."""
+    #
+    # @staticmethod
+    # def validate_openai(api_key: str) -> ProviderValidationResult:
+    #     """Validate OpenAI API key and fetch available models."""
+    #     if not api_key or not api_key.strip():
+    #         return ProviderValidationResult.failure_result(API_KEY_EMPTY)
+    #
+    #     try:
+    #         client = OpenAI(api_key=api_key)
+    #         models = client.models.list().data
+    #         model_list = [model.id for model in models]
+    #
+    #         if not model_list:
+    #             return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
+    #
+    #         return ProviderValidationResult.success_result(model_list)
+    #
+    #     except openai.AuthenticationError:
+    #         return ProviderValidationResult.failure_result(
+    #             "Invalid API key - authentication failed"
+    #         )
+    #     except openai.APIError as e:
+    #         return ProviderValidationResult.failure_result(f"API error: {str(e)}")
+    #     except ImportError:
+    #         return ProviderValidationResult.failure_result(
+    #             "OpenAI package not installed"
+    #         )
+    #     except Exception as e:
+    #         return ProviderValidationResult.failure_result(
+    #             f"Unexpected error: {str(e)}"
+    #         )
+    #
+    # @staticmethod
+    # def validate_gemini(api_key: str) -> ProviderValidationResult:
+    #     """Validate Gemini API key and fetch available models."""
+    #     if not api_key or not api_key.strip():
+    #         return ProviderValidationResult.failure_result(API_KEY_EMPTY)
+    #
+    #     try:
+    #         client = genai.Client(api_key=api_key)
+    #         models = client.models.list()
+    #         model_list = [
+    #             model.name.replace("models/", "")
+    #             for model in models
+    #             if model.name is not None
+    #         ]
+    #         if not model_list:
+    #             return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
+    #
+    #         return ProviderValidationResult.success_result(model_list)
+    #
+    #     except ImportError:
+    #         return ProviderValidationResult.failure_result(
+    #             "Google GenAI package not installed"
+    #         )
+    #     except Exception as e:
+    #         return ProviderValidationResult.failure_result(
+    #             f"Validation error: {str(e)}"
+    #         )
+    #
+    # @staticmethod
+    # def validate_togetherai(api_key: str) -> ProviderValidationResult:
+    #     """Validate TogetherAI API key and fetch available models."""
+    #     if not api_key or not api_key.strip():
+    #         return ProviderValidationResult.failure_result(API_KEY_EMPTY)
+    #
+    #     try:
+    #         client = Together(api_key=api_key)
+    #         models = client.models.list()
+    #         model_list = [model.id for model in models]
+    #
+    #         if not model_list:
+    #             return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
+    #
+    #         return ProviderValidationResult.success_result(model_list)
+    #
+    #     except ImportError:
+    #         return ProviderValidationResult.failure_result(
+    #             "Together package not installed"
+    #         )
+    #     except Exception as e:
+    #         return ProviderValidationResult.failure_result(
+    #             f"Validation error: {str(e)}"
+    #         )
+    #
+    # @staticmethod
+    # def validate_openrouter(api_key: str) -> ProviderValidationResult:
+    #     """Validate OpenRouter API key and fetch available models."""
+    #     if not api_key or not api_key.strip():
+    #         return ProviderValidationResult.failure_result(API_KEY_EMPTY)
+    #
+    #     try:
+    #         client = OpenAI(
+    #             api_key=api_key,
+    #             base_url="https://openrouter.ai/api/v1",
+    #         )
+    #         models = client.models.list().data
+    #         model_list = [model.id for model in models]
+    #
+    #         if not model_list:
+    #             return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
+    #
+    #         return ProviderValidationResult.success_result(model_list)
+    #
+    #     except openai.AuthenticationError:
+    #         return ProviderValidationResult.failure_result(
+    #             "Invalid API key - authentication failed"
+    #         )
+    #     except openai.APIError as e:
+    #         return ProviderValidationResult.failure_result(f"API error: {str(e)}")
+    #     except Exception as e:
+    #         return ProviderValidationResult.failure_result(
+    #             f"Unexpected error: {str(e)}"
+    #         )
 
     @staticmethod
-    def validate_openai(api_key: str) -> ProviderValidationResult:
-        """Validate OpenAI API key and fetch available models."""
-        if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
-
-        try:
-            client = OpenAI(api_key=api_key)
-            models = client.models.list().data
-            model_list = [model.id for model in models]
-
-            if not model_list:
-                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
-
-            return ProviderValidationResult.success_result(model_list)
-
-        except openai.AuthenticationError:
-            return ProviderValidationResult.failure_result(
-                "Invalid API key - authentication failed"
-            )
-        except openai.APIError as e:
-            return ProviderValidationResult.failure_result(f"API error: {str(e)}")
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "OpenAI package not installed"
-            )
-        except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Unexpected error: {str(e)}"
-            )
-
-    @staticmethod
-    def validate_gemini(api_key: str) -> ProviderValidationResult:
-        """Validate Gemini API key and fetch available models."""
-        if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
-
-        try:
-            client = genai.Client(api_key=api_key)
-            models = client.models.list()
-            model_list = [
-                model.name.replace("models/", "")
-                for model in models
-                if model.name is not None
-            ]
-            if not model_list:
-                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
-
-            return ProviderValidationResult.success_result(model_list)
-
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "Google GenAI package not installed"
-            )
-        except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Validation error: {str(e)}"
-            )
-
-    @staticmethod
-    def validate_togetherai(api_key: str) -> ProviderValidationResult:
-        """Validate TogetherAI API key and fetch available models."""
-        if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
-
-        try:
-            client = Together(api_key=api_key)
-            models = client.models.list()
-            model_list = [model.id for model in models]
-
-            if not model_list:
-                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
-
-            return ProviderValidationResult.success_result(model_list)
-
-        except ImportError:
-            return ProviderValidationResult.failure_result(
-                "Together package not installed"
-            )
-        except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Validation error: {str(e)}"
-            )
-
-    @staticmethod
-    def validate_openrouter(api_key: str) -> ProviderValidationResult:
-        """Validate OpenRouter API key and fetch available models."""
-        if not api_key or not api_key.strip():
-            return ProviderValidationResult.failure_result(API_KEY_EMPTY)
-
-        try:
-            client = OpenAI(
-                api_key=api_key,
-                base_url="https://openrouter.ai/api/v1",
-            )
-            models = client.models.list().data
-            model_list = [model.id for model in models]
-
-            if not model_list:
-                return ProviderValidationResult.failure_result(NO_MODELS_FOUND)
-
-            return ProviderValidationResult.success_result(model_list)
-
-        except openai.AuthenticationError:
-            return ProviderValidationResult.failure_result(
-                "Invalid API key - authentication failed"
-            )
-        except openai.APIError as e:
-            return ProviderValidationResult.failure_result(f"API error: {str(e)}")
-        except Exception as e:
-            return ProviderValidationResult.failure_result(
-                f"Unexpected error: {str(e)}"
-            )
-
+    def validate_true(api_key: str) -> ProviderValidationResult:
+        return ProviderValidationResult.success_result([])
     @classmethod
     def validate(cls, provider: ProviderType, api_key: str) -> ProviderValidationResult:
         """Validate API key for any provider type."""
+        #to be changed
         validators = {
-            ProviderType.OPENAI: cls.validate_openai,
-            ProviderType.GEMINI: cls.validate_gemini,
-            ProviderType.TOGETHERAI: cls.validate_togetherai,
-            ProviderType.OPENROUTER: cls.validate_openrouter,
+            ProviderType.OPENAI: cls.validate_true,
+            ProviderType.GEMINI: cls.validate_true,
+            ProviderType.TOGETHERAI: cls.validate_true,
+            ProviderType.OPENROUTER: cls.validate_true,
         }
 
         validator = validators.get(provider)

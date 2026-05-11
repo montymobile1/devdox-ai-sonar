@@ -134,6 +134,14 @@ class SonarFixResponse(BaseModel):
         ge=0.0,
         le=1.0,
     )
+    applied_by_agent: bool = Field(
+        default=False,
+        description=(
+            "When True, the fix was already applied directly to the file by the "
+            "OpenHands agent. The FIXED_CODE_BLOCKS are for documentation only — "
+            "the apply pipeline must skip writing them to disk."
+        ),
+    )
 
     @field_validator("FIXED_CODE_BLOCKS")
     @classmethod
