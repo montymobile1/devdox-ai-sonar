@@ -1121,23 +1121,6 @@ def apply_import_block(
     return lines
 
 
-# def find_global_top_insertion_point(lines: List[str]) -> int:
-#     """
-#     Find the position for non-import global code (classes, functions, constants).
-#     This should go after imports but before other code.
-#     """
-#     import_end = find_import_insertion_point(lines)
-#
-#     # Look for the first non-import, non-comment, non-empty line after imports
-#     for i in range(import_end, len(lines)):
-#         stripped = lines[i].strip()
-#         if stripped and not stripped.startswith("#"):
-#             return i
-#
-#     # If no code found, append at the end
-#     return len(lines)
-#
-
 
 def apply_global_top_helper(
     lines: List[str],
