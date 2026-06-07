@@ -447,6 +447,83 @@ class SonarCloudAnalyzer:
             )
             return None
 
+    def _map_severity(self, issue_data: Dict[str, Any]) -> Severity:
+        severity_str = issue_data.get("severity", "").upper()
+        if severity_str in Severity._value2member_map_:
+            return Severity(severity_str)
+        return Severity.INFO
+
+    def _map_issue_type(self, issue_data: Dict[str, Any]) -> IssueType:
+        type_str = issue_data.get("type", "").upper()
+        if type_str in IssueType._value2member_map_:
+            return IssueType(type_str)
+        return IssueType.CODE_SMELL
+
+    def _map_impact(self, issue_data: Dict[str, Any]) -> Optional[Impact]:
+        impacts = issue_data.get("impacts", [])
+        if not impacts:
+            return None
+        impact_severity = impacts[0].get("severity", "").upper()
+        if impact_severity in Impact._value2member_map_:
+            return Impact(impact_severity)
+        return None
+
+    def _extract_lines_from_flows(
+        self, flows: List[Dict[str, Any]], first_line: Optional[int]
+    ) -> tuple:
+        problem_lines: List[int] = []
+        last_line = first_line
+        for flow in flows:
+            for location in flow.get("locations", []):
+                text_range = location.get("textRange", {})
+                end_line = text_range.get("endLine")
+                if end_line:
+                    end_line = int(end_line)
+                    problem_lines.append(end_line)
+                    if last_line is None or end_line > last_line:
+                        last_line = end_line
+        return problem_lines, last_line
+
+    def _parse_single_issue(self, issue_data: Dict[str, Any]) -> SonarIssue:
+        severity = self._map_severity(issue_data)
+        issue_type = self._map_issue_type(issue_data)
+        impact = self._map_impact(issue_data)
+
+        component = issue_data.get("component", "")
+        file_path = self._extract_file_path(component)
+
+        problem_lines: List[int] = []
+        first_line = issue_data.get("line")
+        if first_line:
+            first_line = int(first_line)
+            problem_lines.append(first_line)
+
+        flows = issue_data.get("flows", [])
+        flow_lines, last_line = self._extract_lines_from_flows(flows, first_line)
+        problem_lines.extend(flow_lines)
+
+        return SonarIssue(
+            key=issue_data.get("key", ""),
+            rule=issue_data.get("rule", ""),
+            severity=severity.value,
+            problem_lines=problem_lines,
+            component=component,
+            project=issue_data.get("project", ""),
+            first_line=first_line,
+            last_line=last_line,
+            message=issue_data.get("message", ""),
+            type=issue_type,
+            impact=impact,
+            file=file_path,
+            branch=issue_data.get("branch"),
+            status=issue_data.get("status", "OPEN"),
+            creation_date=issue_data.get("creationDate"),
+            update_date=issue_data.get("updateDate"),
+            tags=issue_data.get("tags", []),
+            effort=issue_data.get("effort"),
+            debt=issue_data.get("debt"),
+        )
+
     def _parse_issues(self, issues_data: List[Dict[str, Any]]) -> List[SonarIssue]:
         """
         Parse raw issue data into SonarIssue objects.
@@ -460,80 +537,9 @@ class SonarCloudAnalyzer:
         issues = []
 
         for issue_data in issues_data:
-            problem_lines = []
             try:
-                # Map severity enum
-                severity_str = issue_data.get("severity", "").upper()
-                severity = (
-                    Severity(severity_str)
-                    if severity_str in Severity._value2member_map_
-                    else Severity.INFO
-                )
-
-                # Map issue type enum
-                type_str = issue_data.get("type", "").upper()
-                issue_type = (
-                    IssueType(type_str)
-                    if type_str in IssueType._value2member_map_
-                    else IssueType.CODE_SMELL
-                )
-
-                # Map impact enum (from impacts object)
-                impacts = issue_data.get("impacts", [])
-                impact = None
-                if impacts and len(impacts) > 0:
-                    # Get first impact's severity
-                    impact_severity = impacts[0].get("severity", "").upper()
-                    if impact_severity in Impact._value2member_map_:
-                        impact = Impact(impact_severity)
-
-                # Extract file path from component
-                component = issue_data.get("component", "")
-                file_path = self._extract_file_path(component)
-
-                first_line = issue_data.get("line")
-                if first_line:
-                    problem_lines.append(int(first_line))
-                    first_line = int(first_line)
-
-                flows = issue_data.get("flows", [])
-                last_line = first_line  # default
-
-                if last_line is not None:
-                    for flow in flows:
-                        for location in flow.get("locations", []):
-                            text_range = location.get("textRange", {})
-                            end_line = text_range.get("endLine")
-                            if end_line:
-                                problem_lines.append(int(end_line))
-                                end_line = int(end_line)
-                                if end_line > last_line:
-                                    last_line = end_line
-
-                issue = SonarIssue(
-                    key=issue_data.get("key", ""),
-                    rule=issue_data.get("rule", ""),
-                    severity=severity.value,
-                    problem_lines=problem_lines,
-                    component=component,
-                    project=issue_data.get("project", ""),
-                    first_line=first_line,
-                    last_line=last_line,
-                    message=issue_data.get("message", ""),
-                    type=issue_type,
-                    impact=impact,
-                    file=file_path,
-                    branch=issue_data.get("branch"),
-                    status=issue_data.get("status", "OPEN"),
-                    creation_date=issue_data.get("creationDate"),
-                    update_date=issue_data.get("updateDate"),
-                    tags=issue_data.get("tags", []),
-                    effort=issue_data.get("effort"),
-                    debt=issue_data.get("debt"),
-                )
-
+                issue = self._parse_single_issue(issue_data)
                 issues.append(issue)
-
             except Exception as e:
                 logger.error(
                     f"Error parsing issue {issue_data.get('key', 'unknown')}: {e}",
