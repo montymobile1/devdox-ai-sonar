@@ -1044,38 +1044,37 @@ def apply_single_code_block(
         return lines, 0
 
 
+def _skip_header_lines(lines: List[str]) -> int:
+    idx = 0
+    if lines and lines[0].startswith("#!"):
+        idx = 1
+    if idx < len(lines) and "coding" in lines[idx]:
+        idx += 1
+    return idx
+
+
+def _skip_module_docstring(lines: List[str], idx: int) -> int:
+    stripped = lines[idx].strip()
+    if not (stripped.startswith('"""') or stripped.startswith("'''")):
+        return idx
+    quote = '"""' if stripped.startswith('"""') else "'''"
+    if stripped.endswith(quote) and len(stripped) > len(quote):
+        return idx + 1
+    idx += 1
+    while idx < len(lines):
+        if quote in lines[idx]:
+            return idx + 1
+        idx += 1
+    return idx
+
+
 def find_code_start(lines: List[str]) -> int:
     """
     Find where actual code starts (after shebang, encoding, docstrings).
     """
-    idx = 0
-
-    # Skip shebang
-    if lines and lines[0].startswith("#!"):
-        idx = 1
-
-    # Skip encoding declaration
-    if idx < len(lines) and "coding" in lines[idx]:
-        idx += 1
-
-    # Skip module docstring
+    idx = _skip_header_lines(lines)
     if idx < len(lines):
-        stripped = lines[idx].strip()
-        if stripped.startswith('"""') or stripped.startswith("'''"):
-            quote = '"""' if stripped.startswith('"""') else "'''"
-
-            # Check if docstring starts and ends on same line
-            if stripped.endswith(quote) and len(stripped) > len(quote):
-                return idx + 1
-
-            # Multi-line docstring: skip opening line and find closing quote
-            idx += 1
-            while idx < len(lines):
-                if quote in lines[idx]:
-                    idx += 1
-                    break
-                idx += 1
-
+        idx = _skip_module_docstring(lines, idx)
     return idx
 
 
@@ -1120,23 +1119,6 @@ def apply_import_block(
 
     return lines
 
-
-# def find_global_top_insertion_point(lines: List[str]) -> int:
-#     """
-#     Find the position for non-import global code (classes, functions, constants).
-#     This should go after imports but before other code.
-#     """
-#     import_end = find_import_insertion_point(lines)
-#
-#     # Look for the first non-import, non-comment, non-empty line after imports
-#     for i in range(import_end, len(lines)):
-#         stripped = lines[i].strip()
-#         if stripped and not stripped.startswith("#"):
-#             return i
-#
-#     # If no code found, append at the end
-#     return len(lines)
-#
 
 
 def apply_global_top_helper(
