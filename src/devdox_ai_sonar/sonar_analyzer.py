@@ -330,6 +330,50 @@ class SonarCloudAnalyzer:
                     f"Project '{project_key}' not found in organization '{self.organization}'."
                 )
 
+    _INT_METRICS = {"ncloc", "bugs", "vulnerabilities", "code_smells"}
+    _FLOAT_METRICS = {"coverage", "duplicated_lines_density"}
+
+    def _parse_measure(self, metrics_dict: dict, metric_key: str, metric_value: str) -> None:
+        if metric_key in self._INT_METRICS:
+            try:
+                metrics_dict[metric_key] = int(metric_value)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not convert {metric_key}={metric_value} to int")
+                metrics_dict[metric_key] = 0
+        elif metric_key in self._FLOAT_METRICS:
+            try:
+                metrics_dict[metric_key] = float(metric_value)
+            except (ValueError, TypeError):
+                logger.warning(f"Could not convert {metric_key}={metric_value} to float")
+                metrics_dict[metric_key] = 0.0
+        else:
+            metrics_dict[metric_key] = metric_value
+
+    def _parse_metrics_response(self, data: dict, project_key: str) -> ProjectMetrics:
+        metrics_dict: dict[str, Union[int, float]] = {}
+        for measure in data.get("component", {}).get("measures", []):
+            metric_key = measure.get("metric")
+            metric_value = measure.get("value")
+            if metric_value is not None:
+                self._parse_measure(metrics_dict, metric_key, metric_value)
+        return ProjectMetrics(
+            project_key=project_key,
+            lines_of_code=metrics_dict.get("ncloc"),
+            coverage=metrics_dict.get("coverage"),
+            duplicated_lines_density=metrics_dict.get("duplicated_lines_density"),
+            maintainability_rating=metrics_dict.get("sqale_rating"),
+            reliability_rating=metrics_dict.get("reliability_rating"),
+            security_rating=metrics_dict.get("security_rating"),
+            bugs=metrics_dict.get("bugs"),
+            vulnerabilities=metrics_dict.get("vulnerabilities"),
+            code_smells=metrics_dict.get("code_smells"),
+            technical_debt=(
+                str(metrics_dict.get("sqale_index"))
+                if metrics_dict.get("sqale_index")
+                else None
+            ),
+        )
+
     def get_project_metrics(self, project_key: str) -> Optional[ProjectMetrics]:
         """
         Fetch project metrics from SonarCloud.
@@ -343,10 +387,8 @@ class SonarCloudAnalyzer:
         Returns:
             ProjectMetrics object or None if error
         """
-        # Build API URL
         url = urljoin(self.base_url, "/api/measures/component")
 
-        # Metric keys to fetch
         metric_keys = [
             "ncloc",  # Lines of code
             "coverage",  # Test coverage
@@ -365,60 +407,8 @@ class SonarCloudAnalyzer:
 
         try:
             response = self.session.get(url, params=params, timeout=self.timeout)
-
             response.raise_for_status()
-
-            data = response.json()
-            # Parse metrics data
-            metrics_dict: dict[str, Union[int, float]] = {}
-            for measure in data.get("component", {}).get("measures", []):
-                metric_key = measure.get("metric")
-
-                metric_value = measure.get("value")
-
-                if metric_value is not None:
-                    # Convert numeric values
-                    if metric_key in [
-                        "ncloc",
-                        "bugs",
-                        "vulnerabilities",
-                        "code_smells",
-                    ]:
-                        try:
-                            metrics_dict[metric_key] = int(metric_value)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not convert {metric_key}={metric_value} to int"
-                            )
-                            metrics_dict[metric_key] = 0
-                    elif metric_key in ["coverage", "duplicated_lines_density"]:
-                        try:
-                            metrics_dict[metric_key] = float(metric_value)
-                        except (ValueError, TypeError):
-                            logger.warning(
-                                f"Could not convert {metric_key}={metric_value} to float"
-                            )
-                            metrics_dict[metric_key] = 0.0
-
-                    else:
-                        metrics_dict[metric_key] = metric_value
-            return ProjectMetrics(
-                project_key=project_key,
-                lines_of_code=metrics_dict.get("ncloc"),
-                coverage=metrics_dict.get("coverage"),
-                duplicated_lines_density=metrics_dict.get("duplicated_lines_density"),
-                maintainability_rating=metrics_dict.get("sqale_rating"),
-                reliability_rating=metrics_dict.get("reliability_rating"),
-                security_rating=metrics_dict.get("security_rating"),
-                bugs=metrics_dict.get("bugs"),
-                vulnerabilities=metrics_dict.get("vulnerabilities"),
-                code_smells=metrics_dict.get("code_smells"),
-                technical_debt=(
-                    str(metrics_dict.get("sqale_index"))
-                    if metrics_dict.get("sqale_index")
-                    else None
-                ),
-            )
+            return self._parse_metrics_response(response.json(), project_key)
 
         except requests.Timeout:
             logger.error(
