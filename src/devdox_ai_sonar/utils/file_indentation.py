@@ -1044,39 +1044,34 @@ def apply_single_code_block(
         return lines, 0
 
 
+def _skip_module_docstring(lines: List[str], idx: int) -> int:
+    """Skip a module-level docstring starting at idx and return the index after it."""
+    if idx >= len(lines):
+        return idx
+    stripped = lines[idx].strip()
+    if not stripped.startswith('"""') and not stripped.startswith("'''"):
+        return idx
+    quote = '"""' if stripped.startswith('"""') else "'''"
+    if stripped.endswith(quote) and len(stripped) > len(quote):
+        return idx + 1
+    idx += 1
+    while idx < len(lines):
+        if quote in lines[idx]:
+            return idx + 1
+        idx += 1
+    return idx
+
+
 def find_code_start(lines: List[str]) -> int:
     """
     Find where actual code starts (after shebang, encoding, docstrings).
     """
     idx = 0
-
-    # Skip shebang
     if lines and lines[0].startswith("#!"):
         idx = 1
-
-    # Skip encoding declaration
     if idx < len(lines) and "coding" in lines[idx]:
         idx += 1
-
-    # Skip module docstring
-    if idx < len(lines):
-        stripped = lines[idx].strip()
-        if stripped.startswith('"""') or stripped.startswith("'''"):
-            quote = '"""' if stripped.startswith('"""') else "'''"
-
-            # Check if docstring starts and ends on same line
-            if stripped.endswith(quote) and len(stripped) > len(quote):
-                return idx + 1
-
-            # Multi-line docstring: skip opening line and find closing quote
-            idx += 1
-            while idx < len(lines):
-                if quote in lines[idx]:
-                    idx += 1
-                    break
-                idx += 1
-
-    return idx
+    return _skip_module_docstring(lines, idx)
 
 
 def apply_import_block(
