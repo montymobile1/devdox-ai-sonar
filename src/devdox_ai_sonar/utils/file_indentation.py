@@ -1122,6 +1122,7 @@ def apply_import_block(
 
 
 # def find_global_top_insertion_point(lines: List[str]) -> int:
+
 #     """
 #     Find the position for non-import global code (classes, functions, constants).
 #     This should go after imports but before other code.
