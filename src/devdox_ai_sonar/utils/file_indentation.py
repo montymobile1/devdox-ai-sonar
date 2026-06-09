@@ -639,6 +639,18 @@ def apply_helper_code(
         )
 
 
+def _find_closing_quote(
+    lines: List[str], start: int, quote_char: str
+) -> Tuple[bool, List[str], int]:
+    """Find matching closing quote and collect docstring content between them."""
+    docstring_content: List[str] = []
+    for j in range(start, len(lines)):
+        if lines[j].strip() == quote_char:
+            return True, docstring_content, j
+        docstring_content.append(lines[j])
+    return False, docstring_content, -1
+
+
 def normalize_code(code: str) -> str:
     """
     Normalize code by:
@@ -666,26 +678,17 @@ def normalize_code(code: str) -> str:
             quote_char = stripped
             indent = line[: len(line) - len(line.lstrip())]
 
-            # Look for closing quote
-            closing_found = False
-            docstring_content: List[str] = []
+            closing_found, docstring_content, closing_idx = _find_closing_quote(
+                lines, i + 1, quote_char
+            )
 
-            for j in range(i + 1, len(lines)):
-                if lines[j].strip() == quote_char:
-                    # Found closing quote
-                    closing_found = True
-
-                    # Add triple-quoted docstring
-                    fixed_lines.append(f"{indent}{quote_char * 3}")
-                    fixed_lines.extend(docstring_content)
-                    fixed_lines.append(f"{indent}{quote_char * 3}")
-
-                    i = j + 1
-                    break
-                else:
-                    docstring_content.append(lines[j])
-
-            if not closing_found:
+            if closing_found:
+                # Add triple-quoted docstring
+                fixed_lines.append(f"{indent}{quote_char * 3}")
+                fixed_lines.extend(docstring_content)
+                fixed_lines.append(f"{indent}{quote_char * 3}")
+                i = closing_idx + 1
+            else:
                 # No closing quote found, keep original line
                 fixed_lines.append(line)
                 i += 1
