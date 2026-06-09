@@ -705,21 +705,7 @@ async def main(  # ← Async main
     ctx: click.Context,
     verbose: bool,
     command: Optional[str],
-    sonar_token: Optional[str],
-    sonar_org: Optional[str],
-    sonar_project: Optional[str],
-    project_path: Optional[str],
-    llm_provider: Optional[str],
-    llm_api_key: Optional[str],
-    llm_default_model: Optional[str],
-    branch: Optional[str],
-    pull_request: Optional[int],
-    types: Optional[str],
-    severity: Optional[str],
-    excluded_rules: Optional[str],
-    max_fixes: Optional[int],
-    apply: Optional[int],
-    dry_run: bool = False,
+    **kwargs,
 ) -> None:
     """
     DevDox AI Sonar - SonarCloud Analyzer with LLM-powered fixes.
@@ -739,23 +725,9 @@ async def main(  # ← Async main
 
     ctx.ensure_object(dict)
     ctx.obj["verbose"] = verbose
-    ctx.obj["options"] = {
-        "types": types,
-        "severity": severity,
-        "max_fixes": max_fixes or 0,
-        "apply": apply,
-        "dry_run": dry_run,
-        "sonar_token": sonar_token,
-        "sonar_org": sonar_org,
-        "sonar_project": sonar_project,
-        "project_path": project_path,
-        "llm_provider": llm_provider,
-        "llm_api_key": llm_api_key,
-        "llm_default_model": llm_default_model,
-        "branch": branch,
-        "pull_request": pull_request,
-        "excluded_rules": excluded_rules,
-    }
+    options = dict(kwargs)
+    options["max_fixes"] = options.get("max_fixes") or 0
+    ctx.obj["options"] = options
 
     # Sweep orphaned temp directories from previous crashed runs
     sweep_orphaned_tmp_dirs(on_status=lambda msg: console.print(f"[dim]{msg}[/dim]"))
